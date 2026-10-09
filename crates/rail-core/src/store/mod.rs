@@ -55,6 +55,24 @@ fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)
 }
 
+/// Pre-create the file owner-only so it is never visible at umask mode.
+#[cfg(unix)]
+fn create_private_file(file: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(file)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_private_file(_file: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(unix)]
 fn restrict_to_owner(file: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -78,6 +96,10 @@ impl Store {
                 source,
             })?;
         }
+        create_private_file(path).map_err(|source| StoreError::CreateDir {
+            path: path.to_path_buf(),
+            source,
+        })?;
         let conn = Connection::open(path)?;
         restrict_to_owner(path).map_err(|source| StoreError::CreateDir {
             path: path.to_path_buf(),
@@ -306,9 +328,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data_dir = dir.path().join("data");
         let path = data_dir.join("rail.db");
-        drop(Store::open(&path).unwrap());
+        let store = Store::open(&path).unwrap();
+        store
+            .conn()
+            .execute(
+                "INSERT INTO accounts (name, kind, address) VALUES ('a', 'gmail', 'a@example.com')",
+                [],
+            )
+            .unwrap();
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(&data_dir), 0o700);
+        let wal = data_dir.join("rail.db-wal");
+        assert!(wal.exists(), "expected a WAL file after a write");
+        assert_eq!(mode(&wal), 0o600);
     }
 }
