@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 
 use super::StoreError;
 
@@ -16,11 +16,20 @@ pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {
         });
     }
     for (version, sql) in MIGRATIONS {
+        // Take the write lock before reading `user_version`, so a concurrent opener
+        // waits here and then sees the version we committed instead of re-applying.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if current > LATEST_VERSION {
+            return Err(StoreError::TooNew {
+                found: current,
+                supported: LATEST_VERSION,
+            });
+        }
         if *version <= current {
             continue;
         }
         tracing::info!(version, "applying store migration");
-        let tx = conn.transaction()?;
         tx.execute_batch(sql)?;
         tx.pragma_update(None, "user_version", version)?;
         tx.commit()?;

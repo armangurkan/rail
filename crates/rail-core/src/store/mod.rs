@@ -41,6 +41,31 @@ impl StoreError {
     }
 }
 
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
+#[cfg(unix)]
+fn restrict_to_owner(file: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn restrict_to_owner(_file: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -48,12 +73,17 @@ pub struct Store {
 impl Store {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| StoreError::CreateDir {
+            create_private_dir(parent).map_err(|source| StoreError::CreateDir {
                 path: parent.to_path_buf(),
                 source,
             })?;
         }
-        Self::init(Connection::open(path)?)
+        let conn = Connection::open(path)?;
+        restrict_to_owner(path).map_err(|source| StoreError::CreateDir {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Self::init(conn)
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
@@ -122,9 +152,22 @@ mod tests {
     fn reopen_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rail.db");
-        drop(Store::open(&path).unwrap());
+        let first = Store::open(&path).unwrap();
+        first
+            .conn()
+            .execute(
+                "INSERT INTO accounts (name, kind, address) VALUES ('a', 'gmail', 'a@example.com')",
+                [],
+            )
+            .unwrap();
+        drop(first);
         let store = Store::open(&path).unwrap();
         assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
+        let n: i64 = store
+            .conn()
+            .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
     }
 
     #[test]
@@ -254,5 +297,18 @@ mod tests {
             None,
         ));
         assert_eq!(constraint.class(), ErrorClass::Permanent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_and_directory_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        let path = data_dir.join("rail.db");
+        drop(Store::open(&path).unwrap());
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&data_dir), 0o700);
     }
 }
