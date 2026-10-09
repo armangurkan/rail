@@ -1,8 +1,11 @@
 //! The local SQLite store. One file, WAL mode, FTS5.
 
+pub mod accounts;
 pub mod migrations;
 
 use std::path::{Path, PathBuf};
+
+pub use accounts::AccountRow;
 
 use rusqlite::{Connection, ErrorCode};
 
