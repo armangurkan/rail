@@ -127,3 +127,19 @@ pub struct PresetEntry {
     pub source: PathBuf,
     pub preset: Result<Preset, String>,
 }
+
+/// What the outside world reports back. Each outcome carries a `Result`; the wizard decides
+/// what the user sees. `Debug` is safe: `TokenSet` redacts its secrets.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Event {
+    PresetsLoaded(Vec<PresetEntry>),
+    PresetFetched(Result<Preset, Failure>),
+    /// The admin-consent URL, as soon as the browser is asked to open it.
+    ConsentUrl(Url),
+    /// The tenant that consented, which may be empty.
+    AdminConsentFinished(Result<String, Failure>),
+    /// The login URL, as soon as the browser is asked to open it.
+    LoginUrl(Url),
+    LoginFinished(Result<TokenSet, Failure>),
+    Persisted(Result<DoneReport, Failure>),
+}

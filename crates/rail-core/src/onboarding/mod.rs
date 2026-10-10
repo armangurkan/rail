@@ -4,13 +4,14 @@ pub mod draft;
 pub mod events;
 pub mod instructions;
 pub mod preset;
+mod routing;
 pub mod view;
 pub mod wizard;
 #[cfg(test)]
 mod wizard_tests;
 
 pub use draft::{AccountDraft, Field, SHARED_TENANTS, is_address, is_concrete_tenant};
-pub use events::{Action, DoneReport, Failure, Input, PresetEntry, Remedy};
+pub use events::{Action, DoneReport, Event, Failure, Input, PresetEntry, Remedy};
 pub use instructions::{REDIRECT_URI, instructions, portal_url};
 pub use preset::{
     MAX_PRESET_BYTES, Preset, PresetError, SYSTEM_PRESET_DIR, discover_presets,

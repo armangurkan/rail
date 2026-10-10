@@ -1,5 +1,6 @@
 //! Shared fixtures for unit tests.
 
+use crate::auth::TokenSet;
 use crate::config::{AccountConfig, AccountKind, Config};
 use crate::onboarding::{Action, DoneReport, Field, Input, Preset, Wizard};
 
@@ -78,5 +79,13 @@ pub(crate) fn done_report() -> DoneReport {
         token_backend: "file".to_string(),
         token_location: "/home/me/.local/share/rail/secrets.json".to_string(),
         store_path: "/home/me/.local/share/rail/rail.db".into(),
+    }
+}
+
+pub(crate) fn tokens() -> TokenSet {
+    TokenSet {
+        access_token: "access".to_string(),
+        refresh_token: "refresh".to_string(),
+        expires_at: 1,
     }
 }
