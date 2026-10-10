@@ -107,3 +107,18 @@ fn account_add_refuses_duplicate_name_before_opening_a_browser() {
     assert_eq!(std::fs::read_to_string(&config_file).unwrap(), original);
     assert!(!dir.path().join("data").exists());
 }
+
+#[test]
+fn doctor_exits_nonzero_without_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = rail_cmd(&dir).arg("doctor").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("FAIL config"), "got {stdout:?}");
+    assert!(stdout.contains("rail account add"), "got {stdout:?}");
+    assert!(stdout.contains("ok   store"), "got {stdout:?}");
+    assert!(
+        dir.path().join("state").join("rail.log").is_file(),
+        "log file created"
+    );
+}
