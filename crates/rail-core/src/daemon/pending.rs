@@ -7,11 +7,15 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{oneshot, watch};
+use tokio::task::JoinSet;
 
 use crate::ops::{PendingId, PendingKind, PendingState, WaitResponse};
 
 /// How long a finished entry is kept for `pending.wait`.
 pub const RETAIN_FINISHED: Duration = Duration::from_secs(600);
+/// The most logins and consents that may wait for a browser at once; each holds a loopback
+/// listener.
+pub const MAX_PENDING: usize = 8;
 const SAVE_POLL: Duration = Duration::from_millis(50);
 
 struct Entry {
@@ -44,6 +48,8 @@ pub(crate) struct PendingTable {
     entries: Mutex<Entries>,
     /// Bumped on every change, so waiters wake without polling.
     changed: watch::Sender<u64>,
+    /// The detached tasks that wait for redirects and save, so shutdown can join them.
+    tasks: Mutex<JoinSet<()>>,
 }
 
 impl Default for PendingTable {
@@ -51,6 +57,7 @@ impl Default for PendingTable {
         Self {
             entries: Mutex::new(Entries::default()),
             changed: watch::Sender::new(0),
+            tasks: Mutex::new(JoinSet::new()),
         }
     }
 }
@@ -99,6 +106,41 @@ impl PendingTable {
             kind: e.kind,
             state: e.state.clone(),
         })
+    }
+
+    /// True while fewer than `MAX_PENDING` entries are waiting for a browser.
+    pub(crate) fn has_room(&self) -> bool {
+        let waiting = self
+            .lock()
+            .by_id
+            .values()
+            .filter(|e| e.state == PendingState::Waiting)
+            .count();
+        waiting < MAX_PENDING
+    }
+
+    /// Run a pending operation's task detached from any connection, but tracked so shutdown
+    /// can join it.
+    pub(crate) fn spawn(&self, task: impl std::future::Future<Output = ()> + Send + 'static) {
+        let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn(task);
+    }
+
+    /// Wait up to `limit` for every tracked task, then abort the rest. After a cancel, the
+    /// waiting ones end at once, which closes their loopback listeners.
+    pub(crate) async fn join_tasks(&self, limit: Duration) {
+        let mut tasks =
+            std::mem::take(&mut *self.tasks.lock().unwrap_or_else(PoisonError::into_inner));
+        let joined =
+            tokio::time::timeout(limit, async { while tasks.join_next().await.is_some() {} }).await;
+        if joined.is_err() {
+            tracing::warn!(
+                left = tasks.len(),
+                "pending tasks still running; aborting them"
+            );
+            tasks.shutdown().await;
+        }
     }
 
     /// Waiting or saving: the daemon must not idle out while any exist.
@@ -155,10 +197,13 @@ impl PendingTable {
         let mut entries = self.lock();
         let entry = entries.by_id.get_mut(id)?;
         if entry.state == PendingState::Waiting {
+            // The receiver is gone once the task has left its wait (the redirect arrived and
+            // it is about to save, or it ended): the cancel stands and the task will see
+            // `start_saving` refuse.
             if let Some(cancel) = entry.cancel.take()
                 && cancel.send(()).is_err()
             {
-                tracing::warn!(id = %id, "a cancelled login's task was already gone");
+                tracing::debug!(id = %id, "the task had already left its wait when cancelled");
             }
             entry.state = PendingState::Cancelled;
             entry.finished_at = Some(Instant::now());
@@ -204,6 +249,10 @@ impl PendingTable {
         let deadline = Instant::now() + limit;
         while self.saving() > 0 && Instant::now() < deadline {
             tokio::time::sleep(SAVE_POLL).await;
+        }
+        let running = self.saving();
+        if running > 0 {
+            tracing::warn!(running, "the save grace expired with saves still running");
         }
     }
 }
@@ -259,6 +308,20 @@ mod tests {
         assert_eq!(table.get(&waiting).unwrap().state, PendingState::Cancelled);
         assert!(rx.try_recv().is_ok());
         assert_eq!(table.get(&saving).unwrap().state, PendingState::Saving);
+    }
+
+    #[test]
+    fn only_max_pending_entries_may_wait_at_once() {
+        let table = PendingTable::default();
+        let kept: Vec<_> = (0..MAX_PENDING)
+            .map(|_| {
+                assert!(table.has_room());
+                table.begin(PendingKind::Login)
+            })
+            .collect();
+        assert!(!table.has_room());
+        table.cancel(&kept[0].0);
+        assert!(table.has_room(), "a cancelled entry frees its slot");
     }
 
     #[test]

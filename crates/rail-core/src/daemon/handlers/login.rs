@@ -32,6 +32,7 @@ pub(super) async fn add_begin(
     request: AccountAddRequest,
 ) -> Result<BeginResponse, OpError> {
     let ctx = call.ctx.clone();
+    ensure_room(&ctx)?;
     let prepared = prepare_and_probe(&ctx.paths, &ctx.op_ids, &request, &ctx.http).await?;
     let endpoints = endpoints_for_login(&prepared.account, ctx.token_url());
     let session = begin_auth_code(&prepared.login_account(), &endpoints).await?;
@@ -53,6 +54,7 @@ pub(super) async fn login_begin(
     request: LoginBeginRequest,
 ) -> Result<BeginResponse, OpError> {
     let ctx = call.ctx.clone();
+    ensure_room(&ctx)?;
     let (paths, ids, who) = (
         ctx.paths.clone(),
         ctx.op_ids.clone(),
@@ -93,6 +95,7 @@ pub(super) async fn consent_begin(
     request: ConsentBeginRequest,
 ) -> Result<BeginResponse, OpError> {
     let ctx = call.ctx.clone();
+    ensure_room(&ctx)?;
     let session = begin_admin_consent(&request.client_id, &request.tenant).await?;
     let url = session.url().clone();
     let (id, cancel) = ctx.pending.begin(PendingKind::AdminConsent);
@@ -140,6 +143,34 @@ fn begun(
     }
 }
 
+/// Refuse a new login while `MAX_PENDING` are already waiting, before anything is bound.
+fn ensure_room(ctx: &DaemonContext) -> Result<(), OpError> {
+    if ctx.pending.has_room() {
+        return Ok(());
+    }
+    Err(OpError::new(
+        ErrorCode::Daemon,
+        ErrorClass::Transient,
+        "too many logins are in progress; finish or cancel one first",
+    ))
+}
+
+/// Settles an entry as failed if its task ends without doing so (a panic, or an abort at
+/// shutdown), so the daemon can idle out and `finish` does not wait for it.
+struct Settle {
+    ctx: Arc<DaemonContext>,
+    id: PendingId,
+}
+
+impl Drop for Settle {
+    fn drop(&mut self) {
+        let error = OpError::internal("the login task ended unexpectedly");
+        if self.ctx.pending.finish(&self.id, failed(error)).is_some() {
+            tracing::warn!(id = %self.id, "a pending task ended without finishing its entry");
+        }
+    }
+}
+
 /// Run `task` detached and record its outcome; `None` means it was cancelled. The caller is
 /// told with a `pending.finished` notification if it is still connected.
 fn spawn_pending(
@@ -148,11 +179,17 @@ fn spawn_pending(
     id: PendingId,
     task: impl Future<Output = Option<PendingState>> + Send + 'static,
 ) {
+    let table_ctx = ctx.clone();
     let ctx = ctx.clone();
-    tokio::spawn(async move {
-        if let Some(state) = task.await {
-            // None: a cancel got there first and its state stands.
-            ctx.pending.finish(&id, state);
+    table_ctx.pending.spawn(async move {
+        let _settle = Settle {
+            ctx: ctx.clone(),
+            id: id.clone(),
+        };
+        if let Some(state) = task.await
+            && ctx.pending.finish(&id, state).is_none()
+        {
+            tracing::warn!(id = %id, "result discarded: the operation was cancelled");
         }
         match ctx.pending.get(&id) {
             Some(response) => {
@@ -193,6 +230,7 @@ async fn finish_add(
         Err(error) => return Some(failed(error)),
     };
     if !ctx.pending.start_saving(&id) {
+        tracing::warn!(id = %id, "result discarded: the operation was cancelled");
         return None;
     }
     #[cfg(test)]
@@ -218,6 +256,7 @@ async fn finish_login(
         Err(error) => return Some(failed(error)),
     };
     if !ctx.pending.start_saving(&id) {
+        tracing::warn!(id = %id, "result discarded: the operation was cancelled");
         return None;
     }
     #[cfg(test)]
@@ -250,4 +289,29 @@ fn timed_out() -> OpError {
         "nobody finished the login in the browser within 15 minutes",
     )
     .with_hint("begin it again")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::daemon_context;
+
+    /// A task that panics must still end its entry, or the daemon could never idle out.
+    #[tokio::test]
+    async fn a_panicking_task_fails_its_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ctx, _urls) = daemon_context(&crate::paths::Paths::all_in(tmp.path()));
+        let ctx = Arc::new(ctx);
+        let (frames, _outgoing) = tokio::sync::mpsc::unbounded_channel();
+        let (id, _cancel) = ctx.pending.begin(PendingKind::Login);
+        spawn_pending(&ctx, Caller::new(frames), id.clone(), async {
+            panic!("boom");
+        });
+        let answer = ctx.pending.wait(&id, Duration::from_secs(5)).await.unwrap();
+        assert!(
+            matches!(answer.state, PendingState::Failed { .. }),
+            "{answer:?}"
+        );
+        assert_eq!(ctx.pending_count(), 0);
+    }
 }

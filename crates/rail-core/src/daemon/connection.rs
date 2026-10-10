@@ -4,6 +4,7 @@
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -19,6 +20,12 @@ use super::wire::{
     encode_frame, parse_message, read_frame,
 };
 use crate::ops::{HelloRequest, OpError, names};
+
+/// How long a closing connection lets its running requests answer.
+const REQUEST_DRAIN: Duration = Duration::from_secs(1);
+
+/// How long a closing connection lets its writer flush queued frames.
+const WRITER_DRAIN: Duration = Duration::from_secs(1);
 
 /// Aborts the writer task when dropped while still armed, that is, when the connection task is
 /// aborted at shutdown. A normal end disarms it so queued frames are still flushed.
@@ -56,9 +63,25 @@ impl Connection {
         let mut guard = AbortWriter(Some(writer));
         let mut tasks = JoinSet::new();
         self.read_requests(read, &frames, &mut tasks).await;
+        if self.server.is_closing() {
+            // Shutdown: let requests already running answer before the writer is drained.
+            let _ = tokio::time::timeout(REQUEST_DRAIN, async {
+                while tasks.join_next().await.is_some() {}
+            })
+            .await;
+        }
         tasks.abort_all();
         self.server.client_disconnected();
-        guard.0 = None;
+        drop(frames);
+        // The writer ends once its queue is empty and flushed; a client that never reads
+        // cannot hold it past the bound.
+        if let Some(mut writer) = guard.0.take()
+            && tokio::time::timeout(WRITER_DRAIN, &mut writer)
+                .await
+                .is_err()
+        {
+            writer.abort();
+        }
     }
 
     async fn read_requests(
@@ -70,14 +93,9 @@ impl Connection {
         let mut reader = BufReader::new(read);
         let mut greeted = false;
         loop {
-            let next = if greeted {
-                read_frame(&mut reader).await
-            } else {
-                // A client that never says hello must not keep the daemon from going idle.
-                let wait = self.server.config.hello_timeout;
-                tokio::time::timeout(wait, read_frame(&mut reader))
-                    .await
-                    .unwrap_or(Ok(None))
+            let next = tokio::select! {
+                next = self.next_frame(&mut reader, greeted) => next,
+                () = self.server.closed() => return,
             };
             let frame = match next {
                 Ok(Some(frame)) => frame,
@@ -93,6 +111,21 @@ impl Connection {
                 return;
             }
         }
+    }
+
+    async fn next_frame(
+        &self,
+        reader: &mut BufReader<OwnedReadHalf>,
+        greeted: bool,
+    ) -> Result<Option<Vec<u8>>, WireError> {
+        if greeted {
+            return read_frame(reader).await;
+        }
+        // A client that never says hello must not keep the daemon from going idle.
+        let wait = self.server.config.hello_timeout;
+        tokio::time::timeout(wait, read_frame(reader))
+            .await
+            .unwrap_or(Ok(None))
     }
 
     fn handle(

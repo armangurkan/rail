@@ -537,3 +537,24 @@ async fn an_unconfirmed_secrets_change_is_refused_by_the_daemon() {
     };
     client.call::<SecretsConfigure>(&same).await.unwrap();
 }
+
+/// `daemon.stop` always gets its own reply, even on the multi-thread runtime where shutdown
+/// can race the reply's queueing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn daemon_stop_always_receives_its_reply() {
+    use crate::ops::DaemonStopRequest;
+    use crate::ops::op::DaemonStop;
+    for round in 0..50 {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(tmp.path());
+        let (ctx, _urls) = daemon_context(&paths);
+        let daemon = start_daemon(ctx, ServeConfig::default()).await;
+        let client = Connector::new(paths.clone(), std::sync::Arc::new(|| Ok(())))
+            .connect()
+            .await
+            .unwrap();
+        let reply = client.call::<DaemonStop>(&DaemonStopRequest {}).await;
+        assert!(reply.is_ok_and(|r| r.stopping), "round {round}");
+        daemon.await.unwrap().unwrap();
+    }
+}

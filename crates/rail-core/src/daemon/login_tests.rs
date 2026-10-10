@@ -589,3 +589,68 @@ async fn stop_ends_open_connections_and_waiting_logins() {
     );
     let _ = begun;
 }
+
+/// At most `MAX_PENDING` logins wait at once; the next is refused before any browser opens.
+#[tokio::test]
+async fn too_many_waiting_logins_are_refused() {
+    use crate::daemon::pending::MAX_PENDING;
+    let mut h = harness(FILE_BACKEND).await;
+    for n in 0..MAX_PENDING {
+        let request = add_request(&format!("user{n}@example.com"));
+        h.client.call::<AccountAddBegin>(&request).await.unwrap();
+        h.urls.recv().await.unwrap();
+    }
+    let err = h
+        .client
+        .call::<AccountAddBegin>(&add_request("one-too-many@example.com"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.class, crate::error::ErrorClass::Transient);
+    assert!(err.message.contains("too many logins"), "{err}");
+    assert!(h.urls.try_recv().is_err(), "no browser for a refused begin");
+}
+
+/// A client that begins a login and then breaks the framing is disconnected at once; the
+/// login, which belongs to the daemon, stays pending.
+#[tokio::test]
+async fn a_closed_connection_is_released_while_its_login_stays_pending() {
+    use crate::daemon::wire::{MAX_FRAME_BYTES, Request, encode_frame, read_frame};
+    use crate::daemon::{PROTOCOL_VERSION, VERSION};
+    use tokio::io::{AsyncWriteExt, BufReader};
+    let h = harness(FILE_BACKEND).await;
+    let stream = tokio::net::UnixStream::connect(h.paths.socket_file())
+        .await
+        .unwrap();
+    let (read, mut write) = stream.into_split();
+    let hello = json!({"protocol": PROTOCOL_VERSION, "version": VERSION});
+    let begin = serde_json::to_value(add_request("me@example.com")).unwrap();
+    for request in [
+        Request::new(1, names::HELLO, hello),
+        Request::new(2, names::ACCOUNT_ADD_BEGIN, begin),
+    ] {
+        write
+            .write_all(&encode_frame(&request).unwrap())
+            .await
+            .unwrap();
+    }
+    let mut reader = BufReader::new(read);
+    for _ in 0..2 {
+        read_frame(&mut reader).await.unwrap().unwrap();
+    }
+    let junk = vec![b'x'; MAX_FRAME_BYTES + 16];
+    let _ = write.write_all(&junk).await;
+    let closed = tokio::time::timeout(Duration::from_millis(500), async {
+        while let Ok(Some(_)) = read_frame(&mut reader).await {}
+    })
+    .await;
+    assert!(
+        closed.is_ok(),
+        "the socket must reach EOF while the login waits"
+    );
+    let begun = h
+        .client
+        .call::<crate::ops::op::DaemonInfoOp>(&Default::default())
+        .await
+        .unwrap();
+    assert_eq!(begun.pending, 1);
+}

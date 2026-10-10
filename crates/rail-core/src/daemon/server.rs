@@ -50,6 +50,12 @@ impl Default for ServeConfig {
     }
 }
 
+/// How long `finish` waits for pending tasks to end after cancelling them.
+const TASK_JOIN: Duration = Duration::from_secs(5);
+
+/// How long `finish` lets connections answer their last requests and flush before aborting.
+const CLOSE_GRACE: Duration = Duration::from_secs(3);
+
 /// Pause after a failed accept (descriptor exhaustion, say) so the loop cannot spin.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
@@ -63,6 +69,8 @@ pub(crate) struct ServerState {
     #[cfg(test)]
     max_tasks: AtomicUsize,
     shutdown: Notify,
+    /// Set once shutdown starts closing connections.
+    closing: tokio::sync::watch::Sender<bool>,
     started_at: i64,
     socket: PathBuf,
 }
@@ -97,6 +105,22 @@ impl ServerState {
     #[cfg(test)]
     pub(crate) fn max_tasks(&self) -> usize {
         self.max_tasks.load(Ordering::SeqCst)
+    }
+
+    fn begin_close(&self) {
+        self.closing.send_replace(true);
+    }
+
+    pub(crate) fn is_closing(&self) -> bool {
+        *self.closing.borrow()
+    }
+
+    /// Resolves once shutdown starts closing connections.
+    pub(crate) async fn closed(&self) {
+        let mut closing = self.closing.subscribe();
+        if closing.wait_for(|closing| *closing).await.is_err() {
+            std::future::pending::<()>().await;
+        }
     }
 
     pub(crate) fn request_shutdown(&self) {
@@ -173,6 +197,7 @@ impl Server {
             #[cfg(test)]
             max_tasks: AtomicUsize::new(0),
             shutdown: Notify::new(),
+            closing: tokio::sync::watch::Sender::new(false),
             started_at: unix_now(),
             socket,
         };
@@ -253,6 +278,17 @@ impl Server {
         drop(self.listener);
         self.ctx.pending.cancel_waiting();
         self.ctx.pending.wait_for_saves(SAVE_GRACE).await;
+        self.ctx.pending.join_tasks(TASK_JOIN).await;
+        // Connections stop reading, let their requests answer and flush what is queued (the
+        // reply to `daemon.stop` among it); whatever is slower than that is aborted.
+        self.state.begin_close();
+        let drained = tokio::time::timeout(CLOSE_GRACE, async {
+            while self.connections.join_next().await.is_some() {}
+        })
+        .await;
+        if drained.is_err() {
+            tracing::warn!("connections still open after the close grace; aborting them");
+        }
         self.connections.abort_all();
         while self.connections.join_next().await.is_some() {}
         let removed = remove_stale_socket(&self.state.socket);

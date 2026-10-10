@@ -33,12 +33,16 @@ pub(crate) struct Call {
 /// The connection a request came from, for notifications.
 #[derive(Clone)]
 pub(crate) struct Caller {
-    frames: mpsc::UnboundedSender<Vec<u8>>,
+    /// Weak, so a detached pending task never keeps a closed connection's writer (and socket)
+    /// alive.
+    frames: mpsc::WeakUnboundedSender<Vec<u8>>,
 }
 
 impl Caller {
     pub(crate) fn new(frames: mpsc::UnboundedSender<Vec<u8>>) -> Self {
-        Self { frames }
+        Self {
+            frames: frames.downgrade(),
+        }
     }
 
     /// Send a notification. A connection that has gone, or a frame that cannot be encoded, is
@@ -50,11 +54,10 @@ impl Caller {
                 encode_frame(&Notification::new(method, params)).map_err(|e| e.to_string())
             });
         match frame {
-            Ok(frame) => {
-                if self.frames.send(frame).is_err() {
-                    tracing::warn!(method, "the client is gone; notification dropped");
-                }
-            }
+            Ok(frame) => match self.frames.upgrade() {
+                Some(frames) if frames.send(frame).is_ok() => {}
+                _ => tracing::debug!(method, "the client is gone; notification dropped"),
+            },
             Err(error) => tracing::warn!(method, error, "could not encode a notification"),
         }
     }
