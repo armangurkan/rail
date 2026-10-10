@@ -52,9 +52,14 @@ impl Wizard {
     }
 
     fn show_url(&mut self, busy: Busy, url: Url) {
-        if self.busy == Some(busy) {
-            self.url = Some(url);
+        if self.busy != Some(busy) {
+            return;
         }
+        match busy {
+            Busy::Login => self.last_login_url = Some(url.clone()),
+            _ => self.last_consent_url = Some(url.clone()),
+        }
+        self.url = Some(url);
     }
 
     fn presets_loaded(&mut self, entries: Vec<PresetEntry>) {
@@ -95,6 +100,7 @@ impl Wizard {
             // Microsoft may omit the tenant or return its GUID; either way consent covers the
             // tenant the step asked about, which is what `needs_consent` compares against.
             Ok(_) => {
+                self.last_consent_url = None;
                 self.consented = Some(Consent {
                     client_id: self.draft.client_id.trim().to_string(),
                     tenant: self.consent_tenant.trim().to_string(),
@@ -109,7 +115,10 @@ impl Wizard {
             return Vec::new();
         }
         match result {
-            Ok(tokens) => self.start_persist(tokens),
+            Ok(tokens) => {
+                self.last_login_url = None;
+                self.start_persist(tokens)
+            }
             Err(failure) if failure.consent_required => {
                 self.route_consent(failure);
                 Vec::new()
@@ -137,6 +146,7 @@ impl Wizard {
             "An administrator must approve Rail for your organisation. Send them the URL below; once they approve, retry. ({})",
             failure.message
         );
+        self.last_consent_url = Some(url.clone());
         self.failure = Some((Failure { message, ..failure }, Remedy::SendConsentUrl(url)));
     }
 
@@ -301,6 +311,51 @@ mod tests {
             walk(&mut w, [Input::Retry]).as_slice(),
             [Action::RunLogin(_)]
         ));
+    }
+
+    #[test]
+    fn shown_urls_outlive_the_step_and_are_forgotten_on_success() {
+        let mut w = gmail_logging_in();
+        assert_eq!(w.shown_urls(), (None, None));
+        let login = url::Url::parse("https://accounts.example/auth").unwrap();
+        w.apply(Event::LoginUrl(login.clone()));
+        assert_eq!(w.shown_urls(), (None, Some(login.clone())));
+        walk(&mut w, [Input::Back]);
+        assert_eq!(w.view_model().url, None, "the step no longer shows it");
+        assert_eq!(w.shown_urls(), (None, Some(login)), "the last one is kept");
+
+        let mut w = gmail_logging_in();
+        w.apply(Event::LoginUrl(
+            url::Url::parse("https://accounts.example/auth").unwrap(),
+        ));
+        w.apply(Event::LoginFinished(Ok(tokens())));
+        assert_eq!(w.shown_urls(), (None, None), "a finished login needs none");
+    }
+
+    #[test]
+    fn the_consent_url_for_an_administrator_counts_as_shown() {
+        let mut w = microsoft(false, "");
+        walk(&mut w, [Input::Next]);
+        w.apply(Event::LoginFinished(Err(consent_failure())));
+        let Some(Remedy::SendConsentUrl(url)) = w.remedy().cloned() else {
+            panic!("expected a consent URL");
+        };
+        assert_eq!(w.shown_urls(), (Some(url), None));
+    }
+
+    #[test]
+    fn copy_on_the_login_step_copies_the_login_url() {
+        let mut w = gmail_logging_in();
+        assert!(
+            walk(&mut w, [Input::CopyConsentUrl]).is_empty(),
+            "no URL yet"
+        );
+        let login = url::Url::parse("https://accounts.example/auth").unwrap();
+        w.apply(Event::LoginUrl(login.clone()));
+        assert_eq!(
+            walk(&mut w, [Input::CopyConsentUrl]),
+            vec![Action::Copy(login.to_string())]
+        );
     }
 
     #[test]

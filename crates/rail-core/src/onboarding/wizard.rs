@@ -71,6 +71,9 @@ pub struct Wizard {
     pub(super) notice: Option<String>,
     /// The login or consent URL, shown for manual copy.
     pub(super) url: Option<Url>,
+    /// The last consent and login URLs shown, kept across steps so a quit can print them.
+    pub(super) last_consent_url: Option<Url>,
+    pub(super) last_login_url: Option<Url>,
     /// Tokens from a finished login, kept until persist succeeds so a retry needs no new login.
     pub(super) tokens: Option<TokenSet>,
     pub(super) report: Option<DoneReport>,
@@ -97,6 +100,8 @@ impl Wizard {
             failure: None,
             notice: None,
             url: None,
+            last_consent_url: None,
+            last_login_url: None,
             tokens: None,
             report: None,
             added: Vec::new(),
@@ -137,6 +142,12 @@ impl Wizard {
 
     pub fn existing(&self) -> &Config {
         &self.existing
+    }
+
+    /// The last consent and login URLs the wizard showed that are still unused. They carry
+    /// no secret (client id, PKCE challenge, state), so the caller may print them.
+    pub fn shown_urls(&self) -> (Option<Url>, Option<Url>) {
+        (self.last_consent_url.clone(), self.last_login_url.clone())
     }
 
     pub fn added(&self) -> &[String] {
@@ -455,10 +466,13 @@ impl Wizard {
         url.map(|u| vec![Action::OpenUrl(u)]).unwrap_or_default()
     }
 
-    /// The screen reports whether the copy worked once it has run.
+    /// The consent URL a failure asks to send on, else the login URL on the Login step. The
+    /// screen reports whether the copy worked once it has run.
     fn copy_consent_url(&self) -> Vec<Action> {
-        let Some((_, Remedy::SendConsentUrl(url))) = &self.failure else {
-            return Vec::new();
+        let url = match (&self.failure, &self.url) {
+            (Some((_, Remedy::SendConsentUrl(url))), _) => url,
+            (_, Some(url)) if self.step == Step::Login => url,
+            _ => return Vec::new(),
         };
         vec![Action::Copy(url.to_string())]
     }

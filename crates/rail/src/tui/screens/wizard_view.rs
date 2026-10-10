@@ -1,7 +1,7 @@
 //! Drawing the wizard screen: the step list on the left, the current step on the right, a
 //! failure panel when something went wrong, and the status line at the bottom.
 
-use rail_core::onboarding::{Body, FieldView, Primary, StepState};
+use rail_core::onboarding::{Body, FieldView, Primary, Step, StepState};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::text::Line;
@@ -201,6 +201,9 @@ impl WizardScreen {
                 theme.muted,
             ));
             lines.push(Line::styled(url.as_str(), theme.accent));
+            if self.wizard.step() == Step::Login {
+                lines.push(Line::styled("Press c to copy this URL.", theme.muted));
+            }
         }
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     }
@@ -450,15 +453,29 @@ mod tests {
                 "{width}x{height}:\n{text}"
             );
         }
-        keys(&mut screen, &[KeyCode::Down, KeyCode::Down]);
-        for (width, height) in SIZES {
-            let text = draw(&screen, width, height);
-            assert!(
-                !text.contains("1. In Google Cloud Console"),
-                "{width}x{height}:\n{text}"
-            );
-            assert!(text.contains("gmail.modify"), "{width}x{height}:\n{text}");
-        }
+        // The panel remembers the last size drawn. On a short terminal the text overflows, and
+        // End shows the last page of it, not a single row.
+        draw(&screen, 80, 16);
+        keys(&mut screen, &[KeyCode::End]);
+        let text = draw(&screen, 80, 16);
+        assert!(!text.contains("1. In Google Cloud Console"), "{text}");
+        assert!(text.contains("gmail.modify"), "{text}");
+        assert!(
+            text.contains("on any port; there is nothing to add."),
+            "{text}"
+        );
+        assert!(
+            text.contains("4. Copy the client ID") || text.contains("step."),
+            "{text}"
+        );
+        keys(&mut screen, &[KeyCode::Home]);
+        let text = draw(&screen, 80, 16);
+        assert!(text.contains("1. In Google Cloud Console"), "{text}");
+        // Where everything fits there is nothing to scroll.
+        draw(&screen, 120, 40);
+        keys(&mut screen, &[KeyCode::Home, KeyCode::Down]);
+        let text = draw(&screen, 120, 40);
+        assert!(text.contains("1. In Google Cloud Console"), "{text}");
     }
 
     #[test]
@@ -619,10 +636,23 @@ mod tests {
         consent_required(&mut screen);
         press(&mut screen, KeyCode::Char('c'));
         screen.update(Msg::Task(TaskResult::Copied(Ok(()))));
-        assert_shows(&screen, &["Copied the consent URL"]);
+        assert_shows(&screen, &["Sent to the terminal clipboard (OSC 52)"]);
         press(&mut screen, KeyCode::Char('c'));
         screen.update(Msg::Task(TaskResult::Copied(Err("no tty".into()))));
         assert_shows(&screen, &["Could not copy: no tty; the URL is shown above"]);
+    }
+
+    #[test]
+    fn the_login_url_comes_with_the_copy_hint() {
+        let mut screen = wizard_screen();
+        for k in gmail_own_app_keys("me@gmail.com") {
+            screen.update(Msg::Key(k));
+        }
+        let url = url::Url::parse("https://accounts.example/auth?state=s").unwrap();
+        screen.update(Msg::Task(TaskResult::Wizard(
+            rail_core::onboarding::Event::LoginUrl(url),
+        )));
+        assert_shows(&screen, &["accounts.example/auth", "Press c to copy"]);
     }
 
     #[test]

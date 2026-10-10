@@ -20,7 +20,7 @@ impl ScrollPanel {
     /// Scroll for a navigation key. `lines` is the number of wrapped rows (see [`line_count`])
     /// and `page` how far a page key moves, also in rows. Returns true when the offset changed.
     pub fn handle_key(&mut self, key: KeyEvent, lines: u16, page: u16) -> bool {
-        let last = lines.saturating_sub(1);
+        let last = lines.saturating_sub(page);
         let next = match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.offset.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => self.offset.saturating_add(1),
@@ -191,10 +191,13 @@ mod tests {
         assert!(rows > 10, "each source line should wrap to several rows");
         let mut panel = ScrollPanel::default();
         assert!(panel.handle_key(key(KeyCode::End), rows, 10));
-        let lines = render_lines(80, 24, |frame| {
+        let lines = render_lines(80, 10, |frame| {
             frame.render_widget(panel.widget(&text, &theme), frame.area());
         });
-        assert!(lines[0].contains("w5x29"), "{lines:?}");
-        assert!(lines[1].chars().take(79).all(|c| c == ' '), "{lines:?}");
+        assert!(lines[9].contains("w5x29"), "{lines:?}");
+        assert!(
+            lines[0].chars().take(79).any(|c| c != ' '),
+            "a full page shows: {lines:?}"
+        );
     }
 }

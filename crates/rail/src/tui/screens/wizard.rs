@@ -12,6 +12,7 @@ use rail_core::onboarding::{
     ViewModel, Wizard,
 };
 use ratatui::Frame;
+use url::Url;
 
 use crate::tui::app::{Effect, Msg, TaskResult};
 use crate::tui::effects::{EffectContext, to_effect};
@@ -92,6 +93,11 @@ impl WizardScreen {
         self.wizard.step() == Step::Done
     }
 
+    /// The last consent and login URLs shown, for the caller to print once the terminal is back.
+    pub fn shown_urls(&self) -> (Option<Url>, Option<Url>) {
+        self.wizard.shown_urls()
+    }
+
     /// True while the account is being written: nothing may cancel that.
     pub(super) fn saving(&self) -> bool {
         self.wizard.busy() == Some(Busy::Persisting)
@@ -117,9 +123,14 @@ impl WizardScreen {
         effects
     }
 
-    /// Ruling: a panicked job is the failure of whatever action is in flight.
+    /// Ruling: a panicked job is the failure of whatever action is in flight, and that job is
+    /// cancelled so it cannot deliver later. While saving, the panic is only logged: it may
+    /// come from a sibling job, and the save is never abandoned.
     fn job_panicked(&mut self, message: &str) -> Vec<Effect> {
         tracing::error!(panic = %message, "a wizard job panicked");
+        if self.saving() {
+            return Vec::new();
+        }
         let failure = Failure::new(
             format!("internal error: {message}; see rail.log"),
             ErrorClass::Permanent,
@@ -132,18 +143,21 @@ impl WizardScreen {
             Some(Busy::FetchingPreset) => Event::PresetFetched(Err(failure)),
             Some(Busy::Consent) => Event::AdminConsentFinished(Err(failure)),
             Some(Busy::Login) => Event::LoginFinished(Err(failure)),
-            Some(Busy::Persisting) => Event::Persisted(Err(failure)),
+            Some(Busy::Persisting) => return Vec::new(),
             None => {
                 self.failure = Some(format!("Error: {}", failure.message));
                 return Vec::new();
             }
         };
-        self.apply_event(event)
+        let mut effects = vec![Effect::CancelAll];
+        effects.extend(self.apply_event(event));
+        effects
     }
 
     fn copied(&mut self, result: Result<(), String>) {
         self.notice = Some(match result {
-            Ok(()) => "Copied the consent URL".to_string(),
+            Ok(()) => "Sent to the terminal clipboard (OSC 52); if nothing was copied, the URL is printed when you quit"
+                .to_string(),
             Err(e) => format!("Could not copy: {e}; the URL is shown above"),
         });
     }
@@ -248,14 +262,22 @@ impl WizardScreen {
     }
 
     fn failure_key(&self, key: KeyEvent) -> Option<Input> {
-        let failure = self.model.failure.as_ref()?;
+        let failure = self.model.failure.as_ref();
         match key.code {
-            KeyCode::Char('r') => Some(Input::Retry),
-            KeyCode::Char('c') if matches!(failure.primary, Primary::CopyUrl(_)) => {
-                Some(Input::CopyConsentUrl)
-            }
+            KeyCode::Char('r') if failure.is_some() => Some(Input::Retry),
+            KeyCode::Char('c') if self.can_copy_url() => Some(Input::CopyConsentUrl),
             _ => None,
         }
+    }
+
+    /// The consent URL of a failure, or the login URL while the Login step shows one.
+    fn can_copy_url(&self) -> bool {
+        let consent = self
+            .model
+            .failure
+            .as_ref()
+            .is_some_and(|f| matches!(f.primary, Primary::CopyUrl(_)));
+        consent || (self.step == Step::Login && self.model.url.is_some())
     }
 
     fn choose_key(&mut self, key: KeyEvent) -> Vec<Input> {
@@ -567,16 +589,66 @@ mod tests {
         );
     }
 
+    /// A panic while saving may come from a sibling job: the save keeps running, the screen
+    /// keeps holding, and the deferred quit still waits for the save's own result.
     #[test]
-    fn a_panicked_persist_keeps_the_tokens_and_honours_a_deferred_quit() {
+    fn a_panic_while_saving_is_ignored_and_the_save_still_finishes() {
         let mut screen = wizard_screen();
         drive(&mut screen, gmail_own_app_keys("me@gmail.com"));
         feed(&mut screen, Event::LoginFinished(Ok(tokens())));
         assert!(screen.update(Msg::Key(ctrl('c'))).is_empty());
         let effects = screen.update(Msg::Task(TaskResult::JobPanicked("disk".into())));
+        assert!(effects.is_empty(), "{effects:?}");
+        assert_eq!(screen.wizard.busy(), Some(Busy::Persisting));
+        assert!(screen.defers_quit(), "still saving");
+        assert!(screen.wizard.failure().is_none());
+        let effects = screen.update(Msg::Task(TaskResult::Wizard(Event::Persisted(
+            Ok(report()),
+        ))));
         assert!(matches!(effects.as_slice(), [Effect::Quit]), "{effects:?}");
-        assert_eq!(screen.wizard.busy(), None);
-        assert!(screen.wizard.failure().unwrap().message.contains("disk"));
+        assert_eq!(screen.added(), ["me".to_string()]);
+    }
+
+    #[test]
+    fn a_panic_during_login_cancels_the_job_really_in_flight() {
+        let mut screen = wizard_screen();
+        drive(&mut screen, gmail_own_app_keys("me@gmail.com"));
+        assert_eq!(screen.wizard.busy(), Some(Busy::Login));
+        let effects = screen.update(Msg::Task(TaskResult::JobPanicked("boom".into())));
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::CancelAll)),
+            "{effects:?}"
+        );
+        assert!(screen.wizard.failure().is_some());
+    }
+
+    #[test]
+    fn c_on_the_login_step_copies_the_login_url() {
+        let mut screen = wizard_screen();
+        drive(&mut screen, gmail_own_app_keys("me@gmail.com"));
+        assert!(
+            press(&mut screen, KeyCode::Char('c')).is_empty(),
+            "no URL yet"
+        );
+        let login = Url::parse("https://accounts.example/auth?state=s").unwrap();
+        feed(&mut screen, Event::LoginUrl(login.clone()));
+        let effects = press(&mut screen, KeyCode::Char('c'));
+        assert!(
+            matches!(effects.as_slice(), [Effect::Copy(u)] if *u == login.to_string()),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn the_copy_notice_does_not_claim_success_it_cannot_verify() {
+        let mut screen = wizard_screen();
+        screen.update(Msg::Task(TaskResult::Copied(Ok(()))));
+        assert_eq!(
+            screen.notice.as_deref(),
+            Some(
+                "Sent to the terminal clipboard (OSC 52); if nothing was copied, the URL is printed when you quit"
+            )
+        );
     }
 
     /// Review focus 2 and 5, in process: the real screen, loop and effects, cancelled while
