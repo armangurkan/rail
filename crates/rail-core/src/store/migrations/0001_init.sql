@@ -1,8 +1,10 @@
 -- Rail schema v1. See docs/superpowers/specs/2026-10-09-rail-design.md §4.
 
+-- `name` is not unique here: config.toml enforces unique names among active
+-- accounts, while the store keeps historical rows keyed by address.
 CREATE TABLE accounts (
   id            INTEGER PRIMARY KEY,
-  name          TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
   kind          TEXT NOT NULL CHECK (kind IN ('gmail', 'm365')),
   address       TEXT NOT NULL UNIQUE,
   display_name  TEXT,
@@ -83,6 +85,7 @@ CREATE TABLE attachments (
   size            INTEGER NOT NULL DEFAULT 0,
   local_path      TEXT
 );
+CREATE INDEX attachments_by_message ON attachments(message_id);
 
 CREATE TABLE addresses (
   address    TEXT PRIMARY KEY,
@@ -120,7 +123,9 @@ CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN
   VALUES ('delete', old.id, old.subject, old.from_json, old.to_json, old.body_text);
 END;
 
-CREATE TRIGGER messages_fts_update AFTER UPDATE ON messages BEGIN
+-- Only indexed columns re-index; flag and folder changes skip the FTS work.
+CREATE TRIGGER messages_fts_update
+AFTER UPDATE OF subject, from_json, to_json, body_text ON messages BEGIN
   INSERT INTO messages_fts(messages_fts, rowid, subject, from_json, to_json, body_text)
   VALUES ('delete', old.id, old.subject, old.from_json, old.to_json, old.body_text);
   INSERT INTO messages_fts(rowid, subject, from_json, to_json, body_text)

@@ -276,6 +276,45 @@ mod tests {
     }
 
     #[test]
+    fn fts_update_trigger_fires_only_for_indexed_columns() {
+        let store = Store::open_in_memory().unwrap();
+        let sql: String = store
+            .conn()
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name = 'messages_fts_update'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            sql.contains("AFTER UPDATE OF subject, from_json, to_json, body_text ON messages"),
+            "{sql}"
+        );
+        // A flag change leaves the index alone and the message still matches.
+        let id = seed_message(&store, "quarterly roadmap");
+        store
+            .conn()
+            .execute("UPDATE messages SET is_read = 1 WHERE id = ?1", params![id])
+            .unwrap();
+        assert_eq!(fts_hits(&store, "roadmap"), vec![id]);
+    }
+
+    #[test]
+    fn attachments_are_indexed_by_message() {
+        let store = Store::open_in_memory().unwrap();
+        let indexed: i64 = store
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM pragma_index_list('attachments') l
+                 JOIN pragma_index_info(l.name) i WHERE i.name = 'message_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed, 1);
+    }
+
+    #[test]
     fn deleting_an_account_cascades() {
         let store = Store::open_in_memory().unwrap();
         seed_message(&store, "x");

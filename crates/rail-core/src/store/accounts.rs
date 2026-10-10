@@ -118,4 +118,52 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["old", "a", "b"]);
     }
+
+    #[test]
+    fn a_name_can_be_reused_by_a_different_address() {
+        let store = Store::open_in_memory().unwrap();
+        store.upsert_account(&account("me", "me@a.com")).unwrap();
+        // me@a.com was removed from config; a new account takes the same default name.
+        store.upsert_account(&account("me", "me@b.com")).unwrap();
+        let rows = store.list_accounts().unwrap();
+        let pairs: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|r| (r.name.as_str(), r.address.as_str()))
+            .collect();
+        assert_eq!(pairs, vec![("me", "me@a.com"), ("me", "me@b.com")]);
+    }
+
+    #[test]
+    fn swapping_names_in_config_syncs_cleanly() {
+        let store = Store::open_in_memory().unwrap();
+        let before = Config {
+            accounts: vec![
+                account("work", "a@example.com"),
+                account("home", "b@example.com"),
+            ],
+            ..Config::default()
+        };
+        store.sync_accounts_from_config(&before).unwrap();
+        let after = Config {
+            accounts: vec![
+                account("home", "a@example.com"),
+                account("work", "b@example.com"),
+            ],
+            ..Config::default()
+        };
+        store.sync_accounts_from_config(&after).unwrap();
+        let pairs: Vec<(String, String)> = store
+            .list_accounts()
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.name, r.address))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("home".to_string(), "a@example.com".to_string()),
+                ("work".to_string(), "b@example.com".to_string())
+            ]
+        );
+    }
 }
