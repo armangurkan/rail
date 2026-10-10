@@ -88,6 +88,9 @@ pub async fn add(paths: &Paths, args: AddArgs) -> color_eyre::Result<()> {
         signature: None,
     };
 
+    // Pure and known up front: reject a bad or duplicate account before any login.
+    let new_text = config::append_account(&text, &config_path, &account)?;
+
     let endpoints = endpoints_for(account.kind, account.tenant.as_deref());
     let http = http_client()?;
     let tokens = run_auth_code_flow(&account, &endpoints, &http, open_in_browser, unix_now())
@@ -105,7 +108,6 @@ pub async fn add(paths: &Paths, args: AddArgs) -> color_eyre::Result<()> {
         );
     }
 
-    let new_text = config::append_account(&text, &config_path, &account)?;
     write_config(&config_path, &new_text)
         .wrap_err_with(|| format!("writing {}", config_path.display()))?;
 

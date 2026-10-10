@@ -70,3 +70,40 @@ fn account_add_refuses_duplicate_address_before_opening_a_browser() {
     assert_eq!(std::fs::read_to_string(&config_file).unwrap(), original);
     assert!(!dir.path().join("data").exists());
 }
+
+#[test]
+fn account_add_refuses_duplicate_name_before_opening_a_browser() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_dir = dir.path().join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let config_file = config_dir.join("config.toml");
+    let original = "[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
+    std::fs::write(&config_file, original).unwrap();
+
+    let out = rail_cmd(&dir)
+        .args([
+            "account",
+            "add",
+            "gmail",
+            "--address",
+            "other@example.com",
+            "--client-id",
+            "x",
+            "--name",
+            "work",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("work"), "got {stderr:?}");
+    assert!(
+        stderr.to_lowercase().contains("duplicate"),
+        "got {stderr:?}"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("http"), "got {stdout:?}");
+    assert_eq!(std::fs::read_to_string(&config_file).unwrap(), original);
+    assert!(!dir.path().join("data").exists());
+}
