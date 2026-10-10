@@ -670,3 +670,44 @@ fn only_reads_and_idempotent_operations_are_resent() {
         assert!(!super::connect::retry_safe(unsafe_op), "{unsafe_op}");
     }
 }
+
+/// Fix round 3: directories are compared after resolving symlinks, so the same directory
+/// reached through a symlink (or macOS's `/var` -> `/private/var`) is the same daemon; a
+/// genuinely different one is still refused.
+#[cfg(unix)]
+#[tokio::test]
+async fn directories_reached_through_a_symlink_are_the_same() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    std::fs::create_dir_all(tmp.path().join("real")).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("real"), tmp.path().join("link")).unwrap();
+    let served_as = Paths {
+        config_dir: tmp.path().join("real"),
+        ..paths.clone()
+    };
+    tokio::spawn(fake_daemon_on(paths.clone(), VERSION, Some(served_as)));
+    wait_for_socket(&paths).await;
+    let through_link = Paths {
+        config_dir: tmp.path().join("link"),
+        ..paths.clone()
+    };
+    let (linked, spawned) = connector(&through_link, VERSION);
+    let client = linked
+        .connect()
+        .await
+        .expect("the same directory, spelled otherwise");
+    assert_eq!(spawned.load(Ordering::SeqCst), 0);
+    drop(client);
+    let elsewhere = Paths {
+        config_dir: tmp.path().join("elsewhere"),
+        ..paths.clone()
+    };
+    let (refused, _) = connector(&elsewhere, VERSION);
+    let Err(err) = refused.connect().await else {
+        panic!("used a daemon with another config directory");
+    };
+    assert_eq!(
+        err.message,
+        "a Rail daemon is already running with different directories"
+    );
+}

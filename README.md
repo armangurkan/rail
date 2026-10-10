@@ -529,7 +529,8 @@ CLI) and `PATH`. It keeps that environment until it exits, ten idle minutes late
 
 It also works on the directories of the command that started it, made absolute (a relative
 `RAIL_CONFIG_DIR=cfg` means `cfg` under that command's working directory). A later command whose
-`RAIL_CONFIG_DIR`, `RAIL_DATA_DIR` or `RAIL_STATE_DIR` names other directories, but shares the
+`RAIL_CONFIG_DIR`, `RAIL_DATA_DIR` or `RAIL_STATE_DIR` names other directories (compared after
+resolving symlinks, so a symlinked config directory still counts as the same), but shares the
 same runtime directory, is refused with "a Rail daemon is already running with different
 directories" and changes nothing (as is one too old to say which directories it uses, unless
 its version differs, in which case it is replaced as usual); stop that daemon with `rail daemon stop` from the shell that

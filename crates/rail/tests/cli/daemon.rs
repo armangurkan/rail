@@ -256,3 +256,27 @@ fn signals_stop_a_foreground_daemon_cleanly() {
         assert!(log.contains("asked to stop by a signal"), "{signal}: {log}");
     }
 }
+
+/// Fix round 3: directories are compared after resolving symlinks, so a config directory
+/// reached through a symlink (a dotfiles setup, or macOS's `/var` -> `/private/var`) uses the
+/// running daemon instead of being refused.
+#[test]
+fn a_config_dir_reached_through_a_symlink_shares_the_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    let link = dir.path().join("config-link");
+    std::os::unix::fs::symlink(dir.path().join("config"), &link).unwrap();
+    let first = rail_cmd(&dir).args(["account", "list"]).output().unwrap();
+    assert!(first.status.success(), "{first:?}");
+    let linked = rail_cmd(&dir)
+        .env("RAIL_CONFIG_DIR", &link)
+        .args(["account", "list"])
+        .output()
+        .unwrap();
+    assert!(linked.status.success(), "{linked:?}");
+    assert!(stdout_of(&linked).contains("me@example.com"), "{linked:?}");
+    rail_cmd(&dir).args(["daemon", "stop"]).output().unwrap();
+    let log = std::fs::read_to_string(dir.path().join("state").join("rail.log")).unwrap();
+    assert_eq!(log.matches("daemon listening").count(), 1, "{log}");
+}

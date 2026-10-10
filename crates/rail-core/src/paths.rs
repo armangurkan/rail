@@ -172,6 +172,32 @@ fn runtime_or_state(runtime: Option<&Path>, state: &Path) -> PathBuf {
     runtime.map_or_else(|| state.to_path_buf(), Path::to_path_buf)
 }
 
+/// `dir` with symlinks resolved, for comparing two spellings of a directory (macOS's `/var` is
+/// `/private/var`; dotfile setups link config directories). Walked one component at a time:
+/// each existing prefix is resolved with `canonicalize`, `.` is dropped, and `..` steps up
+/// from the already resolved prefix, so a part that does not exist yet is appended as written
+/// to its nearest existing ancestor. A relative `dir` is taken against the working directory;
+/// a part that cannot be resolved is kept lexically.
+pub fn canonical_dir(dir: &Path) -> PathBuf {
+    use std::path::Component;
+    let absolute = std::env::current_dir().unwrap_or_default().join(dir);
+    let mut resolved = PathBuf::new();
+    for part in absolute.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Prefix(_) | Component::RootDir => resolved.push(part),
+            Component::Normal(name) => {
+                let next = resolved.join(name);
+                resolved = std::fs::canonicalize(&next).unwrap_or(next);
+            }
+        }
+    }
+    resolved
+}
+
 /// Create `dir` (and missing parents) readable by the owner only. On unix a
 /// directory that already exists is tightened to 0700.
 #[cfg(unix)]
@@ -239,6 +265,38 @@ fn sync_dir(_dir: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn canonical_dir_resolves_symlinks_for_existing_and_missing_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("real")).unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+        assert_eq!(canonical_dir(&root.join("link")), root.join("real"));
+        assert_eq!(
+            canonical_dir(&root.join("link").join("not-yet").join("deeper")),
+            root.join("real").join("not-yet").join("deeper")
+        );
+        assert_eq!(
+            canonical_dir(&root.join("link").join("gone").join("..").join("x")),
+            root.join("real").join("x")
+        );
+        assert_eq!(
+            canonical_dir(&tmp.path().join("link").join("./y")),
+            root.join("real").join("y")
+        );
+    }
+
+    #[test]
+    fn canonical_dir_keeps_different_dirs_different() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_ne!(
+            canonical_dir(&tmp.path().join("a")),
+            canonical_dir(&tmp.path().join("b"))
+        );
+        assert!(canonical_dir(Path::new("relative/dir")).is_absolute());
+    }
     use crate::error::ErrorClass;
     use std::path::PathBuf;
 

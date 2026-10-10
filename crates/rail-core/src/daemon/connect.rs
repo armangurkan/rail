@@ -17,7 +17,7 @@ use super::wire::PROTOCOL_VERSION;
 use crate::error::ErrorClass;
 use crate::ops::op::{DaemonStop, Operation, names};
 use crate::ops::{DaemonStopRequest, ErrorCode, HelloResponse, OpError};
-use crate::paths::{Paths, create_private_dir};
+use crate::paths::{Paths, canonical_dir, create_private_dir};
 
 /// The operations a client may send again after the connection closed under them: they only
 /// read, or (`pending.cancel`) have the same effect however often they run.
@@ -189,8 +189,10 @@ impl Connector {
         ))
     }
 
-    /// Refuse a daemon whose config, data or state directory is not this client's. The paths
-    /// go into `detail`: they come from the daemon, not from Rail's own words.
+    /// Refuse a daemon whose config, data or state directory is not this client's. Both sides
+    /// are compared after resolving symlinks (`canonical_dir`, here in the client), so two
+    /// spellings of one directory match. The paths go into `detail` as each side spelled them:
+    /// they come from the daemon, not from Rail's own words.
     fn check_dirs(&self, hello: &HelloResponse) -> Result<(), OpError> {
         let ours = [
             &self.paths.config_dir,
@@ -198,7 +200,11 @@ impl Connector {
             &self.paths.state_dir,
         ];
         let theirs = [&hello.config_dir, &hello.data_dir, &hello.state_dir];
-        if ours == theirs {
+        let same = ours
+            .iter()
+            .zip(theirs.iter())
+            .all(|(ours, theirs)| canonical_dir(ours) == canonical_dir(theirs));
+        if same {
             return Ok(());
         }
         Err(self.dirs_mismatch(format!(
