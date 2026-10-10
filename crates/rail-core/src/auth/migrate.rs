@@ -11,8 +11,8 @@ use crate::config::{Config, OnePasswordConfig, SecretsBackend, load_text_or_empt
 use crate::error::ErrorClass;
 use crate::ops::write_config_text;
 use crate::ops::{
-    ConfirmPlan, ErrorCode, OpError, SecretsConfigureRequest, SecretsConfigureResponse,
-    plan_digest, shown,
+    ConfirmPlan, ErrorCode, MAX_NAME_CHARS, OpError, SecretsConfigureRequest,
+    SecretsConfigureResponse, plan_digest, shown,
 };
 use crate::paths::Paths;
 
@@ -32,6 +32,10 @@ pub struct SwitchSummary {
     /// False when the request leaves every setting as it is.
     pub changes: bool,
     pub previous: SecretsBackend,
+    /// The vault and 1Password account tokens are read and deleted from now: they decide
+    /// which old copies the switch touches.
+    pub previous_vault: Option<String>,
+    pub previous_account: Option<String>,
     pub backend: SecretsBackend,
     pub vault: Option<String>,
     pub account: Option<String>,
@@ -47,19 +51,9 @@ impl SwitchSummary {
     /// The text to put in front of the user before they confirm. Every value that came from a
     /// request or config is quoted and escaped, so it can neither forge a line nor hide text.
     pub fn text(&self) -> String {
-        let mut text = format!(
-            "Change token storage from {} to {}",
-            self.previous.as_str(),
-            self.backend.as_str()
-        );
-        if self.backend == SecretsBackend::OnePassword {
-            let vault = shown(self.vault.as_deref().unwrap_or(""));
-            text.push_str(&format!(" (vault {vault}"));
-            if let Some(account) = &self.account {
-                text.push_str(&format!(", account {}", shown(account)));
-            }
-            text.push(')');
-        }
+        let old = store_text(self.previous, &self.previous_vault, &self.previous_account);
+        let new = store_text(self.backend, &self.vault, &self.account);
+        let mut text = format!("Change token storage from {old} to {new}");
         if self.migrate || !self.moves_store {
             text.push_str(&format!(
                 ". Tokens for {} account(s) will be moved.",
@@ -84,6 +78,8 @@ impl SwitchSummary {
         let mut parts = vec![
             "secrets.configure",
             self.previous.as_str(),
+            self.previous_vault.as_deref().unwrap_or(""),
+            self.previous_account.as_deref().unwrap_or(""),
             self.backend.as_str(),
             self.vault.as_deref().unwrap_or(""),
             self.account.as_deref().unwrap_or(""),
@@ -144,6 +140,21 @@ impl Plan {
 }
 
 fn validate_request(request: &SecretsConfigureRequest) -> Result<(), OpError> {
+    // The confirmation shows these whole, so their length is limited here. The value itself is
+    // never echoed.
+    for (field, value) in [
+        ("vault", &request.vault),
+        ("op_account", &request.op_account),
+    ] {
+        if value
+            .as_deref()
+            .is_some_and(|v| v.chars().count() > MAX_NAME_CHARS)
+        {
+            return Err(OpError::invalid_input(format!(
+                "{field} must be at most {MAX_NAME_CHARS} characters"
+            )));
+        }
+    }
     if request
         .op_account
         .as_deref()
@@ -156,6 +167,22 @@ fn validate_request(request: &SecretsConfigureRequest) -> Result<(), OpError> {
         Some(v) if v.contains('/') => Err(OpError::invalid_input("vault must not contain '/'")),
         _ => Ok(()),
     }
+}
+
+/// A backend as a confirmation names it: for 1Password, with its vault and account shown.
+fn store_text(backend: SecretsBackend, vault: &Option<String>, account: &Option<String>) -> String {
+    let mut text = backend.as_str().to_string();
+    if backend == SecretsBackend::OnePassword {
+        text.push_str(&format!(
+            " (vault {}",
+            shown(vault.as_deref().unwrap_or(""))
+        ));
+        if let Some(account) = account {
+            text.push_str(&format!(", account {}", shown(account)));
+        }
+        text.push(')');
+    }
+    text
 }
 
 /// What `request` would change and which accounts' tokens would move, without changing
@@ -177,6 +204,7 @@ fn summarize(
     request: &SecretsConfigureRequest,
 ) -> SwitchSummary {
     let onepassword = plan.target.onepassword.as_ref();
+    let old = plan.config.onepassword.as_ref();
     let moves_store = plan.changes() && plan.stores_differ();
     let mut moving = if moves_store && request.migrate {
         let old = open_secret_store(&plan.config, paths, ids);
@@ -188,6 +216,8 @@ fn summarize(
     SwitchSummary {
         changes: plan.changes(),
         previous: plan.config.general.secrets,
+        previous_vault: old.map(|o| o.vault.clone()),
+        previous_account: old.and_then(|o| o.account.clone()),
         backend: request.backend,
         vault: onepassword.map(|o| o.vault.clone()),
         account: onepassword.and_then(|o| o.account.clone()),

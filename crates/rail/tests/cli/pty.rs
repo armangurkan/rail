@@ -170,12 +170,22 @@ fn start_remove(dir: &tempfile::TempDir, who: &str) -> (Running, ChildStdin) {
 
 /// Answer the removal prompt with `answer`; returns the exit status and the screen.
 fn answer_removal(dir: &tempfile::TempDir, answer: &[u8]) -> (ExitStatus, String) {
+    answer_removal_after(dir, answer, || {})
+}
+
+/// `answer_removal`, running `meanwhile` while the question is on the screen.
+fn answer_removal_after(
+    dir: &tempfile::TempDir,
+    answer: &[u8],
+    meanwhile: impl FnOnce(),
+) -> (ExitStatus, String) {
     let (mut child, mut keys) = start_remove(dir, "ME@example.com");
     let output = collect(child.0.stdout.take().unwrap());
     let shown = output.clone();
     wait_until("the prompt", &output, move || {
         text(&shown).contains("Remove? [y/N]")
     });
+    meanwhile();
     keys.write_all(answer).unwrap();
     keys.flush().unwrap();
     let status = wait_for_exit(&mut child, &output);
@@ -210,6 +220,30 @@ fn account_remove_on_a_terminal_removes_after_yes() {
     assert!(left.contains("secrets = \"file\""), "{left}");
     let tokens = std::fs::read_to_string(&secrets).unwrap();
     assert!(!tokens.contains("me@example.com"), "{tokens}");
+}
+
+/// Ruling S3: the account changes while the question is on the screen; the yes was for the
+/// old account, so nothing is removed and the user is told to run the command again.
+#[test]
+fn account_remove_after_the_account_changed_removes_nothing() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let config = write_config(&dir, WORK_FILE_BACKEND);
+    let changed = WORK_FILE_BACKEND.replace("kind = \"gmail\"", "kind = \"m365\"");
+    let edit = changed.clone();
+    let path = config.clone();
+    let (status, screen) =
+        answer_removal_after(&dir, b"y\r", move || std::fs::write(&path, edit).unwrap());
+    assert_eq!(status.code(), Some(1), "{screen:?}");
+    assert!(
+        screen.contains("the account changed while you answered; nothing was removed"),
+        "{screen:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), changed);
 }
 
 #[test]

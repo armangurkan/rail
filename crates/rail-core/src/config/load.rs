@@ -6,6 +6,9 @@ use super::model::{Config, SecretsBackend};
 use crate::error::ErrorClass;
 
 const MIN_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// The longest email address Rail takes (RFC 5321's limit for a forward path, less its
+/// brackets). Confirmations show addresses whole, so the length is limited here.
+pub const MAX_ADDRESS_CHARS: usize = 254;
 
 // `PathBuf` has no `Display`, so paths are formatted through `.display()`.
 #[derive(Debug, thiserror::Error)]
@@ -123,6 +126,12 @@ fn validate(config: &Config) -> Result<(), String> {
             return Err(format!(
                 "account {:?}: {:?} is not an email address",
                 account.name, account.address
+            ));
+        }
+        if account.address.chars().count() > MAX_ADDRESS_CHARS {
+            return Err(format!(
+                "account {:?}: the address is longer than {MAX_ADDRESS_CHARS} characters",
+                account.name
             ));
         }
         if !addresses.insert(account.address.to_ascii_lowercase()) {
@@ -282,6 +291,12 @@ client_id = "2"
                 .to_string()
                 .contains("not an email address")
         );
+        let long = format!("{}@e.com", "x".repeat(250));
+        let too_long = format!(
+            "[[accounts]]\nname = \"ok\"\nkind = \"gmail\"\naddress = \"{long}\"\nclient_id = \"1\"\n"
+        );
+        let err = p(&too_long).unwrap_err().to_string();
+        assert!(err.contains("longer than 254"), "{err}");
     }
 
     #[test]

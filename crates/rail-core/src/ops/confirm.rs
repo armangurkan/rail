@@ -7,8 +7,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// The longest value (a name, an address, a vault) a confirmation shows, before the ellipsis.
-pub const MAX_SHOWN_CHARS: usize = 100;
+/// The longest vault or 1Password account name Rail takes. Longer ones are refused at input,
+/// so a confirmation never has to cut a value.
+pub const MAX_NAME_CHARS: usize = 100;
 
 /// What to show the person, and the plan digest to send back with `confirm: true`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -20,16 +21,13 @@ pub struct ConfirmPlan {
     pub plan: String,
 }
 
-/// A value from config, a request or outside Rail, as a confirmation shows it: quoted with
-/// escapes (`{:?}` escapes quotes, line breaks, and bidirectional and zero-width characters),
-/// so it can neither forge a line nor hide text, and cut to `MAX_SHOWN_CHARS`.
+/// A value from config, a request or outside Rail, as a confirmation shows it: in double
+/// quotes, in plain ASCII (`str::escape_default`: quotes, backslashes and control characters
+/// escaped, every non-ASCII character as `\u{..}`), so it can neither forge a line, hide text
+/// nor pass a homoglyph off as a Latin letter. Never cut: two values that differ always look
+/// different; lengths are limited where the values come in.
 pub fn shown(value: &str) -> String {
-    let cut: String = value.chars().take(MAX_SHOWN_CHARS).collect();
-    if value.chars().count() > MAX_SHOWN_CHARS {
-        format!("{cut:?}…")
-    } else {
-        format!("{cut:?}")
-    }
+    format!("\"{}\"", value.escape_default())
 }
 
 /// The digest of a plan given as its parts, in a fixed order. The parts are hashed as a JSON
@@ -57,11 +55,20 @@ mod tests {
         assert_eq!(shown("a\u{200b}b"), r#""a\u{200b}b""#);
     }
 
+    /// Ruling S4: plain ASCII, so a homoglyph cannot pass for a Latin letter.
     #[test]
-    fn a_long_value_is_cut() {
-        let long = shown(&"x".repeat(300));
-        assert_eq!(long.matches('x').count(), MAX_SHOWN_CHARS);
-        assert!(long.ends_with('…'));
+    fn a_homoglyph_is_shown_as_its_code_point() {
+        assert_eq!(shown("R\u{430}il"), r#""R\u{430}il""#);
+        assert!(shown("caf\u{e9} \u{1f600}").is_ascii());
+    }
+
+    /// Ruling S4: never cut, so two long values cannot look the same.
+    #[test]
+    fn two_long_values_sharing_a_prefix_look_different() {
+        let common = "v".repeat(MAX_NAME_CHARS);
+        let (a, b) = (format!("{common}a"), format!("{common}b"));
+        assert_ne!(shown(&a), shown(&b));
+        assert!(shown(&a).contains(&a));
     }
 
     #[test]

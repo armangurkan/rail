@@ -532,6 +532,11 @@ fn an_agent_cannot_pass_a_client_secret_or_unknown_fields() {
     });
     let add: AgentAccountAdd = serde_json::from_value(pasted).unwrap();
     assert!(!format!("{add:?}").contains(canary));
+    let as_ref = serde_json::json!({
+        "kind": "gmail", "address": "me@gmail.com", "client_secret_ref": canary
+    });
+    let as_ref: AgentAccountAdd = serde_json::from_value(as_ref).unwrap();
+    assert!(!format!("{as_ref:?}").contains(canary), "{as_ref:?}");
     let err = add.into_request().unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidInput);
     assert_eq!(err.message, crate::ops::NO_SECRETS_FROM_AGENTS);

@@ -291,13 +291,19 @@ pub async fn remove(paths: &Paths, who: &str) -> color_eyre::Result<()> {
         plan: Some(shown.plan),
         ..probe
     };
-    let removed = client
-        .call::<AccountRemove>(&request)
-        .await
-        .map_err(report)?;
+    let removed = match client.call::<AccountRemove>(&request).await {
+        Ok(removed) => removed,
+        Err(error) if error.code == ErrorCode::NotConfirmed => bail!(PLAN_CHANGED),
+        Err(error) => return Err(report(error)),
+    };
     print_removed(&removed);
     Ok(())
 }
+
+/// Said when the account changed between the question and the answer: the daemon refused the
+/// yes, which was for the account as it was.
+const PLAN_CHANGED: &str =
+    "the account changed while you answered; nothing was removed — run `rail account remove` again";
 
 /// Show `summary` and ask; true only for a yes.
 fn ask(summary: &str) -> std::io::Result<bool> {

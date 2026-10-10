@@ -22,7 +22,7 @@ pub use accounts::{
     AgentAccountRemove, BeginResponse, ClientSecretInput, ConsentBeginRequest, LoginBeginRequest,
     NO_SECRETS_FROM_AGENTS, OP_REFERENCE_PREFIX, SavedAccount,
 };
-pub use confirm::{ConfirmPlan, MAX_SHOWN_CHARS, plan_digest, shown};
+pub use confirm::{ConfirmPlan, MAX_NAME_CHARS, plan_digest, shown};
 pub use daemon::{
     DaemonInfo, DaemonInfoRequest, DaemonStopRequest, DaemonStopResponse, HelloRequest,
     HelloResponse,

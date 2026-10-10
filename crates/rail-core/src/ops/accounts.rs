@@ -68,7 +68,7 @@ pub struct AccountAddRequest {
 /// The arguments of the `rail_account_add` MCP tool: an account to add, without any way to
 /// pass a raw client secret. At most one of `client_secret_file`, `client_secret_ref` and
 /// `preset` may be given.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentAccountAdd {
     /// `gmail` or `m365`.
@@ -108,6 +108,27 @@ pub struct AgentAccountAdd {
     )]
     #[schemars(skip)]
     pub pasted_client_secret: bool,
+}
+
+/// Every field but the `op://` reference, which an agent may have filled with a pasted secret:
+/// a log line or an error built from this can never carry it.
+impl std::fmt::Debug for AgentAccountAdd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reference = self.client_secret_ref.as_ref().map(|_| "<redacted>");
+        f.debug_struct("AgentAccountAdd")
+            .field("kind", &self.kind)
+            .field("address", &self.address)
+            .field("client_id", &self.client_id)
+            .field("client_secret_file", &self.client_secret_file)
+            .field("client_secret_ref", &reference)
+            .field("preset", &self.preset)
+            .field("tenant", &self.tenant)
+            .field("name", &self.name)
+            .field("color", &self.color)
+            .field("store_secret_in_1password", &self.store_secret_in_1password)
+            .field("pasted_client_secret", &self.pasted_client_secret)
+            .finish()
+    }
 }
 
 /// The refusal of a `client_secret` sent by an agent. Fixed text: the value is never echoed.

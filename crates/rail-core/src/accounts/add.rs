@@ -84,6 +84,12 @@ fn build_account(
         (None, None) => return Err(OpError::invalid_input("a client id is needed")),
     };
     let address = request.address.trim().to_ascii_lowercase();
+    if address.chars().count() > config::MAX_ADDRESS_CHARS {
+        return Err(OpError::invalid_input(format!(
+            "the address is longer than {} characters",
+            config::MAX_ADDRESS_CHARS
+        )));
+    }
     Ok(AccountConfig {
         name: request
             .name

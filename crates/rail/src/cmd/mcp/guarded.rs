@@ -7,7 +7,7 @@ use rail_core::config::SecretsBackend;
 use rail_core::daemon::Connector;
 use rail_core::ops::op::{AccountRemove, SecretsConfigure};
 use rail_core::ops::{
-    AccountRemoveRequest, AgentAccountRemove, ConfirmPlan, ErrorCode, OpError,
+    AccountRemoveRequest, AgentAccountRemove, ConfirmPlan, ErrorCode, MAX_NAME_CHARS, OpError,
     SecretsConfigureRequest,
 };
 use rmcp::model::CallToolResult;
@@ -49,19 +49,26 @@ fn yes() -> bool {
 }
 
 impl AgentSecretsConfigure {
-    /// The vault and account names go into the text the user confirms, so a control character
-    /// (a line break that could fake another line of that text) is refused.
+    /// The vault and account names go into the text the user confirms. A control character
+    /// (a line break that could fake another line) or a name over `MAX_NAME_CHARS` is refused
+    /// here at once; the daemon refuses the long ones too. The value is never echoed.
     fn check_names(&self) -> Result<(), OpError> {
-        let names = [("vault", &self.vault), ("op_account", &self.op_account)];
-        match names.iter().find(|(_, v)| {
-            v.as_deref()
-                .is_some_and(|v| v.chars().any(char::is_control))
-        }) {
-            Some((field, _)) => Err(OpError::invalid_input(format!(
-                "{field} must not contain control characters"
-            ))),
-            None => Ok(()),
+        for (field, value) in [("vault", &self.vault), ("op_account", &self.op_account)] {
+            let Some(value) = value.as_deref() else {
+                continue;
+            };
+            if value.chars().any(char::is_control) {
+                return Err(OpError::invalid_input(format!(
+                    "{field} must not contain control characters"
+                )));
+            }
+            if value.chars().count() > MAX_NAME_CHARS {
+                return Err(OpError::invalid_input(format!(
+                    "{field} must be at most {MAX_NAME_CHARS} characters"
+                )));
+            }
         }
+        Ok(())
     }
 
     /// The daemon request: unconfirmed (`plan` absent) to learn the plan, or confirmed with
@@ -261,6 +268,11 @@ mod tests {
                 .check_names()
                 .is_ok()
         );
+        let long = "V".repeat(101);
+        let err = onepassword(&long, None).check_names().unwrap_err();
+        assert!(err.message.contains("vault") && !err.message.contains(&long));
+        let err = onepassword("Rail", Some(&long)).check_names().unwrap_err();
+        assert!(err.message.contains("op_account"));
     }
 
     #[test]

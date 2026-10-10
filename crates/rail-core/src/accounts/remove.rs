@@ -17,12 +17,24 @@ pub const REMOVE_NEEDS_CONFIRMATION: &str = "removing an account needs the user'
 /// the address and the vault are quoted and escaped, so none can forge a line or hide text.
 pub fn removal_plan(paths: &Paths, who: &str) -> Result<ConfirmPlan, OpError> {
     let (config, account) = account_for_login(paths, who)?;
+    let op_account = config
+        .onepassword
+        .as_ref()
+        .and_then(|o| o.account.as_deref())
+        .unwrap_or("");
     let place = match config.general.secrets {
         SecretsBackend::Keyring => "the OS keyring".to_string(),
         SecretsBackend::File => paths.secrets_file().display().to_string(),
         SecretsBackend::OnePassword => {
             let vault = config.onepassword.as_ref().map_or("", |o| o.vault.as_str());
-            format!("1Password vault {}", shown(vault))
+            match op_account {
+                "" => format!("1Password vault {}", shown(vault)),
+                account => format!(
+                    "1Password vault {} (account {})",
+                    shown(vault),
+                    shown(account)
+                ),
+            }
         }
     };
     let text = format!(
@@ -42,6 +54,7 @@ pub fn removal_plan(paths: &Paths, who: &str) -> Result<ConfirmPlan, OpError> {
         account.kind.as_str(),
         config.general.secrets.as_str(),
         &location,
+        op_account,
     ]);
     Ok(ConfirmPlan { text, plan })
 }
@@ -133,6 +146,28 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains('\u{202e}'), "{text}");
+    }
+
+    /// The 1Password account decides which store the tokens are deleted from.
+    #[test]
+    fn the_removal_plan_binds_the_1password_account() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = paths_with(&tmp);
+        let on = |account: &str| {
+            WORK.replace("secrets = \"file\"", "secrets = \"1password\"")
+                + &format!("\n[onepassword]\nvault = \"Rail\"\naccount = \"{account}\"\n")
+        };
+        std::fs::write(paths.config_file(), on("A")).unwrap();
+        let asked = removal_plan(&paths, "work").unwrap();
+        assert!(
+            asked
+                .text
+                .contains("1Password vault \"Rail\" (account \"A\")"),
+            "{}",
+            asked.text
+        );
+        std::fs::write(paths.config_file(), on("B")).unwrap();
+        assert_ne!(removal_plan(&paths, "work").unwrap().plan, asked.plan);
     }
 
     #[test]

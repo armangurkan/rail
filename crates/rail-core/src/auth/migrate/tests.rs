@@ -443,3 +443,66 @@ fn an_unverifiable_new_copy_keeps_the_old_one() {
     let old = OnePasswordSecretStore::new(account_cli(&fake, "A"), "Rail".into(), ids);
     assert_eq!(old.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
 }
+
+/// Ruling S4: names longer than the limit are refused at input, without echoing them.
+#[test]
+fn a_vault_or_account_over_the_limit_is_refused_without_echo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (paths, _fake, _file, text) = setup(&tmp);
+    let long = "V".repeat(crate::ops::MAX_NAME_CHARS + 1);
+    for (field, request) in [
+        (
+            "vault",
+            SecretsConfigureRequest {
+                vault: Some(long.clone()),
+                ..to_onepassword()
+            },
+        ),
+        (
+            "op_account",
+            SecretsConfigureRequest {
+                op_account: Some(long.clone()),
+                ..to_onepassword()
+            },
+        ),
+    ] {
+        let err = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput, "{err:?}");
+        assert!(err.message.contains(field), "{err:?}");
+        assert!(!format!("{err:?}").contains(&long), "{err:?}");
+    }
+    assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
+}
+
+/// The old vault and 1Password account decide where tokens are read and deleted, so a hand
+/// edit of either between the question and the answer changes the plan; the text names them.
+#[test]
+fn a_hand_edit_of_the_old_store_changes_the_plan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (paths, _fake) = on_1password(&tmp, Some("A"));
+    let ids = ItemIdCache::default();
+    let to_file = SecretsConfigureRequest {
+        backend: SecretsBackend::File,
+        vault: None,
+        op_account: None,
+        migrate: false,
+        confirm: false,
+        plan: None,
+    };
+    let asked = describe_switch(&paths, &ids, &to_file).unwrap();
+    let text = asked.text();
+    assert!(
+        text.contains("from 1password (vault \"Rail\", account \"A\") to file"),
+        "{text}"
+    );
+    let config = std::fs::read_to_string(paths.config_file()).unwrap();
+    for edited in [
+        config.replace("account = \"A\"", "account = \"B\""),
+        config.replace("vault = \"Rail\"", "vault = \"Other\""),
+    ] {
+        std::fs::write(paths.config_file(), &edited).unwrap();
+        let now = describe_switch(&paths, &ids, &to_file).unwrap();
+        assert!(now.moving.is_empty() && asked.moving.is_empty());
+        assert_ne!(now.plan(), asked.plan(), "{edited}");
+    }
+}
