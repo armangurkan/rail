@@ -10,7 +10,7 @@ const MIN_POLL_INTERVAL: Duration = Duration::from_secs(5);
 // `PathBuf` has no `Display`, so paths are formatted through `.display()`.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("no config file at {}; run `rail account add` to create one", .path.display())]
+    #[error("no config file at {}; run `rail setup` (or `rail account add`) to create one", .path.display())]
     Missing { path: PathBuf },
     #[error("cannot read {}: {source}", .path.display())]
     Io {
@@ -254,6 +254,7 @@ client_id = "2"
         let err = load(&path).unwrap_err();
         assert!(matches!(err, ConfigError::Missing { .. }));
         assert!(err.to_string().contains("rail account add"), "{err}");
+        assert!(err.to_string().contains("rail setup"), "{err}");
     }
 
     #[test]

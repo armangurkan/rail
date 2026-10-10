@@ -36,31 +36,37 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
     let paths = Paths::from_env()?;
     let _log_guard = logging::init(&paths);
     match cli.command {
-        None => {
-            eprintln!("rail: the TUI is not built yet; run `rail --help` for available commands");
-            Ok(ExitCode::from(2))
+        None => cmd::setup::first_run(&paths).await,
+        Some(Command::Setup) => cmd::setup::wizard(&paths, None).await,
+        Some(Command::Account { command }) => account(&paths, command).await,
+        Some(Command::Doctor) => Ok(doctor(&paths)),
+    }
+}
+
+async fn account(paths: &Paths, command: AccountCommand) -> color_eyre::Result<ExitCode> {
+    match command {
+        AccountCommand::Add(args) => {
+            let kind_hint = args.kind.map(Into::into);
+            match cmd::account::new_account_from_args(args)? {
+                Some(new) => cmd::account::add(paths, new)
+                    .await
+                    .map(|()| ExitCode::SUCCESS),
+                None => cmd::setup::wizard(paths, kind_hint).await,
+            }
         }
-        Some(Command::Account {
-            command: AccountCommand::Add(args),
-        }) => cmd::account::add(&paths, args)
+        AccountCommand::Login { account } => cmd::account::relogin(paths, &account)
             .await
             .map(|()| ExitCode::SUCCESS),
-        Some(Command::Account {
-            command: AccountCommand::Login { account },
-        }) => cmd::account::relogin(&paths, &account)
-            .await
-            .map(|()| ExitCode::SUCCESS),
-        Some(Command::Account {
-            command: AccountCommand::List,
-        }) => cmd::account::list(&paths).map(|()| ExitCode::SUCCESS),
-        Some(Command::Doctor) => {
-            let report = cmd::doctor::gather(&paths);
-            print!("{}", cmd::doctor::render(&report));
-            Ok(if report.is_healthy() {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            })
-        }
+        AccountCommand::List => cmd::account::list(paths).map(|()| ExitCode::SUCCESS),
+    }
+}
+
+fn doctor(paths: &Paths) -> ExitCode {
+    let report = cmd::doctor::gather(paths);
+    print!("{}", cmd::doctor::render(&report));
+    if report.is_healthy() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
     }
 }

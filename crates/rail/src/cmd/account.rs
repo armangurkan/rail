@@ -36,20 +36,6 @@ pub(crate) struct NewAccount {
     pub color: Option<String>,
 }
 
-impl From<AddArgs> for NewAccount {
-    fn from(args: AddArgs) -> Self {
-        Self {
-            kind: args.kind.into(),
-            address: args.address,
-            client_id: args.client_id,
-            client_secret: args.client_secret,
-            tenant: args.tenant,
-            name: args.name,
-            color: args.color,
-        }
-    }
-}
-
 impl From<AccountConfig> for NewAccount {
     fn from(account: AccountConfig) -> Self {
         Self {
@@ -62,6 +48,40 @@ impl From<AccountConfig> for NewAccount {
             color: account.color,
         }
     }
+}
+
+/// The flag form of `rail account add`, or `None` when no flag asks for it and the wizard
+/// should open (no arguments, or only a provider). A partial set of flags is an error that
+/// names the missing one.
+pub(crate) fn new_account_from_args(args: AddArgs) -> color_eyre::Result<Option<NewAccount>> {
+    let Some(address) = args.address else {
+        let others = [
+            ("--client-id", args.client_id.is_some()),
+            ("--client-secret", args.client_secret.is_some()),
+            ("--tenant", args.tenant.is_some()),
+            ("--name", args.name.is_some()),
+            ("--color", args.color.is_some()),
+        ];
+        if let Some((flag, _)) = others.iter().find(|(_, given)| *given) {
+            bail!("{flag} needs --address");
+        }
+        return Ok(None);
+    };
+    let Some(kind) = args.kind else {
+        bail!("--address needs a provider: `rail account add <gmail|m365> --address ...`");
+    };
+    let Some(client_id) = args.client_id else {
+        bail!("--address needs --client-id");
+    };
+    Ok(Some(NewAccount {
+        kind: kind.into(),
+        address,
+        client_id,
+        client_secret: args.client_secret,
+        tenant: args.tenant,
+        name: args.name,
+        color: args.color,
+    }))
 }
 
 /// Current config text and parsed value; an absent file counts as empty.
@@ -97,8 +117,8 @@ pub(crate) struct PendingAdd {
 /// Order matters: everything that can be checked offline is checked before the
 /// browser opens, and config.toml is written last so a failure never leaves an
 /// account in config that `add` would then refuse as a duplicate.
-pub async fn add(paths: &Paths, args: AddArgs) -> color_eyre::Result<()> {
-    let pending = prepare(paths, NewAccount::from(args))?;
+pub async fn add(paths: &Paths, new: NewAccount) -> color_eyre::Result<()> {
+    let pending = prepare(paths, new)?;
     let secrets = open_secret_store(pending.backend, paths);
     probe_secrets(secrets.as_ref(), &pending.account.address)
         .wrap_err("secret storage is not usable")?;
@@ -448,5 +468,84 @@ mod tests {
         write_config(&path, "b = 2\n").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "b = 2\n");
         assert_eq!(mode(&path), 0o600);
+    }
+
+    fn parse_add(args: &[&str]) -> AddArgs {
+        use crate::cli::{AccountCommand, Cli, Command};
+        use clap::Parser;
+        match Cli::try_parse_from(args).unwrap().command {
+            Some(Command::Account {
+                command: AccountCommand::Add(add),
+            }) => add,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn from_args(args: &[&str]) -> color_eyre::Result<Option<NewAccount>> {
+        let mut all = vec!["rail", "account", "add"];
+        all.extend_from_slice(args);
+        new_account_from_args(parse_add(&all))
+    }
+
+    fn message(args: &[&str]) -> String {
+        from_args(args)
+            .err()
+            .expect("partial set refused")
+            .to_string()
+    }
+
+    #[test]
+    fn no_provider_and_no_flags_opens_the_wizard() {
+        assert!(from_args(&[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_provider_alone_opens_the_wizard() {
+        assert!(from_args(&["gmail"]).unwrap().is_none());
+    }
+
+    #[test]
+    fn address_and_client_id_with_a_provider_build_the_account() {
+        let flags = [
+            "m365",
+            "--address",
+            "a@b.c",
+            "--client-id",
+            "x",
+            "--tenant",
+            "t",
+        ];
+        let new = from_args(&flags).unwrap().unwrap();
+        assert_eq!(new.kind, AccountKind::M365);
+        assert_eq!(new.address, "a@b.c");
+        assert_eq!(new.client_id, "x");
+        assert_eq!(new.tenant.as_deref(), Some("t"));
+        assert_eq!(new.name, None);
+    }
+
+    #[test]
+    fn address_without_a_provider_names_the_provider() {
+        let msg = message(&["--address", "a@b.c", "--client-id", "x"]);
+        assert!(msg.contains("provider"), "{msg}");
+    }
+
+    #[test]
+    fn address_without_a_client_id_names_the_flag() {
+        let msg = message(&["gmail", "--address", "a@b.c"]);
+        assert!(msg.contains("--client-id"), "{msg}");
+    }
+
+    #[test]
+    fn any_other_flag_without_an_address_names_the_address_flag() {
+        for flag in [
+            ["--client-id", "x"],
+            ["--client-secret", "x"],
+            ["--tenant", "x"],
+            ["--name", "x"],
+            ["--color", "x"],
+        ] {
+            let msg = message(&["gmail", flag[0], flag[1]]);
+            assert!(msg.contains("--address"), "{flag:?}: {msg}");
+        }
     }
 }

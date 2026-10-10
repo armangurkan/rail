@@ -87,6 +87,11 @@ impl WizardScreen {
         self.wizard.added()
     }
 
+    /// True when the wizard ended on its final step, as opposed to being cancelled midway.
+    pub fn finished(&self) -> bool {
+        self.wizard.step() == Step::Done
+    }
+
     /// True while the account is being written: nothing may cancel that.
     pub(super) fn saving(&self) -> bool {
         self.wizard.busy() == Some(Busy::Persisting)
