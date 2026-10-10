@@ -17,4 +17,10 @@ pub trait Screen {
     fn captures_text(&self) -> bool {
         false
     }
+
+    /// True while the screen is finishing work nothing may interrupt. The quit keys then go
+    /// to the screen, which quits (with `Effect::Quit`) once the work is done.
+    fn defers_quit(&self) -> bool {
+        false
+    }
 }

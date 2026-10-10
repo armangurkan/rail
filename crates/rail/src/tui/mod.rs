@@ -5,8 +5,10 @@
 #![allow(dead_code)]
 
 pub mod app;
+pub mod effects;
 pub mod run;
 pub mod screen;
+pub mod screens;
 pub mod terminal;
 #[cfg(test)]
 pub mod test_util;

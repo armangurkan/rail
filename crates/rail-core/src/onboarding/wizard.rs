@@ -455,12 +455,11 @@ impl Wizard {
         url.map(|u| vec![Action::OpenUrl(u)]).unwrap_or_default()
     }
 
-    fn copy_consent_url(&mut self) -> Vec<Action> {
+    /// The screen reports whether the copy worked once it has run.
+    fn copy_consent_url(&self) -> Vec<Action> {
         let Some((_, Remedy::SendConsentUrl(url))) = &self.failure else {
             return Vec::new();
         };
-        let text = url.to_string();
-        self.notice = Some("Copied the consent URL to the clipboard.".to_string());
-        vec![Action::Copy(text)]
+        vec![Action::Copy(url.to_string())]
     }
 }

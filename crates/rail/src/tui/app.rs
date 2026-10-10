@@ -26,6 +26,8 @@ pub enum Msg {
 /// What a background task, or the event loop on its behalf, reports back to the screen.
 #[derive(Debug)]
 pub enum TaskResult {
+    /// An onboarding wizard effect finished or made progress.
+    Wizard(rail_core::onboarding::Event),
     /// A spawned job panicked; carries the panic message when it was a string.
     JobPanicked(String),
     /// The outcome of an `Effect::Copy`: `Err` holds the reason it could not copy.
@@ -50,6 +52,10 @@ impl TaskSink {
     }
 
     /// Send `result` to the event loop. Fails only when the loop is gone.
+    #[expect(
+        clippy::result_large_err,
+        reason = "mpsc hands the unsent result back; callers only ever drop it"
+    )]
     pub fn send(&self, result: TaskResult) -> Result<(), mpsc::error::SendError<TaskResult>> {
         self.tx
             .send((self.generation, result))
@@ -117,10 +123,11 @@ impl<S: Screen> App<S> {
     }
 }
 
-/// `Ctrl-C` always quits; `q` quits unless the screen is taking text. Everything else goes
-/// to the screen.
+/// `Ctrl-C` always quits; `q` quits unless the screen is taking text. While the screen
+/// defers quitting, both go to the screen instead. Everything else goes to the screen.
 pub fn update<S: Screen>(app: &mut App<S>, msg: Msg) -> Vec<Effect> {
     if let Msg::Key(key) = &msg
+        && !app.screen.defers_quit()
         && quits(key, app.screen.captures_text())
     {
         app.quit = true;
