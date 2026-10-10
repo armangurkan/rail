@@ -148,10 +148,13 @@ There are no tools that send mail yet.
 token store, the vault and how many accounts' tokens move (and, when the target is the file, that
 tokens will sit in a plain 0600 file instead of the keyring or 1Password; when tokens are not
 moved, that each account then needs `rail account login`). The daemon writes that text, with
-every name, address and vault quoted and escaped so none can fake a line or hide characters, and
-binds it to a digest of the exact plan: the confirmed request must carry the digest, and if
-anything changed in between (an account added, say), nothing runs and the agent has to ask you
-again. Neither tool has an input that confirms for you. When you decline, dismiss the dialog or
+every name, address, vault and 1Password account quoted and shown in plain ASCII (every
+non-ASCII character as `\u{..}`, so a look-alike letter cannot pass for a Latin one) and never
+cut, so none can fake a line, hide characters or look like another; vault and 1Password account
+names over 100 characters, and addresses over 254, are refused instead. The text is bound to a
+digest of the exact plan, the old token store included: the confirmed request must carry the
+digest, and if anything changed in between (an account added, say), nothing runs and the agent
+has to ask you again. Neither tool has an input that confirms for you. When you decline, dismiss the dialog or
 leave its box unticked, nothing changes. A client that cannot show the dialog changes nothing
 either: the agent is told to ask you to run `rail account remove <name>` in a terminal, or to
 edit `secrets` (and `[onepassword]`) in `config.toml` yourself. A setting that is already in place
@@ -164,7 +167,9 @@ never instructions. That lowers the risk of a message or a preset steering the a
 `ai_send` policy (see [Configuration](#what-an-ai-agent-may-do-with-your-mail-ai_send)) is the real
 control for sending.
 
-`rail mcp` writes only MCP messages to its standard output and logs to `rail.log`. It talks to the
+`rail mcp` writes only MCP messages to its standard output and logs to `rail.log`; it logs the
+MCP library's own messages only at error level, since its warnings about malformed arguments
+can quote what the agent sent. It talks to the
 background daemon like every other command.
 
 ## Commands
@@ -177,7 +182,7 @@ background daemon like every other command.
 | `rail account add <gmail\|m365> --address <address> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>]` | Adds an account without the wizard, for scripts. `--address` needs the provider and `--client-id`; any other flag needs `--address`. A partial set exits with status 1 and names the missing flag. `--client-secret` may be an `op://` 1Password reference (see [Tokens in 1Password](#tokens-in-1password)). |
 | `rail account login <name-or-address>` | Logs in again to an account already in `config.toml` and replaces its tokens. Use it when tokens were revoked, expired or deleted from the keyring. |
 | `rail account list` | Lists configured accounts and whether their tokens are stored, in columns as wide as the longest name and address. It asks the store whether tokens exist without reading them, so a 1Password backend never reveals a token to list accounts. |
-| `rail account remove <name-or-address>` | Removes an account's entry in `config.toml` and its stored tokens; its mail stays in the store. Interactive only: it shows what goes (the daemon's text, with the name and address quoted) and asks `Remove? [y/N]`, and only `y` or `yes` removes; if the account changed while you answered, nothing is removed. When stdin or stdout is not a terminal it removes nothing and exits with status 1; there is no flag to skip the question, so neither a script nor an agent can remove an account for you. |
+| `rail account remove <name-or-address>` | Removes an account's entry in `config.toml` and its stored tokens; its mail stays in the store. Interactive only: it shows what goes (the daemon's text, with the name and address quoted) and asks `Remove? [y/N]`, and only `y` or `yes` removes; if the account changed while you answered, it says so, removes nothing, and asks you to run the command again. When stdin or stdout is not a terminal it removes nothing and exits with status 1; there is no flag to skip the question, so neither a script nor an agent can remove an account for you. |
 | `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |

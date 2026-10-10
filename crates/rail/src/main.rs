@@ -35,7 +35,8 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
         tui::terminal::panic_test();
     }
     let paths = Paths::from_env()?;
-    let _log_guard = logging::init(&paths);
+    let mcp = matches!(cli.command, Some(Command::Mcp));
+    let _log_guard = logging::init(&paths, mcp);
     match cli.command {
         None => cmd::setup::first_run(&paths).await,
         Some(Command::Setup) => cmd::setup::wizard(&paths, None).await,

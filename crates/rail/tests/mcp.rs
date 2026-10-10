@@ -414,6 +414,37 @@ async fn a_client_secret_from_an_agent_is_refused_and_never_echoed() {
     assert!(!config_text(&dir).contains(CANARY));
 }
 
+/// Every tool refuses arguments it does not know, the ones without parameters included.
+#[tokio::test]
+async fn a_tool_without_parameters_refuses_unknown_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    write_config(&dir, FILE_BACKEND);
+    let client = start(&dir, host(None), None).await;
+    let refused = call(&client, "rail_status", json!({"verbose": true})).await;
+    assert!(refused_by_schema(&refused), "{}", text(&refused));
+    let fine = call(&client, "rail_status", json!({})).await;
+    assert_ne!(fine.is_error, Some(true), "{}", text(&fine));
+    client.close().await;
+}
+
+/// Ruling L1: rmcp's text for a wrong-typed argument quotes the value, which may be a pasted
+/// secret; it goes back to the agent that sent it, never into `rail.log`.
+#[tokio::test]
+async fn a_wrong_typed_argument_never_reaches_the_log() {
+    let dir = tempfile::tempdir().unwrap();
+    write_config(&dir, FILE_BACKEND);
+    let client = start(&dir, host(None), None).await;
+    let wrong = json!({"id": "add-1", "timeout_secs": CANARY});
+    let refused = call(&client, "rail_wait", wrong).await;
+    assert_eq!(refused.is_error, Some(true), "{}", text(&refused));
+    client.close().await;
+    let log = std::fs::read_to_string(dir.path().join("state").join("rail.log")).unwrap();
+    assert!(
+        !log.contains(CANARY),
+        "the wrong-typed value is in rail.log:\n{log}"
+    );
+}
+
 /// The host giving up on one `rail_wait` (MCP `notifications/cancelled`) leaves the login
 /// running: only `rail_cancel` cancels it.
 #[tokio::test]
@@ -426,15 +457,19 @@ async fn cancelling_a_wait_request_does_not_cancel_the_login() {
     let wait = CallToolRequestParams::new("rail_wait")
         .with_arguments(json!({"id": id}).as_object().cloned().unwrap());
     let request = ClientRequest::CallToolRequest(CallToolRequest::new(wait));
-    let handle = client
-        .send_cancellable_request(request, PeerRequestOptions::no_options())
-        .await
-        .unwrap();
+    let handle = bounded(
+        "the wait request",
+        client.send_cancellable_request(request, PeerRequestOptions::no_options()),
+    )
+    .await
+    .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    handle
-        .cancel(Some("the host gave up".into()))
-        .await
-        .unwrap();
+    bounded(
+        "the cancellation",
+        handle.cancel(Some("the host gave up".into())),
+    )
+    .await
+    .unwrap();
     let still = call(&client, "rail_wait", json!({"id": id, "timeout_secs": 1})).await;
     assert_eq!(
         structured(&still)["state"]["state"],
@@ -482,13 +517,14 @@ async fn finish_in_the_browser(dir: &tempfile::TempDir) {
             .map(|(_, v)| v.into_owned())
             .unwrap()
     };
-    reqwest::get(format!(
+    let redirect = format!(
         "{}/?code={CODE}&state={}",
         query("redirect_uri"),
         query("state")
-    ))
-    .await
-    .unwrap();
+    );
+    bounded("the redirect", reqwest::get(redirect))
+        .await
+        .unwrap();
 }
 
 /// Review focus 1: the add flow over MCP with a client secret file, then every other tool;
@@ -498,7 +534,7 @@ async fn finish_in_the_browser(dir: &tempfile::TempDir) {
 async fn every_tool_result_and_the_log_are_free_of_secrets() {
     let dir = tempfile::tempdir().unwrap();
     write_config(&dir, FILE_BACKEND);
-    let server = token_server().await;
+    let server = bounded("the token server", token_server()).await;
     let client = start(&dir, host(None), Some(format!("{}/token", server.uri()))).await;
     let file = dir.path().join("client_secret_1.json");
     let google = json!({"installed": {"client_id": "1.apps.googleusercontent.com", "client_secret": CLIENT_SECRET}});

@@ -10,9 +10,11 @@ const LOG_FILE: &str = "rail.log";
 /// Starts logging to `rail.log` in the state dir. The returned guard must live
 /// until exit so buffered lines are flushed. If logging cannot be set up, one
 /// warning goes to stderr and the CLI runs without file logs. Never panics.
-pub fn init(paths: &Paths) -> Option<WorkerGuard> {
+/// With `mcp` (`rail mcp`), rmcp logs only errors: its warnings about tool arguments that do
+/// not parse quote the agent's value, which may be a pasted secret.
+pub fn init(paths: &Paths, mcp: bool) -> Option<WorkerGuard> {
     let dir = paths.log_dir();
-    match try_init(dir) {
+    match try_init(dir, filter(mcp)) {
         Ok(guard) => Some(guard),
         Err(e) => {
             eprintln!(
@@ -24,7 +26,19 @@ pub fn init(paths: &Paths) -> Option<WorkerGuard> {
     }
 }
 
-fn try_init(dir: &std::path::Path) -> Result<WorkerGuard, String> {
+/// `RUST_LOG`, or `info`; for `rail mcp` always with `rmcp=error` on top.
+fn filter(mcp: bool) -> EnvFilter {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    if !mcp {
+        return filter;
+    }
+    match "rmcp=error".parse() {
+        Ok(directive) => filter.add_directive(directive),
+        Err(_) => filter,
+    }
+}
+
+fn try_init(dir: &std::path::Path, filter: EnvFilter) -> Result<WorkerGuard, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let file = RollingFileAppender::builder()
         .rotation(Rotation::NEVER)
@@ -32,7 +46,6 @@ fn try_init(dir: &std::path::Path) -> Result<WorkerGuard, String> {
         .build(dir)
         .map_err(|e| e.to_string())?;
     let (writer, guard) = tracing_appender::non_blocking(file);
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(writer)
@@ -51,6 +64,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::all_in(dir.path());
         std::fs::create_dir_all(paths.log_dir().join(LOG_FILE)).unwrap();
-        assert!(init(&paths).is_none());
+        assert!(init(&paths, false).is_none());
+    }
+
+    #[test]
+    fn rail_mcp_logs_only_rmcp_errors() {
+        assert!(filter(true).to_string().contains("rmcp=error"));
+        assert!(!filter(false).to_string().contains("rmcp"));
     }
 }
