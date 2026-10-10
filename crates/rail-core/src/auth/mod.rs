@@ -5,6 +5,7 @@ pub mod endpoints;
 pub mod flow;
 pub mod loopback;
 pub mod secrets;
+pub mod token_source;
 
 pub use client::{OAuthClient, build_client, http_client};
 pub use endpoints::{GMAIL_SCOPE, OAuthEndpoints, endpoints_for};
@@ -13,6 +14,8 @@ pub use secrets::{
     FileSecretStore, KeyringSecretStore, MemorySecretStore, SecretError, SecretStore, TokenSet,
     open_secret_store,
 };
+
+pub use token_source::{TokenSource, unix_now};
 
 use crate::error::ErrorClass;
 
