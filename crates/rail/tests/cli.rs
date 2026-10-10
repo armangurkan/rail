@@ -209,6 +209,7 @@ fn write_opener(dir: &tempfile::TempDir) -> std::path::PathBuf {
     path
 }
 
+#[cfg(debug_assertions)]
 fn query(url: &url::Url, key: &str) -> String {
     url.query_pairs()
         .find(|(k, _)| k == key)
@@ -216,7 +217,7 @@ fn query(url: &url::Url, key: &str) -> String {
         .unwrap_or_else(|| panic!("{key} missing from {url}"))
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, debug_assertions))]
 async fn wait_for_url(file: &std::path::Path) -> url::Url {
     for _ in 0..500 {
         if let Ok(text) = std::fs::read_to_string(file) {
@@ -251,6 +252,8 @@ fn account_login_unknown_account_fails_before_the_opener() {
 }
 
 #[cfg(unix)]
+// Release builds skip the real-browser flows: they must never launch a browser.
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn account_login_replaces_tokens_in_the_file_backend() {
     use rail_core::auth::{FileSecretStore, SecretStore, TokenSet};
@@ -400,6 +403,8 @@ fn doctor_without_config_mentions_rail_setup() {
 /// Review focus 5, end to end: the real binary in a pseudo-terminal reaches the login wait,
 /// gets Ctrl-C (byte 0x03, a key in raw mode), restores the terminal and saves nothing.
 #[cfg(target_os = "linux")]
+// Release builds skip the pty flows: the test opener is debug-only, so they would launch a real browser.
+#[cfg(debug_assertions)]
 mod pty {
     use std::io::{Read, Write};
     use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
