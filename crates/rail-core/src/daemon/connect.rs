@@ -2,7 +2,7 @@
 //! makes sure that clients starting together spawn exactly one daemon. The running daemon
 //! holds `daemon.lock` for its whole life and releases it only after removing its socket, so a
 //! client that finds the daemon silent waits on that lock before it clears the socket and
-//! spawns a successor.
+//! spawns a successor, unless the socket answers meanwhile: then the daemon was only starting.
 
 use std::fs::File;
 use std::path::Path;
@@ -27,10 +27,6 @@ pub const START_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DAEMON_EXIT_TIMEOUT: Duration = Duration::from_secs(35);
 /// `sun_path` is 104 bytes on macOS (108 on Linux); stay under the smaller.
 pub const MAX_SOCKET_PATH: usize = 103;
-/// The lock a client holds while it starts a daemon, in the runtime directory.
-pub const SPAWN_LOCK_NAME: &str = "rail.lock";
-/// The lock the running daemon holds for its whole life, in the runtime directory.
-pub const DAEMON_LOCK_NAME: &str = "daemon.lock";
 const POLL: Duration = Duration::from_millis(50);
 
 /// Starts a daemon process (or, in tests, an in-process server). It returns once the start is
@@ -132,7 +128,7 @@ impl Connector {
         Err(OpError::new(
             ErrorCode::Daemon,
             ErrorClass::Transient,
-            "the daemon did not stop within five seconds",
+            format!("the daemon did not stop within {:?}", self.start_timeout),
         ))
     }
 
@@ -149,8 +145,11 @@ impl Connector {
             return Ok(client);
         }
         // Nobody answers, but a daemon that is shutting down still holds `daemon.lock`: let it
-        // finish removing its socket before we clear the path and start a successor.
-        self.wait_for_exit().await?;
+        // finish removing its socket before we clear the path and start a successor. One that
+        // is merely starting answers soon, and then it is the daemon we want.
+        if let Some(client) = self.wait_for_exit_or_answer().await? {
+            return Ok(client);
+        }
         remove_stale_socket(&self.paths.socket_file())?;
         (self.spawn)()?;
         let client = self.wait_for_daemon().await;
@@ -158,19 +157,35 @@ impl Connector {
         client
     }
 
-    async fn wait_for_exit(&self) -> Result<(), OpError> {
+    /// Wait until no daemon holds `daemon.lock` (`None`: go on and start one) or until the
+    /// socket answers (`Some`: a daemon that was only starting). Bounded by the exit timeout.
+    async fn wait_for_exit_or_answer(&self) -> Result<Option<DaemonClient>, OpError> {
         let runtime = self.paths.runtime_dir.clone();
-        let timeout = self.exit_timeout;
-        tokio::task::spawn_blocking(move || wait_for_daemon_exit(&runtime, timeout))
+        let path = self.paths.daemon_lock_file();
+        let file = tokio::task::spawn_blocking(move || open_lock_file(&runtime, &path))
             .await
             .map_err(|e| OpError::internal(format!("lock task failed: {e}")))?
+            .map_err(|e| exit_io_error(&e))?;
+        let deadline = tokio::time::Instant::now() + self.exit_timeout;
+        loop {
+            if try_take_lock(&file)? {
+                return Ok(None);
+            }
+            if let Some(client) = self.try_connect().await? {
+                return Ok(Some(client));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(exit_timeout_error());
+            }
+            tokio::time::sleep(POLL).await;
+        }
     }
 
     async fn try_connect(&self) -> Result<Option<DaemonClient>, OpError> {
         let socket = self.paths.socket_file();
         check_socket_path(&socket)?;
         match UnixStream::connect(&socket).await {
-            Ok(stream) => match DaemonClient::handshake(stream, &self.version).await {
+            Ok(stream) => match self.handshake(stream).await? {
                 Ok(client) => Ok(Some(client)),
                 // A socket that accepts and then hangs up is a daemon on its way out (or a
                 // stale listener a forked process briefly held); treat it as absent.
@@ -186,6 +201,28 @@ impl Connector {
         }
     }
 
+    /// The hello, bounded: a daemon that accepts and never answers must not hang the caller.
+    /// The outer error is the timeout; the inner one is the handshake's own failure.
+    async fn handshake(
+        &self,
+        stream: UnixStream,
+    ) -> Result<Result<DaemonClient, OpError>, OpError> {
+        let hello = DaemonClient::handshake(stream, &self.version);
+        tokio::time::timeout(self.start_timeout, hello)
+            .await
+            .map_err(|_| {
+                OpError::new(
+                    ErrorCode::Daemon,
+                    ErrorClass::Transient,
+                    format!(
+                        "the daemon did not answer the hello within {:?}",
+                        self.start_timeout
+                    ),
+                )
+                .with_hint("run `rail daemon stop`, then try again")
+            })
+    }
+
     async fn wait_for_daemon(&self) -> Result<DaemonClient, OpError> {
         let deadline = tokio::time::Instant::now() + self.start_timeout;
         loop {
@@ -196,7 +233,7 @@ impl Connector {
                 return Err(OpError::new(
                     ErrorCode::Daemon,
                     ErrorClass::Transient,
-                    "the daemon did not start within five seconds",
+                    format!("the daemon did not start within {:?}", self.start_timeout),
                 )
                 .with_hint("see rail.log in the state directory"));
             }
@@ -233,29 +270,41 @@ fn lock_file(dir: &Path, path: &Path) -> std::io::Result<File> {
     Ok(file)
 }
 
-/// Block until no daemon holds `<runtime>/daemon.lock`, at most `timeout`: take the lock and
-/// let go of it at once. A daemon that is not running holds nothing, so this returns
-/// immediately. Blocking; call it from `spawn_blocking`.
-pub fn wait_for_daemon_exit(runtime: &Path, timeout: Duration) -> Result<(), OpError> {
-    let io_error =
-        |e: &std::io::Error| OpError::io(ErrorCode::Daemon, "waiting for the daemon to exit", e);
-    let file =
-        open_lock_file(runtime, &runtime.join(DAEMON_LOCK_NAME)).map_err(|e| io_error(&e))?;
+fn exit_io_error(error: &std::io::Error) -> OpError {
+    OpError::io(ErrorCode::Daemon, "waiting for the daemon to exit", error)
+}
+
+fn exit_timeout_error() -> OpError {
+    OpError::new(
+        ErrorCode::Daemon,
+        ErrorClass::Transient,
+        "the running daemon did not exit in time",
+    )
+    .with_hint("run `rail daemon stop`, or end the rail process by hand")
+}
+
+/// Try to take `file`'s lock without blocking; true when taken. Dropping `file` releases it.
+fn try_take_lock(file: &File) -> Result<bool, OpError> {
+    match fs4::FileExt::try_lock(file) {
+        Ok(()) => Ok(true),
+        Err(fs4::TryLockError::WouldBlock) => Ok(false),
+        Err(fs4::TryLockError::Error(e)) => Err(exit_io_error(&e)),
+    }
+}
+
+/// Block until no daemon holds `daemon_lock` (`Paths::daemon_lock_file`), at most `timeout`:
+/// take the lock and let go of it at once. A daemon that is not running holds nothing, so this
+/// returns immediately. Blocking; call it from `spawn_blocking`.
+pub fn wait_for_daemon_exit(daemon_lock: &Path, timeout: Duration) -> Result<(), OpError> {
+    let dir = daemon_lock.parent().unwrap_or_else(|| Path::new("."));
+    let file = open_lock_file(dir, daemon_lock).map_err(|e| exit_io_error(&e))?;
     let deadline = Instant::now() + timeout;
     loop {
-        match fs4::FileExt::try_lock(&file) {
-            // Dropping `file` releases the lock.
-            Ok(()) => return Ok(()),
-            Err(fs4::TryLockError::WouldBlock) => {}
-            Err(fs4::TryLockError::Error(e)) => return Err(io_error(&e)),
+        if try_take_lock(&file)? {
+            return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(OpError::new(
-                ErrorCode::Daemon,
-                ErrorClass::Transient,
-                "the running daemon did not exit in time",
-            )
-            .with_hint("run `rail daemon stop`, or end the rail process by hand"));
+            return Err(exit_timeout_error());
         }
         std::thread::sleep(POLL);
     }

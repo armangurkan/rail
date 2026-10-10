@@ -141,14 +141,19 @@ impl Paths {
 
     /// The lock a client holds while it starts the daemon.
     pub fn lock_file(&self) -> PathBuf {
-        self.runtime_dir.join("rail.lock")
+        self.runtime_dir.join(SPAWN_LOCK_NAME)
     }
 
     /// The lock the running daemon holds for its whole life.
     pub fn daemon_lock_file(&self) -> PathBuf {
-        self.runtime_dir.join("daemon.lock")
+        self.runtime_dir.join(DAEMON_LOCK_NAME)
     }
 }
+
+/// The lock a client holds while it starts the daemon, in the runtime directory.
+pub const SPAWN_LOCK_NAME: &str = "rail.lock";
+/// The lock the running daemon holds for its whole life, in the runtime directory.
+pub const DAEMON_LOCK_NAME: &str = "daemon.lock";
 
 /// `$XDG_RUNTIME_DIR/rail` where there is one (Linux), else the state directory (macOS, and
 /// Linux sessions without a runtime directory).
@@ -244,6 +249,7 @@ mod tests {
         assert_eq!(paths.log_dir(), Path::new("/s"));
         assert_eq!(paths.socket_file(), PathBuf::from("/r/rail.sock"));
         assert_eq!(paths.lock_file(), PathBuf::from("/r/rail.lock"));
+        assert_eq!(paths.daemon_lock_file(), PathBuf::from("/r/daemon.lock"));
     }
 
     #[test]

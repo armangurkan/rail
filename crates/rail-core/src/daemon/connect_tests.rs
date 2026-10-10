@@ -12,7 +12,7 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
 use super::client::DaemonClient;
-use super::connect::{Connector, DAEMON_LOCK_NAME, SpawnFn, VERSION, wait_for_daemon_exit};
+use super::connect::{Connector, SpawnFn, VERSION, wait_for_daemon_exit};
 use super::wire::{
     Message, PROTOCOL_VERSION, Response, RpcError, encode_frame, parse_message, read_frame,
 };
@@ -259,7 +259,7 @@ fn hold_daemon_lock(paths: &Paths) -> std::fs::File {
         .create(true)
         .truncate(false)
         .write(true)
-        .open(paths.runtime_dir.join(DAEMON_LOCK_NAME))
+        .open(paths.daemon_lock_file())
         .unwrap();
     fs4::FileExt::lock(&file).unwrap();
     file
@@ -292,8 +292,8 @@ async fn without_a_daemon_lock_holder_the_connector_proceeds_at_once() {
     let tmp = tempfile::tempdir().unwrap();
     let paths = Paths::all_in(tmp.path());
     let started = std::time::Instant::now();
-    let runtime = paths.runtime_dir.clone();
-    tokio::task::spawn_blocking(move || wait_for_daemon_exit(&runtime, Duration::from_secs(35)))
+    let lock = paths.daemon_lock_file();
+    tokio::task::spawn_blocking(move || wait_for_daemon_exit(&lock, Duration::from_secs(35)))
         .await
         .unwrap()
         .unwrap();
@@ -305,7 +305,8 @@ fn waiting_for_a_daemon_that_never_exits_times_out_as_transient() {
     let tmp = tempfile::tempdir().unwrap();
     let paths = Paths::all_in(tmp.path());
     let _held = hold_daemon_lock(&paths);
-    let err = wait_for_daemon_exit(&paths.runtime_dir, Duration::from_millis(150)).unwrap_err();
+    let err =
+        wait_for_daemon_exit(&paths.daemon_lock_file(), Duration::from_millis(150)).unwrap_err();
     assert_eq!(err.code, ErrorCode::Daemon);
     assert_eq!(err.class, crate::error::ErrorClass::Transient);
 }
@@ -385,4 +386,89 @@ async fn an_unparsable_answer_keeps_outside_text_in_detail() {
     let client = DaemonClient::handshake(stream, VERSION).await.unwrap();
     let err = client.call::<CountOp>(&ping("x")).await.unwrap_err();
     assert_outside_text_is_detail(&err);
+}
+
+/// Review fix 1: a daemon that accepts and never answers must not hang the connector, nor
+/// leave `rail.lock` held.
+#[tokio::test]
+async fn a_daemon_that_never_answers_the_hello_times_out_and_frees_the_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    create_private_dir(&paths.runtime_dir).unwrap();
+    let listener = UnixListener::bind(paths.socket_file()).unwrap();
+    let keep_open = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    let (connector, spawned) = connector(&paths, VERSION);
+    let connector = connector.with_start_timeout(Duration::from_millis(300));
+    let started = std::time::Instant::now();
+    let err = connector.connect().await.err().expect("no answer");
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert_eq!(err.code, ErrorCode::Daemon);
+    assert_eq!(err.class, crate::error::ErrorClass::Transient);
+    assert!(err.message.contains("hello"), "{}", err.message);
+    assert_eq!(spawned.load(Ordering::SeqCst), 0);
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(paths.lock_file())
+        .unwrap();
+    fs4::FileExt::try_lock(&lock).expect("rail.lock is free");
+    keep_open.abort();
+}
+
+/// Review fix 2: a daemon holds `daemon.lock` from the start but binds its socket late. The
+/// connector must wait for it, not spawn a second one or remove its socket.
+#[tokio::test]
+async fn a_starting_daemon_is_recognised_not_replaced() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let held = hold_daemon_lock(&paths);
+    let late = paths.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        fake_daemon(late, VERSION).await;
+    });
+    let (connector, spawned) = connector(&paths, VERSION);
+    let client = connector.connect().await.unwrap();
+    assert_eq!(client.call::<Echo>(&ping("up")).await.unwrap(), ping("up"));
+    assert_eq!(spawned.load(Ordering::SeqCst), 0);
+    assert!(paths.socket_file().exists());
+    drop(held);
+}
+
+/// Review fix 6: a read failure reaches waiting callers with its own class and message.
+#[tokio::test]
+async fn an_oversized_reply_fails_calls_with_its_own_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    create_private_dir(&paths.runtime_dir).unwrap();
+    let listener = UnixListener::bind(paths.socket_file()).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut reader = BufReader::new(read);
+        let hello = read_frame(&mut reader).await.unwrap().unwrap();
+        let Ok(Message::Request(request)) = parse_message(&hello) else {
+            return;
+        };
+        let answer = answer(&request.method, request.id, request.params, VERSION);
+        let _ = write.write_all(&encode_frame(&answer).unwrap()).await;
+        let _ = read_frame(&mut reader).await;
+        let _ = write
+            .write_all(&vec![b' '; super::wire::MAX_FRAME_BYTES + 2])
+            .await;
+    });
+    let stream = tokio::net::UnixStream::connect(paths.socket_file())
+        .await
+        .unwrap();
+    let client = DaemonClient::handshake(stream, VERSION).await.unwrap();
+    let err = client.call::<Echo>(&ping("x")).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::Daemon);
+    assert_eq!(err.class, crate::error::ErrorClass::Permanent);
+    assert!(err.message.contains("1 MiB"), "{}", err.message);
 }

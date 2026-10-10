@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde_json::Value;
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -33,6 +33,8 @@ pub struct DaemonClient {
 #[derive(Default)]
 struct Waiting {
     closed: bool,
+    /// Why the connection ended, when it ended on an error rather than a clean close.
+    failure: Option<OpError>,
     calls: HashMap<u64, oneshot::Sender<Response>>,
 }
 
@@ -123,27 +125,35 @@ fn disconnected() -> OpError {
     )
 }
 
+/// The waiting calls, usable even if a panicking thread poisoned the lock.
+fn state(waiting: &Mutex<Waiting>) -> MutexGuard<'_, Waiting> {
+    waiting.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Why calls on a closed connection fail: the error that ended it, else a plain close.
+fn closed_error(waiting: &Mutex<Waiting>) -> OpError {
+    state(waiting).failure.clone().unwrap_or_else(disconnected)
+}
+
 async fn call_raw(inner: &Inner, method: &str, params: Value) -> Result<Value, OpError> {
     let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
     let frame = encode_frame(&Request::new(id, method, params))?;
     let (tx, rx) = oneshot::channel();
     {
-        let mut waiting = inner.waiting.lock().expect("waiting lock");
+        let mut waiting = state(&inner.waiting);
         if waiting.closed {
-            return Err(disconnected());
+            return Err(waiting.failure.clone().unwrap_or_else(disconnected));
         }
         waiting.calls.insert(id, tx);
     }
     if inner.frames.send(frame).is_err() {
-        inner
-            .waiting
-            .lock()
-            .expect("waiting lock")
-            .calls
-            .remove(&id);
-        return Err(disconnected());
+        state(&inner.waiting).calls.remove(&id);
+        return Err(closed_error(&inner.waiting));
     }
-    rx.await.map_err(|_| disconnected())?.into_result()
+    match rx.await {
+        Ok(response) => response.into_result(),
+        Err(_) => Err(closed_error(&inner.waiting)),
+    }
 }
 
 async fn read_loop(
@@ -152,12 +162,18 @@ async fn read_loop(
     notifications: broadcast::Sender<Notification>,
 ) {
     let mut reader = BufReader::new(read);
-    while let Ok(Some(frame)) = read_frame(&mut reader).await {
+    let failure = loop {
+        let frame = match read_frame(&mut reader).await {
+            Ok(Some(frame)) => frame,
+            Ok(None) => break None,
+            Err(error) => {
+                tracing::warn!(%error, "the daemon connection failed while reading");
+                break Some(OpError::from(error));
+            }
+        };
         match parse_message(&frame) {
             Ok(Message::Response(response)) => {
-                let caller = response
-                    .id
-                    .and_then(|id| waiting.lock().expect("waiting lock").calls.remove(&id));
+                let caller = response.id.and_then(|id| state(&waiting).calls.remove(&id));
                 if let Some(caller) = caller {
                     let _ = caller.send(response);
                 }
@@ -170,10 +186,11 @@ async fn read_loop(
                 tracing::debug!("ignoring an unexpected message from the daemon");
             }
         }
-    }
-    let mut waiting = waiting.lock().expect("waiting lock");
+    };
+    let mut waiting = state(&waiting);
     waiting.closed = true;
-    // Dropping the senders wakes every caller still waiting with "closed the connection".
+    waiting.failure = failure;
+    // Dropping the senders wakes every caller still waiting; they read `failure`.
     waiting.calls.clear();
 }
 
