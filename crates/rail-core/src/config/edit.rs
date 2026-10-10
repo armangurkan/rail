@@ -5,15 +5,10 @@ use std::path::Path;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
 use super::load::{ConfigError, line_col, parse};
-use super::model::{AccountConfig, Config};
+use super::model::{AccountConfig, Config, OnePasswordConfig, SecretsBackend};
 
-/// Return `text` with a new `[[accounts]]` table appended. Validates the result.
-pub fn append_account(
-    text: &str,
-    path: &Path,
-    account: &AccountConfig,
-) -> Result<String, ConfigError> {
-    let mut doc: DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| {
+fn document(text: &str, path: &Path) -> Result<DocumentMut, ConfigError> {
+    text.parse().map_err(|e: toml_edit::TomlError| {
         let (line, col) = e.span().map_or((0, 0), |s| line_col(text, s.start));
         ConfigError::Parse {
             path: path.to_path_buf(),
@@ -21,7 +16,54 @@ pub fn append_account(
             col,
             message: e.message().to_string(),
         }
-    })?;
+    })
+}
+
+fn not_a_table(path: &Path, key: &str) -> ConfigError {
+    ConfigError::Invalid {
+        path: path.to_path_buf(),
+        message: format!("`{key}` must be a table ([{key}])"),
+    }
+}
+
+/// Return `text` with `[general] secrets` set to `backend` and, when given, the
+/// `[onepassword]` table replaced. Comments elsewhere are kept. Validates the result.
+pub fn set_secrets(
+    text: &str,
+    path: &Path,
+    backend: SecretsBackend,
+    onepassword: Option<&OnePasswordConfig>,
+) -> Result<String, ConfigError> {
+    let mut doc = document(text, path)?;
+    let general = doc
+        .entry("general")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| not_a_table(path, "general"))?;
+    general["secrets"] = value(backend.as_str());
+    if let Some(op) = onepassword {
+        let mut table = Table::new();
+        table["vault"] = value(op.vault.as_str());
+        if let Some(account) = &op.account {
+            table["account"] = value(account.as_str());
+        }
+        if let Some(op_path) = &op.op_path {
+            table["op_path"] = value(op_path.to_string_lossy().into_owned());
+        }
+        doc["onepassword"] = Item::Table(table);
+    }
+    let out = doc.to_string();
+    parse(&out, path)?;
+    Ok(out)
+}
+
+/// Return `text` with a new `[[accounts]]` table appended. Validates the result.
+pub fn append_account(
+    text: &str,
+    path: &Path,
+    account: &AccountConfig,
+) -> Result<String, ConfigError> {
+    let mut doc = document(text, path)?;
     let accounts = doc
         .entry("accounts")
         .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
@@ -137,6 +179,43 @@ mod tests {
         let err =
             append_account("[[accounts", Path::new("c.toml"), &account("a", "a@b.c")).unwrap_err();
         assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
+    }
+
+    #[test]
+    fn set_secrets_keeps_comments_and_writes_the_onepassword_table() {
+        let op = OnePasswordConfig {
+            vault: "Rail".into(),
+            account: Some("my.1password.com".into()),
+            op_path: None,
+        };
+        let out = set_secrets(
+            EXISTING,
+            Path::new("c.toml"),
+            SecretsBackend::OnePassword,
+            Some(&op),
+        )
+        .unwrap();
+        assert!(out.contains("# the good one"), "{out}");
+        let config = parse(&out, Path::new("c.toml")).unwrap();
+        assert_eq!(config.general.secrets, SecretsBackend::OnePassword);
+        assert_eq!(config.general.editor.as_deref(), Some("nvim"));
+        assert_eq!(config.onepassword, Some(op));
+        assert_eq!(config.accounts.len(), 1);
+        let back = set_secrets(&out, Path::new("c.toml"), SecretsBackend::File, None).unwrap();
+        let config = parse(&back, Path::new("c.toml")).unwrap();
+        assert_eq!(config.general.secrets, SecretsBackend::File);
+        assert!(
+            config.onepassword.is_some(),
+            "the table is kept for switching back"
+        );
+    }
+
+    #[test]
+    fn set_secrets_creates_the_general_table_and_refuses_1password_without_a_vault() {
+        let out = set_secrets("", Path::new("c.toml"), SecretsBackend::File, None).unwrap();
+        assert!(out.contains("secrets = \"file\""), "{out}");
+        let err = set_secrets("", Path::new("c.toml"), SecretsBackend::OnePassword, None);
+        assert!(matches!(err, Err(ConfigError::Invalid { .. })), "{err:?}");
     }
 
     #[test]

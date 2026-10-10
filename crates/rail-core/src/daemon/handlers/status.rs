@@ -36,10 +36,10 @@ pub(super) async fn daemon_stop(
 }
 
 pub(super) async fn status(call: Call, _: StatusRequest) -> Result<StatusResponse, OpError> {
-    let paths = call.ctx.paths.clone();
+    let (paths, ids) = (call.ctx.paths.clone(), call.ctx.op_ids.clone());
     let doctor = call
         .ctx
-        .blocking(move || Ok(doctor::gather(&paths)))
+        .blocking(move || Ok(doctor::gather(&paths, &ids)))
         .await?;
     Ok(StatusResponse {
         doctor,
@@ -51,11 +51,11 @@ pub(super) async fn accounts_list(
     call: Call,
     _: AccountsListRequest,
 ) -> Result<AccountsListResponse, OpError> {
-    let paths = call.ctx.paths.clone();
+    let (paths, ids) = (call.ctx.paths.clone(), call.ctx.op_ids.clone());
     call.ctx
         .blocking(move || {
             let config = config::load(&paths.config_file())?;
-            let secrets = open_secret_store(config.general.secrets, &paths);
+            let secrets = open_secret_store(&config, &paths, &ids);
             let accounts = config
                 .accounts
                 .iter()

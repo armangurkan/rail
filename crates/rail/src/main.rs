@@ -62,7 +62,7 @@ async fn account(paths: &Paths, command: AccountCommand) -> color_eyre::Result<E
 }
 
 fn doctor(paths: &Paths) -> ExitCode {
-    let report = rail_core::doctor::gather(paths);
+    let report = rail_core::doctor::gather(paths, &rail_core::auth::ItemIdCache::default());
     print!("{}", cmd::doctor::render(&report));
     if report.is_healthy() {
         ExitCode::SUCCESS

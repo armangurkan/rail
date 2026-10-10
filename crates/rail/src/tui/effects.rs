@@ -8,9 +8,10 @@ use std::sync::Arc;
 
 use color_eyre::eyre::Report;
 use rail_core::auth::{
-    AuthError, SecretError, TokenSet, http_client, open_secret_store, run_admin_consent,
+    AuthError, ItemIdCache, SecretError, TokenSet, http_client, open_secret_store,
+    run_admin_consent, token_location,
 };
-use rail_core::config::{AccountConfig, ConfigError, SecretsBackend};
+use rail_core::config::{AccountConfig, ConfigError};
 use rail_core::error::ErrorClass;
 use rail_core::onboarding::{
     Action, DoneReport, Event, Failure, PresetEntry, discover_presets, fetch_preset, read_preset,
@@ -163,7 +164,7 @@ async fn login(ctx: EffectContext, account: AccountConfig, sink: TaskSink) {
 fn check_new_account(paths: &Paths, account: AccountConfig) -> Result<(), Failure> {
     let pending =
         account::prepare(paths, NewAccount::from(account)).map_err(|e| failure_from(&e))?;
-    let secrets = open_secret_store(pending.backend, paths);
+    let secrets = open_secret_store(&pending.config, paths, &ItemIdCache::default());
     account::probe_secrets(secrets.as_ref(), &pending.account.address)
         .map_err(|e| Failure::new(format!("secret storage is not usable: {e}"), e.class()))
 }
@@ -183,16 +184,12 @@ fn save_new_account(
 ) -> Result<DoneReport, Failure> {
     let pending =
         account::prepare(paths, NewAccount::from(account)).map_err(|e| failure_from(&e))?;
-    let secrets = open_secret_store(pending.backend, paths);
+    let secrets = open_secret_store(&pending.config, paths, &ItemIdCache::default());
     account::persist(paths, secrets.as_ref(), &pending, tokens).map_err(|e| failure_from(&e))?;
-    let token_location = match pending.backend {
-        SecretsBackend::Keyring => "OS keyring, service \"rail\"".to_string(),
-        SecretsBackend::File => paths.secrets_file().display().to_string(),
-    };
     Ok(DoneReport {
         config_path: pending.config_path,
         token_backend: secrets.backend_name().to_string(),
-        token_location,
+        token_location: token_location(&pending.config, paths, &pending.account.address),
         store_path: paths.db_file(),
     })
 }

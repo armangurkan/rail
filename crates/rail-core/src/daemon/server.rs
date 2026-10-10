@@ -151,7 +151,7 @@ impl Server {
         let own_uid = std::fs::metadata(dir)
             .map_err(|e| io("reading the runtime directory", e))?
             .uid();
-        let lifetime_lock = take_lifetime_lock(&ctx.paths, &socket)?;
+        let lifetime_lock = take_lifetime_lock(&ctx.paths, &socket).await?;
         if socket_answers(&socket).await {
             return Err(already_running(&socket));
         }
@@ -255,16 +255,25 @@ fn already_running(socket: &Path) -> OpError {
     )
 }
 
-/// Take `daemon.lock` without blocking. By path: `file.try_lock()` would resolve to std's
-/// `File::try_lock`, newer than our MSRV.
-fn take_lifetime_lock(paths: &Paths, socket: &Path) -> Result<File, OpError> {
+/// How long a held `daemon.lock` is waited for, and how often it is tried. A process forked
+/// by a thread of the previous holder (an `op` call, say) carries the lock until its `exec`, so
+/// a lock that is held for a few milliseconds is not another daemon.
+const LOCK_RETRIES: u32 = 20;
+const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
+
+/// Take `daemon.lock` without blocking the thread. By path: `file.try_lock()` would resolve to
+/// std's `File::try_lock`, newer than our MSRV.
+async fn take_lifetime_lock(paths: &Paths, socket: &Path) -> Result<File, OpError> {
     let io = |e: std::io::Error| OpError::io(ErrorCode::Daemon, "locking the daemon", &e);
     let file = open_lock_file(&paths.runtime_dir, &paths.daemon_lock_file()).map_err(io)?;
-    match fs4::FileExt::try_lock(&file) {
-        Ok(()) => Ok(file),
-        Err(fs4::TryLockError::WouldBlock) => Err(already_running(socket)),
-        Err(fs4::TryLockError::Error(e)) => Err(io(e)),
+    for _ in 0..LOCK_RETRIES {
+        match fs4::FileExt::try_lock(&file) {
+            Ok(()) => return Ok(file),
+            Err(fs4::TryLockError::WouldBlock) => tokio::time::sleep(LOCK_RETRY_DELAY).await,
+            Err(fs4::TryLockError::Error(e)) => return Err(io(e)),
+        }
     }
+    Err(already_running(socket))
 }
 
 /// How often the idle timer looks: a tenth of the timeout, between 10 ms and 5 s.

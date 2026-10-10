@@ -120,6 +120,7 @@ fn render_accounts(out: &mut String, report: &DoctorReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rail_core::auth::ItemIdCache;
     use rail_core::doctor::gather;
     use rail_core::paths::Paths;
     use rail_core::store::Store;
@@ -135,7 +136,7 @@ mod tests {
     fn doctor_reports_missing_config() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::all_in(dir.path());
-        let report = gather(&paths);
+        let report = gather(&paths, &ItemIdCache::default());
         assert!(!report.is_healthy());
         let text = render(&report);
         assert!(text.contains("rail account add"), "{text}");
@@ -148,7 +149,7 @@ mod tests {
     fn the_config_hint_sits_under_the_check_text_and_names_no_mcp_tool() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::all_in(dir.path());
-        let text = render(&gather(&paths));
+        let text = render(&gather(&paths, &ItemIdCache::default()));
         let mut lines = text.lines();
         assert!(
             lines
@@ -168,7 +169,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::all_in(dir.path());
         write_config(&paths, "[general]\nnope = 1\n");
-        let report = gather(&paths);
+        let report = gather(&paths, &ItemIdCache::default());
         assert!(!report.is_healthy());
         let text = render(&report);
         assert!(text.contains("config.toml:2:"));
@@ -181,7 +182,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::all_in(dir.path());
         write_config(&paths, FILE_BACKEND_ONE_ACCOUNT);
-        let report = gather(&paths);
+        let report = gather(&paths, &ItemIdCache::default());
         assert!(report.is_healthy(), "{}", render(&report));
         let text = render(&report);
         assert!(text.contains("work"));
@@ -198,7 +199,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::all_in(dir.path());
         write_config(&paths, FILE_BACKEND_ONE_ACCOUNT);
-        let report = gather(&paths);
+        let report = gather(&paths, &ItemIdCache::default());
         let text = render(&report);
         assert!(text.contains("warn secrets"), "{text}");
         assert!(text.contains(&paths.secrets_file().display().to_string()));
@@ -212,7 +213,7 @@ mod tests {
         let paths = Paths::all_in(dir.path());
         write_config(&paths, FILE_BACKEND_ONE_ACCOUNT);
         std::fs::create_dir_all(paths.db_file()).unwrap();
-        assert!(render(&gather(&paths)).contains("FAIL store"));
+        assert!(render(&gather(&paths, &ItemIdCache::default())).contains("FAIL store"));
     }
 
     #[test]
@@ -222,7 +223,7 @@ mod tests {
         write_config(&paths, FILE_BACKEND_ONE_ACCOUNT);
         std::fs::create_dir_all(paths.secrets_file().parent().unwrap()).unwrap();
         std::fs::write(paths.secrets_file(), "not json {").unwrap();
-        assert!(render(&gather(&paths)).contains("FAIL secrets"));
+        assert!(render(&gather(&paths, &ItemIdCache::default())).contains("FAIL secrets"));
     }
 
     #[test]
@@ -233,7 +234,7 @@ mod tests {
         let store = Store::open(&paths.db_file()).unwrap();
         store.conn().execute_batch("DROP TABLE accounts").unwrap();
         drop(store);
-        let text = render(&gather(&paths));
+        let text = render(&gather(&paths, &ItemIdCache::default()));
         assert!(text.contains("FAIL store"), "{text}");
     }
 }

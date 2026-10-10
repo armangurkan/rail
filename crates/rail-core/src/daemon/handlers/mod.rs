@@ -1,5 +1,6 @@
 //! Every operation the daemon serves.
 
+mod secrets;
 mod status;
 
 use super::registry::Registry;
@@ -13,5 +14,6 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::DaemonStop, _, _>(status::daemon_stop);
     registry.register::<op::Status, _, _>(status::status);
     registry.register::<op::AccountsList, _, _>(status::accounts_list);
+    registry.register::<op::SecretsConfigure, _, _>(secrets::configure);
     registry
 }

@@ -196,8 +196,47 @@ impl From<SecretError> for OpError {
                 message,
             ),
             SecretError::Encoding(text) => fixed("the stored token data is corrupt".to_string(), text),
+            SecretError::OnePasswordLocked(text) => fixed(
+                "1Password is not unlocked or not signed in".to_string(),
+                text,
+            )
+            .with_hint("unlock the 1Password app or run `op signin`, then try again"),
+            SecretError::OnePasswordTimeout => Self::new(
+                ErrorCode::Secrets,
+                class,
+                "1Password did not answer in time",
+            )
+            .with_hint("if 1Password is waiting for you to unlock it, unlock it and try again"),
+            SecretError::OnePasswordMissing { program, message } => fixed(
+                format!("cannot run the 1Password CLI {program:?}"),
+                message,
+            )
+            .with_hint("install the 1Password CLI (`op`), or set op_path under [onepassword] in config.toml"),
+            SecretError::OnePasswordUnsafe { path, reason } => fixed(
+                format!("refusing to run the 1Password CLI at {path}"),
+                reason,
+            )
+            .with_hint("fix op_path under [onepassword] in config.toml by hand"),
+            SecretError::OnePasswordNoItem(text) => {
+                fixed("1Password has no such item".to_string(), text)
+            }
+            SecretError::OnePassword(text) => {
+                fixed("1Password reported an error".to_string(), text)
+            }
         }
     }
+}
+
+/// Write `config.toml` (owner-only, atomically), mapping a failure to a config error. Every
+/// operation that edits the config goes through here.
+pub(crate) fn write_config_text(path: &std::path::Path, text: &str) -> Result<(), OpError> {
+    crate::paths::write_private_atomic(path, text.as_bytes()).map_err(|e| {
+        OpError::io(
+            ErrorCode::Config,
+            &format!("writing {}", path.display()),
+            &e,
+        )
+    })
 }
 
 /// SQLite's and the file system's own text goes into `detail`.

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{WrapErr, bail, eyre};
 use rail_core::auth::{
-    AuthError, SecretError, SecretStore, TokenSet, endpoints_for, http_client, open_secret_store,
-    run_auth_code_flow, unix_now,
+    AuthError, ItemIdCache, SecretError, SecretStore, TokenSet, endpoints_for, http_client,
+    open_secret_store, run_auth_code_flow, unix_now,
 };
 use rail_core::config::{self, AccountConfig, AccountKind, Config, ConfigError, SecretsBackend};
 use rail_core::paths::{Paths, write_private_atomic};
@@ -111,7 +111,8 @@ pub(crate) struct PendingAdd {
     pub(crate) account: AccountConfig,
     pub(crate) new_text: String,
     pub(crate) config_path: PathBuf,
-    pub(crate) backend: SecretsBackend,
+    /// The config the account is added to; it picks the token backend.
+    pub(crate) config: Config,
 }
 
 /// Order matters: everything that can be checked offline is checked before the
@@ -119,14 +120,14 @@ pub(crate) struct PendingAdd {
 /// account in config that `add` would then refuse as a duplicate.
 pub async fn add(paths: &Paths, new: NewAccount) -> color_eyre::Result<()> {
     let pending = prepare(paths, new)?;
-    let secrets = open_secret_store(pending.backend, paths);
+    let secrets = open_secret_store(&pending.config, paths, &ItemIdCache::default());
     probe_secrets(secrets.as_ref(), &pending.account.address)
         .wrap_err("secret storage is not usable")?;
     let tokens = login(&pending.account, open_in_browser)
         .await
         .wrap_err("login failed")?;
     persist(paths, secrets.as_ref(), &pending, &tokens)?;
-    warn_if_file_backend(paths, pending.backend);
+    warn_if_file_backend(paths, pending.config.general.secrets);
     let account = &pending.account;
     println!(
         "Added {} ({}) as \"{}\". Tokens stored in the {}.",
@@ -173,7 +174,7 @@ pub(crate) fn prepare(paths: &Paths, new: NewAccount) -> color_eyre::Result<Pend
         account,
         new_text,
         config_path,
-        backend: config.general.secrets,
+        config,
     })
 }
 
@@ -254,7 +255,7 @@ pub async fn relogin(paths: &Paths, who: &str) -> color_eyre::Result<()> {
             config_path.display()
         )
     })?;
-    let secrets = open_secret_store(config.general.secrets, paths);
+    let secrets = open_secret_store(&config, paths, &ItemIdCache::default());
     probe_secrets(secrets.as_ref(), &account.address).wrap_err("secret storage is not usable")?;
     let tokens = login(&account, open_in_browser)
         .await
@@ -273,7 +274,7 @@ pub async fn relogin(paths: &Paths, who: &str) -> color_eyre::Result<()> {
 
 pub fn list(paths: &Paths) -> color_eyre::Result<()> {
     let config = config::load(&paths.config_file())?;
-    let secrets = open_secret_store(config.general.secrets, paths);
+    let secrets = open_secret_store(&config, paths, &ItemIdCache::default());
     if config.accounts.is_empty() {
         println!("No accounts configured. Run `rail account add --help`.");
         return Ok(());
@@ -323,7 +324,7 @@ mod tests {
             account,
             new_text,
             config_path: paths.config_file(),
-            backend: SecretsBackend::Keyring,
+            config: Config::default(),
         }
     }
 
@@ -387,7 +388,7 @@ mod tests {
         let pending = prepare(&paths, new_account("Dana@Corp.com", None)).unwrap();
         assert_eq!(pending.account.name, "dana");
         assert_eq!(pending.account.address, "dana@corp.com");
-        assert_eq!(pending.backend, SecretsBackend::File);
+        assert_eq!(pending.config.general.secrets, SecretsBackend::File);
         let parsed = config::parse(&pending.new_text, &pending.config_path).unwrap();
         assert_eq!(parsed.accounts.len(), 2);
         let named = prepare(&paths, new_account("x@corp.com", Some("corp"))).unwrap();

@@ -17,6 +17,23 @@ pub struct Config {
     /// Free-form until the TUI phase defines the theme schema.
     #[serde(default)]
     pub theme: BTreeMap<String, toml::Value>,
+    /// Where `secrets = "1password"` keeps tokens, and how to run `op`.
+    #[serde(default)]
+    pub onepassword: Option<OnePasswordConfig>,
+}
+
+/// The `[onepassword]` table.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OnePasswordConfig {
+    /// The vault Rail keeps its items in.
+    pub vault: String,
+    /// The 1Password account, when several are signed in.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// The `op` binary; `op` on PATH when absent. Set by hand only.
+    #[serde(default)]
+    pub op_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -60,6 +77,20 @@ pub enum Layout {
 pub enum SecretsBackend {
     Keyring,
     File,
+    /// Items in a 1Password vault, through the `op` CLI.
+    #[serde(rename = "1password")]
+    OnePassword,
+}
+
+impl SecretsBackend {
+    /// The spelling in `config.toml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Keyring => "keyring",
+            Self::File => "file",
+            Self::OnePassword => "1password",
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, PartialEq)]

@@ -283,12 +283,41 @@ fn secret_store_text_is_only_ever_detail() {
             message: INJECTION.into(),
         },
         SecretError::Encoding(INJECTION.into()),
+        SecretError::OnePasswordLocked(INJECTION.into()),
+        SecretError::OnePasswordMissing {
+            program: "op".into(),
+            message: INJECTION.into(),
+        },
+        SecretError::OnePasswordUnsafe {
+            path: "/usr/bin/op".into(),
+            reason: INJECTION.into(),
+        },
+        SecretError::OnePasswordNoItem(INJECTION.into()),
+        SecretError::OnePassword(INJECTION.into()),
     ];
     for error in cases {
         let op: OpError = error.into();
         assert_eq!(op.code, ErrorCode::Secrets);
         assert_isolated(&op);
     }
+}
+
+#[test]
+fn a_locked_1password_says_to_unlock_it_in_fixed_text() {
+    use crate::auth::SecretError;
+    let op: OpError = SecretError::OnePasswordLocked(INJECTION.into()).into();
+    assert_eq!(op.class, crate::error::ErrorClass::Permanent);
+    assert!(op.message.contains("not unlocked or not signed in"));
+    assert!(op.hint.unwrap().contains("op signin"));
+}
+
+#[test]
+fn a_1password_timeout_is_transient_with_fixed_text() {
+    use crate::auth::SecretError;
+    let op: OpError = SecretError::OnePasswordTimeout.into();
+    assert_eq!(op.class, crate::error::ErrorClass::Transient);
+    assert_eq!(op.code, ErrorCode::Secrets);
+    assert!(op.detail.is_none());
 }
 
 #[test]

@@ -25,6 +25,7 @@ pub use daemon::{
     DaemonInfo, DaemonInfoRequest, DaemonStopRequest, DaemonStopResponse, HelloRequest,
     HelloResponse,
 };
+pub(crate) use error::write_config_text;
 pub use error::{ErrorCode, OpError, preset_file_message};
 pub use guide::{Audience, GuideInputs, GuideRequest, GuideResponse, GuideStep, StepKind};
 pub use op::{Operation, names};

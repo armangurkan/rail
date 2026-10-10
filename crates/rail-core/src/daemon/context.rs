@@ -1,11 +1,11 @@
 //! What every handler runs against: the paths, the shared HTTP client, the browser opener and
 //! the daemon's in-memory state.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use url::Url;
 
-use crate::auth::http_client;
+use crate::auth::{ItemIdCache, http_client};
 use crate::ops::OpError;
 use crate::paths::Paths;
 
@@ -20,6 +20,11 @@ pub struct DaemonContext {
     pub opener: Opener,
     /// A token endpoint used instead of the provider's (the binary's debug-only test hook).
     pub token_url: Option<String>,
+    /// 1Password item ids, kept for the daemon's lifetime.
+    pub(crate) op_ids: ItemIdCache,
+    /// Held by every handler that writes config.toml or moves tokens, so two front ends can
+    /// never interleave their writes.
+    config_lock: Mutex<()>,
 }
 
 impl DaemonContext {
@@ -29,6 +34,8 @@ impl DaemonContext {
             http: http_client()?,
             opener,
             token_url: None,
+            op_ids: ItemIdCache::default(),
+            config_lock: Mutex::new(()),
         })
     }
 
@@ -52,5 +59,21 @@ impl DaemonContext {
         tokio::task::spawn_blocking(work)
             .await
             .map_err(|e| OpError::internal(format!("blocking task failed: {e}")))?
+    }
+
+    /// `blocking`, holding the config lock for the whole of `work`.
+    pub(crate) async fn write_locked<T: Send + 'static>(
+        self: &Arc<Self>,
+        work: impl FnOnce(&DaemonContext) -> Result<T, OpError> + Send + 'static,
+    ) -> Result<T, OpError> {
+        let ctx = self.clone();
+        self.blocking(move || {
+            let _guard = ctx
+                .config_lock
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            work(&ctx)
+        })
+        .await
     }
 }

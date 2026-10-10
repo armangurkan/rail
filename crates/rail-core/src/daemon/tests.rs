@@ -13,10 +13,11 @@ use super::wire::{
     encode_frame, parse_message, read_frame,
 };
 use super::{Connector, ServeConfig, VERSION, peer_allowed};
-use crate::config::AiSend;
-use crate::ops::op::{AccountsList, DaemonInfoOp, Status};
+use crate::config::{AiSend, SecretsBackend};
+use crate::ops::op::{AccountsList, DaemonInfoOp, SecretsConfigure, Status};
 use crate::ops::{
-    AccountsListRequest, DaemonInfoRequest, ErrorCode, StatusRequest, TokenState, names,
+    AccountsListRequest, DaemonInfoRequest, ErrorCode, SecretsConfigureRequest, StatusRequest,
+    TokenState, names,
 };
 use crate::paths::Paths;
 use crate::test_support::{daemon_context, in_process_connector, start_daemon};
@@ -29,6 +30,7 @@ fn the_registry_serves_exactly_the_implemented_operations() {
         names::DAEMON_INFO,
         names::DAEMON_STOP,
         names::HELLO,
+        names::SECRETS_CONFIGURE,
         names::STATUS,
     ];
     assert_eq!(names, expected);
@@ -330,7 +332,16 @@ async fn a_stopped_daemon_leaves_no_socket_and_frees_its_lock() {
         .unwrap()
         .unwrap();
     assert!(!paths.socket_file().exists());
-    fs4::FileExt::try_lock(&held).expect("daemon.lock is free after the stop");
+    // A process forked by another test's `op` call carries the descriptor until its `exec`, so
+    // the lock may stay held for a few milliseconds after the daemon let go.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while fs4::FileExt::try_lock(&held).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "daemon.lock is free after the stop"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 #[tokio::test]
@@ -430,4 +441,57 @@ async fn a_silent_connection_is_closed_after_the_hello_deadline() {
         .unwrap()
         .unwrap();
     drop(silent);
+}
+
+#[tokio::test]
+async fn secrets_configure_through_the_daemon_switches_the_backend() {
+    use crate::auth::{FileSecretStore, SecretStore, TokenSet};
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = crate::test_support::FakeOp::install(tmp.path());
+    let config = format!(
+        "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"a\"\nkind = \"gmail\"\naddress = \"a@x.com\"\nclient_id = \"c\"\n{}",
+        fake.config_toml()
+    );
+    let paths = paths_with_config(&tmp, &config);
+    let tokens = TokenSet {
+        access_token: "access-a".into(),
+        refresh_token: "refresh-a".into(),
+        expires_at: 5,
+    };
+    FileSecretStore::new(paths.secrets_file())
+        .set_tokens("a@x.com", &tokens)
+        .unwrap();
+    let (connector, _) = in_process_connector(&paths);
+    let client = connector.connect().await.unwrap();
+    let request = SecretsConfigureRequest {
+        backend: SecretsBackend::OnePassword,
+        vault: Some("Rail".into()),
+        op_account: None,
+        migrate: true,
+    };
+    let done = client.call::<SecretsConfigure>(&request).await.unwrap();
+    assert_eq!(done.moved, ["a@x.com"]);
+    let listed = client
+        .call::<AccountsList>(&AccountsListRequest {})
+        .await
+        .unwrap();
+    assert_eq!(listed.accounts[0].tokens, TokenState::Present);
+    assert!(!fake.argv().contains("access-a"));
+}
+
+#[tokio::test]
+async fn bind_waits_out_a_lock_held_for_a_moment() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    std::fs::create_dir_all(&paths.runtime_dir).unwrap();
+    let held = std::fs::File::create(paths.daemon_lock_file()).unwrap();
+    fs4::FileExt::try_lock(&held).unwrap();
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        drop(held);
+    });
+    let (ctx, _) = daemon_context(&paths);
+    let server = super::Server::bind(ctx, ServeConfig::default()).await;
+    release.await.unwrap();
+    assert!(server.is_ok(), "a lock held for 80ms is not another daemon");
 }

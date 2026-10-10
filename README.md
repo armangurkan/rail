@@ -315,7 +315,7 @@ Tokens are never written to `config.toml`.
 | Config | `~/.config/rail/config.toml` |
 | Presets | `~/.config/rail/presets/*.toml`, `/etc/rail/presets/*.toml` |
 | Store | `~/.local/share/rail/rail.db` |
-| Tokens | OS keyring (service `rail`), or `~/.local/share/rail/secrets.json` with `secrets = "file"` |
+| Tokens | OS keyring (service `rail`), `~/.local/share/rail/secrets.json` with `secrets = "file"`, or 1Password items with `secrets = "1password"` |
 | Logs | `~/.local/state/rail/rail.log` |
 
 macOS uses the platform directories under `~/Library/Application Support/rail` instead. Override any
@@ -329,6 +329,32 @@ secrets = "file"
 ```
 
 Files that hold mail or credentials are created owner-only and written atomically.
+
+### Tokens in 1Password
+
+With the [1Password CLI](https://developer.1password.com/docs/cli/) (`op`, version 2) installed and
+signed in, Rail can keep tokens in a vault instead of the OS keyring:
+
+```toml
+[general]
+secrets = "1password"
+
+[onepassword]
+vault = "Rail"                    # required
+# account = "my.1password.com"    # when several 1Password accounts are signed in
+# op_path = "/usr/bin/op"         # default: op on PATH
+```
+
+Rail keeps one item per mail account in that vault, titled `Rail: <address>` and tagged `rail`,
+with the access and refresh tokens in concealed fields. Values reach `op` only through a JSON
+template on its standard input, never as command-line arguments (which other processes can read).
+Each `op` call may take up to 30 seconds, long enough for the 1Password app's unlock prompt. When
+1Password is locked or `op` is not signed in, Rail says so and asks you to unlock the app or run
+`op signin`; `rail doctor` checks this with `op whoami`. Rail refuses an `op_path` that is
+relative, not an executable file, owned by another user, or writable by anyone but its owner. `op_path`
+is only ever read from `config.toml`; no daemon request can set it. The daemon's `secrets.configure`
+operation switches backends: tokens are copied to the new backend, read back to verify, and only
+then are the old copies deleted, so a failure part way leaves the old copies in place.
 
 ## Project layout
 

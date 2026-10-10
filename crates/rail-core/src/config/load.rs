@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::model::Config;
+use super::model::{Config, SecretsBackend};
 use crate::error::ErrorClass;
 
 const MIN_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -52,6 +52,24 @@ pub fn load(path: &Path) -> Result<Config, ConfigError> {
         }
     };
     parse(&text, path)
+}
+
+/// The config text and its parsed value; a missing file counts as empty. For edits that
+/// create the file, such as adding the first account.
+pub fn load_text_or_empty(path: &Path) -> Result<(String, Config), ConfigError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let config = parse(&text, path)?;
+            Ok((text, config))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok((String::new(), Config::default()))
+        }
+        Err(source) => Err(ConfigError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// Parse and validate config text. `path` is only used in error messages.
@@ -110,6 +128,20 @@ fn validate(config: &Config) -> Result<(), String> {
     }
     if config.general.poll_interval < MIN_POLL_INTERVAL {
         return Err("general.poll_interval must be at least 5s".to_string());
+    }
+    validate_onepassword(config)
+}
+
+fn validate_onepassword(config: &Config) -> Result<(), String> {
+    let vault = config.onepassword.as_ref().map(|o| o.vault.trim());
+    if config.general.secrets == SecretsBackend::OnePassword && vault.is_none_or(str::is_empty) {
+        return Err(
+            "secrets = \"1password\" needs an [onepassword] table with vault = \"<vault name>\""
+                .to_string(),
+        );
+    }
+    if vault.is_some_and(|v| v.contains('/')) {
+        return Err("onepassword.vault must not contain '/'".to_string());
     }
     Ok(())
 }
@@ -255,6 +287,44 @@ client_id = "2"
         assert!(matches!(err, ConfigError::Missing { .. }));
         assert!(err.to_string().contains("rail account add"), "{err}");
         assert!(err.to_string().contains("rail setup"), "{err}");
+    }
+
+    #[test]
+    fn parses_the_onepassword_table() {
+        let text = "[general]\nsecrets = \"1password\"\n\n[onepassword]\nvault = \"Rail\"\naccount = \"my.1password.com\"\nop_path = \"/usr/bin/op\"\n";
+        let c = p(text).unwrap();
+        assert_eq!(c.general.secrets, SecretsBackend::OnePassword);
+        let op = c.onepassword.unwrap();
+        assert_eq!(op.vault, "Rail");
+        assert_eq!(op.account.as_deref(), Some("my.1password.com"));
+        assert_eq!(op.op_path, Some(PathBuf::from("/usr/bin/op")));
+        assert_eq!(SecretsBackend::OnePassword.as_str(), "1password");
+    }
+
+    #[test]
+    fn the_onepassword_backend_needs_a_vault() {
+        let err = p("[general]\nsecrets = \"1password\"\n").unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        assert!(err.to_string().contains("[onepassword]"), "{err}");
+        let empty = p("[general]\nsecrets = \"1password\"\n[onepassword]\nvault = \" \"\n");
+        assert!(empty.is_err());
+        let slash = p("[onepassword]\nvault = \"a/b\"\n").unwrap_err();
+        assert!(slash.to_string().contains("'/'"), "{slash}");
+        let typo = p("[onepassword]\nvalt = \"Rail\"\n").unwrap_err();
+        assert!(matches!(typo, ConfigError::Parse { line: 2, .. }), "{typo}");
+    }
+
+    #[test]
+    fn load_text_or_empty_treats_a_missing_file_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let (text, config) = load_text_or_empty(&path).unwrap();
+        assert!(text.is_empty());
+        assert_eq!(config, Config::default());
+        std::fs::write(&path, "[general]\nsecrets = \"file\"\n").unwrap();
+        let (text, config) = load_text_or_empty(&path).unwrap();
+        assert!(text.contains("file"));
+        assert_eq!(config.general.secrets, SecretsBackend::File);
     }
 
     #[test]
