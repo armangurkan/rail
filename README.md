@@ -74,12 +74,17 @@ Keys:
 | `Esc` | Go back one step. |
 | `F1` | Open the provider portal, or the preset's help link. |
 | `o` | On the Instructions step, open the provider portal in your browser. |
-| `r` / `c` | When an error is shown: retry, or copy the admin-consent URL. |
+| `r` / `c` | `r` retries when an error is shown. `c` copies the admin-consent URL shown with an error, or the login URL on the Login step. |
 | `q` | Quit, except while typing in a text field. |
 | `Ctrl-C` | Quit from anywhere. |
 
-While an account is being saved the status line says "Saving… please wait" and `q`, `Esc` and
-`Ctrl-C` wait until the save finishes, so a half-written account never happens.
+While an account is being saved the status line says "Saving… please wait". `q` and `Esc` are
+ignored, and only `Ctrl-C` is deferred: it quits once the save finishes, so a half-written account
+never happens.
+
+`c` copies with the terminal clipboard escape sequence (OSC 52), which some terminals ignore without
+saying so. If the wizard ends before it finishes, Rail prints the last consent and login URLs it
+showed once the terminal is back, so you can always copy them from there.
 
 When the wizard exits, the status is 0 if at least one account was saved (also when you quit after a
 save; Rail then prints "setup interrupted; saved: <names>"), and 1 with "setup cancelled; nothing was
@@ -239,8 +244,9 @@ files.
 
    The wizard lists the presets it finds in those two directories. A user can also type a preset's
    path or an `https://` URL on the preset step. Rail fetches a URL with the same timeouts as its
-   logins, refuses plain `http://` (anyone on the network could alter the file), refuses bodies over
-   64 KiB, and never saves the fetched file.
+   logins, refuses plain `http://` (anyone on the network could alter the file), refuses redirects
+   (an intranet URL behind single sign-on fails with "HTTP 302"; use the file instead), refuses
+   bodies over 64 KiB, and never saves the fetched file.
 
 For Gmail, register a Desktop app client as in [Gmail / Google Workspace](#gmail--google-workspace)
 and include its `client_secret`.
