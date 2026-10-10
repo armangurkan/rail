@@ -26,6 +26,8 @@ pub struct DoctorReport {
     /// Set when the file backend is in use, so `render` can warn about it.
     pub secrets_file: Option<PathBuf>,
     pub secrets_error: Option<String>,
+    /// False when the probe was skipped because the config did not load.
+    pub secrets_checked: bool,
     pub accounts: Vec<AccountStatus>,
 }
 
@@ -71,6 +73,7 @@ pub fn gather(paths: &Paths) -> DoctorReport {
         secrets_backend: secrets.backend_name(),
         secrets_file: matches!(backend, SecretsBackend::File).then(|| paths.secrets_file()),
         secrets_error: None,
+        secrets_checked: false,
         accounts: Vec::new(),
     };
     let rows = check_store(&mut report);
@@ -145,6 +148,7 @@ fn check_accounts(
 /// Probes secret store access once, so a missing Secret Service shows up even
 /// with zero accounts.
 fn check_secrets(report: &mut DoctorReport, secrets: &dyn SecretStore) {
+    report.secrets_checked = true;
     if let Err(e) = secrets.get_tokens(PROBE_ADDRESS) {
         report.secrets_error.get_or_insert_with(|| e.to_string());
     }
@@ -155,6 +159,7 @@ fn mark(ok: bool) -> &'static str {
 }
 
 const WARN: &str = "warn";
+const SKIP: &str = "skip";
 
 pub fn render(report: &DoctorReport) -> String {
     let mut out = String::new();
@@ -200,6 +205,10 @@ fn render_store(out: &mut String, report: &DoctorReport) {
 fn render_secrets(out: &mut String, report: &DoctorReport) {
     let backend = report.secrets_backend;
     let _ = match (&report.secrets_error, &report.secrets_file) {
+        _ if !report.secrets_checked && report.secrets_error.is_none() => writeln!(
+            out,
+            "{SKIP} secrets  {backend} (not checked: config not loaded)"
+        ),
         (Some(e), _) => writeln!(out, "{} secrets  {backend}: {e}", mark(false)),
         (None, Some(file)) => writeln!(
             out,
@@ -253,6 +262,8 @@ mod tests {
         let text = render(&report);
         assert!(text.contains("rail account add"), "{text}");
         assert!(text.contains(&paths.config_file().display().to_string()));
+        assert!(text.contains("skip secrets"), "{text}");
+        assert!(!text.contains("ok   secrets"), "{text}");
     }
 
     #[test]
@@ -262,7 +273,10 @@ mod tests {
         write_config(&paths, "[general]\nnope = 1\n");
         let report = gather(&paths);
         assert!(!report.is_healthy());
-        assert!(render(&report).contains("config.toml:2:"));
+        let text = render(&report);
+        assert!(text.contains("config.toml:2:"));
+        assert!(text.contains("skip secrets"), "{text}");
+        assert!(!text.contains("ok   secrets"), "{text}");
     }
 
     #[test]

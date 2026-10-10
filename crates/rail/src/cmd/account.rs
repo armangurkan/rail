@@ -91,13 +91,18 @@ pub async fn add(paths: &Paths, args: AddArgs) -> color_eyre::Result<()> {
     // Pure and known up front: reject a bad or duplicate account before any login.
     let new_text = config::append_account(&text, &config_path, &account)?;
 
+    // Read-only reachability probe, so a broken secret store fails before the browser opens.
+    let secrets = open_secret_store(config.general.secrets, paths);
+    secrets
+        .get_tokens(&account.address)
+        .map_err(|e| color_eyre::eyre::eyre!("secret storage is not usable: {e}"))?;
+
     let endpoints = endpoints_for(account.kind, account.tenant.as_deref());
     let http = http_client()?;
     let tokens = run_auth_code_flow(&account, &endpoints, &http, open_in_browser, unix_now())
         .await
         .wrap_err("login failed")?;
 
-    let secrets = open_secret_store(config.general.secrets, paths);
     secrets
         .set_tokens(&account.address, &tokens)
         .wrap_err("storing tokens")?;

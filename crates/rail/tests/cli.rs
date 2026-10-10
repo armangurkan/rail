@@ -116,9 +116,44 @@ fn doctor_exits_nonzero_without_config() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("FAIL config"), "got {stdout:?}");
     assert!(stdout.contains("rail account add"), "got {stdout:?}");
+    assert!(stdout.contains("no config file at"), "got {stdout:?}");
+    assert!(!stdout.contains("ok   secrets"), "got {stdout:?}");
     assert!(stdout.contains("ok   store"), "got {stdout:?}");
     assert!(
         dir.path().join("state").join("rail.log").is_file(),
         "log file created"
+    );
+}
+
+#[test]
+fn account_add_fails_before_the_browser_when_secrets_file_is_corrupt() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_dir = dir.path().join("config");
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let config = "[general]\nsecrets = \"file\"\n";
+    std::fs::write(config_dir.join("config.toml"), config).unwrap();
+    std::fs::write(data_dir.join("secrets.json"), "{not json").unwrap();
+    let out = rail_cmd(&dir)
+        .args([
+            "account",
+            "add",
+            "gmail",
+            "--address",
+            "new@example.com",
+            "--client-id",
+            "x",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("corrupt"), "got {stderr:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("http"), "got {stdout:?}");
+    assert_eq!(
+        std::fs::read_to_string(config_dir.join("config.toml")).unwrap(),
+        config
     );
 }
