@@ -33,7 +33,9 @@ Rail ships no OAuth client of its own. Create one per provider once, then log in
 
 1. In Azure Portal, **App registrations** > New. Supported account types: pick what matches your
    mailbox (work/school, personal, or both). Redirect URI: platform **Mobile and desktop applications**,
-   value `http://localhost` (Rail uses `http://127.0.0.1:<random port>`; Azure accepts any loopback port).
+   value `http://127.0.0.1`. Rail listens on `http://127.0.0.1:<random port>`, and Azure matches any
+   port for a loopback redirect. If the portal refuses an `http://127.0.0.1` URI, add it by editing the
+   app's **Manifest** (`replyUrlsWithType`) instead.
 2. Under **Authentication**, enable "Allow public client flows".
 3. API permissions: Microsoft Graph delegated `Mail.ReadWrite`, `Mail.Send`, `User.Read`, `offline_access`.
 4. Log in:
