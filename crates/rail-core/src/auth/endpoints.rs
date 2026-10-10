@@ -76,7 +76,7 @@ pub(crate) fn is_concrete_tenant(tenant: &str) -> bool {
 /// The tenant goes in as one escaped path segment, so a hostile value cannot change the host
 /// or the path. The URL carries no secret.
 ///
-/// Precondition: `tenant` is concrete (see [`is_concrete_tenant`]); `run_admin_consent`
+/// Precondition: `tenant` is concrete (see `is_concrete_tenant`); `run_admin_consent`
 /// enforces it before calling this.
 pub fn admin_consent_url(client_id: &str, tenant: &str, redirect_uri: &str, state: &str) -> Url {
     debug_assert!(
