@@ -9,6 +9,7 @@ use rail_core::onboarding::Wizard;
 use rail_core::paths::Paths;
 use url::Url;
 
+use crate::cmd::account::report as report_error;
 use crate::tui::effects::EffectContext;
 use crate::tui::run::run_app;
 use crate::tui::screens::wizard::WizardScreen;
@@ -36,11 +37,14 @@ pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre
     }
     // A broken config.toml fails here, with its line number, before the terminal changes.
     let (_, config) = load_text_or_empty(&paths.config_file())?;
-    let screen = WizardScreen::new(
-        Wizard::new(Some(config), kind_hint),
-        EffectContext::new(paths.clone()),
-    );
-    let screen = run_app(screen).await?;
+    // The daemon starts (or fails, with its reason) before the terminal changes.
+    let ctx = EffectContext::new(paths.clone());
+    ctx.daemon.client().await.map_err(report_error)?;
+    let screen = WizardScreen::new(Wizard::new(Some(config), kind_hint), ctx.clone());
+    let screen = run_app(screen).await;
+    // A quit mid-login leaves nothing waiting in the daemon.
+    ctx.settle().await;
+    let screen = screen?;
     Ok(report(
         screen.added(),
         screen.finished(),
@@ -55,11 +59,11 @@ struct Outcome {
     stderr: String,
 }
 
-/// A save is never half done at this point: the wizard holds Ctrl-C while saving. When the
-/// wizard did not finish, the consent URL it last showed is printed, so a non-administrator can
+/// A save is never half done at this point: the daemon never interrupts one. When the wizard
+/// did not finish, the consent URL it last showed is printed, so a non-administrator can
 /// forward it and a terminal that ignores the clipboard escape still has a copy path. The login
-/// URL is never printed: it only works through the loopback listener of this process, which has
-/// closed by then. The consent URL carries no secret.
+/// URL is never printed: it only works through the daemon's loopback listener for this login,
+/// which the quit has cancelled. The consent URL carries no secret.
 fn report(added: &[String], finished: bool, consent: Option<&Url>) -> ExitCode {
     let outcome = outcome(added, finished, consent);
     print!("{}", outcome.stdout);

@@ -155,7 +155,7 @@ async fn wait_or_cancel(
 }
 
 /// The longest a Ctrl-C waits for the daemon to confirm the cancel.
-const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Send `pending.cancel`, bounded: a daemon that does not answer must not trap the user.
 async fn cancel(client: &DaemonClient, id: &PendingId) -> color_eyre::Result<WaitResponse> {

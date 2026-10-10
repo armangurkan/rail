@@ -409,7 +409,6 @@ fn text_fields(body: &Body) -> Vec<FieldView> {
 mod tests {
     use super::*;
     use std::io;
-    use std::sync::Arc;
     use std::time::Duration;
 
     use crossterm::event::Event as TermEvent;
@@ -422,11 +421,12 @@ mod tests {
     use tokio::sync::mpsc;
     use url::Url;
 
+    use crate::tui::app::TaskSink;
     use crate::tui::app::{App, update};
-    use crate::tui::effects::Opener;
     use crate::tui::run::run_loop;
     use crate::tui::test_util::{
-        RecordingClipboard, ctrl, feed, gmail_own_app_keys, key, press, type_text, wizard_screen,
+        RecordingClipboard, ctrl, daemon_ctx, feed, gmail_own_app_keys, key, press,
+        redirect_when_asked, token_server, type_text, wizard_screen,
     };
 
     fn drive(screen: &mut WizardScreen, keys: Vec<KeyEvent>) -> Vec<Effect> {
@@ -680,17 +680,9 @@ mod tests {
         std::fs::create_dir_all(&paths.config_dir).unwrap();
         let config_text = "[general]\nsecrets = \"file\"\n";
         std::fs::write(paths.config_file(), config_text).unwrap();
-        let (url_tx, mut url_rx) = mpsc::unbounded_channel::<Url>();
-        let opener: Opener = Arc::new(move |url: &Url| {
-            let _ = url_tx.send(url.clone());
-            Ok(())
-        });
-        let ctx = EffectContext {
-            paths: paths.clone(),
-            opener,
-        };
+        let (ctx, mut url_rx) = daemon_ctx(&paths, None).await;
         let config = rail_core::config::load(&paths.config_file()).unwrap();
-        let screen = WizardScreen::new(Wizard::new(Some(config), None), ctx);
+        let screen = WizardScreen::new(Wizard::new(Some(config), None), ctx.clone());
         let mut app = App::new(screen, Box::new(RecordingClipboard::default()));
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         let (key_tx, mut key_rx) = mpsc::unbounded_channel::<io::Result<TermEvent>>();
@@ -709,6 +701,7 @@ mod tests {
         };
         let (result, _keys) = tokio::join!(run_loop(&mut terminal, &mut app, events), driver);
         result.unwrap();
+        ctx.settle().await;
         assert!(app.quit);
         assert!(app.screen.added().is_empty());
         assert_eq!(
@@ -723,5 +716,69 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        let client = ctx.daemon.client().await.unwrap();
+        let info = client
+            .call::<rail_core::ops::op::DaemonInfoOp>(&rail_core::ops::DaemonInfoRequest {})
+            .await
+            .unwrap();
+        assert_eq!(
+            info.pending, 0,
+            "the quit cancelled the login in the daemon"
+        );
+    }
+
+    /// Run every spawned job to its end and feed what it reports back to the screen, until
+    /// nothing is left to run. Returns every event the screen received.
+    async fn settle_effects(screen: &mut WizardScreen, mut effects: Vec<Effect>) -> Vec<Event> {
+        let mut seen = Vec::new();
+        while let Some(effect) = effects.pop() {
+            let Effect::Spawn(job) = effect else {
+                continue;
+            };
+            let (tx, mut results) = mpsc::unbounded_channel();
+            job(TaskSink::new(tx, 0)).await;
+            while let Ok((_, result)) = results.try_recv() {
+                if let TaskResult::Wizard(event) = &result {
+                    seen.push(event.clone());
+                }
+                effects.extend(screen.update(Msg::Task(result)));
+            }
+        }
+        seen
+    }
+
+    #[tokio::test]
+    async fn a_completed_login_leaves_no_token_or_code_in_the_tui() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(tmp.path());
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(paths.config_file(), "[general]\nsecrets = \"file\"\n").unwrap();
+        let server = token_server("ACCESS-only-in-the-daemon", "REFRESH-only-in-the-daemon").await;
+        let (ctx, urls) = daemon_ctx(&paths, Some(format!("{}/token", server.uri()))).await;
+        let config = rail_core::config::load(&paths.config_file()).unwrap();
+        let mut screen = WizardScreen::new(Wizard::new(Some(config), None), ctx.clone());
+        let browser = redirect_when_asked(urls);
+        let effects = drive(&mut screen, gmail_own_app_keys("me@example.com"));
+        let events = settle_effects(&mut screen, effects).await;
+        browser.await.unwrap();
+        assert_eq!(screen.wizard.step(), Step::Done, "{events:?}");
+        assert_eq!(screen.added(), ["me"]);
+        let mut texts = vec![format!("{events:?}"), format!("{:?}", screen.wizard)];
+        for event in &events {
+            if let Event::LoginFinished(Ok(tokens)) = event {
+                texts.push(tokens.access_token.clone());
+                texts.push(tokens.refresh_token.clone());
+            }
+        }
+        for text in &texts {
+            for secret in ["ACCESS-only", "REFRESH-only", "c0de"] {
+                assert!(!text.contains(secret), "{secret} reached the TUI: {text}");
+            }
+        }
+        let stored = FileSecretStore::new(paths.secrets_file());
+        let tokens = rail_core::auth::SecretStore::get_tokens(&stored, "me@example.com")
+            .unwrap()
+            .unwrap();
+        assert_eq!(tokens.access_token, "ACCESS-only-in-the-daemon");
     }
 }

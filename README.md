@@ -84,7 +84,10 @@ Keys:
 
 While an account is being saved the status line says "Saving… please wait". `q` and `Esc` are
 ignored, and only `Ctrl-C` is deferred: it quits once the save finishes, so a half-written account
-never happens.
+never happens. `Esc` or `Ctrl-C` while the wizard waits for the browser cancels that login (or admin
+consent) in the [background daemon](#the-background-daemon), so nothing is left waiting there; if
+the browser had already handed the login back, the daemon finishes saving the account (a save is
+never interrupted) and `rail account list` shows it.
 
 `c` copies with the terminal clipboard escape sequence (OSC 52), which some terminals ignore without
 saying so; if nothing was copied, select the URL on screen. The login URL only works while Rail is
@@ -412,9 +415,13 @@ Files that hold mail or credentials are created owner-only and written atomicall
 
 ### The background daemon
 
-The `rail account` commands and `rail doctor` talk to one background process, the Rail daemon,
-which runs every operation, so two of them running at once never race on the store, the config
-file or a login. (The setup wizard still runs its steps itself for now.)
+The setup wizard, the `rail account` commands and `rail doctor` talk to one background process,
+the Rail daemon, which runs every operation, so two of them running at once never race on the
+store, the config file or a login. The wizard starts (or reaches) the daemon before it takes over
+the terminal, so a daemon that cannot start is reported as a plain error. The daemon opens the
+login and consent pages, receives the tokens and saves the account; tokens, client secrets and
+authorization codes never pass through the wizard. A path you type in the wizard (a preset file)
+is resolved against the directory you ran `rail setup` in before it is sent.
 You never start it yourself: the first command that needs it starts `rail daemon run` in the
 background, and it exits after ten minutes with no client connected and no login waiting. Its
 logs go to `rail.log`; it never writes to the terminal.
@@ -441,8 +448,8 @@ its version differs, in which case it is replaced as usual); stop that daemon wi
 started it, or use the same `RAIL_*` settings. Give each setup its own `RAIL_RUNTIME_DIR` to run
 two side by side.
 
-When a command fails, it prints Rail's own message and, on a line starting `hint:`, what to do
-next. Words from outside Rail (a provider's error description, the system's error text) come on a
+When a command or a step of the setup wizard fails, it shows Rail's own message and, on a line
+starting `hint:`, what to do next. Words from outside Rail (a provider's error description, the system's error text) come on a
 line of their own, quoted and with control characters escaped. No error ever shows a token, a
 client secret or an authorization code.
 

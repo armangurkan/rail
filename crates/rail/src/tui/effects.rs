@@ -1,43 +1,192 @@
-//! Runs the wizard's `Action`s with the code the flag commands already use, and reports
-//! each outcome back as a wizard `Event`. Synchronous file and keyring work runs on the
-//! blocking pool, so the event loop never waits on I/O.
+//! Runs the wizard's `Action`s as daemon requests and reports each outcome back as a wizard
+//! `Event`. The daemon runs the login and saves the account when it completes; the wizard's
+//! state machine is unchanged, so its `Persist` step only collects what the daemon saved.
 
+use std::collections::HashSet;
 use std::io;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
-use rail_core::accounts;
-use rail_core::auth::{ItemIdCache, TokenSet, http_client, run_admin_consent};
+use rail_core::auth::TokenSet;
 use rail_core::config::AccountConfig;
+use rail_core::daemon::{Connector, DaemonClient};
 use rail_core::error::ErrorClass;
-use rail_core::onboarding::{
-    Action, DoneReport, Event, Failure, PresetEntry, discover_presets, fetch_preset, read_preset,
+use rail_core::onboarding::{Action, DoneReport, Event, Failure, Preset, PresetEntry};
+use rail_core::ops::op::{
+    AccountAddBegin, ConsentBegin, Operation, PendingCancel, PendingWait, PresetFetch, PresetsList,
 };
-use rail_core::ops::{AccountAddRequest, ClientSecretInput, ErrorCode, OpError};
+use rail_core::ops::{
+    AccountAddRequest, BeginResponse, CancelRequest, ClientSecretInput, ConsentBeginRequest,
+    ErrorCode, OpError, PendingId, PendingOutcome, PendingState, PresetFetchRequest, PresetSummary,
+    PresetsListRequest, SavedAccount, WaitRequest, WaitResponse,
+};
 use rail_core::paths::Paths;
+use tokio::sync::Notify;
 use url::Url;
 
-use crate::browser;
-use crate::test_hooks;
+use crate::cmd::account::{CANCEL_TIMEOUT, error_text};
 use crate::tui::app::{Effect, TaskResult, TaskSink};
+use crate::{browser, daemon_link};
 
 /// Starts the browser on a URL. Injected so tests never start a real one.
 pub type Opener = Arc<dyn Fn(&Url) -> io::Result<()> + Send + Sync>;
 
-/// What the effects need from the outside world: where rail keeps its files, and how to
-/// open a URL in the browser.
+/// Stands in for a preset's client secret in the wizard's draft. The daemon never returns the
+/// secret; the login then names the preset as the source, and the daemon reads it itself.
+const PRESET_SECRET: &str = "rail-preset-secret:";
+
+/// The logins and consents this process has begun in the daemon and not seen finish.
+#[derive(Default)]
+struct Outstanding {
+    ids: HashSet<PendingId>,
+    /// Begin requests sent whose answer (and so whose id) has not arrived yet.
+    begins: usize,
+}
+
+/// What the effects need from the outside world: how to open a portal page, and the daemon.
 #[derive(Clone)]
 pub struct EffectContext {
-    pub paths: Paths,
+    /// Portal and help pages only; the daemon opens login pages.
     pub opener: Opener,
+    pub daemon: Connector,
+    /// What is in flight in the daemon, so a cancel or a quit can end it there.
+    outstanding: Arc<Mutex<Outstanding>>,
+    /// Told whenever a begin request is answered.
+    answered: Arc<Notify>,
+    /// What the daemon saved when the last login finished, for the wizard's `Persist` step.
+    saved: Arc<Mutex<Option<SavedAccount>>>,
+    /// The longest `settle` waits for the daemon.
+    cancel_timeout: Duration,
 }
 
 impl EffectContext {
-    /// The real context: the user's paths and the platform browser.
+    /// The real context: the platform browser and the user's daemon.
     pub fn new(paths: Paths) -> Self {
+        Self::with(Arc::new(browser::launch), daemon_link::connector(&paths))
+    }
+
+    pub fn with(opener: Opener, daemon: Connector) -> Self {
         Self {
-            paths,
-            opener: Arc::new(browser::launch),
+            opener,
+            daemon,
+            outstanding: Arc::default(),
+            answered: Arc::default(),
+            saved: Arc::default(),
+            cancel_timeout: CANCEL_TIMEOUT,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_cancel_timeout(mut self, timeout: Duration) -> Self {
+        self.cancel_timeout = timeout;
+        self
+    }
+
+    /// Cancel every login or consent still in flight, waiting first for begins the daemon has
+    /// not answered yet. Called once the event loop ends, so quitting mid-login leaves nothing
+    /// waiting in the daemon. Bounded: a daemon that does not answer cannot hold the exit.
+    pub async fn settle(&self) {
+        if tokio::time::timeout(self.cancel_timeout, self.cancel_outstanding())
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                "the daemon did not confirm the cancel in time; a login may still be pending"
+            );
+        }
+    }
+
+    async fn cancel_outstanding(&self) {
+        self.begins_answered().await;
+        let ids: Vec<PendingId> = lock(&self.outstanding).ids.iter().cloned().collect();
+        for id in ids {
+            cancel_in_daemon(self, id).await;
+        }
+    }
+
+    async fn begins_answered(&self) {
+        loop {
+            let answered = self.answered.notified();
+            tokio::pin!(answered);
+            answered.as_mut().enable();
+            if lock(&self.outstanding).begins == 0 {
+                return;
+            }
+            answered.await;
+        }
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Ask the daemon to cancel `id`, then forget it. A daemon that cannot be reached has nothing
+/// left to cancel for this process; an id the daemon no longer knows has already finished.
+async fn cancel_in_daemon(ctx: &EffectContext, id: PendingId) {
+    match ctx.daemon.client().await {
+        Ok(client) => {
+            let request = CancelRequest { id: id.clone() };
+            if let Err(e) = client.call::<PendingCancel>(&request).await {
+                tracing::debug!(id = %id, error = %e.message, "the cancel was refused");
+            }
+        }
+        Err(e) => tracing::debug!(id = %id, error = %e.message, "no daemon to cancel in"),
+    }
+    lock(&ctx.outstanding).ids.remove(&id);
+}
+
+/// Counts a begin request as unanswered while it lives.
+struct Answering(EffectContext);
+
+impl Answering {
+    fn new(ctx: &EffectContext) -> Self {
+        lock(&ctx.outstanding).begins += 1;
+        Self(ctx.clone())
+    }
+}
+
+impl Drop for Answering {
+    fn drop(&mut self) {
+        lock(&self.0.outstanding).begins -= 1;
+        self.0.answered.notify_waiters();
+    }
+}
+
+/// Marks a begun operation as in flight. Dropped before `disarm` (the job was aborted by a
+/// cancel or a quit), it asks the daemon to cancel the operation; `settle` cancels it too if
+/// that cannot finish before the process exits.
+struct InFlight {
+    ctx: EffectContext,
+    id: Option<PendingId>,
+}
+
+impl InFlight {
+    fn new(ctx: &EffectContext, id: &PendingId) -> Self {
+        lock(&ctx.outstanding).ids.insert(id.clone());
+        Self {
+            ctx: ctx.clone(),
+            id: Some(id.clone()),
+        }
+    }
+
+    /// The operation finished: nothing to cancel.
+    fn disarm(mut self) {
+        if let Some(id) = self.id.take() {
+            lock(&self.ctx.outstanding).ids.remove(&id);
+        }
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let Some(id) = self.id.take() else {
+            return;
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let ctx = self.ctx.clone();
+            runtime.spawn(async move { cancel_in_daemon(&ctx, id).await });
         }
     }
 }
@@ -51,16 +200,14 @@ pub fn to_effect(action: Action, ctx: &EffectContext) -> Effect {
         Action::CancelPending => Effect::CancelAll,
         Action::Copy(text) => Effect::Copy(text),
         Action::OpenUrl(url) => job(move |_| async move { open(&ctx.opener, &url) }),
-        Action::LoadPresets => job(move |sink| load_presets(ctx.paths, sink)),
-        Action::ReadPreset(path) => job(move |sink| read_preset_file(path, sink)),
-        Action::FetchPreset(url) => job(move |sink| fetch(url, sink)),
+        Action::LoadPresets => job(move |sink| load_presets(ctx, sink)),
+        Action::ReadPreset(path) => job(move |sink| fetch(ctx, absolute(&path), sink)),
+        Action::FetchPreset(url) => job(move |sink| fetch(ctx, url, sink)),
         Action::RunAdminConsent { client_id, tenant } => {
-            job(move |sink| admin_consent(ctx.opener, client_id, tenant, sink))
+            job(move |sink| admin_consent(ctx, client_id, tenant, sink))
         }
         Action::RunLogin(account) => job(move |sink| login(ctx, account, sink)),
-        Action::Persist { account, tokens } => {
-            job(move |sink| persist(ctx.paths, account, tokens, sink))
-        }
+        Action::Persist { .. } => job(move |sink| async move { persisted(&ctx, &sink) }),
     }
 }
 
@@ -84,21 +231,67 @@ fn open(opener: &Opener, url: &Url) {
     }
 }
 
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, Failure> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|e| Failure::new(format!("internal error: {e}"), ErrorClass::Permanent))
+/// A path typed in the wizard, made absolute against this process's working directory: the
+/// daemon runs in `/` and refuses relative paths. Left as typed if there is no working
+/// directory, so the daemon's refusal explains it.
+fn absolute(path: &Path) -> String {
+    std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
 }
 
-async fn load_presets(paths: Paths, sink: TaskSink) {
-    let entries = match blocking(move || discover_presets(&paths)).await {
-        Ok(found) => found
+/// An operation error as the wizard shows it: the message, any outside text escaped and
+/// labelled on a line of its own, the hint, its class, and whether Microsoft wants an
+/// administrator's consent.
+fn failure(error: &OpError) -> Failure {
+    Failure {
+        message: error_text(error),
+        class: error.class,
+        consent_required: error.code == ErrorCode::ConsentRequired,
+    }
+}
+
+async fn client(ctx: &EffectContext) -> Result<DaemonClient, Failure> {
+    ctx.daemon.client().await.map_err(|e| failure(&e))
+}
+
+/// A preset as the wizard holds it. A client secret the daemon kept is replaced by a marker
+/// naming the preset's source.
+fn to_preset(summary: PresetSummary, source: &str) -> Preset {
+    Preset {
+        name: summary.name.map(|n| n.into_inner()),
+        kind: summary.kind,
+        client_id: summary.client_id.into_inner(),
+        tenant: summary.tenant.map(|t| t.into_inner()),
+        client_secret: summary
+            .has_client_secret
+            .then(|| format!("{PRESET_SECRET}{source}")),
+        help_url: summary.help_url.map(|u| u.into_inner()),
+    }
+}
+
+async fn load_presets(ctx: EffectContext, sink: TaskSink) {
+    let listed = match client(&ctx).await {
+        Ok(client) => client
+            .call::<PresetsList>(&PresetsListRequest {})
+            .await
+            .map_err(|e| failure(&e)),
+        Err(failure) => Err(failure),
+    };
+    let entries = match listed {
+        Ok(listed) => listed
+            .presets
             .into_iter()
-            .map(|(source, preset)| PresetEntry {
-                source,
-                preset: preset.map_err(|e| e.to_string()),
+            .map(|listing| {
+                let source = listing.source.into_inner();
+                PresetEntry {
+                    preset: match listing.preset {
+                        Some(summary) => Ok(to_preset(summary, &source)),
+                        None => Err(listing.error.map(|e| error_text(&e)).unwrap_or_default()),
+                    },
+                    source: PathBuf::from(source),
+                }
             })
             .collect(),
         Err(failure) => vec![PresetEntry {
@@ -109,75 +302,35 @@ async fn load_presets(paths: Paths, sink: TaskSink) {
     send(&sink, Event::PresetsLoaded(entries));
 }
 
-async fn read_preset_file(path: PathBuf, sink: TaskSink) {
-    let result = blocking(move || read_preset(&path))
-        .await
-        .and_then(|read| read.map_err(|e| Failure::new(e.to_string(), e.class())));
-    send(&sink, Event::PresetFetched(result));
-}
-
-async fn fetch(url: String, sink: TaskSink) {
-    let result = match http_client() {
-        Ok(http) => fetch_preset(&http, &url)
+/// A typed path or URL; the daemon refuses plain http before any request.
+async fn fetch(ctx: EffectContext, source: String, sink: TaskSink) {
+    let result = match client(&ctx).await {
+        Ok(client) => client
+            .call::<PresetFetch>(&PresetFetchRequest { source })
             .await
-            .map_err(|e| Failure::new(e.to_string(), e.class())),
-        Err(e) => Err(Failure::from_auth(&e)),
+            .map(|fetched| to_preset(fetched.preset, &fetched.source))
+            .map_err(|e| failure(&e)),
+        Err(failure) => Err(failure),
     };
     send(&sink, Event::PresetFetched(result));
 }
 
-/// Every `AuthError` becomes a `Failure` unchanged: the wizard recognises some by their text.
-async fn admin_consent(opener: Opener, client_id: String, tenant: String, sink: TaskSink) {
-    let result = run_admin_consent(&client_id, &tenant, |url| {
-        send(&sink, Event::ConsentUrl(url.clone()));
-        open(&opener, url);
-    })
-    .await;
-    let result = result.map_err(|e| Failure::from_auth(&e));
-    send(&sink, Event::AdminConsentFinished(result));
-}
-
-/// The flag form's order: every offline check, then the browser.
-async fn login(ctx: EffectContext, account: AccountConfig, sink: TaskSink) {
-    let result = login_with(&ctx, &account, &sink).await;
-    send(&sink, Event::LoginFinished(result));
-}
-
-async fn login_with(
-    ctx: &EffectContext,
-    account: &AccountConfig,
-    sink: &TaskSink,
-) -> Result<TokenSet, Failure> {
-    let http = http_client().map_err(|e| Failure::from_auth(&e))?;
-    let ids = ItemIdCache::default();
-    let prepared = accounts::prepare_and_probe(&ctx.paths, &ids, &add_request(account), &http)
-        .await
-        .map_err(|e| failure(&e))?;
-    let token_url = test_hooks::token_url();
-    accounts::run_login(
-        &prepared.login_account(),
-        token_url.as_deref(),
-        &http,
-        |url| {
-            send(sink, Event::LoginUrl(url.clone()));
-            open(&ctx.opener, url);
-        },
-    )
-    .await
-    .map_err(|e| Failure::from_auth(&e))
-}
-
-/// The account the wizard built, as an add request. A client secret typed as `op://...` is a
-/// 1Password reference.
+/// The account the wizard built, as an add request: a preset marker names the preset, a
+/// client secret typed as `op://...` is a 1Password reference, anything else is the value.
 fn add_request(account: &AccountConfig) -> AccountAddRequest {
+    let client_secret =
+        account
+            .client_secret
+            .clone()
+            .map(|secret| match secret.strip_prefix(PRESET_SECRET) {
+                Some(source) => ClientSecretInput::Preset(source.to_string()),
+                None => ClientSecretInput::from_flag(secret),
+            });
     AccountAddRequest {
         kind: account.kind,
         address: account.address.clone(),
         client_id: Some(account.client_id.clone()),
-        client_secret: account
-            .client_secret
-            .clone()
-            .map(ClientSecretInput::from_flag),
+        client_secret,
         tenant: account.tenant.clone(),
         name: Some(account.name.clone()),
         color: account.color.clone(),
@@ -186,300 +339,149 @@ fn add_request(account: &AccountConfig) -> AccountAddRequest {
     }
 }
 
-async fn persist(paths: Paths, account: AccountConfig, tokens: TokenSet, sink: TaskSink) {
-    let result = save_new_account(paths, account, tokens).await;
-    send(&sink, Event::Persisted(result.map_err(|e| failure(&e))));
+/// Send a begin request in a task of its own, so a job aborted while the daemon answers still
+/// learns the id: the task's unread output, the `InFlight`, is then dropped and cancels it.
+async fn begin<O>(
+    ctx: &EffectContext,
+    client: &DaemonClient,
+    request: O::Request,
+) -> Result<(BeginResponse, InFlight), Failure>
+where
+    O: Operation<Response = BeginResponse>,
+{
+    let answering = Answering::new(ctx);
+    let (ctx, client) = (ctx.clone(), client.clone());
+    let task = tokio::spawn(async move {
+        let _answering = answering;
+        let begun = client.call::<O>(&request).await?;
+        let in_flight = InFlight::new(&ctx, &begun.id);
+        Ok::<_, OpError>((begun, in_flight))
+    });
+    match task.await {
+        Ok(result) => result.map_err(|e| failure(&e)),
+        Err(e) => Err(Failure::new(
+            format!("internal error: {e}"),
+            ErrorClass::Permanent,
+        )),
+    }
 }
 
-/// The flag form's persist: tokens, then the store row, then config.toml last. The checks are
-/// repeated first (no probe: the login already used the store).
-async fn save_new_account(
-    paths: Paths,
-    account: AccountConfig,
-    tokens: TokenSet,
-) -> Result<DoneReport, OpError> {
-    let http = http_client()?;
-    let prepared = accounts::prepare_request(&paths, &add_request(&account), &http).await?;
-    tokio::task::spawn_blocking(move || {
-        let saved = accounts::persist_new(&paths, &ItemIdCache::default(), &prepared, &tokens)?;
-        Ok(DoneReport {
+/// `pending.wait` until the operation finishes.
+async fn finished(client: &DaemonClient, id: &PendingId) -> Result<WaitResponse, Failure> {
+    let wait = WaitRequest {
+        id: id.clone(),
+        timeout_secs: None,
+    };
+    loop {
+        let answer = client
+            .call::<PendingWait>(&wait)
+            .await
+            .map_err(|e| failure(&e))?;
+        if answer.state.is_finished() {
+            return Ok(answer);
+        }
+    }
+}
+
+/// Begin the add in the daemon, show the URL, wait. The daemon saves the account as soon as
+/// the login completes; the wizard then gets tokens that are only a placeholder, because the
+/// real ones never leave the daemon.
+async fn login(ctx: EffectContext, account: AccountConfig, sink: TaskSink) {
+    let result = run_login(&ctx, &account, &sink).await;
+    send(&sink, Event::LoginFinished(result));
+}
+
+async fn run_login(
+    ctx: &EffectContext,
+    account: &AccountConfig,
+    sink: &TaskSink,
+) -> Result<TokenSet, Failure> {
+    let client = client(ctx).await?;
+    let (begun, in_flight) = begin::<AccountAddBegin>(ctx, &client, add_request(account)).await?;
+    if let Ok(url) = Url::parse(&begun.url) {
+        send(sink, Event::LoginUrl(url));
+    }
+    let answer = finished(&client, &begun.id).await?;
+    in_flight.disarm();
+    match answer.state {
+        PendingState::Done {
+            outcome: PendingOutcome::Added { account },
+        } => {
+            *lock(&ctx.saved) = Some(account);
+            Ok(saved_by_the_daemon())
+        }
+        PendingState::Failed { error } => Err(failure(&error)),
+        other => Err(ended_without(&other, "the login ended without saving")),
+    }
+}
+
+/// A finished operation that neither succeeded nor failed: it was cancelled, or the daemon
+/// answered with an outcome of another kind.
+fn ended_without(state: &PendingState, what: &str) -> Failure {
+    let why = match state {
+        PendingState::Cancelled => "it was cancelled",
+        _ => "the daemon reported another kind of outcome",
+    };
+    Failure::new(format!("{what}: {why}"), ErrorClass::Permanent)
+}
+
+/// Stands for the tokens the daemon stored. The wizard only needs to know the login worked.
+fn saved_by_the_daemon() -> TokenSet {
+    TokenSet {
+        access_token: String::new(),
+        refresh_token: String::new(),
+        expires_at: 0,
+    }
+}
+
+/// The wizard's `Persist`: report what the daemon saved when the login finished.
+fn persisted(ctx: &EffectContext, sink: &TaskSink) {
+    let result = match lock(&ctx.saved).take() {
+        Some(saved) => Ok(DoneReport {
             config_path: saved.config_path,
             token_backend: saved.token_backend,
             token_location: saved.token_location,
             store_path: saved.store_path,
-        })
-    })
-    .await
-    .map_err(|e| OpError::internal("a blocking task failed").with_detail(e.to_string()))?
+        }),
+        None => Err(Failure::new(
+            "the daemon has no saved account to report; go back and log in again",
+            ErrorClass::Permanent,
+        )),
+    };
+    send(sink, Event::Persisted(result));
 }
 
-/// An operation error as the wizard shows it: the message, detail and hint, its class, and
-/// whether Microsoft wants an administrator's consent.
-fn failure(error: &OpError) -> Failure {
-    Failure {
-        message: error.text(),
-        class: error.class,
-        consent_required: error.code == ErrorCode::ConsentRequired,
+async fn admin_consent(ctx: EffectContext, client_id: String, tenant: String, sink: TaskSink) {
+    let result = run_consent(&ctx, client_id, tenant, &sink).await;
+    send(&sink, Event::AdminConsentFinished(result));
+}
+
+async fn run_consent(
+    ctx: &EffectContext,
+    client_id: String,
+    tenant: String,
+    sink: &TaskSink,
+) -> Result<String, Failure> {
+    let client = client(ctx).await?;
+    let request = ConsentBeginRequest {
+        client_id,
+        tenant,
+        open_browser: true,
+    };
+    let (begun, in_flight) = begin::<ConsentBegin>(ctx, &client, request).await?;
+    if let Ok(url) = Url::parse(&begun.url) {
+        send(sink, Event::ConsentUrl(url));
+    }
+    let answer = finished(&client, &begun.id).await?;
+    in_flight.disarm();
+    match answer.state {
+        PendingState::Done {
+            outcome: PendingOutcome::Consented { tenant },
+        } => Ok(tenant.into_inner()),
+        PendingState::Failed { error } => Err(failure(&error)),
+        other => Err(ended_without(&other, "the consent ended without an answer")),
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Mutex;
-
-    use rail_core::auth::{FileSecretStore, SecretStore};
-    use rail_core::config::AccountKind;
-    use rail_core::store::Store;
-    use tokio::sync::mpsc;
-
-    const FILE_BACKEND: &str = "[general]\nsecrets = \"file\"\n";
-
-    fn tmp_paths(tmp: &tempfile::TempDir, config: &str) -> Paths {
-        let paths = Paths::all_in(tmp.path());
-        std::fs::create_dir_all(&paths.config_dir).unwrap();
-        std::fs::write(paths.config_file(), config).unwrap();
-        paths
-    }
-
-    /// An opener that records the URLs it is asked to open.
-    fn recording_opener() -> (Opener, Arc<Mutex<Vec<Url>>>) {
-        let opened = Arc::new(Mutex::new(Vec::new()));
-        let record = opened.clone();
-        let opener: Opener = Arc::new(move |url: &Url| {
-            record.lock().unwrap().push(url.clone());
-            Ok(())
-        });
-        (opener, opened)
-    }
-
-    fn ctx(paths: Paths) -> EffectContext {
-        EffectContext {
-            paths,
-            opener: recording_opener().0,
-        }
-    }
-
-    async fn run(effect: Effect) -> Vec<Event> {
-        let Effect::Spawn(job) = effect else {
-            panic!("expected a spawned job, got {effect:?}");
-        };
-        let (tx, mut results) = mpsc::unbounded_channel();
-        job(TaskSink::new(tx, 0)).await;
-        let mut events = Vec::new();
-        while let Ok((_, TaskResult::Wizard(event))) = results.try_recv() {
-            events.push(event);
-        }
-        events
-    }
-
-    fn account(address: &str) -> AccountConfig {
-        AccountConfig {
-            name: "me".into(),
-            kind: AccountKind::Gmail,
-            address: address.into(),
-            color: None,
-            client_id: "cid".into(),
-            client_secret: Some("sec".into()),
-            tenant: None,
-            signature: None,
-            ai_send: None,
-        }
-    }
-
-    fn tokens() -> TokenSet {
-        TokenSet {
-            access_token: "a".into(),
-            refresh_token: "r".into(),
-            expires_at: 1,
-        }
-    }
-
-    #[test]
-    fn plain_actions_map_to_shell_effects() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ctx = ctx(Paths::all_in(tmp.path()));
-        assert!(matches!(to_effect(Action::Quit, &ctx), Effect::Quit));
-        assert!(matches!(
-            to_effect(Action::CancelPending, &ctx),
-            Effect::CancelAll
-        ));
-        assert!(matches!(to_effect(Action::Copy("u".into()), &ctx), Effect::Copy(t) if t == "u"));
-    }
-
-    #[tokio::test]
-    async fn load_presets_reports_files_from_the_config_presets_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = tmp_paths(&tmp, FILE_BACKEND);
-        let dir = paths.config_dir.join("presets");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("acme.toml"),
-            "name = \"Acme\"\nkind = \"gmail\"\nclient_id = \"a\"\nclient_secret = \"s\"\n",
-        )
-        .unwrap();
-        let events = run(to_effect(Action::LoadPresets, &ctx(paths))).await;
-        let [Event::PresetsLoaded(entries)] = events.as_slice() else {
-            panic!("{events:?}");
-        };
-        let acme = entries
-            .iter()
-            .find(|e| e.source.ends_with("acme.toml"))
-            .unwrap();
-        assert_eq!(acme.preset.as_ref().unwrap().label(), "Acme");
-    }
-
-    #[tokio::test]
-    async fn read_preset_reports_a_parse_error_with_its_line() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = tmp_paths(&tmp, FILE_BACKEND);
-        let file = tmp.path().join("bad.toml");
-        std::fs::write(&file, "kind = \"gmail\"\nnope = 1\n").unwrap();
-        let events = run(to_effect(Action::ReadPreset(file), &ctx(paths))).await;
-        let [Event::PresetFetched(Err(failure))] = events.as_slice() else {
-            panic!("{events:?}");
-        };
-        assert!(
-            failure.message.contains("bad.toml:2:"),
-            "{}",
-            failure.message
-        );
-    }
-
-    #[tokio::test]
-    async fn fetch_effect_refuses_plain_http() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = tmp_paths(&tmp, FILE_BACKEND);
-        let action = Action::FetchPreset("http://127.0.0.1:9/preset.toml".into());
-        let events = run(to_effect(action, &ctx(paths))).await;
-        let [Event::PresetFetched(Err(failure))] = events.as_slice() else {
-            panic!("{events:?}");
-        };
-        assert!(
-            failure.message.contains("must be an https:// URL"),
-            "{}",
-            failure.message
-        );
-    }
-
-    #[tokio::test]
-    async fn open_url_uses_the_opener() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (opener, opened) = recording_opener();
-        let ctx = EffectContext {
-            paths: Paths::all_in(tmp.path()),
-            opener,
-        };
-        let url = Url::parse("https://portal.azure.com/").unwrap();
-        assert!(
-            run(to_effect(Action::OpenUrl(url.clone()), &ctx))
-                .await
-                .is_empty()
-        );
-        assert_eq!(*opened.lock().unwrap(), vec![url]);
-    }
-
-    #[tokio::test]
-    async fn run_login_refuses_a_configured_address_before_the_browser() {
-        let tmp = tempfile::tempdir().unwrap();
-        let config = format!(
-            "{FILE_BACKEND}\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n"
-        );
-        let paths = tmp_paths(&tmp, &config);
-        let (opener, opened) = recording_opener();
-        let ctx = EffectContext { paths, opener };
-        let events = run(to_effect(Action::RunLogin(account("ME@example.com")), &ctx)).await;
-        let [Event::LoginFinished(Err(failure))] = events.as_slice() else {
-            panic!("{events:?}");
-        };
-        assert!(
-            failure.message.contains("already configured"),
-            "{}",
-            failure.message
-        );
-        assert_eq!(failure.class, ErrorClass::Permanent);
-        assert!(
-            opened.lock().unwrap().is_empty(),
-            "no browser for a refused account"
-        );
-    }
-
-    #[tokio::test]
-    async fn persist_writes_tokens_store_and_config_then_reports_done() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = tmp_paths(&tmp, FILE_BACKEND);
-        let action = Action::Persist {
-            account: account("me@example.com"),
-            tokens: tokens(),
-        };
-        let events = run(to_effect(action, &ctx(paths.clone()))).await;
-        let [Event::Persisted(Ok(report))] = events.as_slice() else {
-            panic!("{events:?}");
-        };
-        assert_eq!(report.config_path, paths.config_file());
-        assert_eq!(report.token_backend, "file");
-        assert_eq!(
-            report.token_location,
-            paths.secrets_file().display().to_string()
-        );
-        assert_eq!(report.store_path, paths.db_file());
-        let secrets = FileSecretStore::new(paths.secrets_file());
-        assert_eq!(
-            secrets.get_tokens("me@example.com").unwrap(),
-            Some(tokens())
-        );
-        assert_eq!(
-            Store::open(&paths.db_file())
-                .unwrap()
-                .list_accounts()
-                .unwrap()
-                .len(),
-            1
-        );
-        let saved = rail_core::config::load(&paths.config_file()).unwrap();
-        assert_eq!(saved.accounts[0].address, "me@example.com");
-    }
-
-    #[tokio::test]
-    async fn a_persist_failure_names_the_cause_and_writes_no_config() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = tmp_paths(&tmp, FILE_BACKEND);
-        std::fs::create_dir_all(&paths.data_dir).unwrap();
-        std::fs::write(paths.secrets_file(), "{not json").unwrap();
-        let action = Action::Persist {
-            account: account("me@example.com"),
-            tokens: tokens(),
-        };
-        let events = run(to_effect(action, &ctx(paths.clone()))).await;
-        let [Event::Persisted(Err(failure))] = events.as_slice() else {
-            panic!("{events:?}");
-        };
-        assert!(
-            failure.message.contains("storing tokens"),
-            "{}",
-            failure.message
-        );
-        assert!(failure.message.contains("corrupt"), "{}", failure.message);
-        assert_eq!(failure.class, ErrorClass::Permanent);
-        assert_eq!(
-            std::fs::read_to_string(paths.config_file()).unwrap(),
-            FILE_BACKEND
-        );
-    }
-
-    #[test]
-    fn operation_errors_become_failures_with_their_class_and_hint() {
-        let transient = OpError::new(ErrorCode::Secrets, ErrorClass::Transient, "disk busy")
-            .with_hint("try again");
-        let shown = failure(&transient);
-        assert_eq!(shown.class, ErrorClass::Transient);
-        assert_eq!(shown.message, "disk busy\nhint: try again");
-        assert!(!shown.consent_required);
-        let consent = OpError::new(
-            ErrorCode::ConsentRequired,
-            ErrorClass::Permanent,
-            "AADSTS65001",
-        );
-        assert!(failure(&consent).consent_required);
-    }
-}
+mod tests;
