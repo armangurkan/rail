@@ -1,0 +1,157 @@
+//! Edit `config.toml` without destroying the user's comments and formatting.
+
+use std::path::Path;
+
+use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
+
+use super::load::{ConfigError, line_col, parse};
+use super::model::{AccountConfig, Config};
+
+/// Return `text` with a new `[[accounts]]` table appended. Validates the result.
+pub fn append_account(
+    text: &str,
+    path: &Path,
+    account: &AccountConfig,
+) -> Result<String, ConfigError> {
+    let mut doc: DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| {
+        let (line, col) = e.span().map_or((0, 0), |s| line_col(text, s.start));
+        ConfigError::Parse {
+            path: path.to_path_buf(),
+            line,
+            col,
+            message: e.message().to_string(),
+        }
+    })?;
+    let accounts = doc
+        .entry("accounts")
+        .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
+        .as_array_of_tables_mut()
+        .ok_or_else(|| ConfigError::Invalid {
+            path: path.to_path_buf(),
+            message: "`accounts` must be an array of tables ([[accounts]])".to_string(),
+        })?;
+
+    let mut table = Table::new();
+    table["name"] = value(account.name.as_str());
+    table["kind"] = value(account.kind.as_str());
+    table["address"] = value(account.address.as_str());
+    if let Some(color) = &account.color {
+        table["color"] = value(color.as_str());
+    }
+    table["client_id"] = value(account.client_id.as_str());
+    if let Some(secret) = &account.client_secret {
+        table["client_secret"] = value(secret.as_str());
+    }
+    if let Some(tenant) = &account.tenant {
+        table["tenant"] = value(tenant.as_str());
+    }
+    if let Some(signature) = &account.signature {
+        table["signature"] = value(signature.to_string_lossy().into_owned());
+    }
+    accounts.push(table);
+
+    let out = doc.to_string();
+    parse(&out, path)?;
+    Ok(out)
+}
+
+/// `dana.reyes+x@corp.com` -> `dana_reyes_x`, suffixed `-2`, `-3`... if taken.
+pub fn default_account_name(address: &str, config: &Config) -> String {
+    let local = address
+        .split('@')
+        .next()
+        .unwrap_or(address)
+        .to_ascii_lowercase();
+    let base: String = local
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let base = if base.is_empty() {
+        "account".to_string()
+    } else {
+        base
+    };
+    let taken = |name: &str| config.accounts.iter().any(|a| a.name == name);
+    if !taken(&base) {
+        return base;
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|candidate| !taken(candidate))
+        .expect("unbounded range always yields a free name")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AccountKind, parse};
+    use std::path::Path;
+
+    fn account(name: &str, address: &str) -> AccountConfig {
+        AccountConfig {
+            name: name.into(),
+            kind: AccountKind::M365,
+            address: address.into(),
+            color: Some("magenta".into()),
+            tenant: Some("common".into()),
+            ..crate::test_support::sample_account()
+        }
+    }
+
+    const EXISTING: &str = "# my rail config\n[general]\neditor = \"nvim\" # the good one\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"g\"\n";
+
+    #[test]
+    fn append_preserves_comments_and_adds_a_table() {
+        let out = append_account(
+            EXISTING,
+            Path::new("c.toml"),
+            &account("corp", "me@corp.com"),
+        )
+        .unwrap();
+        assert!(out.contains("# my rail config"));
+        assert!(out.contains("# the good one"));
+        let config = parse(&out, Path::new("c.toml")).unwrap();
+        assert_eq!(config.accounts.len(), 2);
+        assert_eq!(config.accounts[1].name, "corp");
+        assert_eq!(config.accounts[1].kind, AccountKind::M365);
+        assert_eq!(config.accounts[1].tenant.as_deref(), Some("common"));
+        assert_eq!(config.accounts[1].color.as_deref(), Some("magenta"));
+        assert_eq!(config.accounts[1].client_secret, None);
+    }
+
+    #[test]
+    fn append_to_empty_text_creates_valid_config() {
+        let out = append_account("", Path::new("c.toml"), &account("corp", "me@corp.com")).unwrap();
+        let config = parse(&out, Path::new("c.toml")).unwrap();
+        assert_eq!(config.accounts.len(), 1);
+    }
+
+    #[test]
+    fn append_rejects_unparseable_text() {
+        let err =
+            append_account("[[accounts", Path::new("c.toml"), &account("a", "a@b.c")).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
+    }
+
+    #[test]
+    fn default_name_is_local_part_made_unique() {
+        let mut config = Config::default();
+        assert_eq!(
+            default_account_name("Dana.Reyes+x@corp.com", &config),
+            "dana_reyes_x"
+        );
+        config
+            .accounts
+            .push(account("dana_reyes_x", "other@corp.com"));
+        assert_eq!(
+            default_account_name("dana.reyes+x@corp.com", &config),
+            "dana_reyes_x-2"
+        );
+    }
+}
