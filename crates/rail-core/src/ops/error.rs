@@ -220,6 +220,12 @@ impl From<SecretError> for OpError {
             SecretError::OnePasswordNoItem(text) => {
                 fixed("1Password has no such item".to_string(), text)
             }
+            SecretError::OnePasswordInvalid(text) => {
+                Self::new(ErrorCode::Secrets, class, text.clone())
+            }
+            SecretError::OnePasswordIo { what, message } => {
+                fixed(format!("could not {what} the 1Password CLI"), message)
+            }
             SecretError::OnePassword(text) => {
                 fixed("1Password reported an error".to_string(), text)
             }

@@ -4,13 +4,11 @@
 //! timeout long enough for an unlock prompt.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -36,6 +34,13 @@ const MAX_ERROR_CHARS: usize = 300;
 /// `ETXTBSY`: a just-written executable is briefly busy while another thread forks.
 const TEXT_FILE_BUSY: i32 = 26;
 const SPAWN_ATTEMPTS: usize = 5;
+/// The most of stdout or stderr Rail reads from one `op` call.
+const MAX_OUTPUT: u64 = 1024 * 1024;
+
+mod process;
+use process::classify;
+#[cfg(test)]
+use process::strip_log_prefix;
 
 /// How to run `op`: which binary, which account, how long to wait.
 #[derive(Debug, Clone)]
@@ -53,13 +58,17 @@ impl OpCli {
     /// is created owner-only if it does not exist.
     pub fn from_config(config: Option<&OnePasswordConfig>, runtime_dir: &Path) -> Self {
         let configured = config.and_then(|c| c.op_path.clone());
-        let refused = configured.as_deref().and_then(|path| {
-            own_uid(runtime_dir)
-                .and_then(|uid| check_op_path(path, uid))
-                .err()
-        });
+        let (program, refused) = match configured {
+            None => (PathBuf::from("op"), None),
+            Some(path) => match own_uid(runtime_dir).and_then(|uid| check_op_path(&path, uid)) {
+                // The program that runs is the canonical file that was checked, never the
+                // configured spelling, which a symlink swap could point elsewhere.
+                Ok(canonical) => (canonical, None),
+                Err(reason) => (path, Some(reason)),
+            },
+        };
         Self {
-            program: configured.unwrap_or_else(|| PathBuf::from("op")),
+            program,
             account: config.and_then(|c| c.account.clone()),
             timeout: OP_TIMEOUT,
             refused,
@@ -93,20 +102,8 @@ impl OpCli {
             .stdin(input)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = self.spawn(&mut command)?;
-        if let Err(e) = feed(&mut child, stdin)
-            && e.kind() != std::io::ErrorKind::BrokenPipe
-        {
-            // A broken pipe means op already exited; its status and stderr say why.
-            let _ = child.kill();
-            let _ = child.wait();
-            tracing::warn!(kind = ?e.kind(), "could not write to op");
-            return Err(SecretError::OnePassword(format!(
-                "could not write to op ({:?})",
-                e.kind()
-            )));
-        }
-        let (status, stdout, stderr) = wait_with_timeout(child, self.timeout)?;
+        let child = self.spawn(&mut command)?;
+        let (status, stdout, stderr) = process::run_child(child, stdin, self.timeout)?;
         if status.success() {
             return Ok(stdout);
         }
@@ -148,7 +145,7 @@ impl OpCli {
         validate_reference(reference)?;
         let out = self.run(&["read", "--no-newline", reference], None, &[])?;
         let text = String::from_utf8(out)
-            .map_err(|_| SecretError::OnePassword(format!("{reference} is not text")))?;
+            .map_err(|_| SecretError::OnePasswordInvalid(format!("{reference} is not text")))?;
         Ok(Secret::new(text.trim_end_matches(['\r', '\n'])))
     }
 }
@@ -161,14 +158,18 @@ fn own_uid(runtime_dir: &Path) -> Result<u32, String> {
         .map_err(|e| format!("cannot tell who the current user is ({e})"))
 }
 
-/// A configured `op` binary must be an absolute path to a regular, executable file owned by
-/// root or by `own_uid`, writable by nobody else. Anything less would let another user, or
-/// anything that can write that file, run code with the tokens on its stdin.
-pub fn check_op_path(path: &Path, own_uid: u32) -> Result<(), String> {
+/// A configured `op` binary must resolve (symlinks followed once, here) to a regular,
+/// executable file owned by root or by `own_uid` and writable by nobody else, inside
+/// directories that only root or `own_uid` own and that others cannot write to (unless sticky,
+/// as `/tmp` is). Anything less would let another user swap the program and read the tokens
+/// on its stdin. Returns the canonical path, which is the one to run.
+pub fn check_op_path(path: &Path, own_uid: u32) -> Result<PathBuf, String> {
     if !path.is_absolute() {
         return Err("op_path must be an absolute path".to_string());
     }
-    let meta = std::fs::metadata(path).map_err(|e| format!("it cannot be read ({e})"))?;
+    let canonical =
+        std::fs::canonicalize(path).map_err(|e| format!("it cannot be resolved ({e})"))?;
+    let meta = std::fs::metadata(&canonical).map_err(|e| format!("it cannot be read ({e})"))?;
     if !meta.is_file() {
         return Err("it is not a regular file".to_string());
     }
@@ -179,8 +180,32 @@ pub fn check_op_path(path: &Path, own_uid: u32) -> Result<(), String> {
     if mode & 0o022 != 0 {
         return Err("it is writable by group or others".to_string());
     }
+    check_owner(&meta, own_uid, "it")?;
+    for dir in canonical.ancestors().skip(1) {
+        check_directory(dir, own_uid)?;
+    }
+    Ok(canonical)
+}
+
+fn check_owner(meta: &std::fs::Metadata, own_uid: u32, what: &str) -> Result<(), String> {
     if meta.uid() != 0 && meta.uid() != own_uid {
-        return Err("it is owned by another user".to_string());
+        return Err(format!("{what} is owned by another user"));
+    }
+    Ok(())
+}
+
+/// A directory on the way to `op`: owned by root or the user, and not writable by group or
+/// others unless the sticky bit stops them replacing entries they do not own.
+fn check_directory(dir: &Path, own_uid: u32) -> Result<(), String> {
+    let meta = std::fs::metadata(dir)
+        .map_err(|e| format!("the directory {} cannot be read ({e})", dir.display()))?;
+    check_owner(&meta, own_uid, &format!("the directory {}", dir.display()))?;
+    let mode = meta.permissions().mode();
+    if mode & 0o022 != 0 && mode & 0o1000 == 0 {
+        return Err(format!(
+            "the directory {} is writable by group or others",
+            dir.display()
+        ));
     }
     Ok(())
 }
@@ -192,126 +217,11 @@ pub fn validate_reference(reference: &str) -> Result<(), SecretError> {
         .map(|rest| rest.split('/').collect())
         .unwrap_or_default();
     if parts.len() < 3 || parts.iter().any(|p| p.trim().is_empty()) {
-        return Err(SecretError::OnePassword(format!(
+        return Err(SecretError::OnePasswordInvalid(format!(
             "{reference:?} is not a secret reference of the form op://vault/item/field"
         )));
     }
     Ok(())
-}
-
-/// Write the template to `op`'s stdin and close it, so `op` sees the end of its input.
-fn feed(child: &mut Child, stdin: Option<&[u8]>) -> std::io::Result<()> {
-    match (stdin, child.stdin.take()) {
-        (Some(bytes), Some(mut pipe)) => pipe.write_all(bytes),
-        _ => Ok(()),
-    }
-}
-
-/// Wait for `child`, killing it after `timeout`. Its output is drained on threads so a full
-/// pipe can never stall it.
-fn wait_with_timeout(
-    mut child: Child,
-    timeout: Duration,
-) -> Result<(ExitStatus, Vec<u8>, Vec<u8>), SecretError> {
-    let stdout = child.stdout.take().map(drain);
-    let stderr = child.stderr.take().map(drain);
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(SecretError::OnePasswordTimeout);
-            }
-            Ok(None) => std::thread::sleep(POLL),
-            Err(e) => return Err(SecretError::OnePassword(format!("waiting for op: {e}"))),
-        }
-    };
-    Ok((status, joined(stdout)?, joined(stderr)?))
-}
-
-type Drain = JoinHandle<std::io::Result<Vec<u8>>>;
-
-fn drain(mut pipe: impl Read + Send + 'static) -> Drain {
-    std::thread::spawn(move || {
-        let mut buffer = Vec::new();
-        pipe.read_to_end(&mut buffer).map(|_| buffer)
-    })
-}
-
-/// The drained bytes. A read error or a panicked reader is logged (never with content) and
-/// reported, not swallowed: output that could not be read must not pass for empty output.
-fn joined(handle: Option<Drain>) -> Result<Vec<u8>, SecretError> {
-    let Some(handle) = handle else {
-        return Ok(Vec::new());
-    };
-    match handle.join() {
-        Ok(Ok(bytes)) => Ok(bytes),
-        Ok(Err(e)) => {
-            tracing::warn!(kind = ?e.kind(), "could not read op's output");
-            Err(SecretError::OnePassword(format!(
-                "could not read op's output ({:?})",
-                e.kind()
-            )))
-        }
-        Err(_) => {
-            tracing::warn!("the thread reading op's output panicked");
-            Err(SecretError::OnePassword(
-                "could not read op's output".to_string(),
-            ))
-        }
-    }
-}
-
-/// Turn `op`'s stderr into an error: its last line, without the log prefix, with every
-/// redacted value removed, cut to a sane length.
-fn classify(stderr: &[u8], redact: &[&str]) -> SecretError {
-    let text = String::from_utf8_lossy(stderr);
-    let line = text
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("op failed without a message");
-    let mut clean = strip_log_prefix(line);
-    for value in redact.iter().filter(|v| !v.is_empty()) {
-        clean = clean.replace(value, "<redacted>");
-        // The template quotes the value as JSON, so an escaped form can appear too.
-        if let Some(escaped) = json_escaped(value) {
-            clean = clean.replace(&escaped, "<redacted>");
-        }
-    }
-    let clean: String = clean.chars().take(MAX_ERROR_CHARS).collect();
-    let lower = clean.to_lowercase();
-    if LOCKED_MARKERS.iter().any(|m| lower.contains(m)) {
-        SecretError::OnePasswordLocked(clean)
-    } else if lower.contains(NO_ITEM_MARKER) {
-        SecretError::OnePasswordNoItem(clean)
-    } else {
-        SecretError::OnePassword(clean)
-    }
-}
-
-/// `value` as it appears inside a JSON string, without the quotes.
-fn json_escaped(value: &str) -> Option<String> {
-    let quoted = serde_json::to_string(value).ok()?;
-    let inner = quoted.get(1..quoted.len().checked_sub(1)?)?;
-    (inner != value).then(|| inner.to_string())
-}
-
-/// `[ERROR] 2026/10/10 08:35:58 You are not signed in` -> `You are not signed in`.
-fn strip_log_prefix(line: &str) -> String {
-    let line = line.trim();
-    let Some(rest) = line.strip_prefix("[ERROR]") else {
-        return line.to_string();
-    };
-    let mut words = rest.trim_start().splitn(3, ' ');
-    match (words.next(), words.next(), words.next()) {
-        (Some(date), Some(time), Some(message)) if date.contains('/') && time.contains(':') => {
-            message.to_string()
-        }
-        _ => rest.trim().to_string(),
-    }
 }
 
 fn parse_json<T: DeserializeOwned>(out: &[u8]) -> Result<T, SecretError> {
@@ -451,7 +361,7 @@ impl OnePasswordSecretStore {
 
     fn vault(&self) -> Result<&str, SecretError> {
         if self.vault.trim().is_empty() {
-            return Err(SecretError::OnePassword(
+            return Err(SecretError::OnePasswordInvalid(
                 "no vault is set; add vault = \"...\" under [onepassword]".to_string(),
             ));
         }
@@ -463,6 +373,12 @@ impl OnePasswordSecretStore {
         if let Some(id) = self.ids.get(vault, title) {
             return Ok(Some(id));
         }
+        self.look_up(title)
+    }
+
+    /// Ask `op item list` for the item (never `--reveal`, never the cache), and remember its id.
+    fn look_up(&self, title: &str) -> Result<Option<String>, SecretError> {
+        let vault = self.vault()?;
         let args = [
             "item", "list", "--vault", vault, "--tags", TAG, "--format", "json",
         ];
@@ -473,8 +389,9 @@ impl OnePasswordSecretStore {
             parse_json(&out)?
         };
         let id = items.into_iter().find(|i| i.title == title).map(|i| i.id);
-        if let Some(id) = &id {
-            self.ids.put(vault, title, id);
+        match &id {
+            Some(id) => self.ids.put(vault, title, id),
+            None => self.ids.forget(vault, title),
         }
         Ok(id)
     }
@@ -556,6 +473,12 @@ impl SecretStore for OnePasswordSecretStore {
 
     fn backend_name(&self) -> &'static str {
         "1password"
+    }
+
+    /// An item lookup by tag and title: no token is fetched, so polling stays cheap and
+    /// loads nothing secret into memory.
+    fn has_tokens(&self, address: &str) -> Result<bool, SecretError> {
+        self.look_up(&item_title(address)).map(|id| id.is_some())
     }
 
     fn probe(&self) -> Result<(), SecretError> {

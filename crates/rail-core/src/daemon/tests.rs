@@ -468,15 +468,22 @@ async fn secrets_configure_through_the_daemon_switches_the_backend() {
         vault: Some("Rail".into()),
         op_account: None,
         migrate: true,
+        confirm: true,
     };
     let done = client.call::<SecretsConfigure>(&request).await.unwrap();
     assert_eq!(done.moved, ["a@x.com"]);
+    let revealed = fake.argv().matches("--reveal").count();
     let listed = client
         .call::<AccountsList>(&AccountsListRequest {})
         .await
         .unwrap();
     assert_eq!(listed.accounts[0].tokens, TokenState::Present);
     assert!(!fake.argv().contains("access-a"));
+    assert_eq!(
+        fake.argv().matches("--reveal").count(),
+        revealed,
+        "listing accounts must not reveal tokens"
+    );
 }
 
 #[tokio::test]
@@ -494,4 +501,34 @@ async fn bind_waits_out_a_lock_held_for_a_moment() {
     let server = super::Server::bind(ctx, ServeConfig::default()).await;
     release.await.unwrap();
     assert!(server.is_ok(), "a lock held for 80ms is not another daemon");
+}
+
+#[tokio::test]
+async fn an_unconfirmed_secrets_change_is_refused_by_the_daemon() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = crate::test_support::FakeOp::install(tmp.path());
+    let config = format!("[general]\nsecrets = \"file\"\n{}", fake.config_toml());
+    let paths = paths_with_config(&tmp, &config);
+    let (connector, _) = in_process_connector(&paths);
+    let client = connector.connect().await.unwrap();
+    let request = SecretsConfigureRequest {
+        backend: SecretsBackend::OnePassword,
+        vault: Some("Rail".into()),
+        op_account: None,
+        migrate: true,
+        confirm: false,
+    };
+    let err = client.call::<SecretsConfigure>(&request).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert!(err.message.contains("needs the user's confirmation"));
+    assert_eq!(
+        std::fs::read_to_string(paths.config_file()).unwrap(),
+        config
+    );
+    let same = SecretsConfigureRequest {
+        backend: SecretsBackend::File,
+        vault: None,
+        ..request
+    };
+    client.call::<SecretsConfigure>(&same).await.unwrap();
 }

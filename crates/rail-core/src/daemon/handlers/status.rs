@@ -64,9 +64,9 @@ pub(super) async fn accounts_list(
                     kind: account.kind,
                     address: account.address.clone(),
                     color: account.color.clone(),
-                    tokens: match secrets.get_tokens(&account.address) {
-                        Ok(Some(_)) => TokenState::Present,
-                        Ok(None) => TokenState::Missing,
+                    tokens: match secrets.has_tokens(&account.address) {
+                        Ok(true) => TokenState::Present,
+                        Ok(false) => TokenState::Missing,
                         Err(e) => TokenState::Error {
                             message: e.to_string().into(),
                         },

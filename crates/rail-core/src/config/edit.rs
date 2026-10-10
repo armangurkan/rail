@@ -42,19 +42,45 @@ pub fn set_secrets(
         .ok_or_else(|| not_a_table(path, "general"))?;
     general["secrets"] = value(backend.as_str());
     if let Some(op) = onepassword {
-        let mut table = Table::new();
-        table["vault"] = value(op.vault.as_str());
-        if let Some(account) = &op.account {
-            table["account"] = value(account.as_str());
-        }
-        if let Some(op_path) = &op.op_path {
-            table["op_path"] = value(op_path.to_string_lossy().into_owned());
-        }
-        doc["onepassword"] = Item::Table(table);
+        write_onepassword(&mut doc, op);
     }
     let out = doc.to_string();
     parse(&out, path)?;
     Ok(out)
+}
+
+/// Update `[onepassword]` in place: an existing table keeps its comments and any key not named
+/// here; a missing one is created. `op_path` is written only when present, unchanged otherwise.
+fn write_onepassword(doc: &mut DocumentMut, op: &OnePasswordConfig) {
+    if !doc.get("onepassword").is_some_and(Item::is_table) {
+        doc["onepassword"] = Item::Table(Table::new());
+    }
+    let Some(table) = doc["onepassword"].as_table_mut() else {
+        return;
+    };
+    set_string(table, "vault", &op.vault);
+    match &op.account {
+        Some(account) => set_string(table, "account", account),
+        None => {
+            table.remove("account");
+        }
+    }
+    if let Some(op_path) = &op.op_path {
+        set_string(table, "op_path", &op_path.to_string_lossy());
+    }
+}
+
+/// Set `key` to a string, keeping the formatting and trailing comment of an existing value.
+fn set_string(table: &mut Table, key: &str, text: &str) {
+    let decor = table
+        .get(key)
+        .and_then(Item::as_value)
+        .map(|v| v.decor().clone());
+    let mut new = toml_edit::Value::from(text);
+    if let Some(decor) = decor {
+        *new.decor_mut() = decor;
+    }
+    table[key] = Item::Value(new);
 }
 
 /// Return `text` with a new `[[accounts]]` table appended. Validates the result.
@@ -208,6 +234,28 @@ mod tests {
             config.onepassword.is_some(),
             "the table is kept for switching back"
         );
+    }
+
+    #[test]
+    fn set_secrets_updates_a_commented_onepassword_table_in_place() {
+        let text = "[onepassword]\n# which vault\nvault = \"Old\" # trailing\nop_path = \"/usr/bin/op\"\n# keep me\n";
+        let op = OnePasswordConfig {
+            vault: "New".into(),
+            account: Some("a.1password.com".into()),
+            op_path: Some("/usr/bin/op".into()),
+        };
+        let out = set_secrets(
+            text,
+            Path::new("c.toml"),
+            SecretsBackend::OnePassword,
+            Some(&op),
+        )
+        .unwrap();
+        for kept in ["# which vault", "# trailing", "# keep me", "/usr/bin/op"] {
+            assert!(out.contains(kept), "{kept} lost:\n{out}");
+        }
+        let config = parse(&out, Path::new("c.toml")).unwrap();
+        assert_eq!(config.onepassword, Some(op));
     }
 
     #[test]

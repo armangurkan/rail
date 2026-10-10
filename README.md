@@ -350,10 +350,13 @@ with the access and refresh tokens in concealed fields. Values reach `op` only t
 template on its standard input, never as command-line arguments (which other processes can read).
 Each `op` call may take up to 30 seconds, long enough for the 1Password app's unlock prompt. When
 1Password is locked or `op` is not signed in, Rail says so and asks you to unlock the app or run
-`op signin`; `rail doctor` checks this with `op whoami`. Rail refuses an `op_path` that is
-relative, not an executable file, owned by another user, or writable by anyone but its owner. `op_path`
+`op signin`; `rail doctor` checks this with `op whoami`. Rail resolves `op_path` once (following symlinks) and refuses it when it is
+relative, not an executable file, owned by another user, or writable by anyone but its owner, or when
+any directory above it belongs to another user or is writable by others (a sticky directory such as
+`/tmp` is fine); the resolved file is what runs. `op_path`
 is only ever read from `config.toml`; no daemon request can set it. The daemon's `secrets.configure`
-operation switches backends: tokens are copied to the new backend, read back to verify, and only
+operation switches backends, but only for a request a front end marked `confirm` after asking the
+user: tokens are copied to the new backend, read back to verify, and only
 then are the old copies deleted, so a failure part way leaves the old copies in place.
 
 ## Project layout

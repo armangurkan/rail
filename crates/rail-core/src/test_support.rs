@@ -158,6 +158,10 @@ pub(crate) struct FakeOp {
 const FAKE_OP: &str = r#"#!/bin/sh
 state='@STATE@'
 printf '%s\n' "$*" >> "$state/argv.log"
+printf '%s\n' "$0" > "$state/program"
+vault=none; prev=''
+for a in "$@"; do [ "$prev" = --vault ] && vault=$a; prev=$a; done
+dir="$state/items/$vault"
 if [ -f "$state/locked" ]; then
   echo '[ERROR] 2026/10/10 08:00:00 You are not currently signed in. Please run `op signin --help` for instructions' >&2
   exit 1
@@ -167,11 +171,11 @@ case "$1" in
   whoami) echo '{"url":"my.1password.com","email":"me@example.com"}'; exit 0 ;;
   read) cat "$state/read.txt"; exit 0 ;;
 esac
-mkdir -p "$state/items"
+mkdir -p "$dir"
 case "$1 $2" in
   "item list")
     printf '['; sep=''
-    for f in "$state"/items/*.json; do
+    for f in "$dir"/*.json; do
       [ -e "$f" ] || continue
       id=$(basename "$f" .json)
       title=$(sed 's/.*"title":"\([^"]*\)".*/\1/' "$f")
@@ -185,16 +189,16 @@ case "$1 $2" in
       exit 1
     fi
     n=$(( $(cat "$state/next" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$state/next"
-    printf '%s' "$template" > "$state/items/item$n.json"
+    printf '%s' "$template" > "$dir/item$n.json"
     printf '{"id":"item%s"}\n' "$n" ;;
   "item edit")
-    [ -f "$state/items/$3.json" ] || { echo "[ERROR] 2026/10/10 08:00:00 \"$3\" isn't an item." >&2; exit 1; }
-    cat > "$state/items/$3.json"; printf '{"id":"%s"}\n' "$3" ;;
+    [ -f "$dir/$3.json" ] || { echo "[ERROR] 2026/10/10 08:00:00 \"$3\" isn't an item." >&2; exit 1; }
+    cat > "$dir/$3.json"; printf '{"id":"%s"}\n' "$3" ;;
   "item get")
-    [ -f "$state/items/$3.json" ] || { echo "[ERROR] 2026/10/10 08:00:00 \"$3\" isn't an item." >&2; exit 1; }
-    sed 's/.*"fields":\(\[.*\]\)}$/\1/' "$state/items/$3.json"; echo ;;
+    [ -f "$dir/$3.json" ] || { echo "[ERROR] 2026/10/10 08:00:00 \"$3\" isn't an item." >&2; exit 1; }
+    sed 's/.*"fields":\(\[.*\]\)}$/\1/' "$dir/$3.json"; echo ;;
   "item delete")
-    rm -f "$state/items/$3.json" ;;
+    rm -f "$dir/$3.json" ;;
   *) echo "[ERROR] 2026/10/10 08:00:00 unknown command: $*" >&2; exit 1 ;;
 esac
 "#;
@@ -240,6 +244,14 @@ impl FakeOp {
         std::fs::read_to_string(self.state.join("argv.log")).unwrap_or_default()
     }
 
+    /// The program path the fake was started as (`$0`), as the last call saw it.
+    pub(crate) fn program(&self) -> String {
+        std::fs::read_to_string(self.state.join("program"))
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    }
+
     pub(crate) fn lock(&self) {
         std::fs::write(self.state.join("locked"), "").unwrap();
     }
@@ -259,10 +271,18 @@ impl FakeOp {
 
     /// The stored items, as the template text Rail sent.
     pub(crate) fn items(&self) -> Vec<String> {
-        let Ok(dir) = std::fs::read_dir(self.state.join("items")) else {
+        let Ok(vaults) = std::fs::read_dir(self.state.join("items")) else {
             return Vec::new();
         };
-        dir.map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        vaults
+            .flatten()
+            .flat_map(|vault| {
+                std::fs::read_dir(vault.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+            })
+            .map(|e| std::fs::read_to_string(e.path()).unwrap())
             .collect()
     }
 }

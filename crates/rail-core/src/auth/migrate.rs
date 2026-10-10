@@ -2,6 +2,8 @@
 //! from the new backend; only then is config written and the old copies deleted, so a failure
 //! part way leaves the old copies and the old config in charge.
 
+use std::path::PathBuf;
+
 use super::onepassword::ItemIdCache;
 use super::secrets::{SecretStore, open_secret_store};
 use crate::config::{Config, OnePasswordConfig, SecretsBackend, load_text_or_empty, set_secrets};
@@ -10,37 +12,201 @@ use crate::ops::write_config_text;
 use crate::ops::{ErrorCode, OpError, SecretsConfigureRequest, SecretsConfigureResponse};
 use crate::paths::Paths;
 
+/// The message of the refusal for a change nobody confirmed.
+pub const NEEDS_CONFIRMATION: &str =
+    "changing where tokens are stored needs the user's confirmation";
+
+/// Shown in a confirmation when tokens end up in the plain file.
+pub const FILE_WARNING: &str =
+    "Tokens will be stored in a plain 0600 file instead of the system keyring or 1Password.";
+
+/// What a `secrets.configure` request would do, for the confirmation a front end shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchSummary {
+    /// False when the request leaves every setting as it is.
+    pub changes: bool,
+    pub previous: SecretsBackend,
+    pub backend: SecretsBackend,
+    pub vault: Option<String>,
+    pub account: Option<String>,
+    /// Accounts whose tokens would be copied to the new store.
+    pub accounts_moving: usize,
+}
+
+impl SwitchSummary {
+    /// The text to put in front of the user before they confirm.
+    pub fn text(&self) -> String {
+        let mut text = format!(
+            "Change token storage from {} to {}",
+            self.previous.as_str(),
+            self.backend.as_str()
+        );
+        if self.backend == SecretsBackend::OnePassword {
+            let vault = self.vault.as_deref().unwrap_or("");
+            text.push_str(&format!(" (vault \"{vault}\""));
+            if let Some(account) = &self.account {
+                text.push_str(&format!(", account \"{account}\""));
+            }
+            text.push(')');
+        }
+        text.push_str(&format!(
+            ". Tokens for {} account(s) will be moved.",
+            self.accounts_moving
+        ));
+        if self.backend == SecretsBackend::File {
+            text.push(' ');
+            text.push_str(FILE_WARNING);
+        }
+        text
+    }
+}
+
+struct Plan {
+    path: PathBuf,
+    text: String,
+    config: Config,
+    target: Config,
+}
+
+impl Plan {
+    fn load(paths: &Paths, request: &SecretsConfigureRequest) -> Result<Self, OpError> {
+        validate_request(request)?;
+        let path = paths.config_file();
+        let (text, config) = load_text_or_empty(&path)?;
+        let target = target_config(&config, request)?;
+        Ok(Self {
+            path,
+            text,
+            config,
+            target,
+        })
+    }
+
+    fn changes(&self) -> bool {
+        self.target.general.secrets != self.config.general.secrets
+            || self.target.onepassword != self.config.onepassword
+    }
+
+    /// Whether tokens would live somewhere else: another backend, or another vault or account.
+    fn stores_differ(&self) -> bool {
+        if self.target.general.secrets != self.config.general.secrets {
+            return true;
+        }
+        let place = |c: &Config| {
+            c.onepassword
+                .as_ref()
+                .map(|o| (o.vault.clone(), o.account.clone()))
+        };
+        self.target.general.secrets == SecretsBackend::OnePassword
+            && place(&self.target) != place(&self.config)
+    }
+}
+
+fn validate_request(request: &SecretsConfigureRequest) -> Result<(), OpError> {
+    if request
+        .op_account
+        .as_deref()
+        .is_some_and(|a| a.trim().is_empty())
+    {
+        return Err(OpError::invalid_input("op_account must not be empty"));
+    }
+    match request.vault.as_deref() {
+        Some(v) if v.trim().is_empty() => Err(OpError::invalid_input("vault must not be empty")),
+        Some(v) if v.contains('/') => Err(OpError::invalid_input("vault must not contain '/'")),
+        _ => Ok(()),
+    }
+}
+
+/// What `request` would change and how many accounts' tokens would move, without changing
+/// anything. A front end shows `SwitchSummary::text` and sets `confirm` after the user agrees.
+pub fn describe_switch(
+    paths: &Paths,
+    ids: &ItemIdCache,
+    request: &SecretsConfigureRequest,
+) -> Result<SwitchSummary, OpError> {
+    let plan = Plan::load(paths, request)?;
+    let onepassword = plan.target.onepassword.as_ref();
+    let moving = if plan.changes() && plan.stores_differ() && request.migrate {
+        let old = open_secret_store(&plan.config, paths, ids);
+        present_accounts(&plan.config, old.as_ref()).len()
+    } else {
+        0
+    };
+    Ok(SwitchSummary {
+        changes: plan.changes(),
+        previous: plan.config.general.secrets,
+        backend: request.backend,
+        vault: onepassword.map(|o| o.vault.clone()),
+        account: onepassword.and_then(|o| o.account.clone()),
+        accounts_moving: moving,
+    })
+}
+
 /// Point config at `request.backend` and, when asked, move every account's tokens there.
-/// The caller holds the config lock.
+/// Refuses a change that is not `confirm`ed. The caller holds the config lock.
 pub fn switch_backend(
     paths: &Paths,
     ids: &ItemIdCache,
     request: &SecretsConfigureRequest,
 ) -> Result<SecretsConfigureResponse, OpError> {
-    let path = paths.config_file();
-    let (text, config) = load_text_or_empty(&path)?;
-    let target = target_config(&config, request)?;
+    let plan = Plan::load(paths, request)?;
     let mut response = SecretsConfigureResponse {
         backend: request.backend,
-        previous: config.general.secrets,
+        previous: plan.config.general.secrets,
         moved: Vec::new(),
         old_copies_kept: Vec::new(),
-        config_path: path.clone(),
+        config_path: plan.path.clone(),
     };
-    if target.general.secrets == config.general.secrets && target.onepassword == config.onepassword
-    {
+    if !plan.changes() {
         return Ok(response);
     }
-    let new_text = set_secrets(&text, &path, request.backend, target.onepassword.as_ref())?;
-    let old = open_secret_store(&config, paths, ids);
-    let new = open_secret_store(&target, paths, ids);
-    new.probe()?;
-    if request.migrate && target.general.secrets != config.general.secrets {
-        response.moved = copy_tokens(&config, old.as_ref(), new.as_ref())?;
+    if !request.confirm {
+        return Err(unconfirmed(paths, ids, request));
     }
-    write_config_text(&path, &new_text)?;
-    response.old_copies_kept = delete_old_copies(old.as_ref(), &response.moved);
+    let new_text = set_secrets(
+        &plan.text,
+        &plan.path,
+        request.backend,
+        plan.target.onepassword.as_ref(),
+    )?;
+    let old = open_secret_store(&plan.config, paths, ids);
+    let new = open_secret_store(&plan.target, paths, ids);
+    new.probe()?;
+    let moving = plan.stores_differ();
+    if moving && request.migrate {
+        response.moved = copy_tokens(&plan.config, old.as_ref(), new.as_ref())?;
+    }
+    write_config_text(&plan.path, &new_text)?;
+    if moving && request.migrate {
+        response.old_copies_kept = delete_old_copies(old.as_ref(), &response.moved);
+    } else if moving {
+        response.old_copies_kept = present_accounts(&plan.config, old.as_ref());
+    }
     Ok(response)
+}
+
+fn unconfirmed(paths: &Paths, ids: &ItemIdCache, request: &SecretsConfigureRequest) -> OpError {
+    let error = OpError::invalid_input(NEEDS_CONFIRMATION);
+    match describe_switch(paths, ids, request) {
+        Ok(summary) => error.with_hint(summary.text()),
+        Err(_) => error,
+    }
+}
+
+/// The accounts that have tokens in `store`. One it cannot read counts as holding them: an
+/// old copy that might exist is reported rather than assumed gone.
+fn present_accounts(config: &Config, store: &dyn SecretStore) -> Vec<String> {
+    config
+        .accounts
+        .iter()
+        .filter(|a| {
+            store
+                .has_tokens(&a.address)
+                .inspect_err(|e| tracing::warn!(error = %e, "could not check an account's tokens"))
+                .unwrap_or(true)
+        })
+        .map(|a| a.address.clone())
+        .collect()
 }
 
 fn target_config(config: &Config, request: &SecretsConfigureRequest) -> Result<Config, OpError> {
@@ -185,6 +351,7 @@ mod tests {
             vault: Some("Rail".into()),
             op_account: None,
             migrate: true,
+            confirm: true,
         }
     }
 
@@ -278,6 +445,7 @@ mod tests {
         };
         let done = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap();
         assert!(done.moved.is_empty());
+        assert_eq!(done.old_copies_kept, ["a@x.com", "b@x.com"]);
         assert_eq!(file.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
         assert!(fake.items().is_empty());
     }
@@ -291,6 +459,7 @@ mod tests {
             vault: None,
             op_account: None,
             migrate: true,
+            confirm: false,
         };
         let done = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap();
         assert!(done.moved.is_empty());
@@ -308,9 +477,93 @@ mod tests {
             vault: None,
             op_account: None,
             migrate: true,
+            confirm: true,
         };
         let err = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidInput);
         assert!(err.hint.unwrap().contains("vault"));
+    }
+
+    #[test]
+    fn an_unconfirmed_change_is_refused_with_nothing_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, fake, file, text) = setup(&tmp);
+        let request = SecretsConfigureRequest {
+            confirm: false,
+            ..to_onepassword()
+        };
+        let err = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+        assert_eq!(err.class, ErrorClass::Permanent);
+        assert_eq!(err.message, NEEDS_CONFIRMATION);
+        assert!(err.hint.unwrap().contains("2 account(s)"));
+        assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
+        assert_eq!(file.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
+        assert!(fake.items().is_empty());
+    }
+
+    #[test]
+    fn the_summary_names_the_target_and_warns_about_the_plain_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, _fake, _file, _text) = setup(&tmp);
+        let ids = ItemIdCache::default();
+        let summary = describe_switch(&paths, &ids, &to_onepassword()).unwrap();
+        assert!(summary.changes);
+        assert_eq!(summary.accounts_moving, 2);
+        let text = summary.text();
+        assert!(text.contains("to 1password (vault \"Rail\")"), "{text}");
+        assert!(text.contains("2 account(s)"), "{text}");
+        assert!(!text.contains(FILE_WARNING));
+        switch_backend(&paths, &ids, &to_onepassword()).unwrap();
+        let back = SecretsConfigureRequest {
+            backend: SecretsBackend::File,
+            vault: None,
+            op_account: None,
+            migrate: true,
+            confirm: true,
+        };
+        let text = describe_switch(&paths, &ids, &back).unwrap().text();
+        assert!(text.ends_with(FILE_WARNING), "{text}");
+    }
+
+    #[test]
+    fn changing_only_the_vault_moves_the_tokens() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, fake, _file, _text) = setup(&tmp);
+        let ids = ItemIdCache::default();
+        switch_backend(&paths, &ids, &to_onepassword()).unwrap();
+        let other = SecretsConfigureRequest {
+            vault: Some("Other".into()),
+            ..to_onepassword()
+        };
+        let done = switch_backend(&paths, &ids, &other).unwrap();
+        assert_eq!(done.moved, ["a@x.com", "b@x.com"]);
+        assert!(done.old_copies_kept.is_empty());
+        let config = load(&paths.config_file()).unwrap();
+        assert_eq!(config.onepassword.as_ref().unwrap().vault, "Other");
+        let store = OnePasswordSecretStore::new(fake.cli(), "Other".into(), ids.clone());
+        assert_eq!(store.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
+        let old = OnePasswordSecretStore::new(fake.cli(), "Rail".into(), ids);
+        assert_eq!(old.get_tokens("a@x.com").unwrap(), None);
+    }
+
+    #[test]
+    fn bad_vault_and_account_values_are_invalid_input() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, _fake, _file, text) = setup(&tmp);
+        for request in [
+            SecretsConfigureRequest {
+                vault: Some("a/b".into()),
+                ..to_onepassword()
+            },
+            SecretsConfigureRequest {
+                op_account: Some("  ".into()),
+                ..to_onepassword()
+            },
+        ] {
+            let err = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap_err();
+            assert_eq!(err.code, ErrorCode::InvalidInput, "{err:?}");
+        }
+        assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
     }
 }

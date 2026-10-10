@@ -72,13 +72,22 @@ pub enum SecretError {
     OnePasswordNoItem(String),
     #[error("1Password: {0}")]
     OnePassword(String),
+    /// Rail's own complaint about a request or setting (no vault, a malformed reference).
+    #[error("{0}")]
+    OnePasswordInvalid(String),
+    /// Moving bytes to or from `op` failed: `what` is a fixed phrase, `message` the OS text.
+    #[error("could not {what} the 1Password CLI ({message})")]
+    OnePasswordIo { what: &'static str, message: String },
 }
 
 impl SecretError {
     /// Filesystem and keyring hiccups may clear up; a missing keyring or a corrupt store will not.
     pub fn class(&self) -> ErrorClass {
         match self {
-            Self::Io { .. } | Self::Keyring(_) | Self::OnePasswordTimeout => ErrorClass::Transient,
+            Self::Io { .. }
+            | Self::Keyring(_)
+            | Self::OnePasswordTimeout
+            | Self::OnePasswordIo { .. } => ErrorClass::Transient,
             Self::KeyringUnavailable(_)
             | Self::Corrupt { .. }
             | Self::Encoding(_)
@@ -86,6 +95,7 @@ impl SecretError {
             | Self::OnePasswordMissing { .. }
             | Self::OnePasswordUnsafe { .. }
             | Self::OnePasswordNoItem(_)
+            | Self::OnePasswordInvalid(_)
             | Self::OnePassword(_) => ErrorClass::Permanent,
         }
     }
@@ -96,6 +106,12 @@ pub trait SecretStore: Send + Sync {
     fn set_tokens(&self, address: &str, tokens: &TokenSet) -> Result<(), SecretError>;
     fn delete_tokens(&self, address: &str) -> Result<(), SecretError>;
     fn backend_name(&self) -> &'static str;
+
+    /// Whether `address` has tokens. Stores that can answer without reading the tokens
+    /// override this; the default reads them.
+    fn has_tokens(&self, address: &str) -> Result<bool, SecretError> {
+        self.get_tokens(address).map(|t| t.is_some())
+    }
 
     /// Check the store can be reached without changing anything.
     fn probe(&self) -> Result<(), SecretError> {
@@ -498,7 +514,16 @@ mod tests {
             },
             SecretError::OnePasswordNoItem("x".into()),
             SecretError::OnePassword("x".into()),
+            SecretError::OnePasswordInvalid("x".into()),
         ];
+        assert_eq!(
+            SecretError::OnePasswordIo {
+                what: "read from",
+                message: "x".into()
+            }
+            .class(),
+            ErrorClass::Transient
+        );
         assert!(permanent.iter().all(|e| e.class() == ErrorClass::Permanent));
     }
 

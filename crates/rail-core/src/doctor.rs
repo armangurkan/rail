@@ -73,8 +73,8 @@ fn check_accounts(
     rows: &[AccountRow],
 ) {
     for account in &config.accounts {
-        let (has_tokens, token_error) = match secrets.get_tokens(&account.address) {
-            Ok(t) => (t.is_some(), None),
+        let (has_tokens, token_error) = match secrets.has_tokens(&account.address) {
+            Ok(present) => (present, None),
             Err(e) => (false, Some(Untrusted::new(e.to_string()))),
         };
         if let Some(err) = &token_error {
@@ -217,7 +217,7 @@ mod tests {
         let paths = Paths::all_in(dir.path());
         let fake = crate::test_support::FakeOp::install(dir.path());
         let config = format!(
-            "[general]\nsecrets = \"1password\"\n\n[onepassword]\nvault = \"Rail\"\nop_path = \"{}\"\n",
+            "[general]\nsecrets = \"1password\"\n\n[onepassword]\nvault = \"Rail\"\nop_path = \"{}\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n",
             fake.path.display()
         );
         write_config(&paths, &config);
@@ -225,6 +225,21 @@ mod tests {
         assert!(report.is_healthy(), "{report:?}");
         assert_eq!(report.secrets_backend, "1password");
         assert!(fake.argv().contains("whoami"));
+        let store = open_secret_store(
+            &config::load(&paths.config_file()).unwrap(),
+            &paths,
+            &ItemIdCache::default(),
+        );
+        store
+            .set_tokens("me@example.com", &crate::test_support::tokens())
+            .unwrap();
+        let report = gather(&paths, &ItemIdCache::default());
+        assert!(report.accounts[0].has_tokens);
+        assert!(
+            !fake.argv().contains("--reveal"),
+            "status never reveals tokens:\n{}",
+            fake.argv()
+        );
         fake.lock();
         let report = gather(&paths, &ItemIdCache::default());
         assert!(report.secrets_error.unwrap().get().contains("op signin"));

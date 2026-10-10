@@ -294,6 +294,10 @@ fn secret_store_text_is_only_ever_detail() {
         },
         SecretError::OnePasswordNoItem(INJECTION.into()),
         SecretError::OnePassword(INJECTION.into()),
+        SecretError::OnePasswordIo {
+            what: "read from",
+            message: INJECTION.into(),
+        },
     ];
     for error in cases {
         let op: OpError = error.into();
@@ -309,6 +313,15 @@ fn a_locked_1password_says_to_unlock_it_in_fixed_text() {
     assert_eq!(op.class, crate::error::ErrorClass::Permanent);
     assert!(op.message.contains("not unlocked or not signed in"));
     assert!(op.hint.unwrap().contains("op signin"));
+}
+
+#[test]
+fn rails_own_1password_complaints_are_messages_not_detail() {
+    use crate::auth::SecretError;
+    let op: OpError = SecretError::OnePasswordInvalid("no vault is set; add vault".into()).into();
+    assert_eq!(op.code, ErrorCode::Secrets);
+    assert_eq!(op.message, "no vault is set; add vault");
+    assert!(op.detail.is_none());
 }
 
 #[test]

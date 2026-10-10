@@ -24,6 +24,11 @@ pub struct SecretsConfigureRequest {
     /// old copies. A failure part way leaves the old copies and the config as they were.
     #[serde(default = "yes")]
     pub migrate: bool,
+    /// Set only by a trusted front end after the user confirmed the change (see
+    /// `auth::migrate::describe_switch` for the text to show). The daemon refuses any request
+    /// that changes the backend, vault or account without it. Never offered to an agent.
+    #[serde(default)]
+    pub confirm: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

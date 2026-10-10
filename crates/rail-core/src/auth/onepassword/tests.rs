@@ -1,6 +1,6 @@
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::*;
 use crate::error::ErrorClass;
@@ -141,6 +141,80 @@ fn a_locked_vault_is_reported_even_when_op_never_reads_the_template() {
 }
 
 #[test]
+fn escaped_forms_of_a_token_are_redacted_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = FakeOp::install(tmp.path());
+    fake.fail_on("a@x.com");
+    let tricky = TokenSet {
+        access_token: "ab\"cd\\ef".to_string(),
+        ..tokens()
+    };
+    let err = store(&fake).set_tokens("a@x.com", &tricky).unwrap_err();
+    let text = format!("{err} {err:?}");
+    assert!(text.contains("could not create"), "{text}");
+    assert!(!text.contains("ab\"cd\\ef"), "raw form leaked: {text}");
+    assert!(
+        !text.contains("ab\\\"cd\\\\ef"),
+        "escaped form leaked: {text}"
+    );
+    assert!(text.contains("<redacted>"), "{text}");
+}
+
+#[test]
+fn a_chatty_cli_is_cut_off_at_the_cap_and_fails_the_call() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = FakeOp::install(tmp.path());
+    let big = tmp.path().join("big-op");
+    std::fs::write(
+        &big,
+        "#!/bin/sh\nhead -c 3000000 /dev/zero | tr '\\0' 'x'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&big, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config = OnePasswordConfig {
+        op_path: Some(big),
+        ..fake.config()
+    };
+    let cli = OpCli::from_config(Some(&config), &fake.runtime_dir);
+    // Rail stops reading at the cap, so the writer breaks its pipe: a failed call, not an
+    // unbounded read and not a silently truncated success.
+    let started = Instant::now();
+    assert!(cli.run(&["whoami"], None, &[]).is_err());
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn a_cli_that_never_reads_a_large_template_still_times_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = FakeOp::install(tmp.path());
+    fake.hang();
+    let cli = fake.cli().with_timeout(Duration::from_millis(300));
+    let template = vec![b'x'; 4 * 1024 * 1024];
+    let started = Instant::now();
+    let err = cli
+        .run(&["item", "create", "-"], Some(&template), &[])
+        .unwrap_err();
+    assert!(matches!(err, SecretError::OnePasswordTimeout), "{err:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn presence_checks_never_reveal_tokens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = FakeOp::install(tmp.path());
+    let store = store(&fake);
+    assert!(!store.has_tokens("a@x.com").unwrap());
+    store.set_tokens("a@x.com", &tokens()).unwrap();
+    assert!(store.has_tokens("a@x.com").unwrap());
+    assert!(!fake.argv().contains("--reveal"), "{}", fake.argv());
+    std::fs::remove_dir_all(fake.state.join("items")).unwrap();
+    assert!(
+        !store.has_tokens("a@x.com").unwrap(),
+        "a stale cached id is not presence"
+    );
+}
+
+#[test]
 fn a_hung_cli_times_out_as_transient() {
     let tmp = tempfile::tempdir().unwrap();
     let fake = FakeOp::install(tmp.path());
@@ -209,6 +283,52 @@ fn a_group_writable_op_is_refused() {
     );
     assert!(fake.argv().is_empty(), "the refused program never ran");
     assert_eq!(err.class(), ErrorClass::Permanent);
+}
+
+/// An `op` another user could swap, because the directory it sits in is theirs to write.
+#[test]
+fn an_op_in_a_group_writable_directory_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let shared = tmp.path().join("shared");
+    std::fs::create_dir(&shared).unwrap();
+    let fake = FakeOp::install(&shared);
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o775)).unwrap();
+    let err = refusal(&tmp, &fake.path);
+    assert!(
+        err.to_string().contains("writable by group or others"),
+        "{err}"
+    );
+    assert!(err.to_string().contains("shared"), "{err}");
+    assert!(fake.argv().is_empty(), "the refused program never ran");
+    // A sticky directory (like /tmp) is fine: others cannot replace what they do not own.
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o1777)).unwrap();
+    refusal_free(&tmp, &fake.path);
+}
+
+fn refusal_free(tmp: &tempfile::TempDir, op_path: &Path) {
+    let config = OnePasswordConfig {
+        vault: "Rail".into(),
+        account: None,
+        op_path: Some(op_path.to_path_buf()),
+    };
+    OpCli::from_config(Some(&config), &tmp.path().join("run"))
+        .whoami()
+        .unwrap();
+}
+
+/// The program that runs is the checked canonical file, not the configured spelling.
+#[test]
+fn a_symlinked_op_runs_as_its_canonical_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let fake = FakeOp::install(&real);
+    let link = tmp.path().join("op-link");
+    std::os::unix::fs::symlink(&fake.path, &link).unwrap();
+    refusal_free(&tmp, &link);
+    let canonical = std::fs::canonicalize(&fake.path).unwrap();
+    assert_eq!(fake.program(), canonical.display().to_string());
+    assert_ne!(fake.program(), link.display().to_string());
 }
 
 /// Review focus 6.
