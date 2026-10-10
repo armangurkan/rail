@@ -14,9 +14,9 @@ Rail is a Rust terminal mail client built on ratatui: a modern, fast homage to m
 store, a thread view, a unified inbox, readable HTML and a command palette. Gmail and Microsoft 365
 first.
 
-**Status: pre-alpha.** The setup wizard, login, config, store and `rail doctor` work. The mail views
-are not built yet: with an account configured, `rail` still prints that the TUI is not built and exits
-with status 2.
+**Status: pre-alpha.** The setup wizard, login, config, store, `rail doctor`, the background daemon,
+1Password storage and the MCP server for AI coding agents work. The mail views are not built yet:
+with an account configured, `rail` still prints that the TUI is not built and exits with status 2.
 
 ## Why Rail
 
@@ -34,14 +34,16 @@ with status 2.
 |---|---|---|
 | 1 | Workspace, config, store schema, secrets, OAuth login, `rail account`, `rail doctor` | Done |
 | 2 | App shell and onboarding: setup wizard, organisation presets, admin consent, `rail setup`, `rail account login` | Done |
-| 3 | Gmail provider, sync engine, outbox, writer actor and read pool: `rail sync` fills the store | Next |
-| 4 | TUI read path: thread list, sidebar, reader, palette, help, filter | Planned |
-| 5 | Actions through the outbox and the compose round-trip | Planned |
-| 6 | Microsoft Graph provider and device-code flow | Planned |
-| 7 | Polish: search operators, auto layout, theme, inline images | Planned |
+| 3 | Daemon, operation layer and MCP server: `rail daemon`, `rail mcp`, guided provider setup, 1Password, `ai_send` | Done |
+| 4 | Gmail provider and sync, inside the daemon: `rail sync` fills the store | Next |
+| 5 | TUI read path: thread list, sidebar, reader, palette, help, filter | Planned |
+| 6 | Actions through the outbox and the compose round-trip; agent sends under `ai_send` | Planned |
+| 7 | Microsoft Graph provider and device-code flow | Planned |
+| 8 | Polish: search operators, auto layout, theme, inline images | Planned |
 
 The design is in [`docs/superpowers/specs/2026-10-09-rail-design.md`](docs/superpowers/specs/2026-10-09-rail-design.md)
-and, for the shell and the wizard, [`docs/superpowers/specs/2026-10-09-rail-onboarding-design.md`](docs/superpowers/specs/2026-10-09-rail-onboarding-design.md).
+for the shell and the wizard, [`docs/superpowers/specs/2026-10-09-rail-onboarding-design.md`](docs/superpowers/specs/2026-10-09-rail-onboarding-design.md),
+and for the daemon and the MCP server, [`docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md`](docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md).
 
 ## Install
 
@@ -61,7 +63,9 @@ With no config file yet, Rail opens the setup wizard. It asks how you want to se
   path or `https://` URL it gave you. Enter your address, log in through the browser, done.
 - **Set up my own app.** Choose Gmail or Microsoft 365. The wizard shows the portal steps (the same
   ones as in [Setup](#setup) below), opens the portal with `o`, and asks for the values the portal
-  gave you.
+  gave you. For Microsoft the client ID field is the app's *Application (client) ID*. The Gmail
+  client secret field also takes an `op://` 1Password reference (see
+  [Tokens in 1Password](#tokens-in-1password)).
 
 The wizard ends with a report of where everything lives and offers to add another account.
 `rail setup` opens it any time. `rail account add` with no arguments opens it too, and
@@ -122,7 +126,7 @@ and the desktop client download, and every login), and finishes with `rail_accou
 client secret JSON you downloaded, an `op://` reference or a preset, never the secret itself, and
 tokens stay in the daemon. A `client_secret` sent by an agent is refused, and a value in
 `client_secret_ref` that is not an `op://` reference is refused without being repeated anywhere,
-in case it was a pasted secret. Every tool refuses fields it does not know. File paths given to any
+in case it was a pasted secret. Every tool refuses arguments it does not know. File paths given to any
 tool must be absolute (the daemon's working directory is not the agent's); a relative one is
 refused with "use an absolute path".
 
@@ -169,8 +173,10 @@ control for sending.
 
 `rail mcp` writes only MCP messages to its standard output and logs to `rail.log`; it logs the
 MCP library's own messages only at error level, since its warnings about malformed arguments
-can quote what the agent sent. It talks to the
-background daemon like every other command.
+can quote what the agent sent. A more specific `RUST_LOG` target overrides that: with
+`RUST_LOG=rmcp::handler=warn`, those warnings come back and may quote tool arguments, so do not
+set one while an agent might be sending a pasted secret, and treat `rail.log` as sensitive then.
+It talks to the background daemon like every other command.
 
 ## Commands
 
@@ -242,7 +248,11 @@ An AI agent connected over MCP walks you through exactly these steps (see
 
        rail account add m365 --address you@corp.com --client-id <application-id>
 
-   Add `--tenant <tenant-id-or-domain>` if your organisation restricts the `common` endpoint.
+   The client ID is the **Application (client) ID** on the app registration's **Overview** page
+   (not the *Object ID*). If you chose "Accounts in this organizational directory only" (single
+   tenant), you must also give the tenant: add `--tenant <tenant-id-or-domain>`, or fill in the
+   wizard's *Tenant* field. Microsoft refuses the default `common` endpoint for single-tenant apps;
+   add `--tenant` too if your organisation restricts `common`.
 
 <!-- guide:microsoft v1 -->
 **The same steps with `az`.** The Azure CLI can do the whole registration of an app for work or
@@ -304,7 +314,7 @@ every app (see below).
 port on a loopback address.
 
 **Admin consent.** Many organisations stop users from approving apps themselves. An administrator
-approves Rail once for everyone, in either of two ways:
+approves Rail once for everyone, in any of three ways:
 
 - *From the wizard.* On the Details step tick **I am an administrator of this tenant**. Rail opens
   Microsoft's admin-consent page for your tenant, waits for the redirect to `http://127.0.0.1`, and
@@ -312,8 +322,11 @@ approves Rail once for everyone, in either of two ways:
   or at `common`, the wizard asks for it. Then it continues with your own login.
 - *From the portal.* In Azure Portal open the app's **API permissions** and choose **Grant admin
   consent for <organisation>**.
+- *During a normal login.* An administrator who just logs in (without ticking the box) is shown
+  Microsoft's consent page with a **Consent on behalf of your organization** checkbox. Ticking it
+  grants consent for everyone, exactly like the other two ways.
 
-After either, users should no longer see the consent prompt for exactly the permissions listed above,
+After any of these, users should no longer see the consent prompt for exactly the permissions listed above,
 unless the tenant's other policies (Conditional Access, app assignment, MFA) intervene; the table
 below lists the `AADSTS` codes for those. If you are not an administrator and your login fails
 with `AADSTS65001` or `AADSTS90094`, the wizard shows the exact admin-consent URL. Press `c` to copy
@@ -552,7 +565,11 @@ Each `op` call may take up to 30 seconds, long enough for the 1Password app's un
 relative, not an executable file, owned by another user, or writable by anyone but its owner, or when
 any directory above it belongs to another user or is writable by others (a sticky directory such as
 `/tmp` is fine); the resolved file is what runs. `op_path`
-is only ever read from `config.toml`; no daemon request can set it. The daemon's `secrets.configure`
+is only ever read from `config.toml`; no daemon request can set it. A Homebrew-on-Linux `op` usually
+fails this check, because its prefix (`/home/linuxbrew/.linuxbrew`) is writable by a group or owned by
+another user; Rail then says which part it refused. Install `op` from 1Password's own package (for
+example `/usr/bin/op`), or put a copy that only you own in a directory only you can write, and set
+`op_path` to it by hand. The daemon's `secrets.configure`
 operation switches backends, but only for a request a front end marked `confirm` after asking the
 user, carrying the digest of the plan the user was shown: tokens are copied to the new backend, read back to verify, and only
 then are the old copies deleted, so a failure part way leaves the old copies in place.
@@ -578,11 +595,16 @@ the old config in charge. `op_path` is never set this way: only you choose, by e
 ## Project layout
 
 ```
-crates/rail-core/        Library: paths, config, store, auth, onboarding. No terminal dependency.
+crates/rail-core/        Library: paths, config, store, auth, onboarding, operations, daemon. No terminal dependency.
   src/config/            TOML model, loading with line-numbered errors, comment-preserving edits
   src/store/             SQLite open, migrations, accounts repository
-  src/auth/              Secret stores, OAuth endpoints, loopback listener, login and admin-consent flows, token refresh
+  src/auth/              Secret stores (keyring, file, 1Password), OAuth endpoints, loopback listener, login and admin-consent flows, token refresh
   src/onboarding/        Presets and the setup wizard's pure state machine
+  src/ops/               The operation layer: every request and response type, OpError, Untrusted
+  src/daemon/            JSON-RPC wire format, client and connector, the socket server and its handlers
+  src/accounts/          The add, login and remove pipeline the daemon runs
+  src/guide/             Google and Microsoft setup steps as versioned data
+  src/doctor.rs          The `rail doctor` checks
 crates/rail/             Binary: clap CLI, logging, `account`, `daemon`, `doctor`, `mcp` and `setup` commands
   src/cmd/mcp/           The MCP server: tools, the setup prompt, confirmation through elicitation, summaries
   src/tui/               App shell: terminal guard, event loop, widgets, the wizard screen and its effects
@@ -606,15 +628,21 @@ Line coverage (needs `cargo-llvm-cov`):
 
     cargo llvm-cov --workspace
 
-Tests never touch the real XDG directories, the real OS keyring, the network, or a real browser.
+Tests never touch the real XDG directories, the real OS keyring, the network, a real browser or a
+real 1Password account (a fake `op` script stands in).
 Debug builds honour three test hooks, `RAIL_TEST_OPENER` (a program run instead of the browser),
 `RAIL_TEST_TOKEN_URL` (a token endpoint served by the test) and `RAIL_TEST_IDLE_SECS` (the daemon's
 idle timeout, so the daemons the binary tests start exit seconds after their last client); release
 builds ignore all three. Every binary test runs with the stand-in browser set, so neither it nor a
 daemon it starts can open a real one. On Linux, the tests that drive the wizard and `rail account remove` in a
-pseudo-terminal use util-linux `script` and are skipped where `script` is missing. The one test that exercises the real keyring is ignored by default:
+pseudo-terminal use util-linux `script` and are skipped where `script` is missing. The tests that
+exercise the real keyring and a real 1Password vault are ignored by default:
 
     cargo test -p rail-core -- --ignored keyring_live
+    RAIL_OP_LIVE_VAULT=<vault> cargo test -p rail-core -- --ignored onepassword_live
+
+Changes a user can see or type update this README in the same change; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the ground rules and commit format, and
 [CHANGELOG.md](CHANGELOG.md) for what has shipped.
