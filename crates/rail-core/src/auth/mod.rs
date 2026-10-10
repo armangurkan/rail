@@ -32,7 +32,9 @@ pub enum AuthError {
     NoRefreshToken,
     #[error("token exchange failed: {0}")]
     Exchange(String),
-    #[error("refresh token rejected ({0}); run `rail account add` again to re-authenticate")]
+    #[error(
+        "refresh token rejected ({0}); to re-authenticate, remove its [[accounts]] entry from config.toml and run `rail account add`"
+    )]
     NeedsAuth(String),
     #[error("network error talking to the token endpoint: {0}")]
     Network(String),
@@ -75,5 +77,16 @@ mod tests {
         ];
         assert!(transient.iter().all(|e| e.class() == ErrorClass::Transient));
         assert!(permanent.iter().all(|e| e.class() == ErrorClass::Permanent));
+    }
+
+    #[test]
+    fn needs_auth_advice_is_actionable() {
+        let text = AuthError::NeedsAuth("revoked".into()).to_string();
+        assert!(
+            text.contains(
+                "remove its [[accounts]] entry from config.toml and run `rail account add`"
+            ),
+            "{text}"
+        );
     }
 }

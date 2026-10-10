@@ -7,7 +7,7 @@ use oauth2::RefreshToken;
 use tokio::sync::Mutex;
 
 use super::AuthError;
-use super::client::OAuthClient;
+use super::client::{OAuthClient, send_token_request};
 use super::flow::{map_token_error, token_set_from_response};
 use super::secrets::{SecretStore, TokenSet};
 
@@ -90,7 +90,7 @@ impl TokenSource {
         let response = self
             .client
             .exchange_refresh_token(&RefreshToken::new(current.refresh_token.clone()))
-            .request_async(&self.http)
+            .request_async(&|req| send_token_request(self.http.clone(), req))
             .await
             .map_err(map_token_error)?;
         let tokens = token_set_from_response(&response, Some(&current.refresh_token), now)?;
@@ -210,6 +210,78 @@ mod tests {
             "{err:?}"
         );
         assert_eq!(err.class(), crate::error::ErrorClass::Permanent);
+    }
+
+    async fn refresh_error(response: ResponseTemplate) -> AuthError {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+        let src = source(&server.uri(), stored(0), 1_000);
+        src.access_token().await.unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn token_endpoint_503_with_html_body_is_transient() {
+        let err = refresh_error(
+            ResponseTemplate::new(503)
+                .set_body_raw("<html>Service Unavailable</html>", "text/html"),
+        )
+        .await;
+        assert!(
+            matches!(err, AuthError::Network(ref m) if m.contains("503")),
+            "{err:?}"
+        );
+        assert_eq!(err.class(), crate::error::ErrorClass::Transient);
+    }
+
+    #[tokio::test]
+    async fn token_endpoint_503_with_empty_body_is_transient() {
+        let err = refresh_error(ResponseTemplate::new(503)).await;
+        assert!(
+            matches!(err, AuthError::Network(ref m) if m.contains("503")),
+            "{err:?}"
+        );
+        assert_eq!(err.class(), crate::error::ErrorClass::Transient);
+    }
+
+    #[tokio::test]
+    async fn token_endpoint_429_is_transient() {
+        let err = refresh_error(ResponseTemplate::new(429).set_body_json(serde_json::json!({
+            "error": "rate_limited"
+        })))
+        .await;
+        assert!(
+            matches!(err, AuthError::Network(ref m) if m.contains("429")),
+            "{err:?}"
+        );
+        assert_eq!(err.class(), crate::error::ErrorClass::Transient);
+    }
+
+    #[tokio::test]
+    async fn temporarily_unavailable_error_response_is_transient() {
+        for code in ["temporarily_unavailable", "server_error"] {
+            let err = refresh_error(
+                ResponseTemplate::new(400).set_body_json(serde_json::json!({ "error": code })),
+            )
+            .await;
+            assert_eq!(err.class(), crate::error::ErrorClass::Transient, "{err:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn other_4xx_responses_stay_permanent() {
+        let err = refresh_error(
+            ResponseTemplate::new(401)
+                .set_body_json(serde_json::json!({ "error": "invalid_client" })),
+        )
+        .await;
+        assert!(matches!(err, AuthError::Exchange(_)), "{err:?}");
+        assert_eq!(err.class(), crate::error::ErrorClass::Permanent);
+        let err =
+            refresh_error(ResponseTemplate::new(404).set_body_raw("<html/>", "text/html")).await;
+        assert_eq!(err.class(), crate::error::ErrorClass::Permanent, "{err:?}");
     }
 
     #[tokio::test]

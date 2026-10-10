@@ -7,7 +7,7 @@ use oauth2::{
 use url::Url;
 
 use super::AuthError;
-use super::client::build_client;
+use super::client::{build_client, send_token_request};
 use super::endpoints::OAuthEndpoints;
 use super::loopback::Loopback;
 use super::secrets::TokenSet;
@@ -45,7 +45,7 @@ pub async fn run_auth_code_flow(
     let response = client
         .exchange_code(AuthorizationCode::new(code))
         .set_pkce_verifier(pkce_verifier)
-        .request_async(http)
+        .request_async(&|req| send_token_request(http.clone(), req))
         .await
         .map_err(map_token_error)?;
     token_set_from_response(&response, None, now)
@@ -72,7 +72,11 @@ pub(crate) fn token_set_from_response(
     })
 }
 
-/// Classify a token endpoint failure; `invalid_grant` means the user must log in again.
+/// OAuth error codes (RFC 6749 §5.2 extensions) that say "try again later".
+const TRANSIENT_ERROR_CODES: &[&str] = &["server_error", "temporarily_unavailable"];
+
+/// Classify a token endpoint failure. `invalid_grant` means the user must log in
+/// again; 5xx, 429 and `server_error`/`temporarily_unavailable` are transient.
 pub(crate) fn map_token_error<RE>(error: RequestTokenError<RE, BasicErrorResponse>) -> AuthError
 where
     RE: std::error::Error + 'static,
@@ -82,6 +86,11 @@ where
             if matches!(resp.error(), BasicErrorResponseType::InvalidGrant) =>
         {
             AuthError::NeedsAuth(resp.error_description().cloned().unwrap_or_default())
+        }
+        RequestTokenError::ServerResponse(resp)
+            if TRANSIENT_ERROR_CODES.contains(&resp.error().as_ref()) =>
+        {
+            AuthError::Network(resp.to_string())
         }
         RequestTokenError::ServerResponse(resp) => AuthError::Exchange(resp.to_string()),
         RequestTokenError::Request(e) => AuthError::Network(e.to_string()),
@@ -229,5 +238,38 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(err, AuthError::NoRefreshToken), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn code_exchange_503_is_transient() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let (tx, rx) = tokio::sync::oneshot::channel::<Url>();
+        tokio::spawn(async move {
+            let url = rx.await.unwrap();
+            let state = query(&url, "state");
+            let redirect = query(&url, "redirect_uri");
+            reqwest::get(format!("{redirect}/?code=x&state={state}"))
+                .await
+                .unwrap();
+        });
+        let err = run_auth_code_flow(
+            &account(),
+            &endpoints(&server),
+            &http_client().unwrap(),
+            |u| tx.send(u.clone()).unwrap(),
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, AuthError::Network(ref m) if m.contains("503")),
+            "{err:?}"
+        );
+        assert_eq!(err.class(), crate::error::ErrorClass::Transient);
     }
 }
