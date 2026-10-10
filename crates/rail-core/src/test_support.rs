@@ -14,6 +14,7 @@ pub(crate) fn sample_account() -> AccountConfig {
         client_secret: None,
         tenant: None,
         signature: None,
+        ai_send: None,
     }
 }
 

@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -54,7 +55,7 @@ pub enum Layout {
     Stack,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SecretsBackend {
     Keyring,
@@ -77,6 +78,41 @@ pub struct AccountConfig {
     pub tenant: Option<String>,
     #[serde(default)]
     pub signature: Option<PathBuf>,
+    /// What an AI agent may do with this account's mail over MCP. Unset means `confirm`.
+    #[serde(default)]
+    pub ai_send: Option<AiSend>,
+}
+
+impl AccountConfig {
+    /// The account's send policy, `confirm` when the key is absent.
+    pub fn ai_send(&self) -> AiSend {
+        self.ai_send.unwrap_or_default()
+    }
+}
+
+/// What an agent may do through MCP with an account's mail: send, reply, forward and delete.
+/// Parsed and reported now; enforced when the send tools arrive.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AiSend {
+    /// The user confirms each action through MCP elicitation; without elicitation, drafts only.
+    #[default]
+    Confirm,
+    /// Drafts may be created and edited, never sent.
+    Drafts,
+    /// Rely on the MCP client's own per-call approval prompt. The weakest option.
+    Client,
+}
+
+impl AiSend {
+    /// The value as written in `config.toml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Confirm => "confirm",
+            Self::Drafts => "drafts",
+            Self::Client => "client",
+        }
+    }
 }
 
 /// Hides `client_secret` so `{:?}` and tracing fields never print it.
@@ -94,11 +130,12 @@ impl std::fmt::Debug for AccountConfig {
             )
             .field("tenant", &self.tenant)
             .field("signature", &self.signature)
+            .field("ai_send", &self.ai_send)
             .finish()
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AccountKind {
     Gmail,
@@ -136,5 +173,39 @@ mod tests {
         assert!(!debug.contains("GOCSPX-very-secret"), "{debug}");
         assert!(debug.contains("<redacted>"), "{debug}");
         assert!(debug.contains("me@example.com"), "{debug}");
+    }
+
+    #[test]
+    fn ai_send_defaults_to_confirm_and_parses_each_value() {
+        use crate::config::parse;
+        use std::path::Path;
+        let account = |extra: &str| {
+            format!(
+                "[[accounts]]\nname = \"w\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"c\"\n{extra}"
+            )
+        };
+        let unset = parse(&account(""), Path::new("c.toml")).unwrap();
+        assert_eq!(unset.accounts[0].ai_send, None);
+        assert_eq!(unset.accounts[0].ai_send(), AiSend::Confirm);
+        for (text, expected) in [
+            ("confirm", AiSend::Confirm),
+            ("drafts", AiSend::Drafts),
+            ("client", AiSend::Client),
+        ] {
+            let line = format!("ai_send = \"{text}\"\n");
+            let config = parse(&account(&line), Path::new("c.toml")).unwrap();
+            assert_eq!(config.accounts[0].ai_send(), expected);
+            assert_eq!(expected.as_str(), text);
+        }
+    }
+
+    #[test]
+    fn an_unknown_ai_send_value_reports_its_line() {
+        use crate::config::{ConfigError, parse};
+        use std::path::Path;
+        let text = "[[accounts]]\nname = \"w\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"c\"\nai_send = \"always\"\n";
+        let err = parse(text, Path::new("/x/config.toml")).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse { line: 6, .. }), "{err}");
+        assert!(err.to_string().contains("always"), "{err}");
     }
 }

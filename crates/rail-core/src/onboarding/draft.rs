@@ -266,6 +266,7 @@ impl AccountDraft {
                 AccountKind::Gmail => None,
             },
             signature: None,
+            ai_send: None,
         })
     }
 }

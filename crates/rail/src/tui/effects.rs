@@ -281,6 +281,7 @@ mod tests {
             client_secret: Some("sec".into()),
             tenant: None,
             signature: None,
+            ai_send: None,
         }
     }
 

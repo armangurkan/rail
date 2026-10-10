@@ -23,6 +23,7 @@ oauth2.workspace = true
 reqwest.workspace = true
 url.workspace = true
 humantime-serde.workspace = true
+schemars.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

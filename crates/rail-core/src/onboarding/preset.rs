@@ -110,10 +110,30 @@ fn validate(preset: &Preset) -> Result<(), String> {
     Ok(())
 }
 
+/// What `read_preset` says about a file over `MAX_PRESET_BYTES`.
+pub const PRESET_TOO_LARGE: &str = "the preset is larger than 64 KiB";
+
+/// Read and parse a preset file, refusing anything over 64 KiB unread, like `fetch_preset`.
 pub fn read_preset(path: &Path) -> Result<Preset, ConfigError> {
-    let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+    use std::io::Read;
+    let io_error = |source| ConfigError::Io {
         path: path.to_path_buf(),
         source,
+    };
+    let file = std::fs::File::open(path).map_err(io_error)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_PRESET_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io_error)?;
+    if bytes.len() > MAX_PRESET_BYTES {
+        return Err(ConfigError::Invalid {
+            path: path.to_path_buf(),
+            message: PRESET_TOO_LARGE.to_string(),
+        });
+    }
+    let text = String::from_utf8(bytes).map_err(|_| ConfigError::Invalid {
+        path: path.to_path_buf(),
+        message: "the preset is not UTF-8 text".to_string(),
     })?;
     parse_preset(&text, path)
 }
@@ -406,6 +426,20 @@ help_url = "https://intranet.example/rail"
                 tmp.path().join("config").join("presets"),
                 PathBuf::from("/etc/rail/presets"),
             ]
+        );
+    }
+
+    #[test]
+    fn a_preset_file_over_64_kib_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("big.toml");
+        let mut text = ACME_GMAIL.to_string();
+        text.push_str(&"#".repeat(65 * 1024));
+        std::fs::write(&file, text).unwrap();
+        let err = read_preset(&file).unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::Invalid { message, .. } if message == PRESET_TOO_LARGE),
+            "{err}"
         );
     }
 

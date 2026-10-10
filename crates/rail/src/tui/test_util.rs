@@ -118,6 +118,7 @@ pub fn existing_config() -> Config {
             client_secret: None,
             tenant: None,
             signature: None,
+            ai_send: None,
         }],
         ..Config::default()
     }

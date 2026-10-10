@@ -165,6 +165,7 @@ pub(crate) fn prepare(paths: &Paths, new: NewAccount) -> color_eyre::Result<Pend
         client_secret: new.client_secret,
         tenant: new.tenant,
         signature: None,
+        ai_send: None,
     };
     // Pure: rejects a bad or duplicate-name account.
     let new_text = config::append_account(&text, &config_path, &account)?;
@@ -315,6 +316,7 @@ mod tests {
             client_secret: None,
             tenant: None,
             signature: None,
+            ai_send: None,
         };
         let new_text = config::append_account("", &paths.config_file(), &account).unwrap();
         PendingAdd {
