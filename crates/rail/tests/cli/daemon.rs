@@ -4,7 +4,8 @@
 use std::process::Command;
 
 use super::{
-    KillsChild, StopsDaemon, WORK_FILE_BACKEND, finish_within, rail_cmd, stdout_of, write_config,
+    KillsChild, StopsDaemon, WORK_FILE_BACKEND, finish_within, opened_url_file, rail_cmd,
+    stdout_of, write_config, write_opener,
 };
 
 #[test]
@@ -140,6 +141,8 @@ fn relative_directory_settings_work_through_the_daemon() {
             .env("RAIL_STATE_DIR", "state")
             .env("RAIL_RUNTIME_DIR", "run")
             .env("RAIL_TEST_IDLE_SECS", "2")
+            .env("RAIL_TEST_OPENER", write_opener(&dir))
+            .env("RAIL_TEST_URL_FILE", opened_url_file(&dir))
             .args(args)
             .output()
             .unwrap()
@@ -160,12 +163,9 @@ fn a_daemon_with_other_directories_is_refused_and_nothing_changes() {
     let dir = tempfile::tempdir().unwrap();
     let _daemon = StopsDaemon(&dir);
     let config = write_config(&dir, WORK_FILE_BACKEND);
-    // Should the refusal ever regress, the login must neither reach a real browser nor hang.
-    let first = rail_cmd(&dir)
-        .args(["account", "list"])
-        .env("RAIL_TEST_OPENER", "true")
-        .output()
-        .unwrap();
+    // Should the refusal ever regress, the login reaches only the stand-in browser and the
+    // bounded wait below fails instead of hanging.
+    let first = rail_cmd(&dir).args(["account", "list"]).output().unwrap();
     assert!(first.status.success(), "{first:?}");
     let other = dir.path().join("other-config");
     std::fs::create_dir_all(&other).unwrap();
@@ -198,6 +198,7 @@ fn a_daemon_with_other_directories_is_refused_and_nothing_changes() {
     );
     assert!(stderr.contains("other-config"), "{stderr}");
     assert!(!stdout_of(&add).contains("http"), "{add:?}");
+    assert!(!opened_url_file(&dir).exists(), "the browser was asked");
     assert_eq!(std::fs::read_to_string(&config).unwrap(), WORK_FILE_BACKEND);
     assert_eq!(
         std::fs::read_to_string(other.join("config.toml")).unwrap(),

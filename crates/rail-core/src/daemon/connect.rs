@@ -88,11 +88,21 @@ impl Connector {
     /// A fresh connection to a daemon of this Rail version, starting one if needed. A daemon of
     /// another version is asked to stop and replaced. A daemon that works on other directories
     /// (another `RAIL_*_DIR` setting sharing this runtime directory) is refused, and left alone.
+    /// One that does not say which directories it uses (older than the field) is replaced on a
+    /// version change, and otherwise refused like a mismatch.
     pub async fn connect(&self) -> Result<DaemonClient, OpError> {
         for _ in 0..2 {
             let client = self.connect_or_start().await?;
-            self.check_dirs(client.daemon())?;
+            let known = says_dirs(client.daemon());
+            if known {
+                self.check_dirs(client.daemon())?;
+            }
             if self.matches(client.daemon()) {
+                if !known {
+                    return Err(self.dirs_mismatch(
+                        "the daemon did not say which directories it uses".to_string(),
+                    ));
+                }
                 return Ok(client);
             }
             tracing::info!(
@@ -146,23 +156,31 @@ impl Connector {
         if ours == theirs {
             return Ok(());
         }
-        Err(OpError::new(
+        Err(self.dirs_mismatch(format!(
+            "the daemon uses config {}, data {}, state {}",
+            theirs[0].display(),
+            theirs[1].display(),
+            theirs[2].display()
+        )))
+    }
+
+    /// The refusal of a daemon whose directories differ from ours or are unknown. What the
+    /// daemon said goes into `detail`, next to this command's own directories.
+    fn dirs_mismatch(&self, theirs: String) -> OpError {
+        OpError::new(
             ErrorCode::Daemon,
             ErrorClass::Permanent,
             "a Rail daemon is already running with different directories",
         )
         .with_detail(format!(
-            "the daemon uses config {}, data {}, state {}; this command uses config {}, data {}, state {}",
-            theirs[0].display(),
-            theirs[1].display(),
-            theirs[2].display(),
-            ours[0].display(),
-            ours[1].display(),
-            ours[2].display()
+            "{theirs}; this command uses config {}, data {}, state {}",
+            self.paths.config_dir.display(),
+            self.paths.data_dir.display(),
+            self.paths.state_dir.display()
         ))
         .with_hint(
             "stop it with `rail daemon stop` from the shell that started it, or use the same RAIL_* settings",
-        ))
+        )
     }
 
     fn matches(&self, hello: &HelloResponse) -> bool {
@@ -283,6 +301,13 @@ impl Connector {
             .map_err(|e| OpError::internal(format!("lock task failed: {e}")))?
             .map_err(|e| OpError::io(ErrorCode::Daemon, "locking the daemon start", &e))
     }
+}
+
+/// False for a daemon too old to name its directories in the hello.
+fn says_dirs(hello: &HelloResponse) -> bool {
+    [&hello.config_dir, &hello.data_dir, &hello.state_dir]
+        .iter()
+        .all(|dir| !dir.as_os_str().is_empty())
 }
 
 pub(crate) fn open_lock_file(dir: &Path, path: &Path) -> std::io::Result<File> {

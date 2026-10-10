@@ -41,16 +41,19 @@ impl Operation for Fail {
     type Response = Ping;
 }
 
-fn answer(method: &str, id: u64, params: Value, version: &str, dirs: &Paths) -> Response {
+/// The fake's answers. A hello names `dirs`; with `None` it leaves the directories out, as a
+/// daemon from before they were added does.
+fn answer(method: &str, id: u64, params: Value, version: &str, dirs: Option<&Paths>) -> Response {
     match method {
-        names::HELLO => Response::ok(
-            id,
-            json!({
-                "protocol": PROTOCOL_VERSION, "version": version, "pid": 1,
-                "config_dir": dirs.config_dir, "data_dir": dirs.data_dir,
-                "state_dir": dirs.state_dir,
-            }),
-        ),
+        names::HELLO => {
+            let mut hello = json!({"protocol": PROTOCOL_VERSION, "version": version, "pid": 1});
+            if let Some(dirs) = dirs {
+                hello["config_dir"] = json!(dirs.config_dir);
+                hello["data_dir"] = json!(dirs.data_dir);
+                hello["state_dir"] = json!(dirs.state_dir);
+            }
+            Response::ok(id, hello)
+        }
         names::DAEMON_STOP => Response::ok(id, json!({"stopping": true})),
         "fail" => Response::err(
             Some(id),
@@ -62,11 +65,12 @@ fn answer(method: &str, id: u64, params: Value, version: &str, dirs: &Paths) -> 
 
 /// Listen on the socket and answer until `daemon.stop`, which removes the socket.
 async fn fake_daemon(paths: Paths, version: &'static str) {
-    fake_daemon_on(paths.clone(), version, paths).await;
+    fake_daemon_on(paths.clone(), version, Some(paths)).await;
 }
 
-/// `fake_daemon` on `paths`' socket, saying in the hello that it works on `dirs`.
-async fn fake_daemon_on(paths: Paths, version: &'static str, dirs: Paths) {
+/// `fake_daemon` on `paths`' socket, saying in the hello that it works on `dirs` (or, with
+/// `None`, saying nothing about its directories).
+async fn fake_daemon_on(paths: Paths, version: &'static str, dirs: Option<Paths>) {
     create_private_dir(&paths.runtime_dir).unwrap();
     let socket = paths.socket_file();
     let listener = UnixListener::bind(&socket).unwrap();
@@ -86,7 +90,13 @@ async fn fake_daemon_on(paths: Paths, version: &'static str, dirs: Paths) {
                 let Ok(Message::Request(request)) = parse_message(&frame) else {
                     continue;
                 };
-                let response = answer(&request.method, request.id, request.params, version, &dirs);
+                let response = answer(
+                    &request.method,
+                    request.id,
+                    request.params,
+                    version,
+                    dirs.as_ref(),
+                );
                 let _ = write.write_all(&encode_frame(&response).unwrap()).await;
                 if request.method == names::DAEMON_STOP {
                     let _ = std::fs::remove_file(&socket);
@@ -471,7 +481,13 @@ async fn an_oversized_reply_fails_calls_with_its_own_error() {
         let Ok(Message::Request(request)) = parse_message(&hello) else {
             return;
         };
-        let answer = answer(&request.method, request.id, request.params, VERSION, &dirs);
+        let answer = answer(
+            &request.method,
+            request.id,
+            request.params,
+            VERSION,
+            Some(&dirs),
+        );
         let _ = write.write_all(&encode_frame(&answer).unwrap()).await;
         let _ = read_frame(&mut reader).await;
         let _ = write
@@ -508,7 +524,7 @@ async fn a_daemon_with_other_directories_is_refused_and_left_alone() {
             ..paths.clone()
         },
     ] {
-        let served = tokio::spawn(fake_daemon_on(paths.clone(), VERSION, other.clone()));
+        let served = tokio::spawn(fake_daemon_on(paths.clone(), VERSION, Some(other.clone())));
         let (connector, spawned) = connector(&paths, VERSION);
         while !paths.socket_file().exists() {
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -531,4 +547,56 @@ async fn a_daemon_with_other_directories_is_refused_and_left_alone() {
         served.abort();
         let _ = std::fs::remove_file(paths.socket_file());
     }
+}
+
+async fn wait_for_socket(paths: &Paths) {
+    while !paths.socket_file().exists() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// Fix round 2: a daemon of this version whose hello does not name its directories cannot be
+/// shown to work on ours, so ordinary requests are refused with the mismatch error; it can
+/// still be reached without that check, and stopped.
+#[tokio::test]
+async fn a_hello_without_directories_is_refused_but_the_daemon_can_be_stopped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    tokio::spawn(fake_daemon_on(paths.clone(), VERSION, None));
+    wait_for_socket(&paths).await;
+    let (connector, spawned) = connector(&paths, VERSION);
+    let Err(err) = connector.connect().await else {
+        panic!("used a daemon whose directories are unknown");
+    };
+    assert_eq!(err.class, crate::error::ErrorClass::Permanent);
+    assert_eq!(
+        err.message,
+        "a Rail daemon is already running with different directories"
+    );
+    let detail = err.detail.as_ref().unwrap().get().clone();
+    assert!(detail.contains("did not say"), "{detail}");
+    assert_eq!(spawned.load(Ordering::SeqCst), 0);
+    let existing = connector
+        .connect_existing()
+        .await
+        .unwrap()
+        .expect("reachable");
+    assert!(existing.daemon().config_dir.as_os_str().is_empty());
+    connector.stop(existing).await.unwrap();
+    assert!(!paths.socket_file().exists());
+}
+
+/// Fix round 2: an older daemon whose hello lacks the directories is still replaced on a
+/// version change.
+#[tokio::test]
+async fn an_older_daemon_without_directories_is_replaced() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    tokio::spawn(fake_daemon_on(paths.clone(), "0.0.0-old", None));
+    wait_for_socket(&paths).await;
+    let (connector, spawned) = connector(&paths, VERSION);
+    let client = connector.connect().await.unwrap();
+    assert_eq!(client.daemon().version, VERSION);
+    assert_eq!(client.daemon().config_dir, paths.config_dir);
+    assert_eq!(spawned.load(Ordering::SeqCst), 1);
 }

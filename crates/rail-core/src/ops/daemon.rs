@@ -19,9 +19,14 @@ pub struct HelloResponse {
     pub version: String,
     pub pid: u32,
     /// The directories the daemon works on. A client whose own differ must not use it: it
-    /// would read and write another configuration than the one it thinks it has.
+    /// would read and write another configuration than the one it thinks it has. Empty when an
+    /// older daemon did not send them; the client then cannot tell, and treats it as a mismatch
+    /// for ordinary requests while still being able to stop or replace it.
+    #[serde(default)]
     pub config_dir: PathBuf,
+    #[serde(default)]
     pub data_dir: PathBuf,
+    #[serde(default)]
     pub state_dir: PathBuf,
 }
 

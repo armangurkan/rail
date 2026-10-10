@@ -1,10 +1,14 @@
 use std::process::Command;
 
 /// Point a command's five XDG-style directories under `dir`, so no test ever reads or
-/// writes the real config, store, secrets or daemon socket. The daemon a command starts
+/// writes the real config, store, secrets or daemon socket, and give it the stand-in browser
+/// (recording into `opened_url_file`), so no test, and no daemon a test starts, can ever open
+/// the real one. A test may set its own `RAIL_TEST_URL_FILE`. The daemon a command starts
 /// inherits this environment and exits two seconds after its last client leaves.
 fn rail_env<'a>(cmd: &'a mut Command, dir: &tempfile::TempDir) -> &'a mut Command {
-    cmd.env("RAIL_CONFIG_DIR", dir.path().join("config"))
+    cmd.env("RAIL_TEST_OPENER", write_opener(dir))
+        .env("RAIL_TEST_URL_FILE", opened_url_file(dir))
+        .env("RAIL_CONFIG_DIR", dir.path().join("config"))
         .env("RAIL_DATA_DIR", dir.path().join("data"))
         .env("RAIL_CACHE_DIR", dir.path().join("cache"))
         .env("RAIL_STATE_DIR", dir.path().join("state"))
@@ -94,18 +98,15 @@ fn account_add_refuses_duplicate_address_before_opening_a_browser() {
     let original = "[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
     std::fs::write(&config_file, original).unwrap();
 
-    let out = rail_cmd(&dir)
-        .args([
-            "account",
-            "add",
-            "gmail",
-            "--address",
-            "ME@example.com",
-            "--client-id",
-            "y",
-        ])
-        .output()
-        .unwrap();
+    let out = bounded(rail_cmd(&dir).args([
+        "account",
+        "add",
+        "gmail",
+        "--address",
+        "ME@example.com",
+        "--client-id",
+        "y",
+    ]));
 
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -116,6 +117,7 @@ fn account_add_refuses_duplicate_address_before_opening_a_browser() {
     assert!(!stdout.contains("http"), "got {stdout:?}");
     assert_eq!(std::fs::read_to_string(&config_file).unwrap(), original);
     assert!(!dir.path().join("data").exists());
+    assert!(!opened_url_file(&dir).exists(), "the browser was asked");
 }
 
 #[test]
@@ -128,20 +130,17 @@ fn account_add_refuses_duplicate_name_before_opening_a_browser() {
     let original = "[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
     std::fs::write(&config_file, original).unwrap();
 
-    let out = rail_cmd(&dir)
-        .args([
-            "account",
-            "add",
-            "gmail",
-            "--address",
-            "other@example.com",
-            "--client-id",
-            "x",
-            "--name",
-            "work",
-        ])
-        .output()
-        .unwrap();
+    let out = bounded(rail_cmd(&dir).args([
+        "account",
+        "add",
+        "gmail",
+        "--address",
+        "other@example.com",
+        "--client-id",
+        "x",
+        "--name",
+        "work",
+    ]));
 
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -154,6 +153,7 @@ fn account_add_refuses_duplicate_name_before_opening_a_browser() {
     assert!(!stdout.contains("http"), "got {stdout:?}");
     assert_eq!(std::fs::read_to_string(&config_file).unwrap(), original);
     assert!(!dir.path().join("data").exists());
+    assert!(!opened_url_file(&dir).exists(), "the browser was asked");
 }
 
 #[test]
@@ -185,18 +185,15 @@ fn account_add_fails_before_the_browser_when_secrets_file_is_corrupt() {
     let config = "[general]\nsecrets = \"file\"\n";
     std::fs::write(config_dir.join("config.toml"), config).unwrap();
     std::fs::write(data_dir.join("secrets.json"), "{not json").unwrap();
-    let out = rail_cmd(&dir)
-        .args([
-            "account",
-            "add",
-            "gmail",
-            "--address",
-            "new@example.com",
-            "--client-id",
-            "x",
-        ])
-        .output()
-        .unwrap();
+    let out = bounded(rail_cmd(&dir).args([
+        "account",
+        "add",
+        "gmail",
+        "--address",
+        "new@example.com",
+        "--client-id",
+        "x",
+    ]));
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("corrupt"), "got {stderr:?}");
@@ -206,6 +203,7 @@ fn account_add_fails_before_the_browser_when_secrets_file_is_corrupt() {
         std::fs::read_to_string(config_dir.join("config.toml")).unwrap(),
         config
     );
+    assert!(!opened_url_file(&dir).exists(), "the browser was asked");
 }
 
 #[test]
@@ -242,15 +240,37 @@ fn write_config(dir: &tempfile::TempDir, text: &str) -> std::path::PathBuf {
 }
 
 /// A browser stand-in: writes the URL it was given to `$RAIL_TEST_URL_FILE` (atomically,
-/// so a reader never sees half of it) and exits.
-#[cfg(unix)]
+/// so a reader never sees half of it) and exits. Created once per directory, by rename, so a
+/// daemon running it never meets a half-written script.
 fn write_opener(dir: &tempfile::TempDir) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let path = dir.path().join("opener.sh");
+    if path.exists() {
+        return path;
+    }
     let script = "#!/bin/sh\nprintf '%s' \"$1\" > \"$RAIL_TEST_URL_FILE.tmp\"\nmv \"$RAIL_TEST_URL_FILE.tmp\" \"$RAIL_TEST_URL_FILE\"\n";
-    std::fs::write(&path, script).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let temp = dir
+        .path()
+        .join(format!("opener.{:?}.tmp", std::thread::current().id()));
+    std::fs::write(&temp, script).unwrap();
+    std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::rename(&temp, &path).unwrap();
     path
+}
+
+/// Where the default stand-in browser records a URL; it exists only if a browser was asked.
+fn opened_url_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
+    dir.path().join("opened-url.txt")
+}
+
+/// Run `cmd` with its output captured, failing if it takes longer than half a minute.
+fn bounded(cmd: &mut Command) -> std::process::Output {
+    let child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    finish_within(child, std::time::Duration::from_secs(30))
 }
 
 #[cfg(debug_assertions)]
@@ -272,19 +292,17 @@ async fn wait_for_url(file: &std::path::Path) -> url::Url {
     panic!("the opener was never called");
 }
 
-#[cfg(unix)]
 #[test]
 fn account_login_unknown_account_fails_before_the_opener() {
     let dir = tempfile::tempdir().unwrap();
     let _daemon = StopsDaemon(&dir);
     let config = write_config(&dir, WORK_FILE_BACKEND);
     let url_file = dir.path().join("url.txt");
-    let out = rail_cmd(&dir)
-        .args(["account", "login", "nobody"])
-        .env("RAIL_TEST_OPENER", write_opener(&dir))
-        .env("RAIL_TEST_URL_FILE", &url_file)
-        .output()
-        .unwrap();
+    let out = bounded(
+        rail_cmd(&dir)
+            .args(["account", "login", "nobody"])
+            .env("RAIL_TEST_URL_FILE", &url_file),
+    );
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -537,11 +555,7 @@ fn rail_without_config_and_piped_stdout_prints_the_hint() {
 
 /// Run `rail account add <args>` and return (exit code, stderr).
 fn add_failure(dir: &tempfile::TempDir, args: &[&str]) -> (Option<i32>, String) {
-    let out = rail_cmd(dir)
-        .args(["account", "add"])
-        .args(args)
-        .output()
-        .unwrap();
+    let out = bounded(rail_cmd(dir).args(["account", "add"]).args(args));
     (
         out.status.code(),
         String::from_utf8_lossy(&out.stderr).into_owned(),

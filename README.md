@@ -436,7 +436,8 @@ It also works on the directories of the command that started it, made absolute (
 `RAIL_CONFIG_DIR=cfg` means `cfg` under that command's working directory). A later command whose
 `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR` or `RAIL_STATE_DIR` names other directories, but shares the
 same runtime directory, is refused with "a Rail daemon is already running with different
-directories" and changes nothing; stop that daemon with `rail daemon stop` from the shell that
+directories" and changes nothing (as is one too old to say which directories it uses, unless
+its version differs, in which case it is replaced as usual); stop that daemon with `rail daemon stop` from the shell that
 started it, or use the same `RAIL_*` settings. Give each setup its own `RAIL_RUNTIME_DIR` to run
 two side by side.
 
@@ -518,7 +519,8 @@ Tests never touch the real XDG directories, the real OS keyring, the network, or
 Debug builds honour three test hooks, `RAIL_TEST_OPENER` (a program run instead of the browser),
 `RAIL_TEST_TOKEN_URL` (a token endpoint served by the test) and `RAIL_TEST_IDLE_SECS` (the daemon's
 idle timeout, so the daemons the binary tests start exit seconds after their last client); release
-builds ignore all three. On Linux, the tests that drive the wizard and `rail account remove` in a
+builds ignore all three. Every binary test runs with the stand-in browser set, so neither it nor a
+daemon it starts can open a real one. On Linux, the tests that drive the wizard and `rail account remove` in a
 pseudo-terminal use util-linux `script` and are skipped where `script` is missing. The one test that exercises the real keyring is ignored by default:
 
     cargo test -p rail-core -- --ignored keyring_live
