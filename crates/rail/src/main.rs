@@ -2,6 +2,7 @@ mod browser;
 mod cli;
 mod cmd;
 mod logging;
+mod test_hooks;
 mod tui;
 
 use std::process::ExitCode;
@@ -42,6 +43,11 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
         Some(Command::Account {
             command: AccountCommand::Add(args),
         }) => cmd::account::add(&paths, args)
+            .await
+            .map(|()| ExitCode::SUCCESS),
+        Some(Command::Account {
+            command: AccountCommand::Login { account },
+        }) => cmd::account::relogin(&paths, &account)
             .await
             .map(|()| ExitCode::SUCCESS),
         Some(Command::Account {

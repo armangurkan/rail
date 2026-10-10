@@ -180,3 +180,129 @@ fn panic_inside_the_alternate_screen_restores_the_terminal_before_the_message() 
     let message = out.find("rail panic test").expect("panic message printed");
     assert!(entered < left && left < message, "{out:?}");
 }
+
+const WORK_FILE_BACKEND: &str = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\nclient_secret = \"sec\"\n";
+
+fn write_config(dir: &tempfile::TempDir, text: &str) -> std::path::PathBuf {
+    let config_dir = dir.path().join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let file = config_dir.join("config.toml");
+    std::fs::write(&file, text).unwrap();
+    file
+}
+
+/// A browser stand-in: writes the URL it was given to `$RAIL_TEST_URL_FILE` (atomically,
+/// so a reader never sees half of it) and exits.
+#[cfg(unix)]
+fn write_opener(dir: &tempfile::TempDir) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.path().join("opener.sh");
+    let script = "#!/bin/sh\nprintf '%s' \"$1\" > \"$RAIL_TEST_URL_FILE.tmp\"\nmv \"$RAIL_TEST_URL_FILE.tmp\" \"$RAIL_TEST_URL_FILE\"\n";
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+fn query(url: &url::Url, key: &str) -> String {
+    url.query_pairs()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.into_owned())
+        .unwrap_or_else(|| panic!("{key} missing from {url}"))
+}
+
+#[cfg(unix)]
+async fn wait_for_url(file: &std::path::Path) -> url::Url {
+    for _ in 0..500 {
+        if let Ok(text) = std::fs::read_to_string(file) {
+            return url::Url::parse(&text).unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the opener was never called");
+}
+
+#[cfg(unix)]
+#[test]
+fn account_login_unknown_account_fails_before_the_opener() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = write_config(&dir, WORK_FILE_BACKEND);
+    let url_file = dir.path().join("url.txt");
+    let out = rail_cmd(&dir)
+        .args(["account", "login", "nobody"])
+        .env("RAIL_TEST_OPENER", write_opener(&dir))
+        .env("RAIL_TEST_URL_FILE", &url_file)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no account named or addressed"),
+        "got {stderr:?}"
+    );
+    assert!(!url_file.exists(), "the opener must not run");
+    assert_eq!(std::fs::read_to_string(config).unwrap(), WORK_FILE_BACKEND);
+    assert!(!dir.path().join("data").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn account_login_replaces_tokens_in_the_file_backend() {
+    use rail_core::auth::{FileSecretStore, SecretStore, TokenSet};
+    use wiremock::matchers::{body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let dir = tempfile::tempdir().unwrap();
+    let config = write_config(&dir, WORK_FILE_BACKEND);
+    let secrets = FileSecretStore::new(dir.path().join("data").join("secrets.json"));
+    let old = TokenSet {
+        access_token: "old-access".into(),
+        refresh_token: "old-refresh".into(),
+        expires_at: 1,
+    };
+    secrets.set_tokens("me@example.com", &old).unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .and(body_string_contains("code=the-code"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "new-access", "refresh_token": "new-refresh",
+            "expires_in": 3600, "token_type": "Bearer"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let url_file = dir.path().join("url.txt");
+    let child = rail_cmd(&dir)
+        .args(["account", "login", "WORK"])
+        .env("RAIL_TEST_OPENER", write_opener(&dir))
+        .env("RAIL_TEST_URL_FILE", &url_file)
+        .env("RAIL_TEST_TOKEN_URL", format!("{}/token", server.uri()))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let consent = wait_for_url(&url_file).await;
+    let state = query(&consent, "state");
+    let redirect = query(&consent, "redirect_uri");
+    reqwest::get(format!("{redirect}/?code=the-code&state={state}"))
+        .await
+        .unwrap();
+    let out = tokio::task::spawn_blocking(move || child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Logged in to me@example.com"),
+        "got {stdout:?}"
+    );
+    let tokens = secrets.get_tokens("me@example.com").unwrap().unwrap();
+    assert_eq!(tokens.access_token, "new-access");
+    assert_eq!(tokens.refresh_token, "new-refresh");
+    assert_eq!(std::fs::read_to_string(config).unwrap(), WORK_FILE_BACKEND);
+}

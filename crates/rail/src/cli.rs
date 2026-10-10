@@ -26,6 +26,11 @@ pub enum Command {
 pub enum AccountCommand {
     /// Log in to a provider and add the account to config.toml.
     Add(AddArgs),
+    /// Log in again to an account already in config.toml and replace its tokens.
+    Login {
+        /// Account name or email address.
+        account: String,
+    },
     /// List configured accounts and whether tokens are stored.
     List,
 }

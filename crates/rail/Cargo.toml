@@ -28,6 +28,9 @@ futures-util.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+reqwest.workspace = true
+wiremock.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
