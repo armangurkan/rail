@@ -8,7 +8,7 @@ use url::Url;
 
 use super::AuthError;
 use super::client::{build_client, send_token_request};
-use super::endpoints::OAuthEndpoints;
+use super::endpoints::{OAuthEndpoints, admin_consent_url, is_concrete_tenant};
 use super::loopback::Loopback;
 use super::secrets::TokenSet;
 use crate::config::AccountConfig;
@@ -49,6 +49,30 @@ pub async fn run_auth_code_flow(
         .await
         .map_err(map_token_error)?;
     token_set_from_response(&response, None, now)
+}
+
+/// Grant tenant-wide consent. `open_url` is called once with Microsoft's admin-consent URL;
+/// the result is the tenant that consented (empty if Microsoft omitted it).
+///
+/// `tenant` must name one organisation: `common`, `organizations`, `consumers` and the empty
+/// string are refused with `AuthError::Config` before anything is bound or opened.
+pub async fn run_admin_consent(
+    client_id: &str,
+    tenant: &str,
+    open_url: impl FnOnce(&Url),
+) -> Result<String, AuthError> {
+    if !is_concrete_tenant(tenant) {
+        return Err(AuthError::Config(
+            "admin consent needs the organisation's tenant id or domain, not a shared alias"
+                .to_string(),
+        ));
+    }
+    let loopback = Loopback::bind().await?;
+    let state = CsrfToken::new_random();
+    let url = admin_consent_url(client_id, tenant, &loopback.redirect_url(), state.secret());
+    tracing::info!(tenant, "waiting for admin consent in the browser");
+    open_url(&url);
+    loopback.wait_for_admin_consent(state.secret()).await
 }
 
 /// Build a `TokenSet`, keeping `previous_refresh` when the provider omits a new refresh token.
@@ -271,5 +295,67 @@ mod tests {
             "{err:?}"
         );
         assert_eq!(err.class(), crate::error::ErrorClass::Transient);
+    }
+
+    #[tokio::test]
+    async fn admin_consent_returns_the_tenant_from_the_redirect() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Url>();
+        let browser = tokio::spawn(async move {
+            let url = rx.await.unwrap();
+            assert_eq!(url.path(), "/contoso.onmicrosoft.com/v2.0/adminconsent");
+            assert_eq!(query(&url, "client_id"), "cid");
+            assert_eq!(query(&url, "scope"), "https://graph.microsoft.com/.default");
+            let state = query(&url, "state");
+            let redirect = query(&url, "redirect_uri");
+            assert!(redirect.starts_with("http://127.0.0.1:"), "{redirect}");
+            reqwest::get(format!(
+                "{redirect}/?admin_consent=True&tenant=tid-9&state={state}"
+            ))
+            .await
+            .unwrap();
+        });
+        let tenant = run_admin_consent("cid", "contoso.onmicrosoft.com", |u| {
+            tx.send(u.clone()).unwrap();
+        })
+        .await
+        .unwrap();
+        browser.await.unwrap();
+        assert_eq!(tenant, "tid-9");
+    }
+
+    #[tokio::test]
+    async fn admin_consent_reports_a_refusal() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Url>();
+        tokio::spawn(async move {
+            let url = rx.await.unwrap();
+            let state = query(&url, "state");
+            let redirect = query(&url, "redirect_uri");
+            reqwest::get(format!(
+                "{redirect}/?error=access_denied&error_description=AADSTS65004&state={state}"
+            ))
+            .await
+            .unwrap();
+        });
+        let err = run_admin_consent("cid", "contoso.onmicrosoft.com", |u| {
+            tx.send(u.clone()).unwrap();
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, AuthError::Denied(ref m) if m == "AADSTS65004"),
+            "{err:?}"
+        );
+        assert_eq!(err.class(), crate::error::ErrorClass::Permanent);
+    }
+
+    #[tokio::test]
+    async fn admin_consent_refuses_a_non_concrete_tenant_without_opening_a_browser() {
+        for tenant in ["common", "organizations", "consumers", ""] {
+            let err = run_admin_consent("cid", tenant, |_| panic!("must not open a URL"))
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AuthError::Config(_)), "{tenant}: {err:?}");
+            assert_eq!(err.class(), crate::error::ErrorClass::Permanent);
+        }
     }
 }

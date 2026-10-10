@@ -1,16 +1,26 @@
 use oauth2::AuthType;
+use url::Url;
 
 use crate::config::AccountKind;
 
 /// Gmail API scope for reading and modifying mail.
 pub const GMAIL_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
 
-const GRAPH_SCOPES: [&str; 4] = [
+/// Microsoft Graph delegated scopes Rail asks for.
+pub const GRAPH_SCOPES: [&str; 4] = [
     "https://graph.microsoft.com/Mail.ReadWrite",
     "https://graph.microsoft.com/Mail.Send",
     "https://graph.microsoft.com/User.Read",
     "offline_access",
 ];
+
+/// The scope the v2 admin-consent endpoint takes: every permission the app registration lists.
+pub const ADMIN_CONSENT_SCOPE: &str = "https://graph.microsoft.com/.default";
+
+const MICROSOFT_AUTHORITY: &str = "https://login.microsoftonline.com/";
+
+/// Authority aliases that name no single organisation, so no admin can consent through them.
+const MULTI_TENANT_ALIASES: [&str; 3] = ["common", "organizations", "consumers"];
 
 /// Provider-specific OAuth endpoints and parameters.
 #[derive(Debug, Clone)]
@@ -53,6 +63,41 @@ pub fn endpoints_for(kind: AccountKind, tenant: Option<&str>) -> OAuthEndpoints 
     }
 }
 
+/// Whether `tenant` names one organisation (a tenant id or domain), as admin consent needs.
+pub(crate) fn is_concrete_tenant(tenant: &str) -> bool {
+    !tenant.is_empty()
+        && !MULTI_TENANT_ALIASES
+            .iter()
+            .any(|alias| tenant.eq_ignore_ascii_case(alias))
+}
+
+/// Microsoft's v2 admin-consent URL. The redirect comes back to `redirect_uri` with
+/// `admin_consent=True&tenant=...&state=...` or with `error=...&error_description=...`.
+/// The tenant goes in as one escaped path segment, so a hostile value cannot change the host
+/// or the path. The URL carries no secret.
+///
+/// Precondition: `tenant` is concrete (see `is_concrete_tenant`); `run_admin_consent`
+/// enforces it before calling this.
+pub fn admin_consent_url(client_id: &str, tenant: &str, redirect_uri: &str, state: &str) -> Url {
+    debug_assert!(
+        is_concrete_tenant(tenant),
+        "admin consent needs a concrete tenant"
+    );
+    let mut url = Url::parse(MICROSOFT_AUTHORITY).expect("constant authority URL parses");
+    url.path_segments_mut()
+        .expect("an https URL can have path segments")
+        .pop_if_empty()
+        .push(tenant)
+        .push("v2.0")
+        .push("adminconsent");
+    url.query_pairs_mut()
+        .append_pair("client_id", client_id)
+        .append_pair("scope", ADMIN_CONSENT_SCOPE)
+        .append_pair("redirect_uri", redirect_uri)
+        .append_pair("state", state);
+    url
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,5 +131,31 @@ mod tests {
             e.token_url,
             "https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/token"
         );
+    }
+
+    #[test]
+    fn admin_consent_url_targets_the_tenant_and_default_scope() {
+        let url = admin_consent_url(
+            "cid",
+            "contoso.onmicrosoft.com",
+            "http://127.0.0.1:5000",
+            "st",
+        );
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("login.microsoftonline.com"));
+        assert_eq!(url.path(), "/contoso.onmicrosoft.com/v2.0/adminconsent");
+        let query: std::collections::HashMap<String, String> =
+            url.query_pairs().into_owned().collect();
+        assert_eq!(query["client_id"], "cid");
+        assert_eq!(query["scope"], "https://graph.microsoft.com/.default");
+        assert_eq!(query["redirect_uri"], "http://127.0.0.1:5000");
+        assert_eq!(query["state"], "st");
+    }
+
+    #[test]
+    fn admin_consent_url_escapes_a_hostile_tenant() {
+        let url = admin_consent_url("cid", "a/b?c", "http://127.0.0.1", "st");
+        assert_eq!(url.path(), "/a%2Fb%3Fc/v2.0/adminconsent");
+        assert_eq!(url.host_str(), Some("login.microsoftonline.com"));
     }
 }

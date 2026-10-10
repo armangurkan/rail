@@ -1,0 +1,14 @@
+//! The terminal shell: raw mode and the alternate screen, the event loop, and the screens
+//! that run inside it. Nothing here prints text to stdout or stderr while the alternate
+//! screen is up.
+
+pub mod app;
+pub mod effects;
+pub mod run;
+pub mod screen;
+pub mod screens;
+pub mod terminal;
+#[cfg(test)]
+pub mod test_util;
+pub mod theme;
+pub mod widgets;

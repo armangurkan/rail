@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod config;
 pub mod error;
+pub mod onboarding;
 pub mod paths;
 pub mod store;
 

@@ -224,10 +224,7 @@ fn render_accounts(out: &mut String, report: &DoctorReport) {
         let tokens = match (&account.token_error, account.has_tokens) {
             (Some(e), _) => format!("error: {e}"),
             (None, true) => "present".to_string(),
-            (None, false) => format!(
-                "missing (remove its [[accounts]] entry from {} and run `rail account add`)",
-                report.config_path.display()
-            ),
+            (None, false) => format!("missing (run `rail account login {}`)", account.name),
         };
         let last_sync = account
             .last_sync_at
@@ -297,11 +294,11 @@ mod tests {
         let text = render(&report);
         assert!(text.contains("work"));
         assert!(text.contains("tokens: missing"));
-        let advice = format!(
-            "remove its [[accounts]] entry from {} and run `rail account add`",
-            paths.config_file().display()
+        assert!(
+            text.contains("tokens: missing (run `rail account login work`)"),
+            "{text}"
         );
-        assert!(text.contains(&advice), "{text}");
+        assert!(!text.contains("remove its [[accounts]] entry"), "{text}");
         assert!(text.contains("last sync: never"));
     }
 
