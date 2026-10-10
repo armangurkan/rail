@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::path::Path;
 
 use color_eyre::eyre::{WrapErr, bail};
@@ -6,7 +5,7 @@ use rail_core::auth::{
     endpoints_for, http_client, open_secret_store, run_auth_code_flow, unix_now,
 };
 use rail_core::config::{self, AccountConfig, AccountKind, Config, ConfigError, SecretsBackend};
-use rail_core::paths::Paths;
+use rail_core::paths::{Paths, write_private_atomic};
 use rail_core::store::Store;
 
 use crate::browser::open_in_browser;
@@ -37,27 +36,10 @@ fn load_or_empty(paths: &Paths) -> color_eyre::Result<(String, Config)> {
 }
 
 /// Write `text` to `path` readable by the owner only. The config may hold a
-/// `client_secret`, so the directory is created 0700 and the file 0600 (an
-/// existing, looser file is tightened).
+/// `client_secret`, so the directory is 0700 and the file 0600. The write is
+/// atomic: a crash or full disk leaves the previous config intact.
 pub(crate) fn write_config(path: &Path, text: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-        builder.create(dir)?;
-    }
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    file.write_all(text.as_bytes())
+    write_private_atomic(path, text.as_bytes())
 }
 
 pub async fn add(paths: &Paths, args: AddArgs) -> color_eyre::Result<()> {

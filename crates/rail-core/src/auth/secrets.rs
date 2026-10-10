@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -7,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::SecretsBackend;
 use crate::error::ErrorClass;
-use crate::paths::Paths;
+use crate::paths::{Paths, write_private_atomic};
 
 const KEYRING_SERVICE: &str = "rail";
 
@@ -76,12 +75,24 @@ pub fn open_secret_store(backend: SecretsBackend, paths: &Paths) -> Arc<dyn Secr
     }
 }
 
+/// Describe a JSON error by kind and position only. serde_json's own text
+/// quotes the offending value, which here may be a token.
+fn json_message(e: &serde_json::Error) -> String {
+    let kind = match e.classify() {
+        serde_json::error::Category::Io => "I/O error",
+        serde_json::error::Category::Syntax => "syntax error",
+        serde_json::error::Category::Data => "unexpected value",
+        serde_json::error::Category::Eof => "unexpected end of data",
+    };
+    format!("{kind} at line {} column {}", e.line(), e.column())
+}
+
 fn encode(tokens: &TokenSet) -> Result<String, SecretError> {
-    serde_json::to_string(tokens).map_err(|e| SecretError::Encoding(e.to_string()))
+    serde_json::to_string(tokens).map_err(|e| SecretError::Encoding(json_message(&e)))
 }
 
 fn decode(json: &str) -> Result<TokenSet, SecretError> {
-    serde_json::from_str(json).map_err(|e| SecretError::Encoding(e.to_string()))
+    serde_json::from_str(json).map_err(|e| SecretError::Encoding(json_message(&e)))
 }
 
 // ---- OS keyring ----
@@ -153,7 +164,7 @@ impl FileSecretStore {
         match std::fs::read_to_string(&self.path) {
             Ok(text) => serde_json::from_str(&text).map_err(|e| SecretError::Corrupt {
                 path: self.path.clone(),
-                message: e.to_string(),
+                message: json_message(&e),
             }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
             Err(e) => Err(self.io_err(e)),
@@ -161,24 +172,9 @@ impl FileSecretStore {
     }
 
     fn write_all(&self, map: &HashMap<String, TokenSet>) -> Result<(), SecretError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| self.io_err(e))?;
-        }
         let json =
-            serde_json::to_vec_pretty(map).map_err(|e| SecretError::Encoding(e.to_string()))?;
-        let tmp = self.path.with_extension("json.tmp");
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&tmp).map_err(|e| self.io_err(e))?;
-        file.write_all(&json).map_err(|e| self.io_err(e))?;
-        file.sync_all().map_err(|e| self.io_err(e))?;
-        drop(file);
-        std::fs::rename(&tmp, &self.path).map_err(|e| self.io_err(e))
+            serde_json::to_vec_pretty(map).map_err(|e| SecretError::Encoding(json_message(&e)))?;
+        write_private_atomic(&self.path, &json).map_err(|e| self.io_err(e))
     }
 }
 
@@ -296,6 +292,19 @@ mod tests {
         assert_eq!(mode, 0o600);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn file_store_creates_its_directory_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        FileSecretStore::new(data_dir.join("secrets.json"))
+            .set_tokens("a@x.com", &tokens())
+            .unwrap();
+        let mode = std::fs::metadata(&data_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
     #[test]
     fn corrupt_file_is_reported_not_overwritten() {
         let dir = tempfile::tempdir().unwrap();
@@ -306,6 +315,26 @@ mod tests {
         assert!(matches!(err, SecretError::Corrupt { .. }), "{err}");
         assert!(store.set_tokens("a@x.com", &tokens()).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{not json");
+    }
+
+    #[test]
+    fn corrupt_value_errors_never_echo_the_value() {
+        const TOKEN: &str = "ya29.super-secret-access-token";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets.json");
+        std::fs::write(&path, format!("{{\"a@x.com\": \"{TOKEN}\"}}")).unwrap();
+        let err = FileSecretStore::new(path)
+            .get_tokens("a@x.com")
+            .unwrap_err();
+        assert!(matches!(err, SecretError::Corrupt { .. }), "{err}");
+        assert!(!err.to_string().contains(TOKEN), "{err}");
+        assert!(!format!("{err:?}").contains(TOKEN), "{err:?}");
+        assert!(err.to_string().contains("line 1"), "{err}");
+
+        let err = decode(&format!("\"{TOKEN}\"")).unwrap_err();
+        assert!(matches!(err, SecretError::Encoding(_)), "{err}");
+        assert!(!err.to_string().contains(TOKEN), "{err}");
+        assert!(!format!("{err:?}").contains(TOKEN), "{err:?}");
     }
 
     #[test]

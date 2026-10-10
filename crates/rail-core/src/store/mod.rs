@@ -10,6 +10,7 @@ pub use accounts::AccountRow;
 use rusqlite::{Connection, ErrorCode};
 
 use crate::error::ErrorClass;
+use crate::paths::create_private_dir;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -42,20 +43,6 @@ impl StoreError {
             Self::Sqlite(_) | Self::CreateDir { .. } | Self::TooNew { .. } => ErrorClass::Permanent,
         }
     }
-}
-
-#[cfg(unix)]
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
-}
-
-#[cfg(not(unix))]
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)
 }
 
 /// Pre-create the file owner-only so it is never visible at umask mode.

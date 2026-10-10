@@ -1,6 +1,8 @@
 //! Where Rail keeps its files. XDG on Linux, platform dirs elsewhere,
 //! `RAIL_*_DIR` environment overrides everywhere.
 
+use std::ffi::OsString;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
@@ -42,8 +44,14 @@ fn need(dirs: &Option<ProjectDirs>) -> Result<&ProjectDirs, NoHomeDir> {
 
 impl Paths {
     /// Resolve from `RAIL_*_DIR` environment variables, falling back to platform dirs.
+    /// An empty variable counts as unset, so `RAIL_DATA_DIR=""` never means the current directory.
     pub fn from_env() -> Result<Self, NoHomeDir> {
-        let var = |key: &str| std::env::var_os(key).map(PathBuf::from);
+        Self::from_lookup(|key| std::env::var_os(key))
+    }
+
+    /// `from_env` over an arbitrary variable lookup; lets tests avoid mutating the environment.
+    fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, NoHomeDir> {
+        let var = |key: &str| lookup(key).filter(|v| !v.is_empty()).map(PathBuf::from);
         Self::resolve(PathOverrides {
             config_dir: var("RAIL_CONFIG_DIR"),
             data_dir: var("RAIL_DATA_DIR"),
@@ -117,6 +125,70 @@ impl Paths {
     }
 }
 
+/// Create `dir` (and missing parents) readable by the owner only. On unix a
+/// directory that already exists is tightened to 0700.
+#[cfg(unix)]
+pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
+/// Replace `path` with `bytes` atomically: the parent is created private, the
+/// data goes to a 0600 sibling temp file which is synced and renamed over
+/// `path`. A crash leaves either the old file or the new one, never a torn one.
+pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    create_private_dir(parent)?;
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = parent.join(tmp_name);
+    let result = write_synced_private(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result?;
+    sync_dir(parent)
+}
+
+fn write_synced_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(path)?;
+    // A stale temp file from a crash keeps its old mode; tighten it explicitly.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Make the rename durable. Directories cannot be opened for syncing on Windows.
+#[cfg(unix)]
+fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::File::open(dir)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_dir: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,6 +232,58 @@ mod tests {
         assert_eq!(paths.data_dir, PathBuf::from("/tmp/x/data"));
         assert_eq!(paths.cache_dir, PathBuf::from("/tmp/x/cache"));
         assert_eq!(paths.state_dir, PathBuf::from("/tmp/x/state"));
+    }
+
+    #[test]
+    fn empty_env_override_is_treated_as_unset() {
+        let lookup = |key: &str| match key {
+            "RAIL_CONFIG_DIR" => Some(std::ffi::OsString::new()),
+            "RAIL_DATA_DIR" => Some(std::ffi::OsString::from("/d")),
+            _ => None,
+        };
+        let paths = Paths::from_lookup(lookup).unwrap();
+        let defaults = Paths::resolve(PathOverrides::default()).unwrap();
+        assert_eq!(paths.config_dir, defaults.config_dir);
+        assert_eq!(paths.data_dir, PathBuf::from("/d"));
+        assert_ne!(paths.config_dir, PathBuf::new());
+    }
+
+    #[test]
+    fn write_private_atomic_replaces_content_and_leaves_no_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("file.toml");
+        write_private_atomic(&path, b"first, longer body\n").unwrap();
+        write_private_atomic(&path, b"second\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second\n");
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("file.toml")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_helpers_set_and_tighten_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        let loose = dir.path().join("loose");
+        std::fs::create_dir(&loose).unwrap();
+        std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o755)).unwrap();
+        create_private_dir(&loose).unwrap();
+        assert_eq!(mode(&loose), 0o700);
+
+        let file = loose.join("f");
+        std::fs::write(&file, "old").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let stale_tmp = loose.join("f.tmp");
+        std::fs::write(&stale_tmp, "stale").unwrap();
+        std::fs::set_permissions(&stale_tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private_atomic(&file, b"new").unwrap();
+        assert_eq!(mode(&file), 0o600);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+        assert!(!stale_tmp.exists());
     }
 
     #[test]
