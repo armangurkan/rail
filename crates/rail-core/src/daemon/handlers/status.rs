@@ -14,7 +14,7 @@ use crate::ops::{
 /// Always answers: the client compares versions and decides what to do.
 pub(super) async fn hello(call: Call, request: HelloRequest) -> Result<HelloResponse, OpError> {
     if request.protocol != PROTOCOL_VERSION || request.version != call.server.config.version {
-        tracing::info!(client = %request.version, "hello from a client of another version");
+        tracing::info!(client = ?request.version, "hello from a client of another version");
     }
     Ok(HelloResponse {
         protocol: PROTOCOL_VERSION,

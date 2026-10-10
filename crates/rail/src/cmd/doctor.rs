@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 
-use rail_core::ops::DoctorReport;
+use rail_core::ops::{DoctorReport, OpError};
 
 fn mark(ok: bool) -> &'static str {
     if ok { "ok  " } else { "FAIL" }
@@ -23,7 +23,10 @@ pub fn render(report: &DoctorReport) -> String {
 
 fn render_config(out: &mut String, report: &DoctorReport) {
     let _ = match (&report.config_error, report.config_accounts) {
-        (Some(e), _) => writeln!(out, "{} config   {}", mark(false), e.text()),
+        (Some(e), _) => {
+            write_config_error(out, e);
+            Ok(())
+        }
         (None, n) => writeln!(
             out,
             "{} config   {} ({} accounts)",
@@ -32,6 +35,26 @@ fn render_config(out: &mut String, report: &DoctorReport) {
             n.unwrap_or(0)
         ),
     };
+}
+
+/// Column where a check's text starts: the width of "FAIL config   ".
+const TEXT_INDENT: &str = "              ";
+
+/// The error's message and detail on the check's row, its hint on a row under it, aligned with
+/// the text. The hint is the terminal's own: the config error's shared one also names an MCP
+/// tool.
+fn write_config_error(out: &mut String, error: &OpError) {
+    let mut line = error.message.clone();
+    if let Some(detail) = &error.detail {
+        line = format!("{line}: {}", detail.get());
+    }
+    let _ = writeln!(out, "{} config   {line}", mark(false));
+    if error.hint.is_some() {
+        let _ = writeln!(
+            out,
+            "{TEXT_INDENT}hint: run `rail setup`, or `rail account add`"
+        );
+    }
 }
 
 fn render_store(out: &mut String, report: &DoctorReport) {
@@ -119,6 +142,25 @@ mod tests {
         assert!(text.contains(&paths.config_file().display().to_string()));
         assert!(text.contains("skip secrets"), "{text}");
         assert!(!text.contains("ok   secrets"), "{text}");
+    }
+
+    #[test]
+    fn the_config_hint_sits_under_the_check_text_and_names_no_mcp_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(dir.path());
+        let text = render(&gather(&paths));
+        let mut lines = text.lines();
+        assert!(
+            lines
+                .next()
+                .unwrap()
+                .starts_with("FAIL config   no config file at")
+        );
+        assert_eq!(
+            lines.next().unwrap(),
+            "              hint: run `rail setup`, or `rail account add`"
+        );
+        assert!(!text.contains("rail_account_add"), "{text}");
     }
 
     #[test]

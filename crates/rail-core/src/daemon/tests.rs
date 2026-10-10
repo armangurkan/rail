@@ -372,3 +372,62 @@ async fn status_keeps_parser_text_out_of_message_and_hint() {
     assert!(!err.message.contains("IGNORE"), "{err:?}");
     assert!(err.detail.is_some());
 }
+
+#[tokio::test]
+async fn finished_requests_are_drained_from_the_connection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let (ctx, _) = daemon_context(&paths);
+    let server = super::Server::bind(ctx, ServeConfig::default())
+        .await
+        .unwrap();
+    let state = server.state_for_tests();
+    let _daemon = tokio::spawn(server.run());
+    let client = Connector::new(paths.clone(), std::sync::Arc::new(|| Ok(())))
+        .connect()
+        .await
+        .unwrap();
+    for _ in 0..500 {
+        client
+            .call::<DaemonInfoOp>(&DaemonInfoRequest {})
+            .await
+            .unwrap();
+    }
+    assert!(
+        state.max_tasks() < 20,
+        "{} tasks held at once",
+        state.max_tasks()
+    );
+}
+
+#[tokio::test]
+async fn a_first_request_with_bad_hello_params_closes_the_connection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let (ctx, _) = daemon_context(&paths);
+    let _daemon = start_daemon(ctx, ServeConfig::default()).await;
+    let bad = encode_frame(&Request::new(1, names::HELLO, json!({"protocol": "one"}))).unwrap();
+    let status = encode_frame(&Request::new(2, names::STATUS, json!({}))).unwrap();
+    let replies = raw_exchange(&paths, vec![bad, status], 3).await;
+    assert_eq!(replies.len(), 1, "{replies:?}");
+    assert_eq!(error_code(&replies[0]), super::wire::INVALID_PARAMS);
+}
+
+#[tokio::test]
+async fn a_silent_connection_is_closed_after_the_hello_deadline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let (ctx, _) = daemon_context(&paths);
+    let config = ServeConfig {
+        hello_timeout: Duration::from_millis(150),
+        ..quick(300)
+    };
+    let daemon = start_daemon(ctx, config).await;
+    let silent = UnixStream::connect(paths.socket_file()).await.unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), daemon).await;
+    result
+        .expect("idle exit despite the silent client")
+        .unwrap()
+        .unwrap();
+    drop(silent);
+}

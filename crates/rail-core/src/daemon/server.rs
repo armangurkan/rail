@@ -4,15 +4,15 @@
 use std::fs::File;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
 
 use super::connect::{
-    VERSION, check_socket_path, open_lock_file, remove_stale_socket, socket_answers,
+    START_TIMEOUT, VERSION, check_socket_path, open_lock_file, remove_stale_socket, socket_answers,
 };
 use super::connection::Connection;
 use super::context::DaemonContext;
@@ -30,6 +30,8 @@ pub const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 #[derive(Debug, Clone)]
 pub struct ServeConfig {
     pub idle: Duration,
+    /// How long a new connection may stay silent before it is closed.
+    pub hello_timeout: Duration,
     /// The Rail version the daemon announces in the hello.
     pub version: String,
 }
@@ -38,22 +40,32 @@ impl Default for ServeConfig {
     fn default() -> Self {
         Self {
             idle: IDLE_TIMEOUT,
+            hello_timeout: START_TIMEOUT,
             version: VERSION.to_string(),
         }
     }
 }
 
+/// Pause after a failed accept (descriptor exhaustion, say) so the loop cannot spin.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+
 /// Shared by the accept loop, every connection and the handlers.
 pub(crate) struct ServerState {
     pub(crate) config: ServeConfig,
     clients: AtomicUsize,
-    last_active: Mutex<Instant>,
+    /// Milliseconds since `epoch` at the last activity.
+    last_active_ms: AtomicU64,
+    epoch: Instant,
+    #[cfg(test)]
+    max_tasks: AtomicUsize,
     shutdown: Notify,
     started_at: i64,
     socket: PathBuf,
 }
 
 impl ServerState {
+    /// Counted when the connection is accepted, before its task starts, so the idle timer
+    /// never sees zero clients for a connection that is already on its way.
     pub(crate) fn client_connected(&self) {
         self.clients.fetch_add(1, Ordering::SeqCst);
         self.touch();
@@ -65,7 +77,22 @@ impl ServerState {
     }
 
     pub(crate) fn touch(&self) {
-        *self.last_active.lock().expect("activity lock") = Instant::now();
+        self.last_active_ms.store(self.now_ms(), Ordering::SeqCst);
+    }
+
+    fn now_ms(&self) -> u64 {
+        u64::try_from(self.epoch.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// The most request tasks any connection held at once (tests of the drain).
+    #[cfg(test)]
+    pub(crate) fn note_tasks(&self, len: usize) {
+        self.max_tasks.fetch_max(len, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn max_tasks(&self) -> usize {
+        self.max_tasks.load(Ordering::SeqCst)
     }
 
     pub(crate) fn request_shutdown(&self) {
@@ -85,7 +112,10 @@ impl ServerState {
     }
 
     fn idle_expired(&self, ctx: &DaemonContext) -> bool {
-        let quiet = self.last_active.lock().expect("activity lock").elapsed();
+        let since = self
+            .now_ms()
+            .saturating_sub(self.last_active_ms.load(Ordering::SeqCst));
+        let quiet = Duration::from_millis(since);
         self.clients.load(Ordering::SeqCst) == 0
             && ctx.pending_count() == 0
             && quiet >= self.config.idle
@@ -132,7 +162,10 @@ impl Server {
         let state = ServerState {
             config,
             clients: AtomicUsize::new(0),
-            last_active: Mutex::new(Instant::now()),
+            last_active_ms: AtomicU64::new(0),
+            epoch: Instant::now(),
+            #[cfg(test)]
+            max_tasks: AtomicUsize::new(0),
             shutdown: Notify::new(),
             started_at: unix_now(),
             socket,
@@ -147,6 +180,11 @@ impl Server {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn state_for_tests(&self) -> Arc<ServerState> {
+        self.state.clone()
+    }
+
     pub fn socket(&self) -> &Path {
         &self.state.socket
     }
@@ -159,7 +197,10 @@ impl Server {
             tokio::select! {
                 accepted = self.listener.accept() => match accepted {
                     Ok((stream, _)) => self.admit(stream),
-                    Err(e) => tracing::warn!(error = %e, "accept failed"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "accept failed");
+                        tokio::time::sleep(ACCEPT_BACKOFF).await;
+                    }
                 },
                 () = self.state.shutdown.notified() => break,
                 () = tokio::time::sleep(tick) => {
@@ -191,6 +232,7 @@ impl Server {
             registry: self.registry.clone(),
             server: self.state.clone(),
         };
+        self.state.client_connected();
         tokio::spawn(connection.serve(stream));
     }
 

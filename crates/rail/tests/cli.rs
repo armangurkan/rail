@@ -398,6 +398,11 @@ fn doctor_without_config_mentions_rail_setup() {
     let out = rail_cmd(&dir).arg("doctor").output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("run `rail setup`"), "got {stdout:?}");
+    assert!(
+        stdout.contains("\n              hint: run `rail setup`, or `rail account add`\n"),
+        "got {stdout:?}"
+    );
+    assert!(!stdout.contains("rail_account_add"), "got {stdout:?}");
 }
 
 /// Review focus 5, end to end: the real binary in a pseudo-terminal reaches the login wait,

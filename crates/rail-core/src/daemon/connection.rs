@@ -15,10 +15,10 @@ use super::context::DaemonContext;
 use super::registry::{Call, Registry};
 use super::server::ServerState;
 use super::wire::{
-    INVALID_REQUEST, Message, PARSE_ERROR, Response, RpcError, WireError, encode_frame,
-    parse_message, read_frame,
+    INVALID_PARAMS, INVALID_REQUEST, Message, PARSE_ERROR, Response, RpcError, WireError,
+    encode_frame, parse_message, read_frame,
 };
-use crate::ops::names;
+use crate::ops::{HelloRequest, OpError, names};
 
 pub(crate) struct Connection {
     pub ctx: Arc<DaemonContext>,
@@ -28,7 +28,6 @@ pub(crate) struct Connection {
 
 impl Connection {
     pub(crate) async fn serve(self, stream: UnixStream) {
-        self.server.client_connected();
         let (read, mut write) = stream.into_split();
         let (frames, mut outgoing) = mpsc::unbounded_channel::<Vec<u8>>();
         tokio::spawn(async move {
@@ -54,7 +53,16 @@ impl Connection {
         let mut reader = BufReader::new(read);
         let mut greeted = false;
         loop {
-            let frame = match read_frame(&mut reader).await {
+            let next = if greeted {
+                read_frame(&mut reader).await
+            } else {
+                // A client that never says hello must not keep the daemon from going idle.
+                let wait = self.server.config.hello_timeout;
+                tokio::time::timeout(wait, read_frame(&mut reader))
+                    .await
+                    .unwrap_or(Ok(None))
+            };
+            let frame = match next {
                 Ok(Some(frame)) => frame,
                 Ok(None) => return,
                 Err(WireError::TooLarge) => {
@@ -88,23 +96,58 @@ impl Connection {
                 return ControlFlow::Continue(());
             }
         };
-        if !*greeted && request.method != names::HELLO {
-            let error = RpcError::new(INVALID_REQUEST, "the first request must be hello");
-            reply(frames, Response::err(Some(request.id), error));
-            return ControlFlow::Break(());
+        if !*greeted {
+            if let Some(error) = hello_problem(&request) {
+                reply(frames, Response::err(Some(request.id), error));
+                return ControlFlow::Break(());
+            }
+            *greeted = true;
         }
-        *greeted = true;
         self.server.touch();
         let call = Call {
             ctx: self.ctx.clone(),
             server: self.server.clone(),
         };
         let (registry, frames) = (self.registry.clone(), frames.clone());
+        // A finished task is freed only when joined: drain them, or a long-lived connection
+        // grows with every request it ever made.
+        while let Some(joined) = tasks.try_join_next() {
+            if let Err(e) = joined
+                && e.is_panic()
+            {
+                tracing::warn!("a request handler panicked");
+            }
+        }
         tasks.spawn(async move {
             let response = registry.dispatch(call, request).await;
             reply(&frames, response);
         });
+        #[cfg(test)]
+        self.server.note_tasks(tasks.len());
         ControlFlow::Continue(())
+    }
+}
+
+/// Why `request` cannot be the first one on a connection: not a hello, or a hello whose
+/// parameters do not parse.
+fn hello_problem(request: &super::wire::Request) -> Option<RpcError> {
+    if request.method != names::HELLO {
+        return Some(RpcError::new(
+            INVALID_REQUEST,
+            "the first request must be hello",
+        ));
+    }
+    let params = match &request.params {
+        serde_json::Value::Null => serde_json::json!({}),
+        params => params.clone(),
+    };
+    match serde_json::from_value::<HelloRequest>(params) {
+        Ok(_) => None,
+        Err(e) => {
+            let mut rpc = RpcError::from_op(&OpError::invalid_params(&e));
+            rpc.code = INVALID_PARAMS;
+            Some(rpc)
+        }
     }
 }
 
