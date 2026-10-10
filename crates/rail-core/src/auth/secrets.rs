@@ -72,6 +72,9 @@ pub enum SecretError {
     OnePasswordNoItem(String),
     #[error("1Password: {0}")]
     OnePassword(String),
+    /// `op` wrote more than the cap on one stream; nothing of it is kept.
+    #[error("op's output exceeded 1 MiB")]
+    OnePasswordOutputTooLarge,
     /// Rail's own complaint about a request or setting (no vault, a malformed reference).
     #[error("{0}")]
     OnePasswordInvalid(String),
@@ -96,6 +99,7 @@ impl SecretError {
             | Self::OnePasswordUnsafe { .. }
             | Self::OnePasswordNoItem(_)
             | Self::OnePasswordInvalid(_)
+            | Self::OnePasswordOutputTooLarge
             | Self::OnePassword(_) => ErrorClass::Permanent,
         }
     }
@@ -111,6 +115,12 @@ pub trait SecretStore: Send + Sync {
     /// override this; the default reads them.
     fn has_tokens(&self, address: &str) -> Result<bool, SecretError> {
         self.get_tokens(address).map(|t| t.is_some())
+    }
+
+    /// The identity of the item holding `address`'s tokens, by a fresh lookup that reveals
+    /// nothing; `None` for stores that are not made of items (or when there is none).
+    fn item_id(&self, _address: &str) -> Result<Option<String>, SecretError> {
+        Ok(None)
     }
 
     /// Check the store can be reached without changing anything.
@@ -515,6 +525,7 @@ mod tests {
             SecretError::OnePasswordNoItem("x".into()),
             SecretError::OnePassword("x".into()),
             SecretError::OnePasswordInvalid("x".into()),
+            SecretError::OnePasswordOutputTooLarge,
         ];
         assert_eq!(
             SecretError::OnePasswordIo {

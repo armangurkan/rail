@@ -159,9 +159,13 @@ const FAKE_OP: &str = r#"#!/bin/sh
 state='@STATE@'
 printf '%s\n' "$*" >> "$state/argv.log"
 printf '%s\n' "$0" > "$state/program"
-vault=none; prev=''
-for a in "$@"; do [ "$prev" = --vault ] && vault=$a; prev=$a; done
-dir="$state/items/$vault"
+vault=none; acct=main; prev=''
+for a in "$@"; do
+  [ "$prev" = --vault ] && vault=$(printf %s "$a" | tr A-Z a-z)
+  [ "$prev" = --account ] && acct=$a
+  prev=$a
+done
+dir="$state/items/$acct/$vault"
 if [ -f "$state/locked" ]; then
   echo '[ERROR] 2026/10/10 08:00:00 You are not currently signed in. Please run `op signin --help` for instructions' >&2
   exit 1
@@ -271,19 +275,25 @@ impl FakeOp {
 
     /// The stored items, as the template text Rail sent.
     pub(crate) fn items(&self) -> Vec<String> {
-        let Ok(vaults) = std::fs::read_dir(self.state.join("items")) else {
-            return Vec::new();
-        };
-        vaults
-            .flatten()
-            .flat_map(|vault| {
-                std::fs::read_dir(vault.path())
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-            })
-            .map(|e| std::fs::read_to_string(e.path()).unwrap())
-            .collect()
+        let mut found = Vec::new();
+        let mut stack = vec![self.state.join("items")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    found.push(std::fs::read_to_string(path).unwrap());
+                }
+            }
+        }
+        found
+    }
+
+    /// How many items one account's vault holds (the vault name in lower case).
+    pub(crate) fn item_count(&self, account: &str, vault: &str) -> usize {
+        std::fs::read_dir(self.state.join("items").join(account).join(vault))
+            .map_or(0, |dir| dir.flatten().count())
     }
 }
 

@@ -37,7 +37,12 @@ pub struct SecretsConfigureResponse {
     pub previous: SecretsBackend,
     /// Addresses whose tokens were copied to the new backend.
     pub moved: Vec<String>,
-    /// Addresses whose old copy could not be deleted after the move.
+    /// Addresses whose old copy could not be deleted after the move, or was not (moving to
+    /// another store was not asked for).
     pub old_copies_kept: Vec<String>,
+    /// Addresses whose tokens were already in the new store: the old and new settings name the
+    /// same 1Password item, so nothing was moved or deleted.
+    #[serde(default)]
+    pub already_in_place: Vec<String>,
     pub config_path: PathBuf,
 }

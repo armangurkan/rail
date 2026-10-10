@@ -160,27 +160,45 @@ fn escaped_forms_of_a_token_are_redacted_too() {
     assert!(text.contains("<redacted>"), "{text}");
 }
 
-#[test]
-fn a_chatty_cli_is_cut_off_at_the_cap_and_fails_the_call() {
-    let tmp = tempfile::tempdir().unwrap();
+/// A stand-in `op` printing `bytes` bytes of `x` and exiting with `code`.
+fn printing_cli(tmp: &tempfile::TempDir, bytes: usize, code: i32) -> OpCli {
     let fake = FakeOp::install(tmp.path());
-    let big = tmp.path().join("big-op");
+    let script = tmp.path().join("big-op");
     std::fs::write(
-        &big,
-        "#!/bin/sh\nhead -c 3000000 /dev/zero | tr '\\0' 'x'\n",
+        &script,
+        format!("#!/bin/sh\nhead -c {bytes} /dev/zero | tr '\\0' 'x'\nexit {code}\n"),
     )
     .unwrap();
-    std::fs::set_permissions(&big, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
     let config = OnePasswordConfig {
-        op_path: Some(big),
+        op_path: Some(script),
         ..fake.config()
     };
-    let cli = OpCli::from_config(Some(&config), &fake.runtime_dir);
-    // Rail stops reading at the cap, so the writer breaks its pipe: a failed call, not an
-    // unbounded read and not a silently truncated success.
-    let started = Instant::now();
-    assert!(cli.run(&["whoami"], None, &[]).is_err());
-    assert!(started.elapsed() < Duration::from_secs(10));
+    OpCli::from_config(Some(&config), &fake.runtime_dir)
+}
+
+/// Review: the cap fails closed, whatever the exit status, with a fixed error.
+#[test]
+fn output_over_the_cap_fails_with_a_fixed_error() {
+    let cap = super::MAX_OUTPUT as usize;
+    for (bytes, code) in [(cap + 1, 0), (3_000_000, 0), (3_000_000, 1)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let err = printing_cli(&tmp, bytes, code)
+            .run(&["whoami"], None, &[])
+            .unwrap_err();
+        assert!(
+            matches!(err, SecretError::OnePasswordOutputTooLarge),
+            "{bytes} bytes, exit {code}: {err:?}"
+        );
+        assert_eq!(err.to_string(), "op's output exceeded 1 MiB");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let out = printing_cli(&tmp, cap, 0)
+        .run(&["whoami"], None, &[])
+        .unwrap();
+    assert_eq!(out.len(), cap, "exactly the cap is still fine");
 }
 
 #[test]

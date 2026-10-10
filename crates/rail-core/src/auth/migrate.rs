@@ -5,12 +5,15 @@
 use std::path::PathBuf;
 
 use super::onepassword::ItemIdCache;
+
 use super::secrets::{SecretStore, open_secret_store};
 use crate::config::{Config, OnePasswordConfig, SecretsBackend, load_text_or_empty, set_secrets};
 use crate::error::ErrorClass;
 use crate::ops::write_config_text;
 use crate::ops::{ErrorCode, OpError, SecretsConfigureRequest, SecretsConfigureResponse};
 use crate::paths::Paths;
+
+const ONEPASSWORD: &str = "1password";
 
 /// The message of the refusal for a change nobody confirmed.
 pub const NEEDS_CONFIRMATION: &str =
@@ -155,6 +158,7 @@ pub fn switch_backend(
         previous: plan.config.general.secrets,
         moved: Vec::new(),
         old_copies_kept: Vec::new(),
+        already_in_place: Vec::new(),
         config_path: plan.path.clone(),
     };
     if !plan.changes() {
@@ -178,7 +182,10 @@ pub fn switch_backend(
     }
     write_config_text(&plan.path, &new_text)?;
     if moving && request.migrate {
-        response.old_copies_kept = delete_old_copies(old.as_ref(), &response.moved);
+        let retired = retire_old_copies(old.as_ref(), new.as_ref(), &response.moved);
+        response.moved.retain(|a| !retired.in_place.contains(a));
+        response.old_copies_kept = retired.kept;
+        response.already_in_place = retired.in_place;
     } else if moving {
         response.old_copies_kept = present_accounts(&plan.config, old.as_ref());
     }
@@ -300,18 +307,65 @@ fn partial_failure(mut error: OpError, moved: &[String], config: &Config) -> OpE
     error
 }
 
-/// Delete what was moved. A copy that will not delete is reported, not fatal: the new backend
-/// already holds the tokens and config points at it.
-fn delete_old_copies(old: &dyn SecretStore, moved: &[String]) -> Vec<String> {
-    moved
-        .iter()
-        .filter(|address| {
-            old.delete_tokens(address)
-                .inspect_err(|e| tracing::warn!(error = %e, "could not delete an old token copy"))
-                .is_err()
-        })
-        .cloned()
-        .collect()
+/// What became of the old copies after a move.
+struct Retired {
+    /// Old copies that could not be deleted or confirmed gone.
+    kept: Vec<String>,
+    /// Accounts whose old and new settings name the same item: nothing was deleted.
+    in_place: Vec<String>,
+}
+
+/// Delete what was moved, once it is sure that it is a different item from the new copy.
+/// A copy that will not delete is reported, not fatal: the new backend already holds the
+/// tokens and config points at it.
+fn retire_old_copies(old: &dyn SecretStore, new: &dyn SecretStore, moved: &[String]) -> Retired {
+    let mut retired = Retired {
+        kept: Vec::new(),
+        in_place: Vec::new(),
+    };
+    for address in moved {
+        match retire_one(old, new, address) {
+            Outcome::Deleted => {}
+            Outcome::Kept => retired.kept.push(address.clone()),
+            Outcome::InPlace => retired.in_place.push(address.clone()),
+        }
+    }
+    retired
+}
+
+enum Outcome {
+    Deleted,
+    Kept,
+    InPlace,
+}
+
+/// Item stores are checked with uncached lookups (nothing revealed): the old copy is the
+/// new one when the ids match, and "no such item" on delete only counts when a fresh lookup
+/// agrees the item is gone.
+fn retire_one(old: &dyn SecretStore, new: &dyn SecretStore, address: &str) -> Outcome {
+    let by_item = old.backend_name() == ONEPASSWORD;
+    if by_item {
+        let new_id = new.item_id(address).ok().flatten();
+        match old.item_id(address) {
+            Err(e) => return kept(&e, "could not look up an old token copy"),
+            Ok(Some(id)) if new_id.as_ref() == Some(&id) => return Outcome::InPlace,
+            Ok(None) => return Outcome::Deleted,
+            Ok(Some(_)) => {}
+        }
+    }
+    if let Err(e) = old.delete_tokens(address) {
+        return kept(&e, "could not delete an old token copy");
+    }
+    if by_item && !matches!(old.item_id(address), Ok(None)) {
+        tracing::warn!("an old token copy is still there after its delete");
+        return Outcome::Kept;
+    }
+    Outcome::Deleted
+}
+
+fn kept(error: &super::secrets::SecretError, what: &str) -> Outcome {
+    tracing::warn!(error = %error, "{what}");
+    Outcome::Kept
 }
 
 #[cfg(test)]
@@ -565,5 +619,78 @@ mod tests {
             assert_eq!(err.code, ErrorCode::InvalidInput, "{err:?}");
         }
         assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
+    }
+
+    fn account_cli(fake: &FakeOp, account: &str) -> crate::auth::OpCli {
+        let config = OnePasswordConfig {
+            account: Some(account.into()),
+            ..fake.config()
+        };
+        crate::auth::OpCli::from_config(Some(&config), &fake.runtime_dir)
+    }
+
+    /// Both accounts hold tokens in vault "Rail" of 1Password account `account`.
+    fn on_1password(tmp: &tempfile::TempDir, account: Option<&str>) -> (Paths, FakeOp) {
+        let paths = Paths::all_in(tmp.path());
+        let fake = FakeOp::install(tmp.path());
+        let account_line = account.map_or(String::new(), |a| format!("account = \"{a}\"\n"));
+        let table = fake.config_toml().replace(
+            "vault = \"Rail\"\n",
+            &format!("vault = \"Rail\"\n{account_line}"),
+        );
+        let text = format!(
+            "{}{table}",
+            TWO_ACCOUNTS.replace("secrets = \"file\"", "secrets = \"1password\"")
+        );
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(paths.config_file(), text).unwrap();
+        let cli = match account {
+            Some(a) => account_cli(&fake, a),
+            None => fake.cli(),
+        };
+        let store = OnePasswordSecretStore::new(cli, "Rail".into(), ItemIdCache::default());
+        store.set_tokens("a@x.com", &tokens(1)).unwrap();
+        store.set_tokens("b@x.com", &tokens(2)).unwrap();
+        (paths, fake)
+    }
+
+    fn same_backend_other_account(account: &str, vault: Option<&str>) -> SecretsConfigureRequest {
+        SecretsConfigureRequest {
+            vault: vault.map(Into::into),
+            op_account: Some(account.into()),
+            ..to_onepassword()
+        }
+    }
+
+    #[test]
+    fn another_account_with_the_same_vault_name_gets_the_tokens_and_loses_the_old_copies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, fake) = on_1password(&tmp, Some("A"));
+        let ids = ItemIdCache::default();
+        let request = same_backend_other_account("B", None);
+        let done = switch_backend(&paths, &ids, &request).unwrap();
+        assert_eq!(done.moved, ["a@x.com", "b@x.com"]);
+        assert!(done.old_copies_kept.is_empty(), "{done:?}");
+        assert!(done.already_in_place.is_empty());
+        assert_eq!(fake.item_count("A", "rail"), 0, "old copies deleted");
+        assert_eq!(fake.item_count("B", "rail"), 2, "new copies written");
+        let new = OnePasswordSecretStore::new(account_cli(&fake, "B"), "Rail".into(), ids);
+        assert_eq!(new.get_tokens("b@x.com").unwrap(), Some(tokens(2)));
+    }
+
+    #[test]
+    fn one_store_named_two_ways_deletes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, fake) = on_1password(&tmp, None);
+        let ids = ItemIdCache::default();
+        let request = same_backend_other_account("main", Some("rail"));
+        let done = switch_backend(&paths, &ids, &request).unwrap();
+        assert!(done.moved.is_empty(), "{done:?}");
+        assert_eq!(done.already_in_place, ["a@x.com", "b@x.com"]);
+        assert!(done.old_copies_kept.is_empty());
+        assert_eq!(fake.items().len(), 2, "the only copies survive");
+        let config = load(&paths.config_file()).unwrap();
+        let store = OnePasswordSecretStore::new(fake.cli(), config.onepassword.unwrap().vault, ids);
+        assert_eq!(store.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
     }
 }

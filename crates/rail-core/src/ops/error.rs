@@ -223,6 +223,9 @@ impl From<SecretError> for OpError {
             SecretError::OnePasswordInvalid(text) => {
                 Self::new(ErrorCode::Secrets, class, text.clone())
             }
+            SecretError::OnePasswordOutputTooLarge => {
+                Self::new(ErrorCode::Secrets, class, "op's output exceeded 1 MiB")
+            }
             SecretError::OnePasswordIo { what, message } => {
                 fixed(format!("could not {what} the 1Password CLI"), message)
             }

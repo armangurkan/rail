@@ -75,6 +75,11 @@ impl OpCli {
         }
     }
 
+    /// The `--account` Rail passes, if one is configured.
+    pub fn account(&self) -> Option<&str> {
+        self.account.as_deref()
+    }
+
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
@@ -359,6 +364,11 @@ impl OnePasswordSecretStore {
         Self { op, vault, ids }
     }
 
+    /// The cache scope of a vault: the account too, since two accounts can use one vault name.
+    fn scope(&self, vault: &str) -> String {
+        format!("{}\u{0}{vault}", self.op.account().unwrap_or(""))
+    }
+
     fn vault(&self) -> Result<&str, SecretError> {
         if self.vault.trim().is_empty() {
             return Err(SecretError::OnePasswordInvalid(
@@ -370,7 +380,7 @@ impl OnePasswordSecretStore {
 
     fn find(&self, title: &str) -> Result<Option<String>, SecretError> {
         let vault = self.vault()?;
-        if let Some(id) = self.ids.get(vault, title) {
+        if let Some(id) = self.ids.get(&self.scope(vault), title) {
             return Ok(Some(id));
         }
         self.look_up(title)
@@ -390,8 +400,8 @@ impl OnePasswordSecretStore {
         };
         let id = items.into_iter().find(|i| i.title == title).map(|i| i.id);
         match &id {
-            Some(id) => self.ids.put(vault, title, id),
-            None => self.ids.forget(vault, title),
+            Some(id) => self.ids.put(&self.scope(vault), title, id),
+            None => self.ids.forget(&self.scope(vault), title),
         }
         Ok(id)
     }
@@ -400,7 +410,7 @@ impl OnePasswordSecretStore {
         let vault = self.vault()?;
         let args = ["item", "create", "--vault", vault, "--format", "json", "-"];
         let created: ItemRef = parse_json(&self.op.run(&args, Some(json), redact)?)?;
-        self.ids.put(vault, title, &created.id);
+        self.ids.put(&self.scope(vault), title, &created.id);
         Ok(())
     }
 }
@@ -427,7 +437,7 @@ impl SecretStore for OnePasswordSecretStore {
         match self.op.run(&args, None, &[]) {
             Ok(out) => tokens_from_fields(&parse_json::<Vec<FieldValue>>(&out)?).map(Some),
             Err(SecretError::OnePasswordNoItem(_)) => {
-                self.ids.forget(vault, &title);
+                self.ids.forget(&self.scope(vault), &title);
                 Ok(None)
             }
             Err(e) => Err(e),
@@ -446,7 +456,7 @@ impl SecretStore for OnePasswordSecretStore {
         match self.op.run(&args, Some(&json), &redact) {
             Ok(_) => Ok(()),
             Err(SecretError::OnePasswordNoItem(_)) => {
-                self.ids.forget(vault, &title);
+                self.ids.forget(&self.scope(vault), &title);
                 self.create(&title, &json, &redact)
             }
             Err(e) => Err(e),
@@ -464,7 +474,7 @@ impl SecretStore for OnePasswordSecretStore {
             .run(&["item", "delete", &id, "--vault", vault], None, &[])
         {
             Ok(_) | Err(SecretError::OnePasswordNoItem(_)) => {
-                self.ids.forget(vault, &title);
+                self.ids.forget(&self.scope(vault), &title);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -477,6 +487,11 @@ impl SecretStore for OnePasswordSecretStore {
 
     /// An item lookup by tag and title: no token is fetched, so polling stays cheap and
     /// loads nothing secret into memory.
+    /// The item's id by an uncached lookup (no `--reveal`).
+    fn item_id(&self, address: &str) -> Result<Option<String>, SecretError> {
+        self.look_up(&item_title(address))
+    }
+
     fn has_tokens(&self, address: &str) -> Result<bool, SecretError> {
         self.look_up(&item_title(address)).map(|id| id.is_some())
     }

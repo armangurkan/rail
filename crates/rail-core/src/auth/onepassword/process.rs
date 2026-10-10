@@ -3,6 +3,8 @@
 
 use std::io::{Read, Write};
 use std::process::{Child, ExitStatus};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -12,6 +14,7 @@ type Drain = JoinHandle<std::io::Result<Vec<u8>>>;
 
 /// The threads moving bytes between Rail and one child.
 struct Pipes {
+    exceeded: Arc<AtomicBool>,
     writer: Option<JoinHandle<std::io::Result<()>>>,
     stdout: Option<Drain>,
     stderr: Option<Drain>,
@@ -29,10 +32,12 @@ impl Pipes {
                 // Dropping the pipe at the end closes it, so `op` sees the end of its input.
                 std::thread::spawn(move || pipe.write_all(&bytes))
             });
+        let exceeded = Arc::new(AtomicBool::new(false));
         Self {
             writer,
-            stdout: child.stdout.take().map(drain),
-            stderr: child.stderr.take().map(drain),
+            stdout: child.stdout.take().map(|p| drain(p, exceeded.clone())),
+            stderr: child.stderr.take().map(|p| drain(p, exceeded.clone())),
+            exceeded,
         }
     }
 
@@ -47,7 +52,11 @@ impl Pipes {
                 Err(_) => return Err(panicked("write to")),
             }
         }
-        Ok((joined(self.stdout)?, joined(self.stderr)?))
+        let output = (joined(self.stdout)?, joined(self.stderr)?);
+        if self.exceeded.load(Ordering::SeqCst) {
+            return Err(SecretError::OnePasswordOutputTooLarge);
+        }
+        Ok(output)
     }
 }
 
@@ -67,12 +76,16 @@ fn panicked(what: &'static str) -> SecretError {
     }
 }
 
-fn drain(pipe: impl Read + Send + 'static) -> Drain {
+/// Read up to one byte past the cap: more than the cap means the output is too large, which
+/// raises `exceeded` so the waiting side kills `op` at once.
+fn drain(pipe: impl Read + Send + 'static, exceeded: Arc<AtomicBool>) -> Drain {
     std::thread::spawn(move || {
         let mut buffer = Vec::new();
-        pipe.take(MAX_OUTPUT)
-            .read_to_end(&mut buffer)
-            .map(|_| buffer)
+        pipe.take(MAX_OUTPUT + 1).read_to_end(&mut buffer)?;
+        if buffer.len() as u64 > MAX_OUTPUT {
+            exceeded.store(true, Ordering::SeqCst);
+        }
+        Ok(buffer)
     })
 }
 
@@ -96,6 +109,11 @@ pub(super) fn run_child(
     let pipes = Pipes::start(&mut child, input);
     let deadline = Instant::now() + timeout;
     let status = loop {
+        if pipes.exceeded.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(SecretError::OnePasswordOutputTooLarge);
+        }
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
