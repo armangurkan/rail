@@ -3,6 +3,7 @@
 //! still gets the answer.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,8 @@ struct Entry {
 #[derive(Default)]
 struct Entries {
     next: u64,
+    /// Slots taken by begins still in flight (before their entry exists).
+    reserved: usize,
     by_id: HashMap<PendingId, Entry>,
 }
 
@@ -50,6 +53,33 @@ pub(crate) struct PendingTable {
     changed: watch::Sender<u64>,
     /// The detached tasks that wait for redirects and save, so shutdown can join them.
     tasks: Mutex<JoinSet<()>>,
+    /// Set when shutdown starts: nothing new may begin.
+    stopping: AtomicBool,
+}
+
+/// Why no slot could be reserved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Refused {
+    /// `MAX_PENDING` operations are already waiting or being begun.
+    Full,
+    /// The daemon is shutting down.
+    Stopping,
+}
+
+/// A place among the `MAX_PENDING` waiting operations, held from before the loopback is bound
+/// until the entry exists. Dropping it unused gives the place back.
+pub(crate) struct Slot<'a> {
+    table: &'a PendingTable,
+    held: bool,
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        if self.held {
+            let mut entries = self.table.lock();
+            entries.reserved = entries.reserved.saturating_sub(1);
+        }
+    }
 }
 
 impl Default for PendingTable {
@@ -58,6 +88,7 @@ impl Default for PendingTable {
             entries: Mutex::new(Entries::default()),
             changed: watch::Sender::new(0),
             tasks: Mutex::new(JoinSet::new()),
+            stopping: AtomicBool::new(false),
         }
     }
 }
@@ -79,10 +110,45 @@ impl PendingTable {
         self.changed.send_modify(|n| *n = n.wrapping_add(1));
     }
 
-    /// A new waiting entry, and the receiver its task watches for a cancel.
-    pub(crate) fn begin(&self, kind: PendingKind) -> (PendingId, oneshot::Receiver<()>) {
+    /// Take a place among the waiting operations, atomically with the count of those already
+    /// waiting or being begun.
+    pub(crate) fn try_reserve(&self) -> Result<Slot<'_>, Refused> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err(Refused::Stopping);
+        }
+        let mut entries = self.lock();
+        let waiting = entries
+            .by_id
+            .values()
+            .filter(|e| e.state == PendingState::Waiting)
+            .count();
+        if waiting + entries.reserved >= MAX_PENDING {
+            return Err(Refused::Full);
+        }
+        entries.reserved += 1;
+        drop(entries);
+        Ok(Slot {
+            table: self,
+            held: true,
+        })
+    }
+
+    /// Refuse every later `try_reserve`: the daemon is shutting down.
+    pub(crate) fn stop_new(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
+    }
+
+    /// A new waiting entry in the reserved `slot`, and the receiver its task watches for a
+    /// cancel.
+    pub(crate) fn begin(
+        &self,
+        mut slot: Slot<'_>,
+        kind: PendingKind,
+    ) -> (PendingId, oneshot::Receiver<()>) {
         let (tx, rx) = oneshot::channel();
         let mut entries = self.lock();
+        entries.reserved = entries.reserved.saturating_sub(1);
+        slot.held = false;
         entries.expire();
         entries.next += 1;
         let id = PendingId(format!("{}-{}", prefix(kind), entries.next));
@@ -106,17 +172,6 @@ impl PendingTable {
             kind: e.kind,
             state: e.state.clone(),
         })
-    }
-
-    /// True while fewer than `MAX_PENDING` entries are waiting for a browser.
-    pub(crate) fn has_room(&self) -> bool {
-        let waiting = self
-            .lock()
-            .by_id
-            .values()
-            .filter(|e| e.state == PendingState::Waiting)
-            .count();
-        waiting < MAX_PENDING
     }
 
     /// Run a pending operation's task detached from any connection, but tracked so shutdown
@@ -262,12 +317,16 @@ mod tests {
     use super::*;
     use crate::ops::{OpError, PendingOutcome};
 
+    fn begin(table: &PendingTable, kind: PendingKind) -> (PendingId, oneshot::Receiver<()>) {
+        table.begin(table.try_reserve().unwrap(), kind)
+    }
+
     #[test]
     fn ids_name_their_kind_and_never_repeat() {
         let table = PendingTable::default();
-        let (a, _) = table.begin(PendingKind::AddAccount);
-        let (b, _) = table.begin(PendingKind::Login);
-        let (c, _) = table.begin(PendingKind::AdminConsent);
+        let (a, _) = begin(&table, PendingKind::AddAccount);
+        let (b, _) = begin(&table, PendingKind::Login);
+        let (c, _) = begin(&table, PendingKind::AdminConsent);
         assert_eq!([a.0, b.0, c.0], ["add-1", "login-2", "consent-3"]);
         assert_eq!(table.active(), 3);
     }
@@ -275,7 +334,7 @@ mod tests {
     #[test]
     fn cancel_ends_a_waiting_entry_and_wakes_its_task() {
         let table = PendingTable::default();
-        let (id, mut rx) = table.begin(PendingKind::Login);
+        let (id, mut rx) = begin(&table, PendingKind::Login);
         assert_eq!(table.cancel(&id).unwrap().state, PendingState::Cancelled);
         assert!(rx.try_recv().is_ok());
         assert!(!table.start_saving(&id), "a cancelled login saves nothing");
@@ -289,8 +348,8 @@ mod tests {
     #[test]
     fn finished_entries_expire_but_active_ones_stay() {
         let table = PendingTable::default();
-        let (waiting, _rx) = table.begin(PendingKind::Login);
-        let (cancelled, _rx2) = table.begin(PendingKind::Login);
+        let (waiting, _rx) = begin(&table, PendingKind::Login);
+        let (cancelled, _rx2) = begin(&table, PendingKind::Login);
         table.cancel(&cancelled);
         assert!(table.get(&cancelled).is_some(), "kept for late waiters");
         table.lock().expire_after(Duration::ZERO);
@@ -301,8 +360,8 @@ mod tests {
     #[test]
     fn cancel_waiting_leaves_a_save_alone() {
         let table = PendingTable::default();
-        let (waiting, mut rx) = table.begin(PendingKind::Login);
-        let (saving, _rx2) = table.begin(PendingKind::AddAccount);
+        let (waiting, mut rx) = begin(&table, PendingKind::Login);
+        let (saving, _rx2) = begin(&table, PendingKind::AddAccount);
         assert!(table.start_saving(&saving));
         table.cancel_waiting();
         assert_eq!(table.get(&waiting).unwrap().state, PendingState::Cancelled);
@@ -311,23 +370,33 @@ mod tests {
     }
 
     #[test]
-    fn only_max_pending_entries_may_wait_at_once() {
+    fn reservations_count_against_the_cap_and_are_given_back() {
         let table = PendingTable::default();
-        let kept: Vec<_> = (0..MAX_PENDING)
-            .map(|_| {
-                assert!(table.has_room());
-                table.begin(PendingKind::Login)
-            })
+        let mut slots: Vec<_> = (0..MAX_PENDING)
+            .map(|_| table.try_reserve().unwrap())
             .collect();
-        assert!(!table.has_room());
-        table.cancel(&kept[0].0);
-        assert!(table.has_room(), "a cancelled entry frees its slot");
+        assert_eq!(table.try_reserve().err(), Some(Refused::Full));
+        drop(slots.pop());
+        let last = table.try_reserve().expect("a dropped slot is free again");
+        assert_eq!(table.try_reserve().err(), Some(Refused::Full));
+        // Turning a slot into an entry keeps the count; cancelling the entry frees it.
+        let (id, _rx) = table.begin(last, PendingKind::Login);
+        assert_eq!(table.try_reserve().err(), Some(Refused::Full));
+        table.cancel(&id);
+        assert!(table.try_reserve().is_ok());
+    }
+
+    #[test]
+    fn nothing_new_begins_once_stopping() {
+        let table = PendingTable::default();
+        table.stop_new();
+        assert_eq!(table.try_reserve().err(), Some(Refused::Stopping));
     }
 
     #[test]
     fn a_save_in_progress_cannot_be_cancelled() {
         let table = PendingTable::default();
-        let (id, _rx) = table.begin(PendingKind::AddAccount);
+        let (id, _rx) = begin(&table, PendingKind::AddAccount);
         assert!(table.start_saving(&id));
         assert_eq!(table.cancel(&id).unwrap().state, PendingState::Saving);
         let failed = PendingState::Failed {
@@ -339,7 +408,7 @@ mod tests {
     #[tokio::test]
     async fn wait_returns_on_finish_or_after_the_timeout() {
         let table = std::sync::Arc::new(PendingTable::default());
-        let (id, _rx) = table.begin(PendingKind::AdminConsent);
+        let (id, _rx) = begin(&table, PendingKind::AdminConsent);
         let still = table.wait(&id, Duration::from_millis(50)).await.unwrap();
         assert_eq!(still.state, PendingState::Waiting);
         let finisher = table.clone();

@@ -17,6 +17,7 @@ use crate::auth::{
 };
 use crate::config::AccountConfig;
 use crate::daemon::context::DaemonContext;
+use crate::daemon::pending::{Refused, Slot};
 use crate::daemon::registry::{Call, Caller};
 use crate::error::ErrorClass;
 use crate::ops::{
@@ -32,12 +33,14 @@ pub(super) async fn add_begin(
     request: AccountAddRequest,
 ) -> Result<BeginResponse, OpError> {
     let ctx = call.ctx.clone();
-    ensure_room(&ctx)?;
+    let slot = ensure_room(&ctx)?;
+    #[cfg(test)]
+    ctx.begin_gate.pass().await;
     let prepared = prepare_and_probe(&ctx.paths, &ctx.op_ids, &request, &ctx.http).await?;
     let endpoints = endpoints_for_login(&prepared.account, ctx.token_url());
     let session = begin_auth_code(&prepared.login_account(), &endpoints).await?;
     let url = session.url().clone();
-    let (id, cancel) = ctx.pending.begin(PendingKind::AddAccount);
+    let (id, cancel) = ctx.pending.begin(slot, PendingKind::AddAccount);
     let task = finish_add(ctx.clone(), id.clone(), session, prepared, cancel);
     spawn_pending(&ctx, call.caller, id.clone(), task);
     Ok(begun(
@@ -54,7 +57,7 @@ pub(super) async fn login_begin(
     request: LoginBeginRequest,
 ) -> Result<BeginResponse, OpError> {
     let ctx = call.ctx.clone();
-    ensure_room(&ctx)?;
+    let slot = ensure_room(&ctx)?;
     let (paths, ids, who) = (
         ctx.paths.clone(),
         ctx.op_ids.clone(),
@@ -78,7 +81,7 @@ pub(super) async fn login_begin(
     let endpoints = endpoints_for_login(&account, ctx.token_url());
     let session = begin_auth_code(&login, &endpoints).await?;
     let url = session.url().clone();
-    let (id, cancel) = ctx.pending.begin(PendingKind::Login);
+    let (id, cancel) = ctx.pending.begin(slot, PendingKind::Login);
     let task = finish_login(ctx.clone(), id.clone(), session, account, cancel);
     spawn_pending(&ctx, call.caller, id.clone(), task);
     Ok(begun(
@@ -95,10 +98,10 @@ pub(super) async fn consent_begin(
     request: ConsentBeginRequest,
 ) -> Result<BeginResponse, OpError> {
     let ctx = call.ctx.clone();
-    ensure_room(&ctx)?;
+    let slot = ensure_room(&ctx)?;
     let session = begin_admin_consent(&request.client_id, &request.tenant).await?;
     let url = session.url().clone();
-    let (id, cancel) = ctx.pending.begin(PendingKind::AdminConsent);
+    let (id, cancel) = ctx.pending.begin(slot, PendingKind::AdminConsent);
     let task = async move {
         let waited = tokio::select! {
             result = tokio::time::timeout(LOGIN_LIFETIME, session.finish()) => result,
@@ -143,16 +146,17 @@ fn begun(
     }
 }
 
-/// Refuse a new login while `MAX_PENDING` are already waiting, before anything is bound.
-fn ensure_room(ctx: &DaemonContext) -> Result<(), OpError> {
-    if ctx.pending.has_room() {
-        return Ok(());
-    }
-    Err(OpError::new(
-        ErrorCode::Daemon,
-        ErrorClass::Transient,
-        "too many logins are in progress; finish or cancel one first",
-    ))
+/// Reserve a place for a new login before anything is bound: refused while `MAX_PENDING` are
+/// waiting or being begun, and once the daemon is shutting down. The place is held until
+/// `pending.begin` turns it into the entry, or given back if the begin fails first.
+fn ensure_room(ctx: &DaemonContext) -> Result<Slot<'_>, OpError> {
+    ctx.pending.try_reserve().map_err(|refused| {
+        let message = match refused {
+            Refused::Full => "too many logins are in progress; finish or cancel one first",
+            Refused::Stopping => "the daemon is shutting down",
+        };
+        OpError::new(ErrorCode::Daemon, ErrorClass::Transient, message)
+    })
 }
 
 /// Settles an entry as failed if its task ends without doing so (a panic, or an abort at
@@ -303,7 +307,8 @@ mod tests {
         let (ctx, _urls) = daemon_context(&crate::paths::Paths::all_in(tmp.path()));
         let ctx = Arc::new(ctx);
         let (frames, _outgoing) = tokio::sync::mpsc::unbounded_channel();
-        let (id, _cancel) = ctx.pending.begin(PendingKind::Login);
+        let slot = ctx.pending.try_reserve().unwrap();
+        let (id, _cancel) = ctx.pending.begin(slot, PendingKind::Login);
         spawn_pending(&ctx, Caller::new(frames), id.clone(), async {
             panic!("boom");
         });

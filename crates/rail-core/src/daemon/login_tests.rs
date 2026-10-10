@@ -41,6 +41,7 @@ struct Harness {
     client: DaemonClient,
     urls: UnboundedReceiver<Url>,
     gate: Arc<SaveGate>,
+    begin_gate: Arc<super::context::BeginGate>,
     daemon: tokio::task::JoinHandle<Result<(), OpError>>,
     _token_server: MockServer,
 }
@@ -68,6 +69,7 @@ async fn harness(config: &str) -> Harness {
     let (ctx, urls) = daemon_context(&paths);
     let ctx = ctx.with_token_url(Some(format!("{}/token", server.uri())));
     let gate = ctx.save_gate.clone();
+    let begin_gate = ctx.begin_gate.clone();
     let daemon = start_daemon(ctx, ServeConfig::default()).await;
     let client = Connector::new(paths.clone(), Arc::new(|| Ok(())))
         .connect()
@@ -79,6 +81,7 @@ async fn harness(config: &str) -> Harness {
         client,
         urls,
         gate,
+        begin_gate,
         daemon,
         _token_server: server,
     }
@@ -653,4 +656,73 @@ async fn a_closed_connection_is_released_while_its_login_stays_pending() {
         .await
         .unwrap();
     assert_eq!(begun.pending, 1);
+}
+
+/// A burst of begins held after their slot is reserved: exactly `MAX_PENDING` get through.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burst_of_begins_cannot_pass_the_cap() {
+    use crate::daemon::pending::MAX_PENDING;
+    let mut h = harness(FILE_BACKEND).await;
+    h.begin_gate.armed.store(true, Ordering::SeqCst);
+    let mut calls = tokio::task::JoinSet::new();
+    for n in 0..MAX_PENDING + 4 {
+        let client = h.client.clone();
+        calls.spawn(async move {
+            let request = add_request(&format!("burst{n}@example.com"));
+            client.call::<AccountAddBegin>(&request).await
+        });
+    }
+    let held = h.begin_gate.reached.acquire_many(MAX_PENDING as u32).await;
+    held.unwrap().forget();
+    h.begin_gate.open.send_replace(true);
+    let (mut begun, mut refused) = (0, 0);
+    while let Some(result) = calls.join_next().await {
+        match result.unwrap() {
+            Ok(_) => begun += 1,
+            Err(e) => {
+                assert!(e.message.contains("too many logins"), "{e}");
+                refused += 1;
+            }
+        }
+    }
+    assert_eq!((begun, refused), (MAX_PENDING, 4));
+    assert_eq!(
+        h.begin_gate.reached.available_permits(),
+        0,
+        "no ninth got in"
+    );
+    for _ in 0..MAX_PENDING {
+        h.urls.recv().await.unwrap();
+    }
+    assert!(h.urls.try_recv().is_err());
+}
+
+/// Once shutdown has started nothing new begins and no loopback listener is bound.
+#[tokio::test]
+async fn no_login_begins_once_shutdown_has_started() {
+    let mut h = harness(FILE_BACKEND).await;
+    h.gate.armed.store(true, Ordering::SeqCst);
+    h.client
+        .call::<AccountAddBegin>(&add_request("me@example.com"))
+        .await
+        .unwrap();
+    browser(&mut h.urls, &format!("code={CODE}")).await;
+    tokio::time::timeout(Duration::from_secs(5), h.gate.reached.notified())
+        .await
+        .expect("the save started");
+    stop(&h.client).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let err = h
+        .client
+        .call::<AccountAddBegin>(&add_request("late@example.com"))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("shutting down"), "{err}");
+    assert!(h.urls.try_recv().is_err(), "nothing was bound or opened");
+    h.gate.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(10), &mut h.daemon)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 }

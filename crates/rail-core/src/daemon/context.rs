@@ -33,6 +33,39 @@ pub struct DaemonContext {
     /// Tests hold a save at its start to prove a disconnect cannot stop it.
     #[cfg(test)]
     pub(crate) save_gate: Arc<SaveGate>,
+    /// Tests hold begins after their slot is reserved to prove the cap holds under a burst.
+    #[cfg(test)]
+    pub(crate) begin_gate: Arc<BeginGate>,
+}
+
+/// A test hook: when armed, every begin counts itself in `reached` and waits for `open`.
+#[cfg(test)]
+pub(crate) struct BeginGate {
+    pub(crate) armed: std::sync::atomic::AtomicBool,
+    pub(crate) reached: tokio::sync::Semaphore,
+    pub(crate) open: tokio::sync::watch::Sender<bool>,
+}
+
+#[cfg(test)]
+impl Default for BeginGate {
+    fn default() -> Self {
+        Self {
+            armed: std::sync::atomic::AtomicBool::new(false),
+            reached: tokio::sync::Semaphore::new(0),
+            open: tokio::sync::watch::Sender::new(false),
+        }
+    }
+}
+
+#[cfg(test)]
+impl BeginGate {
+    pub(crate) async fn pass(&self) {
+        if self.armed.load(std::sync::atomic::Ordering::SeqCst) {
+            self.reached.add_permits(1);
+            let mut open = self.open.subscribe();
+            let _ = open.wait_for(|open| *open).await;
+        }
+    }
 }
 
 /// A test hook: when armed, every save signals `reached` and waits for `release`.
@@ -67,6 +100,8 @@ impl DaemonContext {
             pending: PendingTable::default(),
             #[cfg(test)]
             save_gate: Arc::new(SaveGate::default()),
+            #[cfg(test)]
+            begin_gate: Arc::new(BeginGate::default()),
         })
     }
 

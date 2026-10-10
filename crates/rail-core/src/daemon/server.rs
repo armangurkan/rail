@@ -276,6 +276,7 @@ impl Server {
     /// release `daemon.lock`.
     async fn finish(mut self) -> Result<(), OpError> {
         drop(self.listener);
+        self.ctx.pending.stop_new();
         self.ctx.pending.cancel_waiting();
         self.ctx.pending.wait_for_saves(SAVE_GRACE).await;
         self.ctx.pending.join_tasks(TASK_JOIN).await;
