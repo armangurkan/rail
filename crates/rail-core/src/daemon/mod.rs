@@ -7,12 +7,15 @@ pub mod connect;
 mod connection;
 pub mod context;
 mod handlers;
+mod pending;
 mod registry;
 pub mod server;
 pub mod wire;
 
 #[cfg(test)]
 mod connect_tests;
+#[cfg(test)]
+mod login_tests;
 #[cfg(test)]
 mod tests;
 
@@ -22,5 +25,5 @@ pub use connect::{
     wait_for_daemon_exit,
 };
 pub use context::{DaemonContext, Opener};
-pub use server::{IDLE_TIMEOUT, ServeConfig, Server, peer_allowed};
+pub use server::{IDLE_TIMEOUT, SAVE_GRACE, ServeConfig, Server, peer_allowed};
 pub use wire::{MAX_FRAME_BYTES, PROTOCOL_VERSION};

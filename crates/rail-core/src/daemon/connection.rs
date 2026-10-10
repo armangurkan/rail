@@ -12,13 +12,25 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use super::context::DaemonContext;
-use super::registry::{Call, Registry};
+use super::registry::{Call, Caller, Registry};
 use super::server::ServerState;
 use super::wire::{
     INVALID_PARAMS, INVALID_REQUEST, Message, PARSE_ERROR, Response, RpcError, WireError,
     encode_frame, parse_message, read_frame,
 };
 use crate::ops::{HelloRequest, OpError, names};
+
+/// Aborts the writer task when dropped while still armed, that is, when the connection task is
+/// aborted at shutdown. A normal end disarms it so queued frames are still flushed.
+struct AbortWriter(Option<tokio::task::JoinHandle<()>>);
+
+impl Drop for AbortWriter {
+    fn drop(&mut self) {
+        if let Some(writer) = self.0.take() {
+            writer.abort();
+        }
+    }
+}
 
 pub(crate) struct Connection {
     pub ctx: Arc<DaemonContext>,
@@ -30,18 +42,23 @@ impl Connection {
     pub(crate) async fn serve(self, stream: UnixStream) {
         let (read, mut write) = stream.into_split();
         let (frames, mut outgoing) = mpsc::unbounded_channel::<Vec<u8>>();
-        tokio::spawn(async move {
+        let writer = tokio::spawn(async move {
             while let Some(frame) = outgoing.recv().await {
                 if write.write_all(&frame).await.is_err() {
                     break;
                 }
             }
-            let _ = write.shutdown().await;
+            if let Err(e) = write.shutdown().await {
+                tracing::debug!(error = %e, "closing a connection");
+            }
         });
+        // If the daemon ends this task, the socket must close with it.
+        let mut guard = AbortWriter(Some(writer));
         let mut tasks = JoinSet::new();
         self.read_requests(read, &frames, &mut tasks).await;
         tasks.abort_all();
         self.server.client_disconnected();
+        guard.0 = None;
     }
 
     async fn read_requests(
@@ -107,6 +124,7 @@ impl Connection {
         let call = Call {
             ctx: self.ctx.clone(),
             server: self.server.clone(),
+            caller: Caller::new(frames.clone()),
         };
         let (registry, frames) = (self.registry.clone(), frames.clone());
         // A finished task is freed only when joined: drain them, or a long-lived connection

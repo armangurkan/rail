@@ -1,5 +1,7 @@
 //! Every operation the daemon serves.
 
+mod login;
+mod pending;
 mod secrets;
 mod status;
 
@@ -15,5 +17,10 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::Status, _, _>(status::status);
     registry.register::<op::AccountsList, _, _>(status::accounts_list);
     registry.register::<op::SecretsConfigure, _, _>(secrets::configure);
+    registry.register::<op::AccountAddBegin, _, _>(login::add_begin);
+    registry.register::<op::AccountLoginBegin, _, _>(login::login_begin);
+    registry.register::<op::ConsentBegin, _, _>(login::consent_begin);
+    registry.register::<op::PendingWait, _, _>(pending::wait);
+    registry.register::<op::PendingCancel, _, _>(pending::cancel);
     registry
 }

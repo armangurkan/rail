@@ -26,10 +26,15 @@ use crate::test_support::{daemon_context, in_process_connector, start_daemon};
 fn the_registry_serves_exactly_the_implemented_operations() {
     let names = super::handlers::registry().names();
     let expected = [
+        names::ACCOUNT_ADD_BEGIN,
+        names::ACCOUNT_LOGIN_BEGIN,
         names::ACCOUNTS_LIST,
+        names::CONSENT_BEGIN,
         names::DAEMON_INFO,
         names::DAEMON_STOP,
         names::HELLO,
+        names::PENDING_CANCEL,
+        names::PENDING_WAIT,
         names::SECRETS_CONFIGURE,
         names::STATUS,
     ];

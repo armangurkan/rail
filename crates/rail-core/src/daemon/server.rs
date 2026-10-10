@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
+use tokio::task::JoinSet;
 
 use super::connect::{
     START_TIMEOUT, VERSION, check_socket_path, open_lock_file, remove_stale_socket, socket_answers,
@@ -23,6 +24,9 @@ use crate::auth::unix_now;
 use crate::error::ErrorClass;
 use crate::ops::{DaemonInfo, ErrorCode, OpError};
 use crate::paths::{Paths, create_private_dir};
+
+/// The longest `daemon.stop` (or an idle exit) waits for running saves.
+pub const SAVE_GRACE: Duration = Duration::from_secs(30);
 
 /// How long the daemon waits with no client and nothing pending before it exits.
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
@@ -132,6 +136,8 @@ pub struct Server {
     ctx: Arc<DaemonContext>,
     registry: Arc<Registry>,
     state: Arc<ServerState>,
+    /// Every live connection task, so shutdown can end them all.
+    connections: JoinSet<()>,
     own_uid: u32,
     /// `daemon.lock`, held for the daemon's whole life and released last, after the socket is
     /// gone, so a client that waits on it never meets a half-removed daemon.
@@ -175,6 +181,7 @@ impl Server {
             ctx: Arc::new(ctx),
             registry: Arc::new(handlers::registry()),
             state: Arc::new(state),
+            connections: JoinSet::new(),
             own_uid,
             lifetime_lock,
         })
@@ -190,7 +197,7 @@ impl Server {
     }
 
     /// Serve until `daemon.stop` or the idle timeout, then remove the socket.
-    pub async fn run(self) -> Result<(), OpError> {
+    pub async fn run(mut self) -> Result<(), OpError> {
         tracing::info!(socket = %self.state.socket.display(), "daemon listening");
         let tick = check_interval(self.state.config.idle);
         loop {
@@ -214,7 +221,7 @@ impl Server {
         self.finish().await
     }
 
-    fn admit(&self, stream: UnixStream) {
+    fn admit(&mut self, stream: UnixStream) {
         let peer = stream.peer_cred().map(|cred| cred.uid());
         match peer {
             Ok(uid) if peer_allowed(uid, self.own_uid) => {}
@@ -232,14 +239,22 @@ impl Server {
             registry: self.registry.clone(),
             server: self.state.clone(),
         };
+        // Reap the finished ones, or a long-lived daemon grows with every client it ever had.
+        while self.connections.try_join_next().is_some() {}
         self.state.client_connected();
-        tokio::spawn(connection.serve(stream));
+        self.connections.spawn(connection.serve(stream));
     }
 
-    /// Shut down in the one order that matters: stop listening, remove the socket, and only
-    /// then release `daemon.lock`.
-    async fn finish(self) -> Result<(), OpError> {
+    /// The single shutdown point, in the one order that matters: stop listening; end the
+    /// logins still waiting for a browser; give running saves their time to finish; end every
+    /// connection so none serves a request after this; remove the socket; and only then
+    /// release `daemon.lock`.
+    async fn finish(mut self) -> Result<(), OpError> {
         drop(self.listener);
+        self.ctx.pending.cancel_waiting();
+        self.ctx.pending.wait_for_saves(SAVE_GRACE).await;
+        self.connections.abort_all();
+        while self.connections.join_next().await.is_some() {}
         let removed = remove_stale_socket(&self.state.socket);
         drop(self.lifetime_lock);
         tracing::info!("daemon stopped");

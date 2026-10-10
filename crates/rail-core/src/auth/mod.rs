@@ -14,7 +14,10 @@ pub use endpoints::{
     ADMIN_CONSENT_SCOPE, GMAIL_SCOPE, GRAPH_SCOPES, OAuthEndpoints, admin_consent_url,
     endpoints_for,
 };
-pub use flow::{run_admin_consent, run_auth_code_flow};
+pub use flow::{
+    AuthSession, ConsentSession, begin_admin_consent, begin_auth_code, run_admin_consent,
+    run_auth_code_flow,
+};
 pub use loopback::Redirect;
 pub use onepassword::{ItemIdCache, OnePasswordSecretStore, OpCli, store_client_secret};
 pub use secrets::{

@@ -6,22 +6,58 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use serde::Serialize;
 use serde_json::{Value, json};
+use tokio::sync::mpsc;
 
 use super::context::DaemonContext;
 use super::server::ServerState;
-use super::wire::{INVALID_PARAMS, METHOD_NOT_FOUND, Request, Response, RpcError};
+use super::wire::{
+    INVALID_PARAMS, METHOD_NOT_FOUND, Notification, Request, Response, RpcError, encode_frame,
+};
 use crate::ops::OpError;
 use crate::ops::op::Operation;
 
 type Reply = Pin<Box<dyn Future<Output = Result<Value, OpError>> + Send>>;
 type Handler = Box<dyn Fn(Call, Value) -> Result<Reply, OpError> + Send + Sync>;
 
-/// Everything a handler may use: the context and the server's own state.
+/// Everything a handler may use: the context, the server's own state and the connection that
+/// asked.
 #[derive(Clone)]
 pub(crate) struct Call {
     pub ctx: Arc<DaemonContext>,
     pub server: Arc<ServerState>,
+    pub caller: Caller,
+}
+
+/// The connection a request came from, for notifications.
+#[derive(Clone)]
+pub(crate) struct Caller {
+    frames: mpsc::UnboundedSender<Vec<u8>>,
+}
+
+impl Caller {
+    pub(crate) fn new(frames: mpsc::UnboundedSender<Vec<u8>>) -> Self {
+        Self { frames }
+    }
+
+    /// Send a notification. A connection that has gone, or a frame that cannot be encoded, is
+    /// logged (method only, never the content) and the operation carries on.
+    pub(crate) fn notify(&self, method: &str, params: &impl Serialize) {
+        let frame = serde_json::to_value(params)
+            .map_err(|e| e.to_string())
+            .and_then(|params| {
+                encode_frame(&Notification::new(method, params)).map_err(|e| e.to_string())
+            });
+        match frame {
+            Ok(frame) => {
+                if self.frames.send(frame).is_err() {
+                    tracing::warn!(method, "the client is gone; notification dropped");
+                }
+            }
+            Err(error) => tracing::warn!(method, error, "could not encode a notification"),
+        }
+    }
 }
 
 #[derive(Default)]

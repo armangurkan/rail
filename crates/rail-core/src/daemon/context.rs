@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use url::Url;
 
+use super::pending::PendingTable;
 use crate::auth::{ItemIdCache, http_client};
 use crate::ops::OpError;
 use crate::paths::Paths;
@@ -18,13 +19,39 @@ pub struct DaemonContext {
     /// Token requests and preset fetches: timeouts set, redirects off.
     pub http: reqwest::Client,
     pub opener: Opener,
-    /// A token endpoint used instead of the provider's (the binary's debug-only test hook).
-    pub token_url: Option<String>,
+    /// A token endpoint used instead of the provider's: a debug-build test hook, compiled out of
+    /// release builds so nothing can redirect a real login.
+    #[cfg(debug_assertions)]
+    token_url: Option<String>,
     /// 1Password item ids, kept for the daemon's lifetime.
     pub(crate) op_ids: ItemIdCache,
     /// Held by every handler that writes config.toml or moves tokens, so two front ends can
     /// never interleave their writes.
     config_lock: Mutex<()>,
+    /// Logins and consents waiting on the user.
+    pub(crate) pending: PendingTable,
+    /// Tests hold a save at its start to prove a disconnect cannot stop it.
+    #[cfg(test)]
+    pub(crate) save_gate: Arc<SaveGate>,
+}
+
+/// A test hook: when armed, every save signals `reached` and waits for `release`.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct SaveGate {
+    pub(crate) armed: std::sync::atomic::AtomicBool,
+    pub(crate) reached: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+impl SaveGate {
+    pub(crate) async fn pass(&self) {
+        if self.armed.load(std::sync::atomic::Ordering::SeqCst) {
+            self.reached.notify_one();
+            self.release.notified().await;
+        }
+    }
 }
 
 impl DaemonContext {
@@ -33,21 +60,41 @@ impl DaemonContext {
             paths,
             http: http_client()?,
             opener,
+            #[cfg(debug_assertions)]
             token_url: None,
             op_ids: ItemIdCache::default(),
             config_lock: Mutex::new(()),
+            pending: PendingTable::default(),
+            #[cfg(test)]
+            save_gate: Arc::new(SaveGate::default()),
         })
     }
 
+    /// Replace the provider's token endpoint. Honoured in debug builds only.
+    #[cfg_attr(not(debug_assertions), allow(unused_mut, unused_variables))]
     pub fn with_token_url(mut self, token_url: Option<String>) -> Self {
-        self.token_url = token_url;
+        #[cfg(debug_assertions)]
+        {
+            self.token_url = token_url;
+        }
         self
     }
 
-    /// Logins and consents waiting on a browser or saving. None exist yet: the pending
-    /// operations arrive with `account.add.begin`.
+    /// The token endpoint override, if the hook is set and this is a debug build.
+    pub(crate) fn token_url(&self) -> Option<&str> {
+        #[cfg(debug_assertions)]
+        {
+            self.token_url.as_deref()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            None
+        }
+    }
+
+    /// Logins and consents waiting on a browser or saving.
     pub(crate) fn pending_count(&self) -> usize {
-        0
+        self.pending.active()
     }
 
     /// Run synchronous file, store or secret-store work on the blocking pool. Once started it
