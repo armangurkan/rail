@@ -6,6 +6,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+    /// Test only: panic inside the alternate screen to check the terminal is restored.
+    #[arg(long, hide = true)]
+    pub panic_test: bool,
 }
 
 #[derive(Debug, Subcommand)]

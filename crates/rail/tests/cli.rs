@@ -157,3 +157,26 @@ fn account_add_fails_before_the_browser_when_secrets_file_is_corrupt() {
         config
     );
 }
+
+#[test]
+fn panic_inside_the_alternate_screen_restores_the_terminal_before_the_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("terminal.txt");
+    let file = std::fs::File::create(&log).unwrap();
+    // stdout and stderr share one file description, so the file keeps their real order.
+    let status = rail_cmd(&dir)
+        .arg("--panic-test")
+        .env("RUST_BACKTRACE", "0")
+        .stdout(file.try_clone().unwrap())
+        .stderr(file)
+        .status()
+        .unwrap();
+    assert!(!status.success());
+    let out = String::from_utf8_lossy(&std::fs::read(&log).unwrap()).into_owned();
+    let entered = out
+        .find("\x1b[?1049h")
+        .expect("entered the alternate screen");
+    let left = out.find("\x1b[?1049l").expect("left the alternate screen");
+    let message = out.find("rail panic test").expect("panic message printed");
+    assert!(entered < left && left < message, "{out:?}");
+}

@@ -2,6 +2,7 @@ mod browser;
 mod cli;
 mod cmd;
 mod logging;
+mod tui;
 
 use std::process::ExitCode;
 
@@ -28,6 +29,9 @@ async fn main() -> ExitCode {
 /// Runs the command. Returning (rather than exiting) lets the log guard drop
 /// and flush before the process ends.
 async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
+    if cli.panic_test {
+        tui::terminal::panic_test();
+    }
     let paths = Paths::from_env()?;
     let _log_guard = logging::init(&paths);
     match cli.command {
