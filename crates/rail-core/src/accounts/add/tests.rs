@@ -283,3 +283,20 @@ async fn probing_never_reveals_1password_tokens() {
     assert!(fake.argv().contains("item list"), "{}", fake.argv());
     assert!(!fake.argv().contains("--reveal"), "{}", fake.argv());
 }
+
+#[tokio::test]
+async fn a_duplicate_address_is_refused_before_op_is_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = FakeOp::install(tmp.path());
+    let paths = paths_with(&tmp, &format!("{WORK}{}", fake.config_toml()));
+    let wants = AccountAddRequest {
+        client_secret: Some(ClientSecretInput::Reference(
+            "op://Rail/g/client_secret".into(),
+        )),
+        ..request("ME@example.com")
+    };
+    let http = crate::auth::http_client().unwrap();
+    let err = prepare_request(&paths, &wants, &http).await.err().unwrap();
+    assert_eq!(err.code, ErrorCode::Duplicate);
+    assert_eq!(fake.argv(), "", "no op call for a duplicate address");
+}

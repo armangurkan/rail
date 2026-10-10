@@ -10,8 +10,9 @@ use serde::Deserialize;
 use super::blocking;
 use crate::auth::OpCli;
 use crate::auth::onepassword::validate_reference;
+use crate::error::ErrorClass;
 use crate::onboarding::{Preset, PresetError, fetch_preset, read_preset};
-use crate::ops::{ClientSecretInput, OpError, Secret};
+use crate::ops::{ClientSecretInput, ErrorCode, OP_REFERENCE_PREFIX, OpError, Secret};
 
 /// The largest client secret file Rail reads. Google's are under 1 KiB.
 pub const MAX_CLIENT_FILE_BYTES: u64 = 64 * 1024;
@@ -49,6 +50,12 @@ pub async fn resolve_client_secret(
 ) -> Result<ResolvedSecret, OpError> {
     match input {
         None => Ok(ResolvedSecret::default()),
+        Some(ClientSecretInput::Value(value))
+            if value.expose().starts_with(OP_REFERENCE_PREFIX) =>
+        {
+            let (op, reference) = (op.clone(), value.expose().to_string());
+            blocking(move || resolve_reference(&op, &reference)).await
+        }
         Some(ClientSecretInput::Value(value)) => Ok(ResolvedSecret {
             login: Some(value.clone()),
             stored: Some(value.clone()),
@@ -83,6 +90,18 @@ async fn preset_secret(source: &str, http: &reqwest::Client) -> Result<ResolvedS
         let path = Path::new(source).to_path_buf();
         blocking(move || read_preset(&path).map_err(|e| PresetError::Parse(e).into())).await?
     };
+    // A remote preset must not plant a reference that a later login would resolve.
+    if preset
+        .client_secret
+        .as_deref()
+        .is_some_and(|s| s.starts_with(OP_REFERENCE_PREFIX))
+    {
+        return Err(OpError::new(
+            ErrorCode::Preset,
+            ErrorClass::Permanent,
+            "a preset must not carry a 1Password reference",
+        ));
+    }
     let secret = preset.client_secret.map(Secret::new);
     Ok(ResolvedSecret {
         client_id: Some(preset.client_id),
@@ -104,16 +123,30 @@ struct GoogleClient {
     client_secret: String,
 }
 
+/// `O_NONBLOCK`: opening a FIFO then returns at once instead of waiting for a writer.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const O_NONBLOCK: i32 = 0o4000;
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+const O_NONBLOCK: i32 = 0x4;
+
+fn open_nonblocking(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, O_NONBLOCK);
+    options.open(path)
+}
+
 /// Read Google's `client_secret_*.json` (`{"installed": {"client_id", "client_secret", ...}}`).
 /// Every failure names the path and a fixed reason, never a byte of the file.
 pub(crate) fn read_google_client_file(path: &Path) -> Result<ResolvedSecret, OpError> {
     let refuse = |reason: &str| OpError::invalid_input(format!("{}: {reason}", path.display()));
     let cannot_read = |e: std::io::Error| refuse(&format!("cannot be read ({})", e.kind()));
-    // Checked before opening: opening a FIFO or a device could block or read without end.
-    if !std::fs::metadata(path).map_err(cannot_read)?.is_file() {
+    let file = open_nonblocking(path).map_err(cannot_read)?;
+    // Checked on the open handle, so a swap after the open cannot change what is read.
+    if !file.metadata().map_err(cannot_read)?.is_file() {
         return Err(refuse(&format!("is not a regular file; {NOT_GOOGLE_JSON}")));
     }
-    let file = std::fs::File::open(path).map_err(cannot_read)?;
     let mut bytes = Vec::new();
     file.take(MAX_CLIENT_FILE_BYTES + 1)
         .read_to_end(&mut bytes)
@@ -242,6 +275,59 @@ mod tests {
             assert!(err.message.contains("is not a regular file"), "{err}");
             assert_eq!(err.code, ErrorCode::InvalidInput);
         }
+    }
+
+    #[tokio::test]
+    async fn a_value_that_is_a_reference_is_handled_as_a_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fake = FakeOp::install(tmp.path());
+        fake.set_read("GOCSPX-from-1password");
+        let input = ClientSecretInput::Value(Secret::new("op://Rail/google/client_secret"));
+        let resolved = resolve_client_secret(Some(&input), &http_client().unwrap(), &fake.cli())
+            .await
+            .unwrap();
+        assert_eq!(resolved.login.unwrap().expose(), "GOCSPX-from-1password");
+        assert_eq!(
+            resolved.stored.unwrap().expose(),
+            "op://Rail/google/client_secret"
+        );
+        let bad = ClientSecretInput::Value(Secret::new("op://nonsense"));
+        assert!(
+            resolve_client_secret(Some(&bad), &http_client().unwrap(), &fake.cli())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_preset_may_not_carry_a_1password_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("evil.toml");
+        std::fs::write(
+            &file,
+            "kind = \"gmail\"\nclient_id = \"x\"\nclient_secret = \"op://Rail/other/secret\"\n",
+        )
+        .unwrap();
+        let err = resolve(&tmp, ClientSecretInput::Preset(file.display().to_string()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Preset);
+        assert_eq!(err.message, "a preset must not carry a 1Password reference");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_fifo_is_refused_without_blocking() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fifo = tmp.path().join("pipe.json");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if !made.is_ok_and(|s| s.success()) {
+            return;
+        }
+        let err = resolve(&tmp, ClientSecretInput::JsonFile(fifo))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("is not a regular file"), "{err}");
     }
 
     #[tokio::test]

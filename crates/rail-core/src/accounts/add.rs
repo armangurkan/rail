@@ -110,23 +110,27 @@ fn appended(
     config: &Config,
     account: &AccountConfig,
 ) -> Result<String, OpError> {
+    refuse_taken(config, path, &account.address)?;
+    Ok(config::append_account(text, path, account)?)
+}
+
+/// Refuse an address that config already holds.
+fn refuse_taken(config: &Config, path: &Path, address: &str) -> Result<(), OpError> {
     let taken = config
         .accounts
         .iter()
-        .any(|a| a.address.eq_ignore_ascii_case(&account.address));
+        .any(|a| a.address.eq_ignore_ascii_case(address));
     if taken {
         return Err(OpError::new(
             ErrorCode::Duplicate,
             ErrorClass::Permanent,
             format!(
-                "{} is already configured in {}; run `rail account login {}` to sign in again",
-                account.address,
-                path.display(),
-                account.address
+                "{address} is already configured in {}; run `rail account login {address}` to sign in again",
+                path.display()
             ),
         ));
     }
-    Ok(config::append_account(text, path, account)?)
+    Ok(())
 }
 
 /// A read-only reachability probe, so a broken secret store fails before the browser opens.
@@ -138,6 +142,20 @@ pub fn probe_secrets(secrets: &dyn SecretStore, address: &str) -> Result<(), OpE
         .map_err(|e| context("secret storage is not usable", e))
 }
 
+/// Read the config and build the `op` runner on the blocking pool (the latter walks the file
+/// system), refusing a configured address first: a duplicate must not cost an unlock prompt.
+async fn load_for_prepare(paths: &Paths, address: &str) -> Result<(Config, OpCli), OpError> {
+    let (paths, address) = (paths.clone(), address.trim().to_ascii_lowercase());
+    blocking(move || {
+        let path = paths.config_file();
+        let (_, config) = load_text_or_empty(&path)?;
+        refuse_taken(&config, &path, &address)?;
+        let op = OpCli::from_config(config.onepassword.as_ref(), &paths.runtime_dir);
+        Ok((config, op))
+    })
+    .await
+}
+
 /// Resolve the request's client secret and validate the account against config, without
 /// touching the secret store. The config it read is returned for the caller's store.
 async fn resolve_and_prepare(
@@ -145,8 +163,7 @@ async fn resolve_and_prepare(
     request: &AccountAddRequest,
     http: &reqwest::Client,
 ) -> Result<(PreparedAdd, Config), OpError> {
-    let (_, config) = load_text_or_empty(&paths.config_file())?;
-    let op = OpCli::from_config(config.onepassword.as_ref(), &paths.runtime_dir);
+    let (config, op) = load_for_prepare(paths, &request.address).await?;
     let resolved = resolve_client_secret(request.client_secret.as_ref(), http, &op).await?;
     let paths = paths.clone();
     let request = request.clone();
