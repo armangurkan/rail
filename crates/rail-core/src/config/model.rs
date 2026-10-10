@@ -61,7 +61,7 @@ pub enum SecretsBackend {
     File,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
     pub name: String,
@@ -77,6 +77,25 @@ pub struct AccountConfig {
     pub tenant: Option<String>,
     #[serde(default)]
     pub signature: Option<PathBuf>,
+}
+
+/// Hides `client_secret` so `{:?}` and tracing fields never print it.
+impl std::fmt::Debug for AccountConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountConfig")
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("address", &self.address)
+            .field("color", &self.color)
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("tenant", &self.tenant)
+            .field("signature", &self.signature)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -100,5 +119,22 @@ impl AccountKind {
             "m365" => Some(Self::M365),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_debug_hides_the_client_secret() {
+        let account = AccountConfig {
+            client_secret: Some("GOCSPX-very-secret".into()),
+            ..crate::test_support::sample_account()
+        };
+        let debug = format!("{account:?}");
+        assert!(!debug.contains("GOCSPX-very-secret"), "{debug}");
+        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(debug.contains("me@example.com"), "{debug}");
     }
 }
