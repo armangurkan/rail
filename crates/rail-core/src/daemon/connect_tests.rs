@@ -456,7 +456,12 @@ async fn a_daemon_that_never_answers_the_hello_times_out_and_frees_the_lock() {
         .write(true)
         .open(paths.lock_file())
         .unwrap();
-    fs4::FileExt::try_lock(&lock).expect("rail.lock is free");
+    // A process another test forks carries descriptors until its `exec`: retry briefly.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while fs4::FileExt::try_lock(&lock).is_err() {
+        assert!(std::time::Instant::now() < deadline, "rail.lock is free");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     keep_open.abort();
 }
 

@@ -511,13 +511,27 @@ async fn no_daemon_response_carries_a_token_or_the_client_secret() {
     }
 }
 
-fn lock_is_free(paths: &Paths) -> bool {
+fn try_daemon_lock(paths: &Paths) -> bool {
     let file = std::fs::File::options()
         .read(true)
         .write(true)
         .open(paths.daemon_lock_file())
         .unwrap();
     fs4::FileExt::try_lock(&file).is_ok()
+}
+
+/// True once `daemon.lock` can be taken, within five seconds. A process another test forks
+/// (an opener stand-in, a fake `op`) carries the daemon's descriptor until its `exec`, so the
+/// lock may stay held for a moment after the daemon let go: one try is a race.
+async fn lock_frees(paths: &Paths) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !try_daemon_lock(paths) {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    true
 }
 
 async fn stop(client: &DaemonClient) {
@@ -544,14 +558,14 @@ async fn stop_waits_for_a_running_save_before_releasing_the_lock() {
     stop(&h.client).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!h.daemon.is_finished(), "the daemon waits for the save");
-    assert!(!lock_is_free(&h.paths), "the lock is held until the end");
+    assert!(!try_daemon_lock(&h.paths), "the lock is held until the end");
     h.gate.release.notify_one();
     tokio::time::timeout(Duration::from_secs(10), &mut h.daemon)
         .await
         .expect("the daemon stops once the save is done")
         .unwrap()
         .unwrap();
-    assert!(lock_is_free(&h.paths));
+    assert!(lock_frees(&h.paths).await);
     assert!(!h.paths.socket_file().exists());
     assert_eq!(load(&h.paths.config_file()).unwrap().accounts.len(), 1);
     let _ = begun;
@@ -578,7 +592,7 @@ async fn stop_ends_open_connections_and_waiting_logins() {
         .expect("a waiting login does not hold shutdown")
         .unwrap()
         .unwrap();
-    assert!(lock_is_free(&h.paths));
+    assert!(lock_frees(&h.paths).await);
     assert!(!h.paths.socket_file().exists());
     let status = other
         .call::<crate::ops::op::Status>(&crate::ops::StatusRequest {})
