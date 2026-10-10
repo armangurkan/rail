@@ -5,6 +5,7 @@
 pub mod add;
 pub mod client_secret;
 pub mod login;
+pub mod remove;
 
 pub use add::{
     PreparedAdd, persist_new, prepare_add, prepare_and_probe, prepare_request, probe_secrets,
@@ -14,6 +15,7 @@ pub use login::{
     account_for_login, endpoints_for_login, find_account, login_secret, persist_login, run_login,
     saved_account,
 };
+pub use remove::{removal_summary, remove_account};
 
 use crate::ops::OpError;
 

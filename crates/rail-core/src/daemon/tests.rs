@@ -28,6 +28,7 @@ fn the_registry_serves_exactly_the_implemented_operations() {
     let expected = [
         names::ACCOUNT_ADD_BEGIN,
         names::ACCOUNT_LOGIN_BEGIN,
+        names::ACCOUNT_REMOVE,
         names::ACCOUNTS_LIST,
         names::CONSENT_BEGIN,
         names::DAEMON_INFO,
@@ -35,6 +36,8 @@ fn the_registry_serves_exactly_the_implemented_operations() {
         names::HELLO,
         names::PENDING_CANCEL,
         names::PENDING_WAIT,
+        names::PRESET_FETCH,
+        names::PRESETS_LIST,
         names::SECRETS_CONFIGURE,
         names::STATUS,
     ];

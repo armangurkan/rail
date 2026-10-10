@@ -116,11 +116,39 @@ pub fn append_account(
     if let Some(signature) = &account.signature {
         table["signature"] = value(signature.to_string_lossy().into_owned());
     }
+    if let Some(ai_send) = account.ai_send {
+        table["ai_send"] = value(ai_send.as_str());
+    }
     accounts.push(table);
 
     let out = doc.to_string();
     parse(&out, path)?;
     Ok(out)
+}
+
+/// Return `text` without the `[[accounts]]` table named `name`. Other accounts, other tables
+/// and comments stay. Validates the result.
+pub fn remove_account(text: &str, path: &Path, name: &str) -> Result<String, ConfigError> {
+    let mut doc = document(text, path)?;
+    let accounts = doc
+        .get_mut("accounts")
+        .and_then(Item::as_array_of_tables_mut)
+        .ok_or_else(|| no_such_account(path, name))?;
+    let index = accounts
+        .iter()
+        .position(|t| t.get("name").and_then(Item::as_str) == Some(name))
+        .ok_or_else(|| no_such_account(path, name))?;
+    accounts.remove(index);
+    let out = doc.to_string();
+    parse(&out, path)?;
+    Ok(out)
+}
+
+fn no_such_account(path: &Path, name: &str) -> ConfigError {
+    ConfigError::Invalid {
+        path: path.to_path_buf(),
+        message: format!("no [[accounts]] entry named {name:?}"),
+    }
 }
 
 /// `dana.reyes+x@corp.com` -> `dana_reyes_x`, suffixed `-2`, `-3`... if taken.
@@ -264,6 +292,45 @@ mod tests {
         assert!(out.contains("secrets = \"file\""), "{out}");
         let err = set_secrets("", Path::new("c.toml"), SecretsBackend::OnePassword, None);
         assert!(matches!(err, Err(ConfigError::Invalid { .. })), "{err:?}");
+    }
+
+    #[test]
+    fn append_writes_ai_send_only_when_set() {
+        let unset = append_account("", Path::new("c.toml"), &account("a", "a@x.com")).unwrap();
+        assert!(!unset.contains("ai_send"), "{unset}");
+        let drafts = AccountConfig {
+            ai_send: Some(crate::config::AiSend::Drafts),
+            ..account("b", "b@x.com")
+        };
+        let out = append_account("", Path::new("c.toml"), &drafts).unwrap();
+        assert!(out.contains("ai_send = \"drafts\""), "{out}");
+        let config = parse(&out, Path::new("c.toml")).unwrap();
+        assert_eq!(config.accounts[0].ai_send(), crate::config::AiSend::Drafts);
+    }
+
+    #[test]
+    fn remove_account_keeps_comments_and_the_other_accounts() {
+        let two = append_account(
+            EXISTING,
+            Path::new("c.toml"),
+            &account("corp", "me@corp.com"),
+        )
+        .unwrap();
+        let out = remove_account(&two, Path::new("c.toml"), "work").unwrap();
+        assert!(out.contains("# my rail config"), "{out}");
+        assert!(out.contains("# the good one"), "{out}");
+        let config = parse(&out, Path::new("c.toml")).unwrap();
+        let names: Vec<_> = config.accounts.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["corp"]);
+        let last = remove_account(&out, Path::new("c.toml"), "corp").unwrap();
+        assert!(
+            parse(&last, Path::new("c.toml"))
+                .unwrap()
+                .accounts
+                .is_empty()
+        );
+        let err = remove_account(&last, Path::new("c.toml"), "corp").unwrap_err();
+        assert!(err.to_string().contains("no [[accounts]] entry"), "{err}");
     }
 
     #[test]

@@ -106,13 +106,14 @@ fn render_accounts(out: &mut String, report: &DoctorReport) {
             .map_or("never".to_string(), |t| format!("unix {t}"));
         let _ = writeln!(
             out,
-            "{} account  {} <{}> {} tokens: {}  last sync: {}",
+            "{} account  {} <{}> {} tokens: {}  last sync: {}  ai_send: {}",
             mark(account.token_error.is_none()),
             account.name,
             account.address,
             account.kind.as_str(),
             tokens,
-            last_sync
+            last_sync,
+            account.ai_send.as_str()
         );
     }
 }
@@ -192,6 +193,7 @@ mod tests {
         );
         assert!(!text.contains("remove its [[accounts]] entry"), "{text}");
         assert!(text.contains("last sync: never"));
+        assert!(text.contains("ai_send: confirm"), "{text}");
     }
 
     #[test]

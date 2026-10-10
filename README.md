@@ -308,6 +308,27 @@ color = "blue"
 
 Tokens are never written to `config.toml`.
 
+### What an AI agent may do with your mail: `ai_send`
+
+Each account may set what a coding agent connected over MCP may do with its mail:
+
+```toml
+[[accounts]]
+name = "work"
+# ...
+ai_send = "confirm"   # "confirm" (the default), "drafts", or "client"
+```
+
+- `confirm`: Rail shows you, through your MCP client's confirmation dialog (MCP elicitation), the
+  recipients, the subject and the start of the body, and sends only on an explicit yes. A client
+  without that dialog gets drafts-only behaviour.
+- `drafts`: the agent may create and edit drafts, never send.
+- `client`: Rail relies on your MCP client's own per-call approval prompt. This is the weakest
+  option.
+
+The policy covers sending, replying, forwarding and deleting. Mail tools do not exist yet; today
+Rail checks the key, and `rail doctor` shows each account's policy.
+
 ### Where things live
 
 | What | Linux path |

@@ -20,8 +20,8 @@ pub struct PresetsListResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PresetListing {
-    /// The file path.
-    pub source: String,
+    /// The file path. A file name is outside text, so it is `Untrusted`.
+    pub source: Untrusted<String>,
     pub preset: Option<PresetSummary>,
     /// Why the file could not be used: its path, line and a fixed reason.
     pub error: Option<OpError>,

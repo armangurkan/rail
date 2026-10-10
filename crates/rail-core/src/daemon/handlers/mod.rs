@@ -2,6 +2,8 @@
 
 mod login;
 mod pending;
+mod presets;
+mod remove;
 mod secrets;
 mod status;
 
@@ -22,5 +24,8 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::ConsentBegin, _, _>(login::consent_begin);
     registry.register::<op::PendingWait, _, _>(pending::wait);
     registry.register::<op::PendingCancel, _, _>(pending::cancel);
+    registry.register::<op::PresetsList, _, _>(presets::presets_list);
+    registry.register::<op::PresetFetch, _, _>(presets::preset_fetch);
+    registry.register::<op::AccountRemove, _, _>(remove::remove);
     registry
 }
