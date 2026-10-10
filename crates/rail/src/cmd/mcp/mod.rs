@@ -5,7 +5,7 @@ mod confirm;
 mod guarded;
 mod reply;
 mod server;
-mod summary;
+pub(crate) mod summary;
 
 use std::process::ExitCode;
 

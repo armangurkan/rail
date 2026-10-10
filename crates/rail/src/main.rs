@@ -9,7 +9,7 @@ mod tui;
 use std::process::ExitCode;
 
 use clap::Parser;
-use cli::{AccountCommand, Cli, Command, DaemonCommand};
+use cli::{AccountCommand, Cli, Command, DaemonCommand, SecretsCommand};
 use rail_core::paths::Paths;
 
 #[tokio::main]
@@ -41,6 +41,11 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
         None => cmd::setup::first_run(&paths).await,
         Some(Command::Setup) => cmd::setup::wizard(&paths, None).await,
         Some(Command::Account { command }) => account(&paths, command).await,
+        Some(Command::Secrets {
+            command: SecretsCommand::Set(args),
+        }) => cmd::secrets::set(&paths, &args)
+            .await
+            .map(|()| ExitCode::SUCCESS),
         Some(Command::Doctor) => cmd::doctor::run(&paths).await,
         Some(Command::Mcp) => cmd::mcp::run(&paths).await,
         Some(Command::Daemon { command }) => match command {

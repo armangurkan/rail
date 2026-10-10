@@ -1,7 +1,6 @@
 //! `rail account add|login|list|remove` as daemon clients. Output and exit codes are those of
 //! the in-process commands they replace, with the columns of `list` sized to their entries.
 
-use std::io::{BufRead, IsTerminal, Write};
 use std::time::Duration;
 
 use color_eyre::eyre::{bail, eyre};
@@ -12,13 +11,14 @@ use rail_core::ops::op::{
 };
 use rail_core::ops::{
     AccountAddRequest, AccountRemoveRequest, AccountRemoveResponse, AccountSummary,
-    AccountsListRequest, BeginResponse, CancelRequest, ClientSecretInput, ErrorCode,
-    LoginBeginRequest, OpError, PendingId, PendingOutcome, PendingState, SavedAccount, TokenState,
-    WaitRequest, WaitResponse,
+    AccountsListRequest, BeginResponse, CancelRequest, ClientSecretInput, LoginBeginRequest,
+    OpError, PendingId, PendingOutcome, PendingState, SavedAccount, TokenState, WaitRequest,
+    WaitResponse,
 };
 use rail_core::paths::Paths;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
+use super::confirm;
 use crate::cli::{AddArgs, KindArg};
 use crate::daemon_link;
 
@@ -76,6 +76,10 @@ pub(crate) fn new_account_from_args(
             ("--tenant", args.tenant.is_some()),
             ("--name", args.name.is_some()),
             ("--color", args.color.is_some()),
+            (
+                "--store-secret-in-1password",
+                args.store_secret_in_1password,
+            ),
         ];
         if let Some((flag, _)) = others.iter().find(|(_, given)| *given) {
             bail!("{flag} needs --address");
@@ -96,7 +100,7 @@ pub(crate) fn new_account_from_args(
         tenant: args.tenant,
         name: args.name,
         color: args.color,
-        store_secret_in_1password: false,
+        store_secret_in_1password: args.store_secret_in_1password,
         open_browser: true,
     }))
 }
@@ -256,70 +260,35 @@ pub async fn list(paths: &Paths) -> color_eyre::Result<()> {
     Ok(())
 }
 
-/// `rail account remove <name-or-address>`: only a person at a terminal can confirm, so
-/// without one nothing is removed. On a terminal, ask the daemon what would go (its refusal
-/// carries the text and the plan digest), show that, ask, and only on yes send the removal
-/// with `confirm: true` and the digest, so what runs is exactly what the person read.
+/// `rail account remove <name-or-address>`: removes only after a person at a terminal read
+/// the daemon's text and said yes (see `confirm`).
 pub async fn remove(paths: &Paths, who: &str) -> color_eyre::Result<()> {
-    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
-        bail!(
-            "refusing to remove an account without asking: stdin and stdout are not both a terminal; nothing was removed\nhint: run `rail account remove` yourself in a terminal"
-        );
-    }
+    confirm::require_terminal(&REMOVE_WORDS)?;
     let client = client(paths).await?;
     let probe = AccountRemoveRequest {
         account: who.to_string(),
         confirm: false,
         plan: None,
     };
-    let shown = match client.call::<AccountRemove>(&probe).await {
-        Err(error) if error.code == ErrorCode::NotConfirmed => match error.confirmation {
-            Some(shown) => *shown,
-            None => bail!("the daemon did not say what would be removed; nothing was removed"),
-        },
-        Err(error) => return Err(report(error)),
-        Ok(removed) => {
-            print_removed(&removed);
-            return Ok(());
-        }
-    };
-    if !ask(&shown.text)? {
-        bail!("nothing was removed");
-    }
-    let request = AccountRemoveRequest {
+    let confirmed = |probe: AccountRemoveRequest, plan| AccountRemoveRequest {
         confirm: true,
-        plan: Some(shown.plan),
+        plan: Some(plan),
         ..probe
     };
-    let removed = match client.call::<AccountRemove>(&request).await {
-        Ok(removed) => removed,
-        Err(error) if error.code == ErrorCode::NotConfirmed => bail!(PLAN_CHANGED),
-        Err(error) => return Err(report(error)),
-    };
+    let removed =
+        confirm::confirmed_call::<AccountRemove>(&client, probe, confirmed, &REMOVE_WORDS).await?;
     print_removed(&removed);
     Ok(())
 }
 
-/// Said when the account changed between the question and the answer: the daemon refused the
-/// yes, which was for the account as it was.
-const PLAN_CHANGED: &str =
-    "the account changed while you answered; nothing was removed — run `rail account remove` again";
-
-/// Show `summary` and ask; true only for a yes.
-fn ask(summary: &str) -> std::io::Result<bool> {
-    println!("{summary}");
-    print!("Remove? [y/N] ");
-    std::io::stdout().flush()?;
-    let mut answer = String::new();
-    std::io::stdin().lock().read_line(&mut answer)?;
-    Ok(confirms(&answer))
-}
-
-/// `y` or `yes`, in any case and with surrounding space, confirms; anything else, an empty
-/// line and end of input included, does not.
-pub(crate) fn confirms(answer: &str) -> bool {
-    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
-}
+const REMOVE_WORDS: confirm::Words = confirm::Words {
+    not_a_terminal: "refusing to remove an account without asking: stdin and stdout are not both a terminal; nothing was removed\nhint: run `rail account remove` yourself in a terminal",
+    question: "Remove? [y/N] ",
+    declined: "nothing was removed",
+    unexplained: "the daemon did not say what would be removed; nothing was removed",
+    // The daemon refused the yes, which was for the account as it was.
+    plan_changed: "the account changed while you answered; nothing was removed — run `rail account remove` again",
+};
 
 fn print_removed(removed: &AccountRemoveResponse) {
     let entry = format!(
@@ -455,6 +424,35 @@ mod tests {
         );
     }
 
+    /// Final review F4: the flag reaches the request; without it the request stays false. On
+    /// its own (no --address) it names the missing flag like every other.
+    #[test]
+    fn store_secret_in_1password_maps_to_the_request() {
+        let base = [
+            "gmail",
+            "--address",
+            "a@b.c",
+            "--client-id",
+            "x",
+            "--client-secret",
+            "GOCSPX-x",
+        ];
+        assert!(!from_args(&base).unwrap().unwrap().store_secret_in_1password);
+        let mut flagged = base.to_vec();
+        flagged.push("--store-secret-in-1password");
+        assert!(
+            from_args(&flagged)
+                .unwrap()
+                .unwrap()
+                .store_secret_in_1password
+        );
+        let msg = message(&["gmail", "--store-secret-in-1password"]);
+        assert!(
+            msg.contains("--store-secret-in-1password needs --address"),
+            "{msg}"
+        );
+    }
+
     #[test]
     fn address_without_a_provider_names_the_provider() {
         let msg = message(&["--address", "a@b.c", "--client-id", "x"]);
@@ -501,25 +499,6 @@ mod tests {
         );
         assert_eq!(lines[2], "hint: try again");
         assert!(!text.contains('\u{1b}'), "{text:?}");
-    }
-
-    #[test]
-    fn only_y_or_yes_confirms_a_removal() {
-        for yes in ["y\n", "Y\n", "yes\n", "YES\r\n", "  Yes  \n", "y"] {
-            assert!(confirms(yes), "{yes:?}");
-        }
-        for no in [
-            "",
-            "\n",
-            "n\n",
-            "no\n",
-            "yy\n",
-            "ye\n",
-            "yes please\n",
-            "sure\n",
-        ] {
-            assert!(!confirms(no), "{no:?}");
-        }
     }
 
     fn summary(name: &str, address: &str, tokens: TokenState) -> AccountSummary {

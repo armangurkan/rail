@@ -160,8 +160,9 @@ digest of the exact plan, the old token store included: the confirmed request mu
 digest, and if anything changed in between (an account added, say), nothing runs and the agent
 has to ask you again. Neither tool has an input that confirms for you. When you decline, dismiss the dialog or
 leave its box unticked, nothing changes. A client that cannot show the dialog changes nothing
-either: the agent is told to ask you to run `rail account remove <name>` in a terminal, or to
-edit `secrets` (and `[onepassword]`) in `config.toml` yourself. A setting that is already in place
+either: the agent is told to ask you to run `rail account remove <name>` or `rail secrets set`
+in a terminal (or to edit `secrets` and `[onepassword]` in `config.toml` yourself). Every tool
+has a terminal command that does the same. A setting that is already in place
 needs no confirmation.
 
 What this protects is the MCP path: through MCP, an account is removed and tokens move only after
@@ -192,10 +193,11 @@ It talks to the background daemon like every other command.
 | `rail` | Opens the setup wizard when there is no config yet. With a config it prints that the TUI is not built yet and exits with status 2. |
 | `rail setup` | Opens the setup wizard to add an account. |
 | `rail account add [<gmail\|m365>]` | With no arguments, or only a provider, opens the setup wizard. |
-| `rail account add <gmail\|m365> --address <address> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>]` | Adds an account without the wizard, for scripts. `--address` needs the provider and `--client-id`; any other flag needs `--address`. A partial set exits with status 1 and names the missing flag. `--client-secret` may be an `op://` 1Password reference (see [Tokens in 1Password](#tokens-in-1password)). |
+| `rail account add <gmail\|m365> --address <address> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>] [--store-secret-in-1password]` | Adds an account without the wizard, for scripts. `--address` needs the provider and `--client-id`; any other flag needs `--address`. A partial set exits with status 1 and names the missing flag. `--client-secret` may be an `op://` 1Password reference; with `--store-secret-in-1password`, Rail instead stores the secret you gave in the `[onepassword]` vault and writes an `op://` reference into `config.toml` (see [Tokens in 1Password](#tokens-in-1password)). |
 | `rail account login <name-or-address>` | Logs in again to an account already in `config.toml` and replaces its tokens. Use it when tokens were revoked, expired or deleted from the keyring. |
 | `rail account list` | Lists configured accounts and whether their tokens are stored, in columns as wide as the longest name and address. It asks the store whether tokens exist without reading them, so a 1Password backend never reveals a token to list accounts. |
 | `rail account remove <name-or-address>` | Removes an account's entry in `config.toml` and its stored tokens; its mail stays in the store. Interactive only: it shows what goes (the daemon's text, with the name and address quoted) and asks `Remove? [y/N]`, and only `y` or `yes` removes; if the account changed while you answered, it says so, removes nothing, and asks you to run the command again. When stdin or stdout is not a terminal it removes nothing and exits with status 1; there is no flag to skip the question, so a script cannot answer it through a pipe. An agent that can run shell commands could still drive it as you; see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp). |
+| `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves every account's tokens there (with `--no-migrate`, only the setting changes and each account then needs `rail account login`). `--vault` and `--account` are the 1Password vault and account. Interactive only, like `rail account remove`: it shows the daemon's description of the change and asks `Change? [y/N]`; only `y` or `yes` changes anything. If the settings changed while you answered, it says so and changes nothing; if the setting is already in place it says nothing needed changing. When stdin or stdout is not a terminal it changes nothing and exits with status 1. |
 | `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
@@ -592,10 +594,11 @@ then are the old copies deleted, so a failure part way leaves the old copies in 
 
 A Gmail `client_secret` can live in 1Password too. In `config.toml`, or in
 `rail account add --client-secret`, give an `op://vault/item/field` secret reference instead of the
-value (an agent can also set `store_secret_in_1password` on `rail_account_add`, which makes Rail store
-the secret it was given by file in 1Password and write an `op://` reference into `config.toml`; it
-needs a `[onepassword]` vault in `config.toml` and a client secret to store, and the CLI and the
-wizard never do this):
+value. Or let Rail put it there: `rail account add ... --client-secret <secret>
+--store-secret-in-1password` (or `store_secret_in_1password` on `rail_account_add`, with the secret
+given by file) stores the secret in 1Password and writes an `op://` reference into `config.toml`.
+That needs a `[onepassword]` vault in `config.toml` and a client secret to store; the wizard
+never does this:
 
 ```toml
 client_secret = "op://Rail/Google client/client_secret"
@@ -604,7 +607,8 @@ client_secret = "op://Rail/Google client/client_secret"
 Rail reads it with `op read` only when a login needs it, and never caches, logs or writes the
 value. This works with any token backend.
 
-To move existing tokens from the keyring or the file into 1Password (or back), ask an agent to call
+To move existing tokens from the keyring or the file into 1Password (or back), run
+`rail secrets set 1password --vault <vault>` in a terminal and answer `y`, or ask an agent to call
 `rail_secrets_configure` with `backend = "1password"` and your vault, and confirm the change in its
 dialog. Rail copies each account's tokens, reads them back from the new backend, writes
 `config.toml`, and only then deletes the old copies; a failure part way leaves the old copies and

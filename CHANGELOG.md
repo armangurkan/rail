@@ -51,6 +51,11 @@ All notable changes to Rail are recorded here. The format follows
   an `op://` reference or a preset, never a raw secret; tools refuse arguments they do not know.
   `rail_account_remove` and `rail_secrets_configure` change things only after the user confirms
   through MCP elicitation; without it nothing changes.
+- `rail secrets set <keyring|file|1password> [--vault V] [--account A] [--no-migrate]`, the
+  terminal's way to move tokens between backends (as `rail_secrets_configure` is the agent's):
+  interactive only, it shows the daemon's description of the change and asks `Change? [y/N]`.
+- `rail account add --store-secret-in-1password` stores the given client secret in 1Password and
+  writes an `op://` reference, as `store_secret_in_1password` on `rail_account_add` does.
 - `rail account remove <name-or-address>`, interactive only: it shows what goes and asks
   `Remove? [y/N]`, has no flag to skip the question, and removes nothing when stdin or stdout is
   not a terminal. The account's mail stays in the store.

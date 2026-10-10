@@ -95,8 +95,24 @@ impl AgentSecretsConfigure {
             _ => String::new(),
         };
         format!(
-            "ask the user to make the change themselves (do not edit config.toml yourself): set `secrets = \"{backend}\"` under [general]{vault} in config.toml. A hand edit does not move tokens already stored, so each account then needs `rail account login <name>`."
+            "ask the user to make the change themselves (do not edit config.toml yourself): run `{}` in a terminal, which shows the change, asks, and moves the tokens; or set `secrets = \"{backend}\"` under [general]{vault} in config.toml. A hand edit does not move tokens already stored, so each account then needs `rail account login <name>`.",
+            self.command()
         )
+    }
+
+    /// The `rail secrets set` command line that asks for the same change at a terminal.
+    fn command(&self) -> String {
+        let mut line = format!("rail secrets set {}", self.backend.as_str());
+        if let Some(vault) = &self.vault {
+            line.push_str(&format!(" --vault {}", as_typed(vault)));
+        }
+        if let Some(account) = &self.op_account {
+            line.push_str(&format!(" --account {}", as_typed(account)));
+        }
+        if !self.migrate {
+            line.push_str(" --no-migrate");
+        }
+        line
     }
 }
 
@@ -287,6 +303,16 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("rail account login"), "{text}");
+        assert!(
+            text.contains("run `rail secrets set 1password --vault Rail` in a terminal"),
+            "{text}"
+        );
+        let mut odd = onepassword("My Vault", Some("me@x.com"));
+        odd.migrate = false;
+        assert_eq!(
+            odd.command(),
+            "rail secrets set 1password --vault \"My Vault\" --account me@x.com --no-migrate"
+        );
         assert!(text.contains("do not edit config.toml yourself"), "{text}");
     }
 

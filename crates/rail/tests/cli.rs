@@ -449,6 +449,28 @@ fn account_remove_without_a_terminal_refuses_and_changes_nothing() {
     }
 }
 
+/// Final review F4: `rail secrets set` without a terminal changes nothing, and says to run
+/// it in one. No daemon is started: the check comes first.
+#[test]
+fn secrets_set_without_a_terminal_refuses_and_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = write_config(&dir, WORK_FILE_BACKEND);
+    for backend in ["keyring", "file", "1password"] {
+        let out = rail_cmd(&dir)
+            .args(["secrets", "set", backend, "--vault", "Rail"])
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{backend}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("run `rail secrets set` yourself in a terminal"),
+            "{backend}: {stderr}"
+        );
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), WORK_FILE_BACKEND);
+    }
+    assert!(!dir.path().join("run").join("rail.sock").exists());
+}
+
 #[test]
 fn account_remove_has_no_yes_flag() {
     let dir = tempfile::tempdir().unwrap();

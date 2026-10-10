@@ -151,12 +151,10 @@ fn ctrl_c_during_login_wait_restores_the_terminal_and_saves_nothing() {
         "no store row"
     );
 }
-/// Start `rail account remove <who>` under `script`, so stdin and stdout are a terminal.
-fn start_remove(dir: &tempfile::TempDir, who: &str) -> (Running, ChildStdin) {
-    let command = format!(
-        "exec '{}' account remove '{who}'",
-        env!("CARGO_BIN_EXE_rail")
-    );
+/// Start `rail <args>` under `script`, so stdin and stdout are a terminal. `args` is shell
+/// text, quoted by the caller.
+fn start_in_terminal(dir: &tempfile::TempDir, args: &str) -> (Running, ChildStdin) {
+    let command = format!("exec '{}' {args}", env!("CARGO_BIN_EXE_rail"));
     let mut script = Command::new("script");
     rail_env(&mut script, dir)
         .args(["-q", "-e", "-c", &command, "/dev/null"])
@@ -179,12 +177,28 @@ fn answer_removal_after(
     answer: &[u8],
     meanwhile: impl FnOnce(),
 ) -> (ExitStatus, String) {
-    let (mut child, mut keys) = start_remove(dir, "ME@example.com");
+    answer_in_terminal(
+        dir,
+        "account remove 'ME@example.com'",
+        "Remove? [y/N]",
+        answer,
+        meanwhile,
+    )
+}
+
+/// Run `rail <args>` in a terminal, wait for `prompt`, run `meanwhile`, type `answer`; returns
+/// the exit status and the screen.
+fn answer_in_terminal(
+    dir: &tempfile::TempDir,
+    args: &str,
+    prompt: &'static str,
+    answer: &[u8],
+    meanwhile: impl FnOnce(),
+) -> (ExitStatus, String) {
+    let (mut child, mut keys) = start_in_terminal(dir, args);
     let output = collect(child.0.stdout.take().unwrap());
     let shown = output.clone();
-    wait_until("the prompt", &output, move || {
-        text(&shown).contains("Remove? [y/N]")
-    });
+    wait_until("the prompt", &output, move || text(&shown).contains(prompt));
     meanwhile();
     keys.write_all(answer).unwrap();
     keys.flush().unwrap();
@@ -262,4 +276,103 @@ fn account_remove_on_a_terminal_keeps_everything_after_no() {
     assert!(screen.contains("nothing was removed"), "{screen:?}");
     assert_eq!(std::fs::read_to_string(&config).unwrap(), WORK_FILE_BACKEND);
     assert_eq!(std::fs::read_to_string(&secrets).unwrap(), before);
+}
+
+/// No account has tokens, so the keyring is never asked: only the config changes.
+const KEYRING_BACKEND: &str = "[general]\nsecrets = \"keyring\"\n";
+
+/// Final review F4: `rail secrets set` shows the daemon's text, asks, and changes the setting
+/// on a yes.
+#[test]
+fn secrets_set_on_a_terminal_changes_the_store_after_yes() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let config = write_config(&dir, KEYRING_BACKEND);
+    let (status, screen) =
+        answer_in_terminal(&dir, "secrets set file", "Change? [y/N]", b"y\r", || {});
+    assert_eq!(status.code(), Some(0), "{screen:?}");
+    assert!(
+        screen.contains("from keyring to file") && screen.contains("plain 0600 file"),
+        "{screen:?}"
+    );
+    assert!(
+        screen.contains("Tokens now go to the file backend"),
+        "{screen:?}"
+    );
+    assert!(
+        std::fs::read_to_string(&config)
+            .unwrap()
+            .contains("secrets = \"file\"")
+    );
+}
+
+/// An empty answer is a no: nothing changes.
+#[test]
+fn secrets_set_on_a_terminal_changes_nothing_after_an_empty_answer() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let config = write_config(&dir, KEYRING_BACKEND);
+    let (status, screen) =
+        answer_in_terminal(&dir, "secrets set file", "Change? [y/N]", b"\r", || {});
+    assert_eq!(status.code(), Some(1), "{screen:?}");
+    assert!(screen.contains("nothing changed"), "{screen:?}");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), KEYRING_BACKEND);
+}
+
+/// The settings change while the question is on the screen: the yes was for the old plan.
+#[test]
+fn secrets_set_after_the_settings_changed_changes_nothing() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let config = write_config(&dir, KEYRING_BACKEND);
+    // A vault setting enters the plan; no account means the keyring is still never asked.
+    let edited = format!("{KEYRING_BACKEND}\n[onepassword]\nvault = \"Other\"\n");
+    let (path, edit) = (config.clone(), edited.clone());
+    let (status, screen) = answer_in_terminal(
+        &dir,
+        "secrets set file",
+        "Change? [y/N]",
+        b"y\r",
+        move || std::fs::write(&path, edit).unwrap(),
+    );
+    assert_eq!(status.code(), Some(1), "{screen:?}");
+    assert!(
+        screen.contains("the settings changed while you answered; nothing changed — run it again"),
+        "{screen:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), edited);
+}
+
+/// A setting already in place needs no question.
+#[test]
+fn secrets_set_to_the_current_store_says_nothing_needed_changing() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let config = write_config(&dir, FILE_BACKEND);
+    let (mut child, keys) = start_in_terminal(&dir, "secrets set file");
+    let output = collect(child.0.stdout.take().unwrap());
+    let status = wait_for_exit(&mut child, &output);
+    drop(keys);
+    std::thread::sleep(Duration::from_millis(200));
+    let screen = text(&output);
+    assert_eq!(status.code(), Some(0), "{screen:?}");
+    assert!(screen.contains("already in place"), "{screen:?}");
+    assert!(!screen.contains("Change? [y/N]"), "{screen:?}");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), FILE_BACKEND);
 }
