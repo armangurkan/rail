@@ -11,12 +11,23 @@ use crate::paths::Paths;
 
 const KEYRING_SERVICE: &str = "rail";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenSet {
     pub access_token: String,
     pub refresh_token: String,
     /// Unix seconds.
     pub expires_at: i64,
+}
+
+/// Hides both tokens so that `{:?}` and tracing fields never leak credentials.
+impl std::fmt::Debug for TokenSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenSet")
+            .field("access_token", &"<redacted>")
+            .field("refresh_token", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -318,6 +329,15 @@ mod tests {
             open_secret_store(SecretsBackend::Keyring, &paths).backend_name(),
             "keyring"
         );
+    }
+
+    #[test]
+    fn debug_redacts_tokens() {
+        let output = format!("{:?}", tokens());
+        assert!(output.contains("<redacted>"), "{output}");
+        assert!(output.contains("1700000000"), "{output}");
+        assert!(!output.contains("\"acc\""), "{output}");
+        assert!(!output.contains("\"ref\""), "{output}");
     }
 
     #[test]
