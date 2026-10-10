@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
-use super::app::{App, Effect, Job, Msg, Osc52, TaskResult, TaskSink, update, view};
+use super::app::{App, Effect, Job, Msg, Osc52, TaggedResult, TaskResult, TaskSink, update, view};
 use super::screen::Screen;
 use super::terminal;
 
@@ -61,7 +61,10 @@ where
                 Some(Err(e)) => return Err(e),
                 None => return Ok(()),
             },
-            Some(result) = results.recv() => Msg::Task(result),
+            Some(tagged) = results.recv() => match tasks.current(tagged) {
+                Some(result) => Msg::Task(result),
+                None => continue,
+            },
             _ = tick.tick() => Msg::Tick,
         };
         dispatch(msg, app, &mut tasks);
@@ -124,24 +127,34 @@ impl Drop for AbortOnDrop {
 /// The tasks spawned for effects. Dropping it aborts whatever is still running, so leaving
 /// the loop (quit, error, or the screen going away) cancels every effect.
 pub struct Tasks {
-    sink: TaskSink,
+    tx: mpsc::UnboundedSender<TaggedResult>,
+    /// Bumped by every `cancel_all`; results from an older generation are stale.
+    generation: u64,
     handles: Vec<JoinHandle<()>>,
 }
 
 impl Tasks {
-    /// A task set whose jobs report to `sink`.
-    pub fn new(sink: TaskSink) -> Self {
+    /// A task set whose jobs report to `tx`.
+    pub fn new(tx: mpsc::UnboundedSender<TaggedResult>) -> Self {
         Self {
-            sink,
+            tx,
+            generation: 0,
             handles: Vec::new(),
         }
+    }
+
+    /// The result itself if it came from a job spawned since the last `cancel_all`, else
+    /// `None`. A job aborted mid-send, or results already queued when the cancel happened,
+    /// are dropped here.
+    pub fn current(&self, (generation, result): TaggedResult) -> Option<TaskResult> {
+        (generation == self.generation).then_some(result)
     }
 
     /// Start `job`. If it panics, the panic message goes to the sink as
     /// `TaskResult::JobPanicked`; if it is cancelled, nothing is sent.
     pub fn spawn(&mut self, job: Job) {
         self.handles.retain(|handle| !handle.is_finished());
-        let sink = self.sink.clone();
+        let sink = TaskSink::new(self.tx.clone(), self.generation);
         let work = AbortOnDrop(tokio::spawn({
             let sink = sink.clone();
             async move { job(sink).await }
@@ -149,8 +162,9 @@ impl Tasks {
         self.handles.push(tokio::spawn(supervise(work, sink)));
     }
 
-    /// Abort every running job without reporting anything.
+    /// Abort every running job and discard anything they already sent.
     pub fn cancel_all(&mut self) {
+        self.generation += 1;
         for handle in self.handles.drain(..) {
             handle.abort();
         }
@@ -315,12 +329,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn results_sent_before_cancel_all_are_dropped() {
+        let (tx, mut results) = mpsc::unbounded_channel();
+        let mut tasks = Tasks::new(tx);
+        let (sent_tx, sent_rx) = oneshot::channel();
+        let (_keep_open, never) = oneshot::channel::<()>();
+        tasks.spawn(Box::new(move |sink| {
+            Box::pin(async move {
+                let _ = sink.send(TaskResult::Copied(Ok(())));
+                let _ = sent_tx.send(());
+                let _ = never.await;
+            })
+        }));
+        sent_rx.await.unwrap();
+        tasks.cancel_all();
+        tasks.spawn(Box::new(|sink| {
+            Box::pin(async move {
+                let _ = sink.send(TaskResult::Copied(Err("fresh".into())));
+            })
+        }));
+        let mut delivered = Vec::new();
+        for _ in 0..2 {
+            let tagged = results.recv().await.expect("both results were queued");
+            delivered.extend(tasks.current(tagged));
+        }
+        match delivered.as_slice() {
+            [TaskResult::Copied(Err(reason))] => assert_eq!(reason, "fresh"),
+            other => panic!("expected only the post-cancel result, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn a_panicking_job_is_reported_with_its_message() {
         let (sink, mut results) = mpsc::unbounded_channel();
         let mut tasks = Tasks::new(sink);
         tasks.spawn(Box::new(|_sink| Box::pin(async { panic!("boom") })));
         match results.recv().await {
-            Some(TaskResult::JobPanicked(message)) => assert_eq!(message, "boom"),
+            Some((_, TaskResult::JobPanicked(message))) => assert_eq!(message, "boom"),
             other => panic!("expected JobPanicked, got {other:?}"),
         }
     }

@@ -32,8 +32,30 @@ pub enum TaskResult {
     Copied(Result<(), String>),
 }
 
-/// Where a running task sends its results.
-pub type TaskSink = mpsc::UnboundedSender<TaskResult>;
+/// A result tagged with the generation of the job that sent it (see `Tasks`).
+pub type TaggedResult = (u64, TaskResult);
+
+/// Where a running task sends its results. Every result carries the generation the job was
+/// spawned in, so the event loop can drop results that outlived a cancel.
+#[derive(Debug, Clone)]
+pub struct TaskSink {
+    tx: mpsc::UnboundedSender<TaggedResult>,
+    generation: u64,
+}
+
+impl TaskSink {
+    /// A sink that tags results with `generation`.
+    pub fn new(tx: mpsc::UnboundedSender<TaggedResult>, generation: u64) -> Self {
+        Self { tx, generation }
+    }
+
+    /// Send `result` to the event loop. Fails only when the loop is gone.
+    pub fn send(&self, result: TaskResult) -> Result<(), mpsc::error::SendError<TaskResult>> {
+        self.tx
+            .send((self.generation, result))
+            .map_err(|mpsc::error::SendError((_, result))| mpsc::error::SendError(result))
+    }
+}
 
 /// A unit of background work. The event loop starts it and aborts it when it is cancelled.
 pub type Job = Box<dyn FnOnce(TaskSink) -> BoxFuture<'static, ()> + Send>;
