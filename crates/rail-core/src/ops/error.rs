@@ -190,63 +190,87 @@ impl From<ConfigError> for OpError {
 impl From<SecretError> for OpError {
     fn from(error: SecretError) -> Self {
         let class = error.class();
-        let fixed = |message: String, detail: &str| {
-            Self::new(ErrorCode::Secrets, class, message).with_detail(detail)
-        };
         match &error {
-            SecretError::KeyringUnavailable(text) => fixed(
+            SecretError::KeyringUnavailable(text) => secrets_error(
+                class,
                 "the OS keyring is unavailable; set `secrets = \"file\"` under [general] in config.toml to keep tokens in a private file instead".to_string(),
                 text,
             ),
             SecretError::Keyring(text) => {
-                fixed("the OS keyring reported an error".to_string(), text)
+                secrets_error(class, "the OS keyring reported an error".to_string(), text)
             }
-            SecretError::Io { path, source } => fixed(
+            SecretError::Io { path, source } => secrets_error(
+                class,
                 format!("cannot use the secrets file {}", path.display()),
                 &source.to_string(),
             ),
-            SecretError::Corrupt { path, message } => fixed(
+            SecretError::Corrupt { path, message } => secrets_error(
+                class,
                 format!("the secrets file {} is corrupt", path.display()),
                 message,
             ),
-            SecretError::Encoding(text) => fixed("the stored token data is corrupt".to_string(), text),
-            SecretError::OnePasswordLocked(text) => fixed(
-                "1Password is not unlocked or not signed in".to_string(),
-                text,
-            )
-            .with_hint("unlock the 1Password app or run `op signin`, then try again"),
-            SecretError::OnePasswordTimeout => Self::new(
-                ErrorCode::Secrets,
-                class,
-                "1Password did not answer in time",
-            )
-            .with_hint("if 1Password is waiting for you to unlock it, unlock it and try again"),
-            SecretError::OnePasswordMissing { program, message } => fixed(
-                format!("cannot run the 1Password CLI {program:?}"),
-                message,
-            )
-            .with_hint("install the 1Password CLI (`op`), or set op_path under [onepassword] in config.toml"),
-            SecretError::OnePasswordUnsafe { path, reason } => fixed(
-                format!("refusing to run the 1Password CLI at {path}"),
-                reason,
-            )
-            .with_hint("fix op_path under [onepassword] in config.toml by hand"),
-            SecretError::OnePasswordNoItem(text) => {
-                fixed("1Password has no such item".to_string(), text)
+            SecretError::Encoding(text) => {
+                secrets_error(class, "the stored token data is corrupt".to_string(), text)
             }
-            SecretError::OnePasswordInvalid(text) => {
-                Self::new(ErrorCode::Secrets, class, text.clone())
-            }
-            SecretError::OnePasswordOutputTooLarge => {
-                Self::new(ErrorCode::Secrets, class, "op's output exceeded 1 MiB")
-            }
-            SecretError::OnePasswordIo { what, message } => {
-                fixed(format!("could not {what} the 1Password CLI"), message)
-            }
-            SecretError::OnePassword(text) => {
-                fixed("1Password reported an error".to_string(), text)
-            }
+            _ => onepassword_error(&error, class),
         }
+    }
+}
+
+/// Rail's fixed `message` for a secret-store failure, with the store's own text as `detail`.
+fn secrets_error(class: ErrorClass, message: String, detail: &str) -> OpError {
+    OpError::new(ErrorCode::Secrets, class, message).with_detail(detail)
+}
+
+/// The 1Password CLI's failures (the keyring and file ones are mapped by the caller).
+fn onepassword_error(error: &SecretError, class: ErrorClass) -> OpError {
+    let fixed = |message: &str| OpError::new(ErrorCode::Secrets, class, message);
+    match error {
+        SecretError::OnePasswordLocked(text) => secrets_error(
+            class,
+            "1Password is not unlocked or not signed in".to_string(),
+            text,
+        )
+        .with_hint("unlock the 1Password app or run `op signin`, then try again"),
+        SecretError::OnePasswordTimeout => fixed("1Password did not answer in time")
+            .with_hint("if 1Password is waiting for you to unlock it, unlock it and try again"),
+        SecretError::OnePasswordMissing { program, message } => secrets_error(
+            class,
+            format!("cannot run the 1Password CLI {program:?}"),
+            message,
+        )
+        .with_hint(
+            "install the 1Password CLI (`op`), or set op_path under [onepassword] in config.toml",
+        ),
+        SecretError::OnePasswordUnsafe { path, reason } => secrets_error(
+            class,
+            format!("refusing to run the 1Password CLI at {path}"),
+            reason,
+        )
+        .with_hint("fix op_path under [onepassword] in config.toml by hand"),
+        SecretError::OnePasswordNoItem(text) => {
+            secrets_error(class, "1Password has no such item".to_string(), text)
+        }
+        SecretError::OnePasswordInvalid(text) => fixed(text),
+        SecretError::OnePasswordOutputTooLarge => fixed("op's output exceeded 1 MiB"),
+        SecretError::OnePasswordIo { what, message } => secrets_error(
+            class,
+            format!("could not {what} the 1Password CLI"),
+            message,
+        ),
+        SecretError::OnePasswordEditUnverified => {
+            fixed("1Password did not keep the new tokens; nothing was saved")
+                .with_hint("try again; if it keeps failing, update the 1Password CLI (`op`)")
+        }
+        SecretError::OnePassword(text) => {
+            secrets_error(class, "1Password reported an error".to_string(), text)
+        }
+        // Not a 1Password failure: `From<SecretError>` maps these itself.
+        other => secrets_error(
+            class,
+            "the secret store failed".to_string(),
+            &other.to_string(),
+        ),
     }
 }
 

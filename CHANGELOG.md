@@ -97,6 +97,9 @@ All notable changes to Rail are recorded here. The format follows
 - Tokens, client secrets and authorization codes never reach a daemon response, an MCP tool result,
   a log line or an `op` command line: 1Password values go through templates on `op`'s stdin and
   `op`'s errors are redacted.
+- After `op item edit` replaces an account's tokens, Rail reads the item back; if 1Password did
+  not keep the new values, the save fails ("1Password did not keep the new tokens; nothing was
+  saved") instead of reporting success.
 - No MCP tool can choose the program Rail runs: `op_path` is set only by hand in `config.toml`, and
   Rail refuses one that is relative, not an executable file, owned by another user, or writable by
   group or others, or inside a directory that is.

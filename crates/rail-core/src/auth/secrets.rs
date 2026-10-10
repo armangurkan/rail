@@ -81,6 +81,11 @@ pub enum SecretError {
     /// Moving bytes to or from `op` failed: `what` is a fixed phrase, `message` the OS text.
     #[error("could not {what} the 1Password CLI ({message})")]
     OnePasswordIo { what: &'static str, message: String },
+    /// `op item edit` answered success, but reading the item back gave other values.
+    #[error(
+        "1Password did not keep the new tokens: reading the item back after the edit gave other values"
+    )]
+    OnePasswordEditUnverified,
 }
 
 impl SecretError {
@@ -100,6 +105,7 @@ impl SecretError {
             | Self::OnePasswordNoItem(_)
             | Self::OnePasswordInvalid(_)
             | Self::OnePasswordOutputTooLarge
+            | Self::OnePasswordEditUnverified
             | Self::OnePassword(_) => ErrorClass::Permanent,
         }
     }
@@ -526,6 +532,7 @@ mod tests {
             SecretError::OnePassword("x".into()),
             SecretError::OnePasswordInvalid("x".into()),
             SecretError::OnePasswordOutputTooLarge,
+            SecretError::OnePasswordEditUnverified,
         ];
         assert_eq!(
             SecretError::OnePasswordIo {

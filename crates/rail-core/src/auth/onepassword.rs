@@ -407,6 +407,37 @@ impl OnePasswordSecretStore {
         Ok(id)
     }
 
+    /// The item's tokens, revealed. `OnePasswordNoItem` when the id is gone.
+    fn read_item(&self, id: &str, vault: &str) -> Result<TokenSet, SecretError> {
+        let args = [
+            "item",
+            "get",
+            id,
+            "--vault",
+            vault,
+            "--fields",
+            TOKEN_FIELDS,
+            "--reveal",
+            "--format",
+            "json",
+        ];
+        let out = self.op.run(&args, None, &[])?;
+        tokens_from_fields(&parse_json::<Vec<FieldValue>>(&out)?)
+    }
+
+    /// Read an edited item back: `op item edit` takes its template on stdin, and a CLI that
+    /// ignored it would answer success and keep the old tokens. Anything but the values just
+    /// written (a missing item included) is an error, so nothing is reported as saved.
+    fn verify_edit(&self, id: &str, vault: &str, written: &TokenSet) -> Result<(), SecretError> {
+        match self.read_item(id, vault) {
+            Ok(stored) if stored == *written => Ok(()),
+            Ok(_) | Err(SecretError::OnePasswordNoItem(_)) => {
+                Err(SecretError::OnePasswordEditUnverified)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     fn create(&self, title: &str, json: &[u8], redact: &[&str]) -> Result<(), SecretError> {
         let vault = self.vault()?;
         let args = ["item", "create", "--vault", vault, "--format", "json", "-"];
@@ -423,25 +454,12 @@ impl SecretStore for OnePasswordSecretStore {
             return Ok(None);
         };
         let vault = self.vault()?;
-        let args = [
-            "item",
-            "get",
-            &id,
-            "--vault",
-            vault,
-            "--fields",
-            TOKEN_FIELDS,
-            "--reveal",
-            "--format",
-            "json",
-        ];
-        match self.op.run(&args, None, &[]) {
-            Ok(out) => tokens_from_fields(&parse_json::<Vec<FieldValue>>(&out)?).map(Some),
+        match self.read_item(&id, vault) {
             Err(SecretError::OnePasswordNoItem(_)) => {
                 self.ids.forget(&self.scope(vault), &title);
                 Ok(None)
             }
-            Err(e) => Err(e),
+            read => read.map(Some),
         }
     }
 
@@ -455,7 +473,7 @@ impl SecretStore for OnePasswordSecretStore {
         let vault = self.vault()?;
         let args = ["item", "edit", &id, "--vault", vault, "--format", "json"];
         match self.op.run(&args, Some(&json), &redact) {
-            Ok(_) => Ok(()),
+            Ok(_) => self.verify_edit(&id, vault, tokens),
             Err(SecretError::OnePasswordNoItem(_)) => {
                 self.ids.forget(&self.scope(vault), &title);
                 self.create(&title, &json, &redact)

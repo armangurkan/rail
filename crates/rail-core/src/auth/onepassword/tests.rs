@@ -46,6 +46,37 @@ fn tokens_round_trip_through_the_cli() {
     assert!(fake.items().is_empty());
 }
 
+/// Final review F2: an `op item edit` that answers success but keeps the old values is caught
+/// by reading the item back; the error is fixed text and quotes no token.
+#[test]
+fn an_edit_that_kept_the_old_values_is_an_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = FakeOp::install(tmp.path());
+    let store = store(&fake);
+    store.set_tokens("me@example.com", &tokens()).unwrap();
+    fake.edit_ignores_stdin();
+    let newer = TokenSet {
+        access_token: "ya29.newer-access".to_string(),
+        refresh_token: "1//newer-refresh".to_string(),
+        expires_at: 1_800_000_000,
+    };
+    let err = store.set_tokens("me@example.com", &newer).unwrap_err();
+    assert!(
+        matches!(err, SecretError::OnePasswordEditUnverified),
+        "{err:?}"
+    );
+    assert_eq!(err.class(), ErrorClass::Permanent);
+    let text = format!("{err} {err:?}");
+    for secret in [ACCESS, REFRESH, "ya29.newer-access", "1//newer-refresh"] {
+        assert!(!text.contains(secret), "{text}");
+    }
+    assert_eq!(store.get_tokens("me@example.com").unwrap(), Some(tokens()));
+    assert!(
+        fake.argv().contains("item get item1"),
+        "the edit was read back"
+    );
+}
+
 #[test]
 fn items_are_titled_tagged_and_found_again_by_a_fresh_store() {
     let tmp = tempfile::tempdir().unwrap();
@@ -467,6 +498,15 @@ fn onepassword_live_roundtrip() {
     let address = "rail-live-test@example.invalid";
     store.set_tokens(address, &tokens()).unwrap();
     assert_eq!(store.get_tokens(address).unwrap(), Some(tokens()));
+    // The second write edits the existing item through `op item edit` with the template on
+    // stdin; reading it back must give the new values.
+    let newer = TokenSet {
+        access_token: "ya29.live-test-second-access".to_string(),
+        refresh_token: "1//live-test-second-refresh".to_string(),
+        expires_at: 1_800_000_000,
+    };
+    store.set_tokens(address, &newer).unwrap();
+    assert_eq!(store.get_tokens(address).unwrap(), Some(newer));
     store.delete_tokens(address).unwrap();
     assert_eq!(store.get_tokens(address).unwrap(), None);
 }

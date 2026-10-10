@@ -204,7 +204,8 @@ case "$1 $2" in
     printf '{"id":"item%s"}\n' "$n" ;;
   "item edit")
     [ -f "$dir/$3.json" ] || { echo "[ERROR] 2026/10/10 08:00:00 \"$3\" isn't an item." >&2; exit 1; }
-    cat > "$dir/$3.json"; printf '{"id":"%s"}\n' "$3" ;;
+    if [ -f "$state/edit_ignores_stdin" ]; then cat > /dev/null; else cat > "$dir/$3.json"; fi
+    printf '{"id":"%s"}\n' "$3" ;;
   "item get")
     [ -f "$dir/$3.json" ] || { echo "[ERROR] 2026/10/10 08:00:00 \"$3\" isn't an item." >&2; exit 1; }
     sed 's/.*"fields":\(\[.*\]\)}$/\1/' "$dir/$3.json"; echo ;;
@@ -265,6 +266,12 @@ impl FakeOp {
 
     pub(crate) fn lock(&self) {
         std::fs::write(self.state.join("locked"), "").unwrap();
+    }
+
+    /// Make `item edit` read its template and keep the old item, answering as if it worked:
+    /// what a CLI that took its edits from arguments, not stdin, would do.
+    pub(crate) fn edit_ignores_stdin(&self) {
+        std::fs::write(self.state.join("edit_ignores_stdin"), "").unwrap();
     }
 
     pub(crate) fn hang(&self) {
