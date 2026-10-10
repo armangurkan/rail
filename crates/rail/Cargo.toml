@@ -1,0 +1,30 @@
+[package]
+name = "rail"
+description = "Modern email. Native to your terminal."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+
+[[bin]]
+name = "rail"
+path = "src/main.rs"
+
+[dependencies]
+rail-core.workspace = true
+tokio.workspace = true
+clap.workspace = true
+color-eyre.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
