@@ -10,14 +10,32 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::net::UnixStream;
-use tokio::sync::OnceCell;
+use tokio::sync::Mutex as AsyncMutex;
 
 use super::client::DaemonClient;
 use super::wire::PROTOCOL_VERSION;
 use crate::error::ErrorClass;
-use crate::ops::op::DaemonStop;
+use crate::ops::op::{DaemonStop, Operation, names};
 use crate::ops::{DaemonStopRequest, ErrorCode, HelloResponse, OpError};
 use crate::paths::{Paths, create_private_dir};
+
+/// The operations a client may send again after the connection closed under them: they only
+/// read, or (`pending.cancel`) have the same effect however often they run.
+const RETRY_SAFE: [&str; 8] = [
+    names::STATUS,
+    names::ACCOUNTS_LIST,
+    names::PRESETS_LIST,
+    names::PRESET_FETCH,
+    names::GUIDE_PROVIDER,
+    names::PENDING_WAIT,
+    names::PENDING_CANCEL,
+    names::DAEMON_INFO,
+];
+
+/// True when `operation` may be sent again on a fresh connection.
+pub fn retry_safe(operation: &str) -> bool {
+    RETRY_SAFE.contains(&operation)
+}
 
 /// Rail's version, which the daemon and its clients must share.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -41,7 +59,8 @@ pub struct Connector {
     version: String,
     start_timeout: Duration,
     exit_timeout: Duration,
-    cached: Arc<OnceCell<DaemonClient>>,
+    /// The shared connection; replaced once it has closed.
+    cached: Arc<AsyncMutex<Option<DaemonClient>>>,
 }
 
 impl Connector {
@@ -52,7 +71,7 @@ impl Connector {
             version: VERSION.to_string(),
             start_timeout: START_TIMEOUT,
             exit_timeout: DAEMON_EXIT_TIMEOUT,
-            cached: Arc::new(OnceCell::new()),
+            cached: Arc::default(),
         }
     }
 
@@ -77,12 +96,38 @@ impl Connector {
         &self.paths
     }
 
-    /// One shared connection for the life of this connector (and its clones).
+    /// One shared connection for this connector (and its clones). Once it has closed (the
+    /// daemon stopped or crashed), the next call connects again, starting a daemon if needed.
     pub async fn client(&self) -> Result<DaemonClient, OpError> {
-        self.cached
-            .get_or_try_init(|| self.connect())
-            .await
-            .cloned()
+        let mut cached = self.cached.lock().await;
+        if let Some(client) = cached.as_ref().filter(|c| !c.is_closed()) {
+            return Ok(client.clone());
+        }
+        let client = self.connect().await?;
+        *cached = Some(client.clone());
+        Ok(client)
+    }
+
+    /// Run operation `O` on the shared connection. If the connection closes under the call,
+    /// the call is sent once more on a fresh connection when that is safe (`retry_safe`);
+    /// otherwise its error says to try again.
+    pub async fn call<O: Operation>(&self, request: &O::Request) -> Result<O::Response, OpError> {
+        let client = self.client().await?;
+        match client.call::<O>(request).await {
+            Err(error) if client.is_closed() => {
+                if !retry_safe(O::NAME) {
+                    return Err(
+                        error.with_hint("the daemon stopped while handling the request; try again")
+                    );
+                }
+                tracing::info!(
+                    op = O::NAME,
+                    "the daemon connection closed; reconnecting once"
+                );
+                self.client().await?.call::<O>(request).await
+            }
+            answer => answer,
+        }
     }
 
     /// A fresh connection to a daemon of this Rail version, starting one if needed. A daemon of

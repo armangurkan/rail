@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+# Test hooks that hold a daemon's begins and saves part way. For tests of other crates only;
+# never enabled in a build that ships.
+test-gates = []
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true

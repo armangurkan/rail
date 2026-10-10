@@ -83,6 +83,11 @@ impl DaemonClient {
         })
     }
 
+    /// True once the connection has ended: every call on it fails.
+    pub fn is_closed(&self) -> bool {
+        state(&self.inner.waiting).closed
+    }
+
     /// What the daemon said in the handshake.
     pub fn daemon(&self) -> &HelloResponse {
         &self.hello

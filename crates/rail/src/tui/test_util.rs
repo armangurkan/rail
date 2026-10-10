@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rail_core::config::{AccountConfig, AccountKind, Config};
-use rail_core::daemon::{Connector, DaemonContext, ServeConfig, Server, SpawnFn};
+use rail_core::daemon::{
+    BeginGate, Connector, DaemonContext, SaveGate, ServeConfig, Server, SpawnFn,
+};
 use rail_core::onboarding::{Event, Wizard};
 use rail_core::ops::OpError;
 use rail_core::paths::Paths;
@@ -147,6 +149,21 @@ pub async fn daemon_ctx(
     paths: &Paths,
     token_url: Option<String>,
 ) -> (EffectContext, mpsc::UnboundedReceiver<Url>) {
+    let (ctx, urls, _) = gated_daemon_ctx(paths, token_url).await;
+    (ctx, urls)
+}
+
+/// The in-process daemon's hooks that hold its begins and saves part way (disarmed).
+pub struct Gates {
+    pub begin: Arc<BeginGate>,
+    pub save: Arc<SaveGate>,
+}
+
+/// `daemon_ctx`, with the daemon's gates.
+pub async fn gated_daemon_ctx(
+    paths: &Paths,
+    token_url: Option<String>,
+) -> (EffectContext, mpsc::UnboundedReceiver<Url>, Gates) {
     let (tx, rx) = mpsc::unbounded_channel();
     let daemon_opener: Opener = Arc::new(move |url: &Url| {
         let _ = tx.send(url.clone());
@@ -155,6 +172,10 @@ pub async fn daemon_ctx(
     let ctx = DaemonContext::new(paths.clone(), daemon_opener)
         .expect("daemon context")
         .with_token_url(token_url);
+    let gates = Gates {
+        begin: ctx.begin_gate.clone(),
+        save: ctx.save_gate.clone(),
+    };
     let server = Server::bind(ctx, ServeConfig::default())
         .await
         .expect("bind the test daemon");
@@ -162,7 +183,7 @@ pub async fn daemon_ctx(
     let portal: Opener = Arc::new(|_: &Url| Ok(()));
     let spawn: SpawnFn = Arc::new(|| Ok(()));
     let connector = Connector::new(paths.clone(), spawn);
-    (EffectContext::with(portal, connector), rx)
+    (EffectContext::with(portal, connector), rx, gates)
 }
 
 /// A token endpoint that answers every exchange with `access` and `refresh`.

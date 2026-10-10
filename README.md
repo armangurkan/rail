@@ -82,12 +82,12 @@ Keys:
 | `q` | Quit, except while typing in a text field. |
 | `Ctrl-C` | Quit from anywhere. |
 
-While an account is being saved the status line says "Saving… please wait". `q` and `Esc` are
-ignored, and only `Ctrl-C` is deferred: it quits once the save finishes, so a half-written account
-never happens. `Esc` or `Ctrl-C` while the wizard waits for the browser cancels that login (or admin
-consent) in the [background daemon](#the-background-daemon), so nothing is left waiting there; if
-the browser had already handed the login back, the daemon finishes saving the account (a save is
-never interrupted) and `rail account list` shows it.
+The [background daemon](#the-background-daemon) saves the account as soon as the browser hands the
+login back, and the wizard then shows where everything was saved. `Esc` or `Ctrl-C` while the
+wizard waits for the browser cancels that login (or admin consent) in the daemon, so nothing is
+left waiting there. A save the daemon has already started is never interrupted, so a half-written
+account never happens: if you quit just as the browser came back, the daemon finishes the save and
+Rail says so once the terminal is back (see below).
 
 `c` copies with the terminal clipboard escape sequence (OSC 52), which some terminals ignore without
 saying so; if nothing was copied, select the URL on screen. The login URL only works while Rail is
@@ -97,7 +97,9 @@ back, so a non-administrator can forward it to an administrator. The login URL i
 
 When the wizard exits, the status is 0 if at least one account was saved (also when you quit after a
 save; Rail then prints "setup interrupted; saved: <names>"), and 1 with "setup cancelled; nothing was
-saved" otherwise. Quitting before the save of an account saves nothing for that account.
+saved" otherwise. Quitting before the save of an account saves nothing for that account. Quitting
+while the daemon was already saving one keeps it: Rail prints "setup cancelled; the account being
+saved was kept — check `rail account list`" and exits 0.
 
 The wizard needs an interactive terminal. When stdout is a pipe or a file, every way of opening it
 (`rail`, `rail setup`, `rail account add` without flags) prints a one-line hint and exits with
@@ -421,7 +423,11 @@ store, the config file or a login. The wizard starts (or reaches) the daemon bef
 the terminal, so a daemon that cannot start is reported as a plain error. The daemon opens the
 login and consent pages, receives the tokens and saves the account; tokens, client secrets and
 authorization codes never pass through the wizard. A path you type in the wizard (a preset file)
-is resolved against the directory you ran `rail setup` in before it is sent.
+is resolved against the directory you ran `rail setup` in before it is sent. If the daemon stops
+while the wizard is open (`rail daemon stop`, or a crash), the wizard's next request connects to a
+fresh daemon, starting one if needed. A request that only reads is sent again on the new connection;
+one that changes something (beginning a login or a consent) is not, and the wizard asks you to try
+again. A login that was waiting in the stopped daemon is gone: retry it.
 You never start it yourself: the first command that needs it starts `rail daemon run` in the
 background, and it exits after ten minutes with no client connected and no login waiting. Its
 logs go to `rail.log`; it never writes to the terminal.

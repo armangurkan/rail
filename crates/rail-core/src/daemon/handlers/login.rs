@@ -38,7 +38,7 @@ pub(super) async fn add_begin(
     let endpoints = endpoints_for_login(&prepared.account, ctx.token_url());
     let session = begin_auth_code(&prepared.login_account(), &endpoints).await?;
     let url = session.url().clone();
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-gates"))]
     ctx.begin_gate.pass(&url).await;
     let (id, cancel) = ctx
         .pending
@@ -248,7 +248,7 @@ async fn finish_add(
         tracing::warn!(id = %id, "result discarded: the operation was cancelled");
         return None;
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-gates"))]
     ctx.save_gate.pass().await;
     let saved = ctx
         .write_locked(move |ctx| persist_new(&ctx.paths, &ctx.op_ids, &prepared, &tokens))
@@ -274,7 +274,7 @@ async fn finish_login(
         tracing::warn!(id = %id, "result discarded: the operation was cancelled");
         return None;
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-gates"))]
     ctx.save_gate.pass().await;
     let saved = ctx
         .write_locked(move |ctx| {

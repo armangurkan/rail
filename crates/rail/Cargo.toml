@@ -27,6 +27,7 @@ crossterm.workspace = true
 futures-util.workspace = true
 
 [dev-dependencies]
+rail-core = { workspace = true, features = ["test-gates"] }
 tempfile.workspace = true
 reqwest.workspace = true
 wiremock.workspace = true

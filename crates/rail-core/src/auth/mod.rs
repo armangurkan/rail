@@ -15,8 +15,8 @@ pub use endpoints::{
     endpoints_for,
 };
 pub use flow::{
-    AuthSession, ConsentSession, begin_admin_consent, begin_auth_code, run_admin_consent,
-    run_auth_code_flow,
+    AuthSession, ConsentSession, begin_admin_consent, begin_auth_code, random_token,
+    run_admin_consent, run_auth_code_flow,
 };
 pub use loopback::Redirect;
 pub use onepassword::{ItemIdCache, OnePasswordSecretStore, OpCli, store_client_secret};

@@ -701,7 +701,7 @@ mod tests {
         };
         let (result, _keys) = tokio::join!(run_loop(&mut terminal, &mut app, events), driver);
         result.unwrap();
-        ctx.settle().await;
+        assert_eq!(ctx.settle().await, crate::tui::effects::Settled::Clean);
         assert!(app.quit);
         assert!(app.screen.added().is_empty());
         assert_eq!(

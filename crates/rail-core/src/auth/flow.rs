@@ -14,6 +14,12 @@ use super::loopback::Loopback;
 use super::secrets::TokenSet;
 use crate::config::AccountConfig;
 
+/// A fresh unguessable token (16 random bytes from the OS, base64url), the same kind the OAuth
+/// `state` parameter uses.
+pub fn random_token() -> String {
+    CsrfToken::new_random().secret().clone()
+}
+
 const DEFAULT_EXPIRES_SECS: i64 = 3600;
 
 /// A login whose URL is ready: the loopback listener is bound and the PKCE verifier and CSRF

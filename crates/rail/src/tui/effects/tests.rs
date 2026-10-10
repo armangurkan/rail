@@ -1,6 +1,7 @@
 use super::*;
 
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use rail_core::auth::{FileSecretStore, SecretStore};
@@ -12,7 +13,7 @@ use rail_core::store::Store;
 use tokio::sync::mpsc;
 
 use crate::tui::test_util::{
-    daemon_ctx, query, redirect, redirect_when_asked, test_ctx, token_server,
+    daemon_ctx, gated_daemon_ctx, query, redirect, redirect_when_asked, test_ctx, token_server,
 };
 
 const FILE_BACKEND: &str = "[general]\nsecrets = \"file\"\n";
@@ -101,7 +102,11 @@ async fn load_presets_lists_the_daemons_presets_with_a_marker_for_the_secret() {
     let preset = acme.preset.as_ref().unwrap();
     assert_eq!(preset.label(), "Acme");
     let secret = preset.client_secret.as_deref().unwrap();
-    assert!(secret.starts_with(PRESET_SECRET), "{secret}");
+    assert!(
+        ctx.preset_source(secret)
+            .is_some_and(|source| source.ends_with("acme.toml")),
+        "{secret}"
+    );
     assert!(
         !secret.contains("GOCSPX"),
         "the TUI never sees the preset's secret"
@@ -109,22 +114,49 @@ async fn load_presets_lists_the_daemons_presets_with_a_marker_for_the_secret() {
 }
 
 #[test]
-fn a_preset_marker_becomes_the_preset_source_and_op_references_stay_references() {
-    let marked = account(
-        "a@x.com",
-        &format!("{PRESET_SECRET}/etc/rail/presets/acme.toml"),
-    );
+fn a_preset_stand_in_names_the_preset_and_op_references_stay_references() {
+    let ctx = test_ctx();
+    let stand_in = ctx.preset_secret("/etc/rail/presets/acme.toml");
     assert_eq!(
-        add_request(&marked).client_secret,
+        add_request(&ctx, &account("a@x.com", &stand_in)).client_secret,
         Some(ClientSecretInput::Preset(
             "/etc/rail/presets/acme.toml".into()
         ))
     );
     let reference = account("a@x.com", "op://Rail/google/client_secret");
     assert!(matches!(
-        add_request(&reference).client_secret,
+        add_request(&ctx, &reference).client_secret,
         Some(ClientSecretInput::Reference(_))
     ));
+}
+
+#[test]
+fn typed_text_that_looks_like_a_stand_in_is_sent_as_the_literal_secret() {
+    let ctx = test_ctx();
+    let stand_in = ctx.preset_secret("/etc/rail/presets/acme.toml");
+    let prefix = stand_in.split_at(stand_in.len() - 4).0.to_string();
+    for typed in [
+        "rail-preset-secret:/etc/rail/presets/acme.toml".to_string(),
+        "rail-preset-/etc/rail/presets/acme.toml".to_string(),
+        prefix,
+        format!("{stand_in} "),
+    ] {
+        assert_eq!(
+            add_request(&ctx, &account("a@x.com", &typed)).client_secret,
+            Some(ClientSecretInput::Value(rail_core::ops::Secret::new(
+                typed.clone()
+            ))),
+            "{typed}"
+        );
+    }
+    let other = test_ctx();
+    assert!(
+        matches!(
+            add_request(&other, &account("a@x.com", &stand_in)).client_secret,
+            Some(ClientSecretInput::Value(_))
+        ),
+        "a stand-in from another context is just text"
+    );
 }
 
 #[tokio::test]
@@ -159,9 +191,9 @@ async fn read_preset_resolves_a_relative_path_against_the_working_directory() {
         panic!("{events:?}");
     };
     assert_eq!(preset.label(), "Acme");
-    let marker = preset.client_secret.as_deref().unwrap();
-    let source = Path::new(marker.strip_prefix(PRESET_SECRET).unwrap());
-    assert!(source.is_absolute(), "{marker}");
+    let stand_in = preset.client_secret.as_deref().unwrap();
+    let source = ctx.preset_source(stand_in).unwrap();
+    assert!(Path::new(&source).is_absolute(), "{source}");
     assert_eq!(std::fs::read_to_string(source).unwrap(), ACME);
 }
 
@@ -344,7 +376,7 @@ async fn an_aborted_login_job_cancels_the_login_in_the_daemon() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    ctx.settle().await;
+    assert_eq!(ctx.settle().await, Settled::Clean);
     assert!(!paths.secrets_file().exists(), "no tokens");
 }
 
@@ -361,7 +393,7 @@ async fn settle_cancels_a_login_still_waiting() {
         .await
         .unwrap()
         .unwrap();
-    ctx.settle().await;
+    assert_eq!(ctx.settle().await, Settled::Clean);
     assert_eq!(pending_in_daemon(&ctx).await, 0);
     let events = job.await.unwrap();
     assert!(
@@ -388,9 +420,87 @@ async fn settle_gives_up_on_a_daemon_that_does_not_answer() {
         .with_cancel_timeout(Duration::from_millis(200));
     lock(&ctx.outstanding).ids.insert(PendingId("p1".into()));
     let started = Instant::now();
-    ctx.settle().await;
+    assert_eq!(ctx.settle().await, Settled::Clean);
     assert!(started.elapsed() < Duration::from_secs(5), "settle hung");
     silent.abort();
+}
+
+#[tokio::test]
+async fn a_quit_while_the_daemon_saves_reports_the_account_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = tmp_paths(&tmp, FILE_BACKEND);
+    let server = token_server("A1", "R1").await;
+    let token_url = Some(format!("{}/token", server.uri()));
+    let (ctx, urls, gates) = gated_daemon_ctx(&paths, token_url).await;
+    gates.save.armed.store(true, Ordering::SeqCst);
+    let job = tokio::spawn(run(to_effect(
+        Action::RunLogin(account("me@example.com", "sec")),
+        &ctx,
+    )));
+    let browser = redirect_when_asked(urls);
+    tokio::time::timeout(Duration::from_secs(10), gates.save.reached.notified())
+        .await
+        .expect("the daemon reached its save");
+    job.abort();
+    assert!(job.await.unwrap_err().is_cancelled());
+    assert_eq!(ctx.settle().await, Settled::SaveKept);
+    gates.save.release.notify_one();
+    browser.await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while pending_in_daemon(&ctx).await != 0 {
+        assert!(Instant::now() < deadline, "the save never finished");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let config = rail_core::config::load(&paths.config_file()).unwrap();
+    assert_eq!(
+        config.accounts[0].address, "me@example.com",
+        "the save was kept"
+    );
+}
+
+#[tokio::test]
+async fn an_abort_while_the_begin_reply_is_in_flight_cancels_the_login() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = tmp_paths(&tmp, FILE_BACKEND);
+    let server = token_server("A1", "R1").await;
+    let token_url = Some(format!("{}/token", server.uri()));
+    let (ctx, _urls, gates) = gated_daemon_ctx(&paths, token_url).await;
+    gates.begin.armed.store(true, Ordering::SeqCst);
+    let job = tokio::spawn(run(to_effect(
+        Action::RunLogin(account("me@example.com", "sec")),
+        &ctx,
+    )));
+    tokio::time::timeout(Duration::from_secs(10), gates.begin.reached.acquire())
+        .await
+        .expect("the begin reached its gate")
+        .unwrap()
+        .forget();
+    let url = gates.begin.urls.lock().unwrap()[0].clone();
+    job.abort();
+    assert!(
+        job.await.unwrap_err().is_cancelled(),
+        "aborted before the reply"
+    );
+    gates.begin.open.send_replace(true);
+    assert_eq!(ctx.settle().await, Settled::Clean);
+    assert_eq!(
+        pending_in_daemon(&ctx).await,
+        0,
+        "the begun login was cancelled"
+    );
+    // A browser coming back now finds nothing to complete.
+    let late = format!(
+        "{}/?code=c0de&state={}",
+        query(&url, "redirect_uri"),
+        query(&url, "state")
+    );
+    let _ = tokio::time::timeout(Duration::from_secs(5), reqwest::get(late)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!paths.secrets_file().exists(), "no tokens");
+    assert_eq!(
+        std::fs::read_to_string(paths.config_file()).unwrap(),
+        FILE_BACKEND
+    );
 }
 
 #[test]

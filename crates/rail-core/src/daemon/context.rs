@@ -31,24 +31,24 @@ pub struct DaemonContext {
     /// Logins and consents waiting on the user.
     pub(crate) pending: PendingTable,
     /// Tests hold a save at its start to prove a disconnect cannot stop it.
-    #[cfg(test)]
-    pub(crate) save_gate: Arc<SaveGate>,
+    #[cfg(any(test, feature = "test-gates"))]
+    pub save_gate: Arc<SaveGate>,
     /// Tests hold begins after their loopback is bound to prove the cap holds under a burst.
-    #[cfg(test)]
-    pub(crate) begin_gate: Arc<BeginGate>,
+    #[cfg(any(test, feature = "test-gates"))]
+    pub begin_gate: Arc<BeginGate>,
 }
 
 /// A test hook: when armed, every begin counts itself in `reached` and waits for `open`.
-#[cfg(test)]
-pub(crate) struct BeginGate {
-    pub(crate) armed: std::sync::atomic::AtomicBool,
-    pub(crate) reached: tokio::sync::Semaphore,
-    pub(crate) open: tokio::sync::watch::Sender<bool>,
+#[cfg(any(test, feature = "test-gates"))]
+pub struct BeginGate {
+    pub armed: std::sync::atomic::AtomicBool,
+    pub reached: tokio::sync::Semaphore,
+    pub open: tokio::sync::watch::Sender<bool>,
     /// The login URL of every begin that reached the gate.
-    pub(crate) urls: Mutex<Vec<Url>>,
+    pub urls: Mutex<Vec<Url>>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-gates"))]
 impl Default for BeginGate {
     fn default() -> Self {
         Self {
@@ -60,7 +60,7 @@ impl Default for BeginGate {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-gates"))]
 impl BeginGate {
     pub(crate) async fn pass(&self, url: &Url) {
         if self.armed.load(std::sync::atomic::Ordering::SeqCst) {
@@ -76,15 +76,15 @@ impl BeginGate {
 }
 
 /// A test hook: when armed, every save signals `reached` and waits for `release`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-gates"))]
 #[derive(Default)]
-pub(crate) struct SaveGate {
-    pub(crate) armed: std::sync::atomic::AtomicBool,
-    pub(crate) reached: tokio::sync::Notify,
-    pub(crate) release: tokio::sync::Notify,
+pub struct SaveGate {
+    pub armed: std::sync::atomic::AtomicBool,
+    pub reached: tokio::sync::Notify,
+    pub release: tokio::sync::Notify,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-gates"))]
 impl SaveGate {
     pub(crate) async fn pass(&self) {
         if self.armed.load(std::sync::atomic::Ordering::SeqCst) {
@@ -105,9 +105,9 @@ impl DaemonContext {
             op_ids: ItemIdCache::default(),
             config_lock: Mutex::new(()),
             pending: PendingTable::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-gates"))]
             save_gate: Arc::new(SaveGate::default()),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-gates"))]
             begin_gate: Arc::new(BeginGate::default()),
         })
     }

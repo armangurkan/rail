@@ -10,7 +10,7 @@ use rail_core::paths::Paths;
 use url::Url;
 
 use crate::cmd::account::report as report_error;
-use crate::tui::effects::EffectContext;
+use crate::tui::effects::{EffectContext, Settled};
 use crate::tui::run::run_app;
 use crate::tui::screens::wizard::WizardScreen;
 
@@ -43,11 +43,12 @@ pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre
     let screen = WizardScreen::new(Wizard::new(Some(config), kind_hint), ctx.clone());
     let screen = run_app(screen).await;
     // A quit mid-login leaves nothing waiting in the daemon.
-    ctx.settle().await;
+    let settled = ctx.settle().await;
     let screen = screen?;
     Ok(report(
         screen.added(),
         screen.finished(),
+        settled == Settled::SaveKept,
         screen.shown_urls().0.as_ref(),
     ))
 }
@@ -59,19 +60,24 @@ struct Outcome {
     stderr: String,
 }
 
-/// A save is never half done at this point: the daemon never interrupts one. When the wizard
+/// A save is never half done at this point: the daemon never interrupts one. `kept` says a
+/// login cancelled on the way out had already reached its save, so that account exists although
+/// the wizard never reported it. When the wizard
 /// did not finish, the consent URL it last showed is printed, so a non-administrator can
 /// forward it and a terminal that ignores the clipboard escape still has a copy path. The login
 /// URL is never printed: it only works through the daemon's loopback listener for this login,
 /// which the quit has cancelled. The consent URL carries no secret.
-fn report(added: &[String], finished: bool, consent: Option<&Url>) -> ExitCode {
-    let outcome = outcome(added, finished, consent);
+fn report(added: &[String], finished: bool, kept: bool, consent: Option<&Url>) -> ExitCode {
+    let outcome = outcome(added, finished, kept, consent);
     print!("{}", outcome.stdout);
     eprint!("{}", outcome.stderr);
     ExitCode::from(outcome.code)
 }
 
-fn outcome(added: &[String], finished: bool, consent: Option<&Url>) -> Outcome {
+/// Printed when the account being saved at the quit was kept.
+const KEPT: &str = "the account being saved was kept — check `rail account list`";
+
+fn outcome(added: &[String], finished: bool, kept: bool, consent: Option<&Url>) -> Outcome {
     let mut out = Outcome {
         code: 0,
         stdout: String::new(),
@@ -84,11 +90,18 @@ fn outcome(added: &[String], finished: bool, consent: Option<&Url>) -> Outcome {
         out.stdout += "Run `rail doctor` to check everything.\n";
         return out;
     }
-    if added.is_empty() {
-        out.code = 1;
-        out.stderr += "rail: setup cancelled; nothing was saved\n";
-    } else {
-        out.stderr += &format!("rail: setup interrupted; saved: {}\n", added.join(", "));
+    match (added.is_empty(), kept) {
+        (true, false) => {
+            out.code = 1;
+            out.stderr += "rail: setup cancelled; nothing was saved\n";
+        }
+        (true, true) => out.stderr += &format!("rail: setup cancelled; {KEPT}\n"),
+        (false, kept) => {
+            out.stderr += &format!("rail: setup interrupted; saved: {}\n", added.join(", "));
+            if kept {
+                out.stderr += &format!("rail: {KEPT}\n");
+            }
+        }
     }
     if let Some(url) = consent {
         out.stderr += &format!("rail: the last consent URL shown:\n{url}\n");
@@ -127,6 +140,7 @@ mod tests {
         let out = outcome(
             screen.added(),
             screen.finished(),
+            false,
             screen.shown_urls().0.as_ref(),
         );
         assert_eq!(out.code, 1);
@@ -167,6 +181,7 @@ mod tests {
         let out = outcome(
             screen.added(),
             screen.finished(),
+            false,
             screen.shown_urls().0.as_ref(),
         );
 
@@ -185,6 +200,7 @@ mod tests {
         let out = outcome(
             screen.added(),
             screen.finished(),
+            false,
             screen.shown_urls().0.as_ref(),
         );
         assert_eq!(out.stderr, "rail: setup cancelled; nothing was saved\n");
@@ -193,7 +209,7 @@ mod tests {
     #[test]
     fn a_finished_setup_prints_the_accounts_and_no_urls() {
         let consent = Url::parse("https://login.microsoftonline.com/x/adminconsent").unwrap();
-        let out = outcome(&["work".to_string()], true, Some(&consent));
+        let out = outcome(&["work".to_string()], true, false, Some(&consent));
         assert_eq!(out.code, 0);
         assert!(out.stdout.contains("Added account \"work\"."));
         assert!(out.stderr.is_empty());
@@ -202,9 +218,23 @@ mod tests {
     #[test]
     fn an_interrupted_setup_lists_what_was_saved_and_the_consent_url() {
         let consent = Url::parse("https://login.microsoftonline.com/x/adminconsent").unwrap();
-        let out = outcome(&["work".to_string()], false, Some(&consent));
+        let out = outcome(&["work".to_string()], false, false, Some(&consent));
         assert_eq!(out.code, 0);
         assert!(out.stderr.contains("setup interrupted; saved: work"));
         assert!(out.stderr.contains("adminconsent"), "{}", out.stderr);
+    }
+
+    #[test]
+    fn a_cancel_after_the_daemon_began_saving_says_the_account_was_kept() {
+        let out = outcome(&[], false, true, None);
+        assert_eq!(out.code, 0, "an account was saved");
+        assert_eq!(
+            out.stderr,
+            "rail: setup cancelled; the account being saved was kept — check `rail account list`\n"
+        );
+        assert!(!out.stderr.contains("nothing was saved"));
+        let out = outcome(&["work".to_string()], false, true, None);
+        assert!(out.stderr.contains("saved: work\n"), "{}", out.stderr);
+        assert!(out.stderr.contains("was kept"), "{}", out.stderr);
     }
 }

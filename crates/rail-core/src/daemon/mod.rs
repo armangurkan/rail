@@ -23,9 +23,11 @@ mod tests;
 
 pub use client::DaemonClient;
 pub use connect::{
-    Connector, DAEMON_EXIT_TIMEOUT, MAX_SOCKET_PATH, START_TIMEOUT, SpawnFn, VERSION,
+    Connector, DAEMON_EXIT_TIMEOUT, MAX_SOCKET_PATH, START_TIMEOUT, SpawnFn, VERSION, retry_safe,
     wait_for_daemon_exit,
 };
+#[cfg(any(test, feature = "test-gates"))]
+pub use context::{BeginGate, SaveGate};
 pub use context::{DaemonContext, Opener};
 pub use server::{IDLE_TIMEOUT, SAVE_GRACE, ServeConfig, Server, peer_allowed};
 pub use wire::{MAX_FRAME_BYTES, PROTOCOL_VERSION};

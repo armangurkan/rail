@@ -33,6 +33,14 @@ impl Operation for Echo {
     type Response = Ping;
 }
 
+/// `hangup`: the fake closes the connection without answering. Not safe to resend.
+struct Hangup;
+impl Operation for Hangup {
+    const NAME: &'static str = "hangup";
+    type Request = Ping;
+    type Response = Ping;
+}
+
 /// `fail`: always answers with an operation error.
 struct Fail;
 impl Operation for Fail {
@@ -63,6 +71,9 @@ fn answer(method: &str, id: u64, params: Value, version: &str, dirs: Option<&Pat
     }
 }
 
+/// How many `hangup` requests the fakes received, over every test in this module.
+static HANGUPS: AtomicUsize = AtomicUsize::new(0);
+
 /// Listen on the socket and answer until `daemon.stop`, which removes the socket.
 async fn fake_daemon(paths: Paths, version: &'static str) {
     fake_daemon_on(paths.clone(), version, Some(paths)).await;
@@ -90,6 +101,10 @@ async fn fake_daemon_on(paths: Paths, version: &'static str, dirs: Option<Paths>
                 let Ok(Message::Request(request)) = parse_message(&frame) else {
                     continue;
                 };
+                if request.method == "hangup" {
+                    HANGUPS.fetch_add(1, Ordering::SeqCst);
+                    return;
+                }
                 let response = answer(
                     &request.method,
                     request.id,
@@ -599,4 +614,54 @@ async fn an_older_daemon_without_directories_is_replaced() {
     assert_eq!(client.daemon().version, VERSION);
     assert_eq!(client.daemon().config_dir, paths.config_dir);
     assert_eq!(spawned.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_call_the_connection_drops_is_not_resent_unless_safe_and_says_to_try_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let (connector, spawned) = connector(&paths, VERSION);
+    let before = HANGUPS.load(Ordering::SeqCst);
+    let err = tokio::time::timeout(Duration::from_secs(5), connector.call::<Hangup>(&ping("x")))
+        .await
+        .expect("no hang")
+        .unwrap_err();
+    assert_eq!(HANGUPS.load(Ordering::SeqCst) - before, 1, "sent once only");
+    assert_eq!(err.code, ErrorCode::Daemon);
+    assert!(
+        err.hint.as_deref().is_some_and(|h| h.contains("try again")),
+        "{err:?}"
+    );
+    let echoed = connector.call::<Echo>(&ping("after")).await.unwrap();
+    assert_eq!(echoed, ping("after"), "the next call reconnects");
+    assert_eq!(
+        spawned.load(Ordering::SeqCst),
+        1,
+        "the same daemon, a new connection"
+    );
+}
+
+#[test]
+fn only_reads_and_idempotent_operations_are_resent() {
+    for safe in [
+        names::STATUS,
+        names::ACCOUNTS_LIST,
+        names::PRESETS_LIST,
+        names::PRESET_FETCH,
+        names::GUIDE_PROVIDER,
+        names::PENDING_WAIT,
+        names::PENDING_CANCEL,
+    ] {
+        assert!(super::connect::retry_safe(safe), "{safe}");
+    }
+    for unsafe_op in [
+        names::ACCOUNT_ADD_BEGIN,
+        names::ACCOUNT_LOGIN_BEGIN,
+        names::CONSENT_BEGIN,
+        names::ACCOUNT_REMOVE,
+        names::SECRETS_CONFIGURE,
+        names::DAEMON_STOP,
+    ] {
+        assert!(!super::connect::retry_safe(unsafe_op), "{unsafe_op}");
+    }
 }

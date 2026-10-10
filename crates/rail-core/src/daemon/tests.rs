@@ -608,3 +608,19 @@ async fn the_hello_names_the_daemons_directories() {
     assert_eq!(hello.state_dir, paths.state_dir);
     connector.stop(client).await.unwrap();
 }
+
+#[tokio::test]
+async fn a_read_reconnects_once_to_a_fresh_daemon_after_a_stop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = paths_with_config(&tmp, "[general]\nsecrets = \"file\"\n");
+    let (connector, spawned) = in_process_connector(&paths);
+    let cached = connector.client().await.unwrap();
+    connector.call::<Status>(&StatusRequest {}).await.unwrap();
+    let stopper = connector.connect().await.unwrap();
+    connector.stop(stopper).await.unwrap();
+    let status = connector.call::<Status>(&StatusRequest {}).await.unwrap();
+    assert_eq!(status.daemon.clients, 1, "only the fresh connection");
+    assert_eq!(spawned.load(Ordering::SeqCst), 2, "a fresh daemon answered");
+    assert!(cached.is_closed(), "the old connection is gone");
+    assert!(!connector.client().await.unwrap().is_closed());
+}
