@@ -15,6 +15,8 @@ pub struct Paths {
     pub data_dir: PathBuf,
     pub cache_dir: PathBuf,
     pub state_dir: PathBuf,
+    /// Holds the daemon's socket and start lock. Owner-only.
+    pub runtime_dir: PathBuf,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -23,11 +25,12 @@ pub struct PathOverrides {
     pub data_dir: Option<PathBuf>,
     pub cache_dir: Option<PathBuf>,
     pub state_dir: Option<PathBuf>,
+    pub runtime_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "cannot determine a home directory; set RAIL_CONFIG_DIR, RAIL_DATA_DIR, RAIL_CACHE_DIR and RAIL_STATE_DIR"
+    "cannot determine a home directory; set RAIL_CONFIG_DIR, RAIL_DATA_DIR, RAIL_CACHE_DIR, RAIL_STATE_DIR and RAIL_RUNTIME_DIR"
 )]
 pub struct NoHomeDir;
 
@@ -57,6 +60,7 @@ impl Paths {
             data_dir: var("RAIL_DATA_DIR"),
             cache_dir: var("RAIL_CACHE_DIR"),
             state_dir: var("RAIL_STATE_DIR"),
+            runtime_dir: var("RAIL_RUNTIME_DIR"),
         })
     }
 
@@ -82,11 +86,16 @@ impl Paths {
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| data_dir.clone()),
         };
+        let runtime_dir = match overrides.runtime_dir {
+            Some(p) => p,
+            None => runtime_or_state(need(&dirs)?.runtime_dir(), &state_dir),
+        };
         Ok(Self {
             config_dir,
             data_dir,
             cache_dir,
             state_dir,
+            runtime_dir,
         })
     }
 
@@ -97,6 +106,7 @@ impl Paths {
             data_dir: root.join("data"),
             cache_dir: root.join("cache"),
             state_dir: root.join("state"),
+            runtime_dir: root.join("run"),
         }
     }
 
@@ -123,6 +133,27 @@ impl Paths {
     pub fn log_dir(&self) -> &Path {
         &self.state_dir
     }
+
+    /// The daemon's Unix socket.
+    pub fn socket_file(&self) -> PathBuf {
+        self.runtime_dir.join("rail.sock")
+    }
+
+    /// The lock a client holds while it starts the daemon.
+    pub fn lock_file(&self) -> PathBuf {
+        self.runtime_dir.join("rail.lock")
+    }
+
+    /// The lock the running daemon holds for its whole life.
+    pub fn daemon_lock_file(&self) -> PathBuf {
+        self.runtime_dir.join("daemon.lock")
+    }
+}
+
+/// `$XDG_RUNTIME_DIR/rail` where there is one (Linux), else the state directory (macOS, and
+/// Linux sessions without a runtime directory).
+fn runtime_or_state(runtime: Option<&Path>, state: &Path) -> PathBuf {
+    runtime.map_or_else(|| state.to_path_buf(), Path::to_path_buf)
 }
 
 /// Create `dir` (and missing parents) readable by the owner only. On unix a
@@ -202,6 +233,7 @@ mod tests {
             data_dir: Some(PathBuf::from("/d")),
             cache_dir: Some(PathBuf::from("/k")),
             state_dir: Some(PathBuf::from("/s")),
+            runtime_dir: Some(PathBuf::from("/r")),
         })
         .unwrap();
         assert_eq!(paths.config_file(), PathBuf::from("/c/config.toml"));
@@ -210,6 +242,8 @@ mod tests {
         assert_eq!(paths.compose_dir(), PathBuf::from("/k/compose"));
         assert_eq!(paths.attachments_dir(), PathBuf::from("/k/attachments"));
         assert_eq!(paths.log_dir(), Path::new("/s"));
+        assert_eq!(paths.socket_file(), PathBuf::from("/r/rail.sock"));
+        assert_eq!(paths.lock_file(), PathBuf::from("/r/rail.lock"));
     }
 
     #[test]
@@ -220,6 +254,7 @@ mod tests {
             &paths.data_dir,
             &paths.cache_dir,
             &paths.state_dir,
+            &paths.runtime_dir,
         ] {
             assert_eq!(dir.file_name().unwrap(), "rail", "{dir:?}");
         }
@@ -232,6 +267,21 @@ mod tests {
         assert_eq!(paths.data_dir, PathBuf::from("/tmp/x/data"));
         assert_eq!(paths.cache_dir, PathBuf::from("/tmp/x/cache"));
         assert_eq!(paths.state_dir, PathBuf::from("/tmp/x/state"));
+        assert_eq!(paths.runtime_dir, PathBuf::from("/tmp/x/run"));
+    }
+
+    #[test]
+    fn runtime_dir_env_override_and_fallback() {
+        let lookup = |key: &str| (key == "RAIL_RUNTIME_DIR").then(|| "/run/x".into());
+        assert_eq!(
+            Paths::from_lookup(lookup).unwrap().runtime_dir,
+            PathBuf::from("/run/x")
+        );
+        assert_eq!(
+            runtime_or_state(Some(Path::new("/run/user/1000/rail")), Path::new("/s")),
+            PathBuf::from("/run/user/1000/rail")
+        );
+        assert_eq!(runtime_or_state(None, Path::new("/s")), PathBuf::from("/s"));
     }
 
     #[test]

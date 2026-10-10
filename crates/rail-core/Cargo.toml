@@ -24,6 +24,7 @@ reqwest.workspace = true
 url.workspace = true
 humantime-serde.workspace = true
 schemars.workspace = true
+fs4.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
