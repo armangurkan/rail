@@ -41,9 +41,9 @@ with an account configured, `rail` still prints that the TUI is not built and ex
 | 7 | Microsoft Graph provider and device-code flow | Planned |
 | 8 | Polish: search operators, auto layout, theme, inline images | Planned |
 
-The design is in [`docs/superpowers/specs/2026-10-09-rail-design.md`](docs/superpowers/specs/2026-10-09-rail-design.md)
-for the shell and the wizard, [`docs/superpowers/specs/2026-10-09-rail-onboarding-design.md`](docs/superpowers/specs/2026-10-09-rail-onboarding-design.md),
-and for the daemon and the MCP server, [`docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md`](docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md).
+The overall design is in [`docs/superpowers/specs/2026-10-09-rail-design.md`](docs/superpowers/specs/2026-10-09-rail-design.md);
+the shell and the wizard are in [`docs/superpowers/specs/2026-10-09-rail-onboarding-design.md`](docs/superpowers/specs/2026-10-09-rail-onboarding-design.md),
+and the daemon and the MCP server in [`docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md`](docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md).
 
 ## Install
 
@@ -84,7 +84,7 @@ Keys:
 | `o` | On the Instructions step, open the provider portal in your browser. |
 | `r` / `c` | `r` retries when an error is shown. `c` copies the admin-consent URL shown with an error, or the login URL on the Login step. |
 | `q` | Quit, except while typing in a text field. |
-| `Ctrl-C` | Quit from anywhere. |
+| `Ctrl-C` | Quit from anywhere. While an account is being saved, `Esc` and `q` do nothing and `Ctrl-C` waits for the save to finish, then quits. |
 
 The [background daemon](#the-background-daemon) saves the account as soon as the browser hands the
 login back, and the wizard then shows where everything was saved. `Esc` or `Ctrl-C` while the
@@ -137,7 +137,7 @@ refused with "use an absolute path".
 | `rail_presets_list` | Presets installed on this machine. Read-only. |
 | `rail_preset_fetch` | A preset from an `https://` URL or an absolute file path. Read-only. |
 | `rail_provider_guide` | The Google or Microsoft setup steps, as data. Read-only. |
-| `rail_account_add` | Validates a new account, opens its login and returns the URL and an id. |
+| `rail_account_add` | Validates a new account, opens its login and returns the URL and an id. With `store_secret_in_1password` set, Rail keeps the client secret in 1Password (see below). |
 | `rail_account_login` | Logs in again to a configured account. |
 | `rail_admin_consent` | Microsoft admin consent for one organisation. |
 | `rail_wait` | Waits, at most five minutes per call, for a login or consent to finish. Read-only. An agent giving up on a wait does not cancel the login. |
@@ -568,16 +568,21 @@ any directory above it belongs to another user or is writable by others (a stick
 `/tmp` is fine); the resolved file is what runs. `op_path`
 is only ever read from `config.toml`; no daemon request can set it. A Homebrew-on-Linux `op` usually
 fails this check, because its prefix (`/home/linuxbrew/.linuxbrew`) is writable by a group or owned by
-another user; Rail then says which part it refused. Install `op` from 1Password's own package (for
-example `/usr/bin/op`), or put a copy that only you own in a directory only you can write, and set
-`op_path` to it by hand. The daemon's `secrets.configure`
+another user; Rail then says which part it refused. Prefer 1Password's own package (for
+example `/usr/bin/op`). If you instead copy a binary into a directory only you can write, use
+`install -m 0755`, and set `op_path` to it by hand. A copy loses the package's setgid group, which
+can break the desktop-app integration (`op` then asks you to sign in separately). The 1Password
+Homebrew cask is macOS-only, so this mainly concerns manual and Linuxbrew installs. The daemon's `secrets.configure`
 operation switches backends, but only for a request a front end marked `confirm` after asking the
 user, carrying the digest of the plan the user was shown: tokens are copied to the new backend, read back to verify, and only
 then are the old copies deleted, so a failure part way leaves the old copies in place.
 
 A Gmail `client_secret` can live in 1Password too. In `config.toml`, or in
 `rail account add --client-secret`, give an `op://vault/item/field` secret reference instead of the
-value:
+value (an agent can also set `store_secret_in_1password` on `rail_account_add`, which makes Rail store
+the secret it was given by file in 1Password and write an `op://` reference into `config.toml`; it
+needs a `[onepassword]` vault in `config.toml` and a client secret to store, and the CLI and the
+wizard never do this):
 
 ```toml
 client_secret = "op://Rail/Google client/client_secret"
@@ -613,6 +618,7 @@ crates/rail/             Binary: clap CLI, logging, `account`, `daemon`, `doctor
   tests/cli/daemon.rs    The daemon through the binary: on-demand start, status, stop, directories, signals
   tests/cli/pty.rs       The same in a pseudo-terminal: the wizard's Ctrl-C and `rail account remove`'s question
   tests/mcp.rs           `rail mcp` driven by an MCP client that accepts, declines or cannot show confirmations
+  tests/mcp/guarded.rs   The same for the two confirmed tools, removal and secret-store changes
 assets/brand/            Logos for light and dark backgrounds, and the app icon
 docs/superpowers/        Design specs and phase plans
 deny.toml                Licence and advisory policy for `cargo deny`
