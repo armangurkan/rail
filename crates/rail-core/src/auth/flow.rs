@@ -176,9 +176,10 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel::<Url>();
         tokio::spawn(async move {
             let url = rx.await.unwrap();
+            let state = query(&url, "state");
             let redirect = query(&url, "redirect_uri");
             reqwest::get(format!(
-                "{redirect}/?error=access_denied&error_description=User%20said%20no"
+                "{redirect}/?error=access_denied&error_description=User%20said%20no&state={state}"
             ))
             .await
             .unwrap();

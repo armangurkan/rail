@@ -21,8 +21,6 @@ use crate::error::ErrorClass;
 pub enum AuthError {
     #[error("authorization denied by the provider: {0}")]
     Denied(String),
-    #[error("state mismatch on the OAuth redirect (possible CSRF); try again")]
-    StateMismatch,
     #[error("the OAuth redirect did not include an authorization code")]
     MissingCode,
     #[error(
@@ -65,7 +63,6 @@ mod tests {
         ];
         let permanent = [
             AuthError::Denied("x".into()),
-            AuthError::StateMismatch,
             AuthError::MissingCode,
             AuthError::NoRefreshToken,
             AuthError::Exchange("x".into()),
