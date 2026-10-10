@@ -3,7 +3,6 @@
 //! still gets the answer.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -32,6 +31,9 @@ struct Entries {
     next: u64,
     /// Slots taken by begins still in flight (before their entry exists).
     reserved: usize,
+    /// Set when shutdown starts; guarded by the same lock as the entries, so a begin cannot
+    /// slip an entry in after `cancel_waiting` has run.
+    stopping: bool,
     by_id: HashMap<PendingId, Entry>,
 }
 
@@ -53,8 +55,6 @@ pub(crate) struct PendingTable {
     changed: watch::Sender<u64>,
     /// The detached tasks that wait for redirects and save, so shutdown can join them.
     tasks: Mutex<JoinSet<()>>,
-    /// Set when shutdown starts: nothing new may begin.
-    stopping: AtomicBool,
 }
 
 /// Why no slot could be reserved.
@@ -88,7 +88,6 @@ impl Default for PendingTable {
             entries: Mutex::new(Entries::default()),
             changed: watch::Sender::new(0),
             tasks: Mutex::new(JoinSet::new()),
-            stopping: AtomicBool::new(false),
         }
     }
 }
@@ -113,10 +112,10 @@ impl PendingTable {
     /// Take a place among the waiting operations, atomically with the count of those already
     /// waiting or being begun.
     pub(crate) fn try_reserve(&self) -> Result<Slot<'_>, Refused> {
-        if self.stopping.load(Ordering::SeqCst) {
+        let mut entries = self.lock();
+        if entries.stopping {
             return Err(Refused::Stopping);
         }
-        let mut entries = self.lock();
         let waiting = entries
             .by_id
             .values()
@@ -135,20 +134,24 @@ impl PendingTable {
 
     /// Refuse every later `try_reserve`: the daemon is shutting down.
     pub(crate) fn stop_new(&self) {
-        self.stopping.store(true, Ordering::SeqCst);
+        self.lock().stopping = true;
     }
 
     /// A new waiting entry in the reserved `slot`, and the receiver its task watches for a
-    /// cancel.
+    /// cancel. Refused (the slot released, no entry made) if shutdown started since the
+    /// reservation: the caller drops its session, which closes its loopback.
     pub(crate) fn begin(
         &self,
         mut slot: Slot<'_>,
         kind: PendingKind,
-    ) -> (PendingId, oneshot::Receiver<()>) {
+    ) -> Result<(PendingId, oneshot::Receiver<()>), Refused> {
         let (tx, rx) = oneshot::channel();
         let mut entries = self.lock();
         entries.reserved = entries.reserved.saturating_sub(1);
         slot.held = false;
+        if entries.stopping {
+            return Err(Refused::Stopping);
+        }
         entries.expire();
         entries.next += 1;
         let id = PendingId(format!("{}-{}", prefix(kind), entries.next));
@@ -161,7 +164,7 @@ impl PendingTable {
         entries.by_id.insert(id.clone(), entry);
         drop(entries);
         self.bump();
-        (id, rx)
+        Ok((id, rx))
     }
 
     pub(crate) fn get(&self, id: &PendingId) -> Option<WaitResponse> {
@@ -318,7 +321,7 @@ mod tests {
     use crate::ops::{OpError, PendingOutcome};
 
     fn begin(table: &PendingTable, kind: PendingKind) -> (PendingId, oneshot::Receiver<()>) {
-        table.begin(table.try_reserve().unwrap(), kind)
+        table.begin(table.try_reserve().unwrap(), kind).unwrap()
     }
 
     #[test]
@@ -380,10 +383,24 @@ mod tests {
         let last = table.try_reserve().expect("a dropped slot is free again");
         assert_eq!(table.try_reserve().err(), Some(Refused::Full));
         // Turning a slot into an entry keeps the count; cancelling the entry frees it.
-        let (id, _rx) = table.begin(last, PendingKind::Login);
+        let (id, _rx) = table.begin(last, PendingKind::Login).unwrap();
         assert_eq!(table.try_reserve().err(), Some(Refused::Full));
         table.cancel(&id);
         assert!(table.try_reserve().is_ok());
+    }
+
+    #[test]
+    fn a_reservation_made_before_stopping_cannot_begin_after_it() {
+        let table = PendingTable::default();
+        let slot = table.try_reserve().unwrap();
+        table.stop_new();
+        table.cancel_waiting();
+        assert_eq!(
+            table.begin(slot, PendingKind::Login).err(),
+            Some(Refused::Stopping)
+        );
+        assert_eq!(table.active(), 0, "no entry was made");
+        assert_eq!(table.lock().reserved, 0, "the slot was released");
     }
 
     #[test]

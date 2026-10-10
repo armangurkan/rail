@@ -726,3 +726,36 @@ async fn no_login_begins_once_shutdown_has_started() {
         .unwrap()
         .unwrap();
 }
+
+/// A begin that reserved a slot and bound its loopback before shutdown started is refused when
+/// it reaches `begin`, and its loopback closes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_begin_in_flight_when_shutdown_starts_is_refused_and_its_loopback_closes() {
+    let mut h = harness(FILE_BACKEND).await;
+    h.begin_gate.armed.store(true, Ordering::SeqCst);
+    let client = h.client.clone();
+    let begin = tokio::spawn(async move {
+        client
+            .call::<AccountAddBegin>(&add_request("me@example.com"))
+            .await
+    });
+    h.begin_gate.reached.acquire().await.unwrap().forget();
+    let url = h.begin_gate.urls.lock().unwrap()[0].clone();
+    let redirect = query(&url, "redirect_uri");
+    stop(&h.client).await;
+    h.begin_gate.open.send_replace(true);
+    let err = begin.await.unwrap().unwrap_err();
+    assert!(err.message.contains("shutting down"), "{err}");
+    assert!(h.urls.try_recv().is_err(), "no browser for a refused begin");
+    assert!(
+        reqwest::get(format!("{redirect}/?code={CODE}"))
+            .await
+            .is_err(),
+        "the loopback listener is closed"
+    );
+    tokio::time::timeout(Duration::from_secs(10), &mut h.daemon)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}

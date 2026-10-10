@@ -34,13 +34,16 @@ pub(super) async fn add_begin(
 ) -> Result<BeginResponse, OpError> {
     let ctx = call.ctx.clone();
     let slot = ensure_room(&ctx)?;
-    #[cfg(test)]
-    ctx.begin_gate.pass().await;
     let prepared = prepare_and_probe(&ctx.paths, &ctx.op_ids, &request, &ctx.http).await?;
     let endpoints = endpoints_for_login(&prepared.account, ctx.token_url());
     let session = begin_auth_code(&prepared.login_account(), &endpoints).await?;
     let url = session.url().clone();
-    let (id, cancel) = ctx.pending.begin(slot, PendingKind::AddAccount);
+    #[cfg(test)]
+    ctx.begin_gate.pass(&url).await;
+    let (id, cancel) = ctx
+        .pending
+        .begin(slot, PendingKind::AddAccount)
+        .map_err(refusal)?;
     let task = finish_add(ctx.clone(), id.clone(), session, prepared, cancel);
     spawn_pending(&ctx, call.caller, id.clone(), task);
     Ok(begun(
@@ -81,7 +84,10 @@ pub(super) async fn login_begin(
     let endpoints = endpoints_for_login(&account, ctx.token_url());
     let session = begin_auth_code(&login, &endpoints).await?;
     let url = session.url().clone();
-    let (id, cancel) = ctx.pending.begin(slot, PendingKind::Login);
+    let (id, cancel) = ctx
+        .pending
+        .begin(slot, PendingKind::Login)
+        .map_err(refusal)?;
     let task = finish_login(ctx.clone(), id.clone(), session, account, cancel);
     spawn_pending(&ctx, call.caller, id.clone(), task);
     Ok(begun(
@@ -101,7 +107,10 @@ pub(super) async fn consent_begin(
     let slot = ensure_room(&ctx)?;
     let session = begin_admin_consent(&request.client_id, &request.tenant).await?;
     let url = session.url().clone();
-    let (id, cancel) = ctx.pending.begin(slot, PendingKind::AdminConsent);
+    let (id, cancel) = ctx
+        .pending
+        .begin(slot, PendingKind::AdminConsent)
+        .map_err(refusal)?;
     let task = async move {
         let waited = tokio::select! {
             result = tokio::time::timeout(LOGIN_LIFETIME, session.finish()) => result,
@@ -150,13 +159,15 @@ fn begun(
 /// waiting or being begun, and once the daemon is shutting down. The place is held until
 /// `pending.begin` turns it into the entry, or given back if the begin fails first.
 fn ensure_room(ctx: &DaemonContext) -> Result<Slot<'_>, OpError> {
-    ctx.pending.try_reserve().map_err(|refused| {
-        let message = match refused {
-            Refused::Full => "too many logins are in progress; finish or cancel one first",
-            Refused::Stopping => "the daemon is shutting down",
-        };
-        OpError::new(ErrorCode::Daemon, ErrorClass::Transient, message)
-    })
+    ctx.pending.try_reserve().map_err(refusal)
+}
+
+fn refusal(refused: Refused) -> OpError {
+    let message = match refused {
+        Refused::Full => "too many logins are in progress; finish or cancel one first",
+        Refused::Stopping => "the daemon is shutting down",
+    };
+    OpError::new(ErrorCode::Daemon, ErrorClass::Transient, message)
 }
 
 /// Settles an entry as failed if its task ends without doing so (a panic, or an abort at
@@ -308,7 +319,7 @@ mod tests {
         let ctx = Arc::new(ctx);
         let (frames, _outgoing) = tokio::sync::mpsc::unbounded_channel();
         let slot = ctx.pending.try_reserve().unwrap();
-        let (id, _cancel) = ctx.pending.begin(slot, PendingKind::Login);
+        let (id, _cancel) = ctx.pending.begin(slot, PendingKind::Login).unwrap();
         spawn_pending(&ctx, Caller::new(frames), id.clone(), async {
             panic!("boom");
         });
