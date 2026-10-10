@@ -90,3 +90,58 @@ pub(crate) fn tokens() -> TokenSet {
         expires_at: 1,
     }
 }
+
+/// A daemon context over `paths` whose opener records every URL instead of starting a browser.
+pub(crate) fn daemon_context(
+    paths: &crate::paths::Paths,
+) -> (
+    crate::daemon::DaemonContext,
+    tokio::sync::mpsc::UnboundedReceiver<url::Url>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let opener: crate::daemon::Opener = std::sync::Arc::new(move |url: &url::Url| {
+        let _ = tx.send(url.clone());
+        Ok(())
+    });
+    let ctx = crate::daemon::DaemonContext::new(paths.clone(), opener).expect("http client");
+    (ctx, rx)
+}
+
+/// Bind a real daemon on `paths` and run it on a task.
+pub(crate) async fn start_daemon(
+    ctx: crate::daemon::DaemonContext,
+    config: crate::daemon::ServeConfig,
+) -> tokio::task::JoinHandle<Result<(), crate::ops::OpError>> {
+    let server = crate::daemon::Server::bind(ctx, config)
+        .await
+        .expect("bind the test daemon");
+    tokio::spawn(server.run())
+}
+
+/// A connector whose spawn starts an in-process daemon (with the default config) and counts
+/// the starts.
+pub(crate) fn in_process_connector(
+    paths: &crate::paths::Paths,
+) -> (
+    crate::daemon::Connector,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
+    use std::sync::atomic::Ordering;
+    let spawned = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = spawned.clone();
+    let for_spawn = paths.clone();
+    let spawn: crate::daemon::SpawnFn = std::sync::Arc::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+        let (ctx, _urls) = daemon_context(&for_spawn);
+        tokio::spawn(async move {
+            match crate::daemon::Server::bind(ctx, crate::daemon::ServeConfig::default()).await {
+                Ok(server) => {
+                    let _ = server.run().await;
+                }
+                Err(e) => panic!("test daemon failed to bind: {e}"),
+            }
+        });
+        Ok(())
+    });
+    (crate::daemon::Connector::new(paths.clone(), spawn), spawned)
+}

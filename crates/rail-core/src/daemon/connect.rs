@@ -252,7 +252,7 @@ impl Connector {
     }
 }
 
-fn open_lock_file(dir: &Path, path: &Path) -> std::io::Result<File> {
+pub(crate) fn open_lock_file(dir: &Path, path: &Path) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
     create_private_dir(dir)?;
     std::fs::OpenOptions::new()

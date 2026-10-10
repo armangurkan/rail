@@ -1,0 +1,118 @@
+//! One client connection: the hello first, then each request on its own task so a long
+//! `pending.wait` never holds up the others. When the client goes away its in-flight requests
+//! are aborted; work they started on the blocking pool or in detached tasks carries on.
+
+use std::ops::ControlFlow;
+use std::sync::Arc;
+
+use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
+use tokio::net::unix::OwnedReadHalf;
+use tokio::sync::mpsc;
+use tokio::task::JoinSet;
+
+use super::context::DaemonContext;
+use super::registry::{Call, Registry};
+use super::server::ServerState;
+use super::wire::{
+    INVALID_REQUEST, Message, PARSE_ERROR, Response, RpcError, WireError, encode_frame,
+    parse_message, read_frame,
+};
+use crate::ops::names;
+
+pub(crate) struct Connection {
+    pub ctx: Arc<DaemonContext>,
+    pub registry: Arc<Registry>,
+    pub server: Arc<ServerState>,
+}
+
+impl Connection {
+    pub(crate) async fn serve(self, stream: UnixStream) {
+        self.server.client_connected();
+        let (read, mut write) = stream.into_split();
+        let (frames, mut outgoing) = mpsc::unbounded_channel::<Vec<u8>>();
+        tokio::spawn(async move {
+            while let Some(frame) = outgoing.recv().await {
+                if write.write_all(&frame).await.is_err() {
+                    break;
+                }
+            }
+            let _ = write.shutdown().await;
+        });
+        let mut tasks = JoinSet::new();
+        self.read_requests(read, &frames, &mut tasks).await;
+        tasks.abort_all();
+        self.server.client_disconnected();
+    }
+
+    async fn read_requests(
+        &self,
+        read: OwnedReadHalf,
+        frames: &mpsc::UnboundedSender<Vec<u8>>,
+        tasks: &mut JoinSet<()>,
+    ) {
+        let mut reader = BufReader::new(read);
+        let mut greeted = false;
+        loop {
+            let frame = match read_frame(&mut reader).await {
+                Ok(Some(frame)) => frame,
+                Ok(None) => return,
+                Err(WireError::TooLarge) => {
+                    let error = RpcError::new(INVALID_REQUEST, "a message is larger than 1 MiB");
+                    reply(frames, Response::err(None, error));
+                    return;
+                }
+                Err(_) => return,
+            };
+            if self.handle(&frame, &mut greeted, frames, tasks).is_break() {
+                return;
+            }
+        }
+    }
+
+    fn handle(
+        &self,
+        frame: &[u8],
+        greeted: &mut bool,
+        frames: &mpsc::UnboundedSender<Vec<u8>>,
+        tasks: &mut JoinSet<()>,
+    ) -> ControlFlow<()> {
+        let request = match parse_message(frame) {
+            Ok(Message::Request(request)) => request,
+            Ok(_) => return ControlFlow::Continue(()),
+            Err(e) => {
+                reply(
+                    frames,
+                    Response::err(None, RpcError::new(PARSE_ERROR, e.to_string())),
+                );
+                return ControlFlow::Continue(());
+            }
+        };
+        if !*greeted && request.method != names::HELLO {
+            let error = RpcError::new(INVALID_REQUEST, "the first request must be hello");
+            reply(frames, Response::err(Some(request.id), error));
+            return ControlFlow::Break(());
+        }
+        *greeted = true;
+        self.server.touch();
+        let call = Call {
+            ctx: self.ctx.clone(),
+            server: self.server.clone(),
+        };
+        let (registry, frames) = (self.registry.clone(), frames.clone());
+        tasks.spawn(async move {
+            let response = registry.dispatch(call, request).await;
+            reply(&frames, response);
+        });
+        ControlFlow::Continue(())
+    }
+}
+
+fn reply(frames: &mpsc::UnboundedSender<Vec<u8>>, response: Response) {
+    match encode_frame(&response) {
+        Ok(frame) => {
+            let _ = frames.send(frame);
+        }
+        Err(e) => tracing::error!(error = %e, "could not encode a response"),
+    }
+}

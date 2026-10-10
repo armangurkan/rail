@@ -1,0 +1,80 @@
+//! The handshake, the daemon's own state, `status` and `accounts.list`.
+
+use crate::auth::open_secret_store;
+use crate::config;
+use crate::daemon::registry::Call;
+use crate::daemon::wire::PROTOCOL_VERSION;
+use crate::doctor;
+use crate::ops::{
+    AccountSummary, AccountsListRequest, AccountsListResponse, DaemonInfo, DaemonInfoRequest,
+    DaemonStopRequest, DaemonStopResponse, HelloRequest, HelloResponse, OpError, StatusRequest,
+    StatusResponse, TokenState,
+};
+
+/// Always answers: the client compares versions and decides what to do.
+pub(super) async fn hello(call: Call, request: HelloRequest) -> Result<HelloResponse, OpError> {
+    if request.protocol != PROTOCOL_VERSION || request.version != call.server.config.version {
+        tracing::info!(client = %request.version, "hello from a client of another version");
+    }
+    Ok(HelloResponse {
+        protocol: PROTOCOL_VERSION,
+        version: call.server.config.version.clone(),
+        pid: std::process::id(),
+    })
+}
+
+pub(super) async fn daemon_info(call: Call, _: DaemonInfoRequest) -> Result<DaemonInfo, OpError> {
+    Ok(call.server.info(&call.ctx))
+}
+
+pub(super) async fn daemon_stop(
+    call: Call,
+    _: DaemonStopRequest,
+) -> Result<DaemonStopResponse, OpError> {
+    call.server.request_shutdown();
+    Ok(DaemonStopResponse { stopping: true })
+}
+
+pub(super) async fn status(call: Call, _: StatusRequest) -> Result<StatusResponse, OpError> {
+    let paths = call.ctx.paths.clone();
+    let doctor = call
+        .ctx
+        .blocking(move || Ok(doctor::gather(&paths)))
+        .await?;
+    Ok(StatusResponse {
+        doctor,
+        daemon: call.server.info(&call.ctx),
+    })
+}
+
+pub(super) async fn accounts_list(
+    call: Call,
+    _: AccountsListRequest,
+) -> Result<AccountsListResponse, OpError> {
+    let paths = call.ctx.paths.clone();
+    call.ctx
+        .blocking(move || {
+            let config = config::load(&paths.config_file())?;
+            let secrets = open_secret_store(config.general.secrets, &paths);
+            let accounts = config
+                .accounts
+                .iter()
+                .map(|account| AccountSummary {
+                    name: account.name.clone(),
+                    kind: account.kind,
+                    address: account.address.clone(),
+                    color: account.color.clone(),
+                    tokens: match secrets.get_tokens(&account.address) {
+                        Ok(Some(_)) => TokenState::Present,
+                        Ok(None) => TokenState::Missing,
+                        Err(e) => TokenState::Error {
+                            message: e.to_string().into(),
+                        },
+                    },
+                    ai_send: account.ai_send(),
+                })
+                .collect();
+            Ok(AccountsListResponse { accounts })
+        })
+        .await
+}
