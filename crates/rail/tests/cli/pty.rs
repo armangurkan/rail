@@ -197,7 +197,7 @@ fn account_remove_on_a_terminal_removes_after_yes() {
     let (status, screen) = answer_removal(&dir, b"Yes\r");
     assert_eq!(status.code(), Some(0), "{screen:?}");
     assert!(
-        screen.contains("Remove account work <me@example.com> (gmail)?"),
+        screen.contains("Remove account \"work\" (\"me@example.com\", gmail)?"),
         "{screen:?}"
     );
     assert!(screen.contains("Mail already synced stays"), "{screen:?}");

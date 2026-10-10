@@ -1,5 +1,5 @@
 //! The real `rail mcp` binary driven over piped stdio by an rmcp client. The client plays an
-//! MCP host that accepts, declines, or cannot show elicitation forms.
+//! MCP host that accepts, declines, cancels, answers oddly, or cannot show elicitation forms.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -10,7 +10,7 @@ use rmcp::model::{
     ClientRequest, ElicitRequestParams, ElicitResult, ElicitationAction, GetPromptRequestParams,
     Implementation,
 };
-use rmcp::service::{PeerRequestOptions, RequestContext, RunningService};
+use rmcp::service::{PeerRequestOptions, RequestContext, RunningService, ServiceError};
 use rmcp::transport::TokioChildProcess;
 use rmcp::{ClientHandler, ErrorData, RoleClient, ServiceExt};
 use serde_json::{Value, json};
@@ -19,6 +19,8 @@ const FILE_BACKEND: &str = "[general]\nsecrets = \"file\"\n";
 const KEYRING_BACKEND: &str = "[general]\nsecrets = \"keyring\"\n";
 const WORK: &str = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\nclient_secret = \"GOCSPX-test-secret\"\n";
 const CLIENT_SECRET: &str = "GOCSPX-test-secret";
+/// A secret an agent pastes where it does not belong.
+const CANARY: &str = "GOCSPX-canary-pasted-secret";
 const ACCESS: &str = "test-access-token";
 const REFRESH: &str = "test-refresh-token";
 const CODE: &str = "test-authorization-code";
@@ -28,17 +30,32 @@ const BOUND: Duration = Duration::from_secs(30);
 /// A tool's (read-only, destructive, open-world) hints.
 type Hints = (Option<bool>, Option<bool>, Option<bool>);
 
-/// An MCP host. `answer` is what it does with an elicitation form; `None` means it has no
-/// elicitation capability at all.
+/// What the host does with a confirmation form.
+#[derive(Clone, Copy, Debug)]
+enum Reply {
+    /// Accept with the box ticked.
+    Yes,
+    /// Accept with the box left unticked.
+    Unticked,
+    /// Accept without any content.
+    Empty,
+    Decline,
+    Cancel,
+}
+
+/// An MCP host. `reply` is what it does with an elicitation form; `None` means it has no
+/// elicitation capability at all. `meanwhile` runs before it answers, to change things
+/// between the question and the answer.
 #[derive(Clone)]
 struct Host {
-    answer: Option<ElicitationAction>,
+    reply: Option<Reply>,
     asked: Arc<Mutex<Vec<String>>>,
+    meanwhile: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl ClientHandler for Host {
     fn get_info(&self) -> ClientConfig {
-        let capabilities = match self.answer {
+        let capabilities = match self.reply {
             Some(_) => ClientCapabilities::builder().enable_elicitation().build(),
             None => ClientCapabilities::default(),
         };
@@ -53,20 +70,25 @@ impl ClientHandler for Host {
         if let ElicitRequestParams::FormElicitationParams { message, .. } = request {
             self.asked.lock().unwrap().push(message);
         }
-        Ok(match self.answer.clone() {
-            Some(ElicitationAction::Accept) => {
-                ElicitResult::new(ElicitationAction::Accept).with_content(json!({"confirm": true}))
-            }
-            Some(other) => ElicitResult::new(other),
-            None => ElicitResult::new(ElicitationAction::Decline),
+        if let Some(meanwhile) = &self.meanwhile {
+            meanwhile();
+        }
+        let accept = ElicitResult::new(ElicitationAction::Accept);
+        Ok(match self.reply {
+            Some(Reply::Yes) => accept.with_content(json!({"confirm": true})),
+            Some(Reply::Unticked) => accept.with_content(json!({"confirm": false})),
+            Some(Reply::Empty) => accept,
+            Some(Reply::Cancel) => ElicitResult::new(ElicitationAction::Cancel),
+            Some(Reply::Decline) | None => ElicitResult::new(ElicitationAction::Decline),
         })
     }
 }
 
-fn host(answer: Option<ElicitationAction>) -> Host {
+fn host(reply: Option<Reply>) -> Host {
     Host {
-        answer,
+        reply,
         asked: Arc::default(),
+        meanwhile: None,
     }
 }
 
@@ -165,13 +187,35 @@ async fn start(dir: &tempfile::TempDir, host: Host, token_url: Option<String>) -
     }
 }
 
-async fn call(client: &Session, name: &str, args: Value) -> CallToolResult {
+/// A tool call, bounded; the error is the protocol's (an argument the schema refuses).
+async fn try_call(
+    client: &Session,
+    name: &str,
+    args: Value,
+) -> Result<CallToolResult, ServiceError> {
     let arguments = args.as_object().cloned().unwrap_or_default();
     let request = CallToolRequestParams::new(name.to_string()).with_arguments(arguments);
     tokio::time::timeout(BOUND, client.call_tool(request))
         .await
         .unwrap_or_else(|_| panic!("{name} answered in time"))
-        .unwrap()
+}
+
+async fn call(client: &Session, name: &str, args: Value) -> CallToolResult {
+    try_call(client, name, args).await.unwrap()
+}
+
+/// `future`, failing the test if it takes longer than `BOUND`.
+async fn bounded<T>(what: &str, future: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(BOUND, future)
+        .await
+        .unwrap_or_else(|_| panic!("{what} finished in time"))
+}
+
+/// True when rmcp refused the arguments before the tool ran: a field the schema does not have.
+fn refused_by_schema(result: &CallToolResult) -> bool {
+    result.is_error == Some(true)
+        && result.structured_content.is_none()
+        && text(result).contains("unknown field")
 }
 
 fn structured(result: &CallToolResult) -> &Value {
@@ -190,7 +234,9 @@ async fn the_tools_carry_their_hints_and_no_raw_secret_input() {
     let dir = tempfile::tempdir().unwrap();
     write_config(&dir, FILE_BACKEND);
     let client = start(&dir, host(None), None).await;
-    let tools = client.list_all_tools().await.unwrap();
+    let tools = bounded("tools/list", client.list_all_tools())
+        .await
+        .unwrap();
     let hints: BTreeMap<String, Hints> = tools
         .iter()
         .map(|t| {
@@ -237,6 +283,7 @@ async fn the_tools_carry_their_hints_and_no_raw_secret_input() {
         .collect();
     assert!(!add.contains("client_secret"), "{add:?}");
     assert!(add.contains("client_secret_file") && add.contains("client_secret_ref"));
+    assert_eq!(schema("rail_account_add")["additionalProperties"], false);
     let remove = schema("rail_account_remove").to_string();
     assert!(
         !remove.contains("confirm"),
@@ -256,13 +303,17 @@ async fn the_setup_prompt_and_the_instructions() {
     let dir = tempfile::tempdir().unwrap();
     write_config(&dir, FILE_BACKEND);
     let client = start(&dir, host(None), None).await;
-    let prompts = client.list_all_prompts().await.unwrap();
-    let names: Vec<_> = prompts.iter().map(|p| p.name.to_string()).collect();
-    assert_eq!(names, ["setup"]);
-    let setup = client
-        .get_prompt(GetPromptRequestParams::new("setup"))
+    let prompts = bounded("prompts/list", client.list_all_prompts())
         .await
         .unwrap();
+    let names: Vec<_> = prompts.iter().map(|p| p.name.to_string()).collect();
+    assert_eq!(names, ["setup"]);
+    let setup = bounded(
+        "prompts/get",
+        client.get_prompt(GetPromptRequestParams::new("setup")),
+    )
+    .await
+    .unwrap();
     let body = serde_json::to_string(&setup).unwrap();
     assert!(
         body.contains("rail_status") && body.contains("rail_provider_guide"),
@@ -286,136 +337,81 @@ async fn the_setup_prompt_and_the_instructions() {
     client.close().await;
 }
 
-/// Run one tool call against a fresh `rail mcp` whose config is `config`, as `answer`'s host.
+/// Run one tool call against a fresh `rail mcp` whose config is `config`, as `host`.
 async fn one_call(
     config: &str,
-    answer: Option<ElicitationAction>,
+    host: Host,
     tool: &str,
     args: Value,
-) -> (tempfile::TempDir, CallToolResult, Vec<String>) {
+) -> (
+    tempfile::TempDir,
+    Result<CallToolResult, ServiceError>,
+    Vec<String>,
+) {
     let dir = tempfile::tempdir().unwrap();
     write_config(&dir, config);
-    let host = host(answer);
     let asked = host.asked.clone();
     let client = start(&dir, host, None).await;
-    let result = call(&client, tool, args).await;
+    let result = try_call(&client, tool, args).await;
     client.close().await;
     let asked = asked.lock().unwrap().clone();
     (dir, result, asked)
-}
-
-async fn remove_with(
-    answer: Option<ElicitationAction>,
-    args: Value,
-) -> (tempfile::TempDir, CallToolResult, Vec<String>) {
-    one_call(WORK, answer, "rail_account_remove", args).await
 }
 
 fn config_text(dir: &tempfile::TempDir) -> String {
     std::fs::read_to_string(dir.path().join("config").join("config.toml")).unwrap()
 }
 
-#[tokio::test]
-async fn remove_confirmed_through_elicitation_removes_the_account() {
-    let (dir, result, asked) =
-        remove_with(Some(ElicitationAction::Accept), json!({"account": "WORK"})).await;
-    assert_eq!(asked.len(), 1);
-    assert!(asked[0].contains("work <me@example.com>"), "{asked:?}");
-    assert!(asked[0].contains("Rail never deletes mail"), "{asked:?}");
-    assert_eq!(structured(&result)["name"], "work", "{}", text(&result));
-    assert!(!config_text(&dir).contains("me@example.com"));
-}
-
-#[tokio::test]
-async fn remove_declined_through_elicitation_removes_nothing() {
-    let (dir, result, asked) =
-        remove_with(Some(ElicitationAction::Decline), json!({"account": "work"})).await;
-    assert_eq!(asked.len(), 1);
-    assert_eq!(structured(&result)["removed"], false);
-    assert_eq!(config_text(&dir), WORK);
-}
-
-/// Review focus 4: without elicitation nothing is removed, whatever the agent passes.
-#[tokio::test]
-async fn remove_without_elicitation_removes_nothing_and_names_the_cli_command() {
-    let (dir, result, asked) = remove_with(None, json!({"account": "work", "confirm": true})).await;
-    assert!(asked.is_empty());
-    assert_eq!(structured(&result)["removed"], false);
-    assert!(
-        text(&result).contains("rail account remove work"),
-        "{}",
-        text(&result)
-    );
-    assert_eq!(config_text(&dir), WORK);
-}
-
-async fn switch_to_file(
-    answer: Option<ElicitationAction>,
-) -> (tempfile::TempDir, CallToolResult, Vec<String>) {
-    let args = json!({"backend": "file", "confirm": true});
-    one_call(KEYRING_BACKEND, answer, "rail_secrets_configure", args).await
-}
-
-/// No account has tokens, so the keyring is never asked: only the config changes.
-#[tokio::test]
-async fn a_secret_store_change_confirmed_through_elicitation_happens() {
-    let (dir, result, asked) = switch_to_file(Some(ElicitationAction::Accept)).await;
-    assert_eq!(asked.len(), 1, "{asked:?}");
-    assert!(
-        asked[0].contains("from keyring to file") && asked[0].contains("plain 0600 file"),
-        "{asked:?}"
-    );
-    assert_eq!(structured(&result)["backend"], "file", "{}", text(&result));
-    assert!(config_text(&dir).contains("secrets = \"file\""));
-}
-
-#[tokio::test]
-async fn a_secret_store_change_declined_through_elicitation_changes_nothing() {
-    let (dir, result, asked) = switch_to_file(Some(ElicitationAction::Decline)).await;
-    assert_eq!(asked.len(), 1);
-    assert_eq!(structured(&result)["changed"], false, "{}", text(&result));
-    assert_eq!(config_text(&dir), KEYRING_BACKEND);
-}
-
-#[tokio::test]
-async fn a_secret_store_change_without_elicitation_changes_nothing_and_says_how() {
-    let (dir, result, asked) = switch_to_file(None).await;
-    assert!(asked.is_empty());
-    assert_eq!(structured(&result)["changed"], false, "{}", text(&result));
-    assert!(
-        text(&result).contains("secrets = \\\"file\\\"") && text(&result).contains("config.toml"),
-        "{}",
-        text(&result)
-    );
-    assert_eq!(config_text(&dir), KEYRING_BACKEND);
-}
-
-#[tokio::test]
-async fn a_secret_store_setting_already_in_place_needs_no_confirmation() {
-    let args = json!({"backend": "file"});
-    let (dir, result, asked) = one_call(
-        FILE_BACKEND,
-        Some(ElicitationAction::Decline),
-        "rail_secrets_configure",
-        args,
-    )
-    .await;
-    assert!(asked.is_empty(), "{asked:?}");
-    assert_eq!(structured(&result)["backend"], "file", "{}", text(&result));
-    assert_eq!(config_text(&dir), FILE_BACKEND);
-}
+#[path = "mcp/guarded.rs"]
+mod guarded;
 
 #[tokio::test]
 async fn a_relative_path_is_refused_with_the_daemons_reason() {
     let args =
         json!({"kind": "gmail", "address": "me@example.com", "client_secret_file": "cs.json"});
-    let (_dir, result, _) = one_call(FILE_BACKEND, None, "rail_account_add", args).await;
+    let (_dir, result, _) = one_call(FILE_BACKEND, host(None), "rail_account_add", args).await;
+    let result = result.unwrap();
     assert_eq!(result.is_error, Some(true));
     assert!(
         text(&result).contains("use an absolute path"),
         "{}",
         text(&result)
     );
+}
+
+/// Ruling A1: a client secret from an agent is refused with fixed text, and a pasted secret
+/// in the reference field is never echoed.
+#[tokio::test]
+async fn a_client_secret_from_an_agent_is_refused_and_never_echoed() {
+    let dir = tempfile::tempdir().unwrap();
+    write_config(&dir, FILE_BACKEND);
+    let client = start(&dir, host(None), None).await;
+    let pasted = json!({"kind": "gmail", "address": "me@example.com", "client_id": "c", "client_secret": CANARY});
+    let refused = call(&client, "rail_account_add", pasted).await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(
+        text(&refused).contains("Rail does not take client secrets from agents"),
+        "{}",
+        text(&refused)
+    );
+    let as_ref = json!({"kind": "gmail", "address": "me@example.com", "client_id": "c", "client_secret_ref": CANARY});
+    let refused_ref = call(&client, "rail_account_add", as_ref).await;
+    assert_eq!(refused_ref.is_error, Some(true));
+    let unknown = json!({"kind": "gmail", "address": "me@example.com", "secret": CANARY});
+    let refused_unknown = call(&client, "rail_account_add", unknown).await;
+    assert!(
+        refused_by_schema(&refused_unknown),
+        "{}",
+        text(&refused_unknown)
+    );
+    client.close().await;
+    let log = std::fs::read_to_string(dir.path().join("state").join("rail.log")).unwrap();
+    for result in [&refused, &refused_ref, &refused_unknown] {
+        let body = serde_json::to_string(result).unwrap();
+        assert!(!body.contains(CANARY), "{body}");
+    }
+    assert!(!log.contains(CANARY), "the pasted secret is in rail.log");
+    assert!(!config_text(&dir).contains(CANARY));
 }
 
 /// The host giving up on one `rail_wait` (MCP `notifications/cancelled`) leaves the login
@@ -546,6 +542,10 @@ async fn every_tool_result_and_the_log_are_free_of_secrets() {
         ("rail_secrets_configure", json!({"backend": "1password"})),
         ("rail_account_remove", json!({"account": "me@example.com"})),
         ("rail_wait", json!({"id": "add-999", "timeout_secs": 1})),
+        (
+            "rail_account_add",
+            json!({"kind": "gmail", "address": "x@example.com", "client_secret_ref": CANARY}),
+        ),
     ] {
         results.push(call(&client, tool, args).await);
     }
@@ -562,7 +562,7 @@ async fn every_tool_result_and_the_log_are_free_of_secrets() {
     client.close().await;
 
     let log = std::fs::read_to_string(dir.path().join("state").join("rail.log")).unwrap();
-    for secret in [CLIENT_SECRET, ACCESS, REFRESH, CODE] {
+    for secret in [CLIENT_SECRET, ACCESS, REFRESH, CODE, CANARY] {
         for result in &results {
             let body = serde_json::to_string(result).unwrap();
             assert!(!body.contains(secret), "{secret} in a tool result: {body}");

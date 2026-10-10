@@ -15,7 +15,7 @@ pub use login::{
     account_for_login, endpoints_for_login, find_account, login_secret, persist_login, run_login,
     saved_account,
 };
-pub use remove::{removal_summary, remove_account};
+pub use remove::{REMOVE_NEEDS_CONFIRMATION, removal_plan, remove_account, remove_confirmed};
 
 use crate::ops::OpError;
 

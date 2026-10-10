@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::AccountKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GuideRequest {
     pub kind: AccountKind,
     #[serde(default)]
@@ -15,6 +16,7 @@ pub struct GuideRequest {
 
 /// Values filled into the steps. Anything absent stays as a `<placeholder>`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GuideInputs {
     /// Google only: the Cloud project id to create or use.
     #[serde(default)]

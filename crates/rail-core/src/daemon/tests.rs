@@ -477,7 +477,15 @@ async fn secrets_configure_through_the_daemon_switches_the_backend() {
         vault: Some("Rail".into()),
         op_account: None,
         migrate: true,
+        confirm: false,
+        plan: None,
+    };
+    let refused = client.call::<SecretsConfigure>(&request).await.unwrap_err();
+    let plan = refused.confirmation.expect("a plan to confirm").plan;
+    let request = SecretsConfigureRequest {
         confirm: true,
+        plan: Some(plan),
+        ..request
     };
     let done = client.call::<SecretsConfigure>(&request).await.unwrap();
     assert_eq!(done.moved, ["a@x.com"]);
@@ -526,10 +534,21 @@ async fn an_unconfirmed_secrets_change_is_refused_by_the_daemon() {
         op_account: None,
         migrate: true,
         confirm: false,
+        plan: None,
     };
     let err = client.call::<SecretsConfigure>(&request).await.unwrap_err();
-    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert_eq!(err.code, ErrorCode::NotConfirmed);
     assert!(err.message.contains("needs the user's confirmation"));
+    let shown = err.confirmation.unwrap();
+    assert!(shown.text.contains("vault \"Rail\""), "{}", shown.text);
+    let stale = SecretsConfigureRequest {
+        confirm: true,
+        plan: Some("0".repeat(64)),
+        ..request.clone()
+    };
+    let err = client.call::<SecretsConfigure>(&stale).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotConfirmed);
+    assert_eq!(err.confirmation.unwrap(), shown);
     assert_eq!(
         std::fs::read_to_string(paths.config_file()).unwrap(),
         config

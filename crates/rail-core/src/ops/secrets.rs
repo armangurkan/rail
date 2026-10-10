@@ -29,10 +29,17 @@ pub struct SecretsConfigureRequest {
     /// that changes the backend, vault or account without it. Never offered to an agent.
     #[serde(default)]
     pub confirm: bool,
+    /// The `plan` digest from the daemon's `NotConfirmed` refusal, which carried the text the
+    /// person confirmed. A confirmed change without it, or with a stale one, is refused.
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SecretsConfigureResponse {
+    /// False when the settings were already in place and nothing was written.
+    #[serde(default)]
+    pub changed: bool,
     pub backend: SecretsBackend,
     pub previous: SecretsBackend,
     /// Addresses whose tokens were copied to the new backend.

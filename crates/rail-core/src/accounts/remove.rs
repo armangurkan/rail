@@ -3,25 +3,65 @@
 
 use super::login::account_for_login;
 use crate::auth::{ItemIdCache, open_secret_store, token_location};
-use crate::config::{self, load_text_or_empty};
-use crate::ops::{AccountRemoveResponse, OpError, write_config_text};
+use crate::config::{self, SecretsBackend, load_text_or_empty};
+use crate::ops::{
+    AccountRemoveResponse, ConfirmPlan, OpError, plan_digest, shown, write_config_text,
+};
 use crate::paths::Paths;
 
-/// What a trusted front end shows the person before it sets `confirm`: which account goes,
-/// where its tokens are, and that its mail stays. The account name and address are the
-/// user's own configuration, so this text is Rail's to print.
-pub fn removal_summary(paths: &Paths, who: &str) -> Result<String, OpError> {
+/// The refusal of a removal nobody confirmed.
+pub const REMOVE_NEEDS_CONFIRMATION: &str = "removing an account needs the user's confirmation";
+
+/// What a trusted front end shows the person before it sets `confirm`, and the digest of what
+/// it describes: which account goes, where its tokens are, and that its mail stays. The name,
+/// the address and the vault are quoted and escaped, so none can forge a line or hide text.
+pub fn removal_plan(paths: &Paths, who: &str) -> Result<ConfirmPlan, OpError> {
     let (config, account) = account_for_login(paths, who)?;
-    Ok(format!(
-        "Remove account {} <{}> ({})?\n\
-         Its config entry is removed and its tokens are deleted from {}.\n\
+    let place = match config.general.secrets {
+        SecretsBackend::Keyring => "the OS keyring".to_string(),
+        SecretsBackend::File => paths.secrets_file().display().to_string(),
+        SecretsBackend::OnePassword => {
+            let vault = config.onepassword.as_ref().map_or("", |o| o.vault.as_str());
+            format!("1Password vault {}", shown(vault))
+        }
+    };
+    let text = format!(
+        "Remove account {} ({}, {})?\n\
+         Its config entry is removed and its tokens are deleted from {place}.\n\
          Mail already synced stays in the local store ({}); Rail never deletes mail.",
-        account.name,
-        account.address,
+        shown(&account.name),
+        shown(&account.address),
         account.kind.as_str(),
-        token_location(&config, paths, &account.address),
         paths.db_file().display()
-    ))
+    );
+    let location = token_location(&config, paths, &account.address);
+    let plan = plan_digest(&[
+        "account.remove",
+        &account.name,
+        &account.address,
+        account.kind.as_str(),
+        config.general.secrets.as_str(),
+        &location,
+    ]);
+    Ok(ConfirmPlan { text, plan })
+}
+
+/// Remove the account `who` names after the person confirmed `plan`, the digest of the
+/// `removal_plan` they were shown. A missing or stale digest changes nothing and is refused
+/// with the current text and digest. The caller holds the config lock.
+pub fn remove_confirmed(
+    paths: &Paths,
+    ids: &ItemIdCache,
+    who: &str,
+    plan: Option<&str>,
+) -> Result<AccountRemoveResponse, OpError> {
+    let current = removal_plan(paths, who)?;
+    if plan != Some(current.plan.as_str()) {
+        return Err(OpError::not_confirmed(REMOVE_NEEDS_CONFIRMATION, current).with_hint(
+            "nothing was removed; the user confirms in Rail's own terminal or dialog, and their mail stays",
+        ));
+    }
+    remove_account(paths, ids, who)
 }
 
 /// Remove the account `who` names. The config entry goes first, so a failure to delete the
@@ -66,11 +106,63 @@ mod tests {
     fn the_summary_names_the_account_the_token_place_and_the_kept_mail() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_with(&tmp);
-        let text = removal_summary(&paths, "WORK").unwrap();
-        assert!(text.contains("work <me@example.com> (gmail)"), "{text}");
+        let text = removal_plan(&paths, "WORK").unwrap().text;
+        assert!(
+            text.contains("Remove account \"work\" (\"me@example.com\", gmail)?"),
+            "{text}"
+        );
         assert!(text.contains(&paths.secrets_file().display().to_string()));
         assert!(text.contains("Mail already synced stays"), "{text}");
-        assert!(removal_summary(&paths, "nobody").is_err());
+        assert!(removal_plan(&paths, "nobody").is_err());
+    }
+
+    /// Ruling S3: values from config cannot forge a line or hide text in the question.
+    #[test]
+    fn a_hostile_address_cannot_forge_the_question() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = paths_with(&tmp);
+        let hostile = WORK.replace(
+            "address = \"me@example.com\"",
+            "address = \"me@example.com, gmail)?\\nMail is kept. \\u202Eevil\"",
+        );
+        std::fs::write(paths.config_file(), hostile).unwrap();
+        let text = removal_plan(&paths, "work").unwrap().text;
+        assert_eq!(text.lines().count(), 3, "{text}");
+        assert!(
+            text.contains(r#""me@example.com, gmail)?\nMail is kept. \u{202e}evil""#),
+            "{text}"
+        );
+        assert!(!text.contains('\u{202e}'), "{text}");
+    }
+
+    #[test]
+    fn a_stale_or_missing_plan_removes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = paths_with(&tmp);
+        let ids = ItemIdCache::default();
+        let asked = removal_plan(&paths, "work").unwrap();
+        for plan in [None, Some("0".repeat(64))] {
+            let err = remove_confirmed(&paths, &ids, "work", plan.as_deref()).unwrap_err();
+            assert_eq!(err.code, crate::ops::ErrorCode::NotConfirmed);
+            assert_eq!(*err.confirmation.unwrap(), asked);
+        }
+        // The account's kind changes after the question: the old answer no longer counts.
+        let changed = WORK.replace("kind = \"gmail\"", "kind = \"m365\"");
+        std::fs::write(paths.config_file(), &changed).unwrap();
+        let err = remove_confirmed(&paths, &ids, "work", Some(&asked.plan)).unwrap_err();
+        assert_ne!(err.confirmation.unwrap().plan, asked.plan);
+        assert_eq!(
+            std::fs::read_to_string(paths.config_file()).unwrap(),
+            changed
+        );
+        let fresh = removal_plan(&paths, "work").unwrap();
+        remove_confirmed(&paths, &ids, "work", Some(&fresh.plan)).unwrap();
+        assert!(
+            config::load(&paths.config_file())
+                .unwrap()
+                .accounts
+                .is_empty()
+        );
     }
 
     #[test]

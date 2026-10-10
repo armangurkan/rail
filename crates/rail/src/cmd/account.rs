@@ -5,7 +5,6 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::time::Duration;
 
 use color_eyre::eyre::{bail, eyre};
-use rail_core::accounts;
 use rail_core::config::{AccountKind, SecretsBackend};
 use rail_core::daemon::DaemonClient;
 use rail_core::ops::op::{
@@ -13,9 +12,9 @@ use rail_core::ops::op::{
 };
 use rail_core::ops::{
     AccountAddRequest, AccountRemoveRequest, AccountRemoveResponse, AccountSummary,
-    AccountsListRequest, BeginResponse, CancelRequest, ClientSecretInput, LoginBeginRequest,
-    OpError, PendingId, PendingOutcome, PendingState, SavedAccount, TokenState, WaitRequest,
-    WaitResponse,
+    AccountsListRequest, BeginResponse, CancelRequest, ClientSecretInput, ErrorCode,
+    LoginBeginRequest, OpError, PendingId, PendingOutcome, PendingState, SavedAccount, TokenState,
+    WaitRequest, WaitResponse,
 };
 use rail_core::paths::Paths;
 use tokio::signal::unix::{Signal, SignalKind, signal};
@@ -258,25 +257,41 @@ pub async fn list(paths: &Paths) -> color_eyre::Result<()> {
 }
 
 /// `rail account remove <name-or-address>`: only a person at a terminal can confirm, so
-/// without one nothing is removed. On a terminal, show what goes, ask, and only on yes send
-/// the removal (for the account the summary named) with `confirm: true`.
+/// without one nothing is removed. On a terminal, ask the daemon what would go (its refusal
+/// carries the text and the plan digest), show that, ask, and only on yes send the removal
+/// with `confirm: true` and the digest, so what runs is exactly what the person read.
 pub async fn remove(paths: &Paths, who: &str) -> color_eyre::Result<()> {
     if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         bail!(
             "refusing to remove an account without asking: stdin and stdout are not both a terminal; nothing was removed\nhint: run `rail account remove` yourself in a terminal"
         );
     }
-    let (_, account) = accounts::account_for_login(paths, who).map_err(report)?;
-    let summary = accounts::removal_summary(paths, &account.name).map_err(report)?;
-    if !ask(&summary)? {
+    let client = client(paths).await?;
+    let probe = AccountRemoveRequest {
+        account: who.to_string(),
+        confirm: false,
+        plan: None,
+    };
+    let shown = match client.call::<AccountRemove>(&probe).await {
+        Err(error) if error.code == ErrorCode::NotConfirmed => match error.confirmation {
+            Some(shown) => *shown,
+            None => bail!("the daemon did not say what would be removed; nothing was removed"),
+        },
+        Err(error) => return Err(report(error)),
+        Ok(removed) => {
+            print_removed(&removed);
+            return Ok(());
+        }
+    };
+    if !ask(&shown.text)? {
         bail!("nothing was removed");
     }
     let request = AccountRemoveRequest {
-        account: account.name,
         confirm: true,
+        plan: Some(shown.plan),
+        ..probe
     };
-    let removed = client(paths)
-        .await?
+    let removed = client
         .call::<AccountRemove>(&request)
         .await
         .map_err(report)?;

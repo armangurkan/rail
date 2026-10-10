@@ -7,8 +7,10 @@ use serde::Serialize;
 
 use super::summary;
 
-/// Said when a result cannot be encoded; nothing of the result goes into it.
-const UNENCODABLE: &str = "Rail could not encode its answer as JSON. The operation itself ran; rail_status shows where things stand.";
+/// Said when an answer cannot be encoded; nothing of the answer goes into it.
+const UNENCODABLE_ANSWER: &str = "The operation finished, but Rail could not encode its answer as JSON; rail_status shows where things stand.";
+/// Said when an error cannot be encoded; nothing of the error goes into it.
+const UNENCODABLE_ERROR: &str = "The operation failed, and Rail could not encode the error as JSON; rail_status shows where things stand.";
 
 /// What a guarded tool returns when it did nothing: `{"<done>": false, "reason": ..}`, plus
 /// the outside text that explains it (an MCP client's error), marked untrusted.
@@ -30,7 +32,7 @@ fn encode<T: Serialize>(value: &T) -> Option<serde_json::Value> {
 /// A finished operation: its response and the summary.
 pub fn ok<T: Serialize>(value: &T, text: String) -> CallToolResult {
     let Some(value) = encode(value) else {
-        return CallToolResult::error(vec![ContentBlock::text(UNENCODABLE)]);
+        return CallToolResult::error(vec![ContentBlock::text(UNENCODABLE_ANSWER)]);
     };
     let mut result = CallToolResult::structured(value);
     result.content = vec![ContentBlock::text(text)];
@@ -40,7 +42,7 @@ pub fn ok<T: Serialize>(value: &T, text: String) -> CallToolResult {
 /// A failed operation: the error (detail marked untrusted) and its summary.
 pub fn failed(error: &OpError) -> CallToolResult {
     let Some(value) = encode(error) else {
-        return CallToolResult::error(vec![ContentBlock::text(UNENCODABLE)]);
+        return CallToolResult::error(vec![ContentBlock::text(UNENCODABLE_ERROR)]);
     };
     let mut result = CallToolResult::structured_error(value);
     result.content = vec![ContentBlock::text(summary::failure(error))];

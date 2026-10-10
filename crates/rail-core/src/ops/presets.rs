@@ -59,6 +59,7 @@ impl PresetSummary {
 
 /// `preset.fetch`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PresetFetchRequest {
     /// An `https://` URL (plain `http` is refused) or a file path.
     pub source: String,

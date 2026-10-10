@@ -3,12 +3,13 @@
 //! dialog (MCP elicitation). A client without one changes nothing, and the agent is told what
 //! the user can do themselves.
 
-use rail_core::accounts;
-use rail_core::auth::migrate::NEEDS_CONFIRMATION;
 use rail_core::config::SecretsBackend;
 use rail_core::daemon::Connector;
 use rail_core::ops::op::{AccountRemove, SecretsConfigure};
-use rail_core::ops::{AccountRemoveRequest, AgentAccountRemove, OpError, SecretsConfigureRequest};
+use rail_core::ops::{
+    AccountRemoveRequest, AgentAccountRemove, ConfirmPlan, ErrorCode, OpError,
+    SecretsConfigureRequest,
+};
 use rmcp::model::CallToolResult;
 use rmcp::{Peer, RoleServer};
 use schemars::JsonSchema;
@@ -20,11 +21,14 @@ use super::summary;
 
 const NOT_REMOVED: &str = "Nothing was removed";
 const NOT_CHANGED: &str = "Nothing changed";
+/// Said when the daemon refuses a confirmed request because its plan changed meanwhile.
+const PLAN_CHANGED: &str = "what the user confirmed no longer matches what would run (something changed meanwhile, such as an account added), so nothing ran; call the tool again so the user can confirm the new plan.";
 
 /// The arguments of `rail_secrets_configure`: `secrets.configure` without `confirm` (only the
 /// user confirms, through the client's dialog) and without any way to choose the `op` program
 /// (only the user chooses it, by editing `config.toml`).
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AgentSecretsConfigure {
     /// `keyring`, `file` or `1password`.
     pub backend: SecretsBackend,
@@ -60,13 +64,16 @@ impl AgentSecretsConfigure {
         }
     }
 
-    fn request(&self, confirm: bool) -> SecretsConfigureRequest {
+    /// The daemon request: unconfirmed (`plan` absent) to learn the plan, or confirmed with
+    /// the plan's digest after the user said yes.
+    fn request(&self, plan: Option<String>) -> SecretsConfigureRequest {
         SecretsConfigureRequest {
             backend: self.backend,
             vault: self.vault.clone(),
             op_account: self.op_account.clone(),
             migrate: self.migrate,
-            confirm,
+            confirm: plan.is_some(),
+            plan,
         }
     }
 
@@ -81,7 +88,7 @@ impl AgentSecretsConfigure {
             _ => String::new(),
         };
         format!(
-            "ask the user to make the change themselves: set `secrets = \"{backend}\"` under [general]{vault} in config.toml. A hand edit does not move tokens already stored, so each account then needs `rail account login <name>`."
+            "ask the user to make the change themselves (do not edit config.toml yourself): set `secrets = \"{backend}\"` under [general]{vault} in config.toml. A hand edit does not move tokens already stored, so each account then needs `rail account login <name>`."
         )
     }
 }
@@ -111,39 +118,93 @@ fn unconfirmed(
     Some(nothing_done(flag, what, &reason, outside))
 }
 
-/// Remove `request.account` only after the user confirmed `removal_summary` in the client.
+/// What the daemon said to an unconfirmed request.
+enum Probe<T> {
+    /// Nothing needed confirming; this is the answer.
+    Done(T),
+    /// The text to show the user and the plan digest to send back.
+    Ask(ConfirmPlan),
+    Failed(OpError),
+}
+
+fn probe<T>(answer: Result<T, OpError>) -> Probe<T> {
+    match answer {
+        Ok(done) => Probe::Done(done),
+        Err(error) if error.code == ErrorCode::NotConfirmed => match error.confirmation {
+            Some(plan) => Probe::Ask(*plan),
+            None => Probe::Failed(error),
+        },
+        Err(error) => Probe::Failed(error),
+    }
+}
+
+/// The result of a confirmed request: the daemon refuses one whose plan changed after the
+/// user confirmed it, and nothing ran.
+fn confirmed<T: serde::Serialize>(
+    answer: Result<T, OpError>,
+    flag: &str,
+    what: &str,
+    text: impl FnOnce(&T) -> String,
+) -> CallToolResult {
+    match answer {
+        Ok(done) => {
+            let summary = text(&done);
+            ok(&done, summary)
+        }
+        Err(error) if error.code == ErrorCode::NotConfirmed => {
+            nothing_done(flag, what, PLAN_CHANGED, None)
+        }
+        Err(error) => failed(&error),
+    }
+}
+
+/// `who` as the user would type it in a shell: as is when it is a plain name or address.
+fn as_typed(who: &str) -> String {
+    let plain = !who.is_empty()
+        && who
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "@._+-".contains(c));
+    if plain {
+        who.to_string()
+    } else {
+        format!("{who:?}")
+    }
+}
+
+/// Remove `request.account` only after the user confirmed, in the client, the text the daemon
+/// gave for it; the confirmed request carries the daemon's plan digest.
 pub async fn remove(
     daemon: &Connector,
     peer: &Peer<RoleServer>,
     request: AgentAccountRemove,
 ) -> CallToolResult {
-    let paths = daemon.paths();
-    let name = match accounts::account_for_login(paths, &request.account) {
-        Ok((_, account)) => account.name,
-        Err(error) => return failed(&error),
+    let mut call = AccountRemoveRequest {
+        account: request.account,
+        confirm: false,
+        plan: None,
     };
-    let message = match accounts::removal_summary(paths, &name) {
-        Ok(message) => message,
-        Err(error) => return failed(&error),
+    let shown = match probe(daemon.call::<AccountRemove>(&call).await) {
+        Probe::Done(removed) => return ok(&removed, summary::removed(&removed)),
+        Probe::Ask(shown) => shown,
+        Probe::Failed(error) => return failed(&error),
     };
-    let yourself =
-        format!("ask the user to run `rail account remove {name}` themselves in a terminal.");
-    let answer = confirm_with_user(peer, message).await;
+    let yourself = format!(
+        "ask the user to run `rail account remove {}` themselves in a terminal.",
+        as_typed(&call.account)
+    );
+    let answer = confirm_with_user(peer, shown.text).await;
     if let Some(refused) = unconfirmed(answer, "removed", NOT_REMOVED, &yourself) {
         return refused;
     }
-    let confirmed = AccountRemoveRequest {
-        account: name,
-        confirm: true,
-    };
-    match daemon.call::<AccountRemove>(&confirmed).await {
-        Ok(removed) => ok(&removed, summary::removed(&removed)),
-        Err(error) => failed(&error),
-    }
+    call.confirm = true;
+    call.plan = Some(shown.plan);
+    let answer = daemon.call::<AccountRemove>(&call).await;
+    confirmed(answer, "removed", NOT_REMOVED, summary::removed)
 }
 
-/// Change the token store only after the user confirmed what the daemon says the change does.
-/// A request that changes nothing (the settings are already in place) needs no confirmation.
+/// Change the token store only after the user confirmed, in the client, the text the daemon
+/// gave for the change; the confirmed request carries the daemon's plan digest. A request that
+/// changes nothing (the settings are already in place) needs no confirmation.
 pub async fn configure_secrets(
     daemon: &Connector,
     peer: &Peer<RoleServer>,
@@ -152,36 +213,24 @@ pub async fn configure_secrets(
     if let Err(error) = request.check_names() {
         return failed(&error);
     }
-    // Unconfirmed, the daemon either finds nothing to change and answers, or refuses and says
-    // in the hint what the change would do (`describe_switch`, computed where the stores are).
-    let description = match daemon
-        .call::<SecretsConfigure>(&request.request(false))
-        .await
-    {
-        Ok(done) => return ok(&done, summary::secrets(&done)),
-        Err(error) if error.message == NEEDS_CONFIRMATION => error.hint,
-        Err(error) => return failed(&error),
+    let shown = match probe(
+        daemon
+            .call::<SecretsConfigure>(&request.request(None))
+            .await,
+    ) {
+        Probe::Done(done) => return ok(&done, summary::secrets(&done)),
+        Probe::Ask(shown) => shown,
+        Probe::Failed(error) => return failed(&error),
     };
-    let Some(description) = description else {
-        let reason = format!(
-            "Rail could not describe the change to confirm it; {}",
-            request.by_hand()
-        );
-        return nothing_done("changed", NOT_CHANGED, &reason, None);
-    };
-    let answer = confirm_with_user(peer, description).await;
+    let answer = confirm_with_user(peer, shown.text).await;
     if let Some(refused) = unconfirmed(answer, "changed", NOT_CHANGED, &request.by_hand()) {
         return refused;
     }
-    match daemon
-        .call::<SecretsConfigure>(&request.request(true))
-        .await
-    {
-        Ok(done) => ok(&done, summary::secrets(&done)),
-        Err(error) => failed(&error),
-    }
+    let answer = daemon
+        .call::<SecretsConfigure>(&request.request(Some(shown.plan)))
+        .await;
+    confirmed(answer, "changed", NOT_CHANGED, summary::secrets)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +275,13 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("rail account login"), "{text}");
+        assert!(text.contains("do not edit config.toml yourself"), "{text}");
+    }
+
+    #[test]
+    fn a_name_is_shown_as_the_user_would_type_it() {
+        assert_eq!(as_typed("work"), "work");
+        assert_eq!(as_typed("me@example.com"), "me@example.com");
+        assert_eq!(as_typed("a b; rm -rf ~"), "\"a b; rm -rf ~\"");
     }
 }

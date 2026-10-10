@@ -138,8 +138,12 @@ impl RailMcp {
         &self,
         Parameters(request): Parameters<AgentAccountAdd>,
     ) -> Result<CallToolResult, ErrorData> {
+        let from_preset = request.preset.is_some();
         Ok(match request.into_request() {
-            Ok(request) => self.run::<AccountAddBegin>(&request, summary::begun).await,
+            Ok(request) => {
+                let text = |begun: &_| summary::begun(begun, from_preset);
+                self.run::<AccountAddBegin>(&request, text).await
+            }
             Err(error) => failed(&error),
         })
     }
@@ -159,7 +163,7 @@ impl RailMcp {
         Parameters(request): Parameters<LoginBeginRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         Ok(self
-            .run::<AccountLoginBegin>(&request, summary::begun)
+            .run::<AccountLoginBegin>(&request, |b| summary::begun(b, false))
             .await)
     }
 
@@ -177,7 +181,9 @@ impl RailMcp {
         &self,
         Parameters(request): Parameters<ConsentBeginRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        Ok(self.run::<ConsentBegin>(&request, summary::begun).await)
+        Ok(self
+            .run::<ConsentBegin>(&request, |b| summary::begun(b, false))
+            .await)
     }
 
     /// Wait for a begun login or consent: returns when it finishes, fails, or after at most five

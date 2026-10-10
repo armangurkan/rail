@@ -141,6 +141,7 @@ async fn remove_without_confirm_changes_nothing() {
     let request = AccountRemoveRequest {
         account: "work".into(),
         confirm: false,
+        plan: None,
     };
     let err = client.call::<AccountRemove>(&request).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::NotConfirmed);
@@ -149,6 +150,13 @@ async fn remove_without_confirm_changes_nothing() {
             .contains("removing an account needs the user's confirmation"),
         "{err}"
     );
+    let stale = AccountRemoveRequest {
+        account: "work".into(),
+        confirm: true,
+        plan: Some("0".repeat(64)),
+    };
+    let err = client.call::<AccountRemove>(&stale).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotConfirmed);
     assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), TWO);
     assert!(secrets.get_tokens("me@example.com").unwrap().is_some());
     let rows = Store::open(&paths.db_file()).unwrap().list_accounts();
@@ -166,9 +174,20 @@ async fn remove_deletes_the_entry_and_tokens_but_keeps_the_store_row() {
         .unwrap()
         .sync_accounts_from_config(&config)
         .unwrap();
-    let request = AccountRemoveRequest {
+    let ask = AccountRemoveRequest {
         account: "ME@example.com".into(),
+        confirm: false,
+        plan: None,
+    };
+    let refused = client.call::<AccountRemove>(&ask).await.unwrap_err();
+    let shown = refused
+        .confirmation
+        .expect("the text to confirm and its plan");
+    assert!(shown.text.contains("\"work\""), "{}", shown.text);
+    let request = AccountRemoveRequest {
         confirm: true,
+        plan: Some(shown.plan),
+        ..ask
     };
     let removed = client.call::<AccountRemove>(&request).await.unwrap();
     assert_eq!(removed.name, "work");
@@ -196,6 +215,7 @@ async fn remove_of_an_unknown_account_is_not_found() {
     let request = AccountRemoveRequest {
         account: "nobody".into(),
         confirm: true,
+        plan: None,
     };
     let err = client.call::<AccountRemove>(&request).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);

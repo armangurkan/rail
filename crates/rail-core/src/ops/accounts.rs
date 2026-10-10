@@ -69,6 +69,7 @@ pub struct AccountAddRequest {
 /// pass a raw client secret. At most one of `client_secret_file`, `client_secret_ref` and
 /// `preset` may be given.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AgentAccountAdd {
     /// `gmail` or `m365`.
     pub kind: AccountKind,
@@ -97,11 +98,33 @@ pub struct AgentAccountAdd {
     /// Store the client secret in 1Password and keep only a reference in config.
     #[serde(default)]
     pub store_secret_in_1password: bool,
+    /// Set when an agent sent a `client_secret` field. Its value is dropped unread, never kept
+    /// or shown, and the call is refused. Not part of the schema.
+    #[serde(
+        default,
+        rename = "client_secret",
+        deserialize_with = "pasted",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    pub pasted_client_secret: bool,
+}
+
+/// The refusal of a `client_secret` sent by an agent. Fixed text: the value is never echoed.
+pub const NO_SECRETS_FROM_AGENTS: &str = "Rail does not take client secrets from agents; pass an op:// reference, a preset, or an absolute path to the client JSON file";
+
+/// Any value at all: skipped without being read into memory as text.
+fn pasted<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer)?;
+    Ok(true)
 }
 
 impl AgentAccountAdd {
     /// The daemon request this tool call stands for. The browser is always tried.
     pub fn into_request(self) -> Result<AccountAddRequest, OpError> {
+        if self.pasted_client_secret {
+            return Err(OpError::invalid_input(NO_SECRETS_FROM_AGENTS));
+        }
         let sources = [
             self.client_secret_file.map(ClientSecretInput::JsonFile),
             self.client_secret_ref.map(ClientSecretInput::Reference),
@@ -130,6 +153,7 @@ impl AgentAccountAdd {
 
 /// `account.login.begin`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LoginBeginRequest {
     /// The account's name or address, matched without regard to case.
     pub account: String,
@@ -140,6 +164,7 @@ pub struct LoginBeginRequest {
 
 /// `consent.begin`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConsentBeginRequest {
     /// The app registration's Application (client) ID.
     pub client_id: String,
@@ -183,11 +208,16 @@ pub struct AccountRemoveRequest {
     /// Must be true, or nothing is removed.
     #[serde(default)]
     pub confirm: bool,
+    /// The `plan` digest from the daemon's `NotConfirmed` refusal, which carried the text the
+    /// person confirmed. A confirmed request without it, or with a stale one, is refused.
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 
 /// The arguments of the `rail_account_remove` MCP tool. There is no way for the agent to
 /// confirm on the user's behalf: the user confirms through the client's own dialog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AgentAccountRemove {
     /// The account's name or address.
     pub account: String,

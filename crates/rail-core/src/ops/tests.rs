@@ -502,6 +502,7 @@ fn the_agent_add_tool_takes_at_most_one_secret_source() {
         name: None,
         color: None,
         store_secret_in_1password: false,
+        pasted_client_secret: false,
     };
     let request = base.clone().into_request().unwrap();
     assert_eq!(
@@ -519,6 +520,35 @@ fn the_agent_add_tool_takes_at_most_one_secret_source() {
         both.into_request().unwrap_err().code,
         ErrorCode::InvalidInput
     );
+}
+
+/// A client secret an agent sends is refused with fixed text, its value never kept or shown,
+/// and every agent input refuses fields it does not know.
+#[test]
+fn an_agent_cannot_pass_a_client_secret_or_unknown_fields() {
+    let canary = "GOCSPX-canary-pasted-secret";
+    let pasted = serde_json::json!({
+        "kind": "gmail", "address": "me@gmail.com", "client_id": "c", "client_secret": canary
+    });
+    let add: AgentAccountAdd = serde_json::from_value(pasted).unwrap();
+    assert!(!format!("{add:?}").contains(canary));
+    let err = add.into_request().unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert_eq!(err.message, crate::ops::NO_SECRETS_FROM_AGENTS);
+    assert!(!properties::<AgentAccountAdd>().contains("client_secret"));
+    let unknown = serde_json::json!({"account": "work", "confirm": true});
+    assert!(serde_json::from_value::<AgentAccountRemove>(unknown).is_err());
+    let unknown = serde_json::json!({"id": "add-1", "force": true});
+    assert!(serde_json::from_value::<WaitRequest>(unknown.clone()).is_err());
+    assert!(serde_json::from_value::<crate::ops::CancelRequest>(unknown).is_err());
+    let unknown = serde_json::json!({"kind": "gmail", "inputs": {"project": "x"}});
+    assert!(serde_json::from_value::<crate::ops::GuideRequest>(unknown).is_err());
+    let unknown = serde_json::json!({"source": "https://x", "insecure": true});
+    assert!(serde_json::from_value::<crate::ops::PresetFetchRequest>(unknown).is_err());
+    let unknown = serde_json::json!({"account": "w", "open_browser": true, "x": 1});
+    assert!(serde_json::from_value::<crate::ops::LoginBeginRequest>(unknown).is_err());
+    let unknown = serde_json::json!({"client_id": "c", "tenant": "t", "x": 1});
+    assert!(serde_json::from_value::<crate::ops::ConsentBeginRequest>(unknown).is_err());
 }
 
 #[test]

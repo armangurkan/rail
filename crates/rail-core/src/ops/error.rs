@@ -9,6 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::error::Category;
 
+use super::confirm::ConfirmPlan;
 use super::untrusted::Untrusted;
 use crate::auth::{AuthError, SecretError};
 use crate::config::ConfigError;
@@ -65,6 +66,10 @@ pub struct OpError {
     pub detail: Option<Untrusted<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// Set on a `NotConfirmed` refusal: the text to show the person and the plan digest the
+    /// confirmed request must carry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmation: Option<Box<ConfirmPlan>>,
 }
 
 impl OpError {
@@ -75,7 +80,16 @@ impl OpError {
             message: message.into(),
             detail: None,
             hint: None,
+            confirmation: None,
         }
+    }
+
+    /// A change that needs the person's confirmation of `plan` and did not get it (or got it
+    /// for another plan). Nothing was changed.
+    pub fn not_confirmed(message: impl Into<String>, plan: ConfirmPlan) -> Self {
+        let mut error = Self::new(ErrorCode::NotConfirmed, ErrorClass::Permanent, message);
+        error.confirmation = Some(Box::new(plan));
+        error
     }
 
     /// Attach text that came from outside Rail, such as a provider's error description.

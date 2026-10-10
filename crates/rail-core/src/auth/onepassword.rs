@@ -222,9 +222,10 @@ pub fn validate_reference(reference: &str) -> Result<(), SecretError> {
         .map(|rest| rest.split('/').collect())
         .unwrap_or_default();
     if parts.len() < 3 || parts.iter().any(|p| p.trim().is_empty()) {
-        return Err(SecretError::OnePasswordInvalid(format!(
-            "{reference:?} is not a secret reference of the form op://vault/item/field"
-        )));
+        // Never echo the value: it may be a secret pasted where a reference belongs.
+        return Err(SecretError::OnePasswordInvalid(
+            "the client secret reference is not of the form op://vault/item/field".to_string(),
+        ));
     }
     Ok(())
 }

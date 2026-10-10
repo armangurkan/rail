@@ -10,7 +10,10 @@ use super::secrets::{SecretStore, open_secret_store};
 use crate::config::{Config, OnePasswordConfig, SecretsBackend, load_text_or_empty, set_secrets};
 use crate::error::ErrorClass;
 use crate::ops::write_config_text;
-use crate::ops::{ErrorCode, OpError, SecretsConfigureRequest, SecretsConfigureResponse};
+use crate::ops::{
+    ConfirmPlan, ErrorCode, OpError, SecretsConfigureRequest, SecretsConfigureResponse,
+    plan_digest, shown,
+};
 use crate::paths::Paths;
 
 const ONEPASSWORD: &str = "1password";
@@ -32,12 +35,17 @@ pub struct SwitchSummary {
     pub backend: SecretsBackend,
     pub vault: Option<String>,
     pub account: Option<String>,
-    /// Accounts whose tokens would be copied to the new store.
-    pub accounts_moving: usize,
+    /// Whether tokens would live in another store (another backend, vault or account).
+    pub moves_store: bool,
+    /// Whether the request asks for the tokens to be moved.
+    pub migrate: bool,
+    /// Accounts whose tokens would be copied to the new store, sorted.
+    pub moving: Vec<String>,
 }
 
 impl SwitchSummary {
-    /// The text to put in front of the user before they confirm.
+    /// The text to put in front of the user before they confirm. Every value that came from a
+    /// request or config is quoted and escaped, so it can neither forge a line nor hide text.
     pub fn text(&self) -> String {
         let mut text = format!(
             "Change token storage from {} to {}",
@@ -45,22 +53,52 @@ impl SwitchSummary {
             self.backend.as_str()
         );
         if self.backend == SecretsBackend::OnePassword {
-            let vault = self.vault.as_deref().unwrap_or("");
-            text.push_str(&format!(" (vault \"{vault}\""));
+            let vault = shown(self.vault.as_deref().unwrap_or(""));
+            text.push_str(&format!(" (vault {vault}"));
             if let Some(account) = &self.account {
-                text.push_str(&format!(", account \"{account}\""));
+                text.push_str(&format!(", account {}", shown(account)));
             }
             text.push(')');
         }
-        text.push_str(&format!(
-            ". Tokens for {} account(s) will be moved.",
-            self.accounts_moving
-        ));
+        if self.migrate || !self.moves_store {
+            text.push_str(&format!(
+                ". Tokens for {} account(s) will be moved.",
+                self.moving.len()
+            ));
+        } else {
+            text.push_str(
+                ". Tokens stay where they are and are not moved, so each account then needs `rail account login <name>`.",
+            );
+        }
         if self.backend == SecretsBackend::File {
             text.push(' ');
             text.push_str(FILE_WARNING);
         }
         text
+    }
+
+    /// The digest the confirmed request must carry: the old and new backend, the vault, the
+    /// 1Password account, the migrate flag and the accounts whose tokens move.
+    pub fn plan(&self) -> String {
+        let migrate = if self.migrate { "migrate" } else { "keep" };
+        let mut parts = vec![
+            "secrets.configure",
+            self.previous.as_str(),
+            self.backend.as_str(),
+            self.vault.as_deref().unwrap_or(""),
+            self.account.as_deref().unwrap_or(""),
+            migrate,
+        ];
+        parts.extend(self.moving.iter().map(String::as_str));
+        plan_digest(&parts)
+    }
+
+    /// The text and the digest, for a `NotConfirmed` refusal.
+    pub fn confirm_plan(&self) -> ConfirmPlan {
+        ConfirmPlan {
+            text: self.text(),
+            plan: self.plan(),
+        }
     }
 }
 
@@ -120,29 +158,43 @@ fn validate_request(request: &SecretsConfigureRequest) -> Result<(), OpError> {
     }
 }
 
-/// What `request` would change and how many accounts' tokens would move, without changing
-/// anything. A front end shows `SwitchSummary::text` and sets `confirm` after the user agrees.
+/// What `request` would change and which accounts' tokens would move, without changing
+/// anything. A front end shows `SwitchSummary::text` and, after the user agrees, sends the
+/// request again with `confirm` and `SwitchSummary::plan`.
 pub fn describe_switch(
     paths: &Paths,
     ids: &ItemIdCache,
     request: &SecretsConfigureRequest,
 ) -> Result<SwitchSummary, OpError> {
     let plan = Plan::load(paths, request)?;
+    Ok(summarize(&plan, paths, ids, request))
+}
+
+fn summarize(
+    plan: &Plan,
+    paths: &Paths,
+    ids: &ItemIdCache,
+    request: &SecretsConfigureRequest,
+) -> SwitchSummary {
     let onepassword = plan.target.onepassword.as_ref();
-    let moving = if plan.changes() && plan.stores_differ() && request.migrate {
+    let moves_store = plan.changes() && plan.stores_differ();
+    let mut moving = if moves_store && request.migrate {
         let old = open_secret_store(&plan.config, paths, ids);
-        present_accounts(&plan.config, old.as_ref()).len()
+        present_accounts(&plan.config, old.as_ref())
     } else {
-        0
+        Vec::new()
     };
-    Ok(SwitchSummary {
+    moving.sort();
+    SwitchSummary {
         changes: plan.changes(),
         previous: plan.config.general.secrets,
         backend: request.backend,
         vault: onepassword.map(|o| o.vault.clone()),
         account: onepassword.and_then(|o| o.account.clone()),
-        accounts_moving: moving,
-    })
+        moves_store,
+        migrate: request.migrate,
+        moving,
+    }
 }
 
 /// Point config at `request.backend` and, when asked, move every account's tokens there.
@@ -160,13 +212,19 @@ pub fn switch_backend(
         old_copies_kept: Vec::new(),
         already_in_place: Vec::new(),
         config_path: plan.path.clone(),
+        changed: false,
     };
     if !plan.changes() {
         return Ok(response);
     }
-    if !request.confirm {
-        return Err(unconfirmed(paths, ids, request));
+    let summary = summarize(&plan, paths, ids, request);
+    if !request.confirm || request.plan.as_deref() != Some(summary.plan().as_str()) {
+        return Err(OpError::not_confirmed(
+            NEEDS_CONFIRMATION,
+            summary.confirm_plan(),
+        ));
     }
+    response.changed = true;
     let new_text = set_secrets(
         &plan.text,
         &plan.path,
@@ -190,14 +248,6 @@ pub fn switch_backend(
         response.old_copies_kept = present_accounts(&plan.config, old.as_ref());
     }
     Ok(response)
-}
-
-fn unconfirmed(paths: &Paths, ids: &ItemIdCache, request: &SecretsConfigureRequest) -> OpError {
-    let error = OpError::invalid_input(NEEDS_CONFIRMATION);
-    match describe_switch(paths, ids, request) {
-        Ok(summary) => error.with_hint(summary.text()),
-        Err(_) => error,
-    }
 }
 
 /// The accounts that have tokens in `store`. One it cannot read counts as holding them: an
@@ -378,343 +428,4 @@ fn kept(error: &super::secrets::SecretError, what: &str) -> Outcome {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::auth::{FileSecretStore, OnePasswordSecretStore, TokenSet};
-    use crate::config::load;
-    use crate::test_support::FakeOp;
-
-    fn tokens(n: i64) -> TokenSet {
-        TokenSet {
-            access_token: format!("access-{n}"),
-            refresh_token: format!("refresh-{n}"),
-            expires_at: n,
-        }
-    }
-
-    const TWO_ACCOUNTS: &str = "# mine\n[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"a\"\nkind = \"gmail\"\naddress = \"a@x.com\"\nclient_id = \"c\"\n\n[[accounts]]\nname = \"b\"\nkind = \"gmail\"\naddress = \"b@x.com\"\nclient_id = \"c\"\n";
-
-    /// Two accounts on the file backend, with `op_path` set by hand to the fake, as a user
-    /// would. Returns the config text as written.
-    fn setup(tmp: &tempfile::TempDir) -> (Paths, FakeOp, FileSecretStore, String) {
-        let paths = Paths::all_in(tmp.path());
-        let fake = FakeOp::install(tmp.path());
-        let text = format!("{TWO_ACCOUNTS}{}", fake.config_toml());
-        std::fs::create_dir_all(&paths.config_dir).unwrap();
-        std::fs::write(paths.config_file(), &text).unwrap();
-        let file = FileSecretStore::new(paths.secrets_file());
-        file.set_tokens("a@x.com", &tokens(1)).unwrap();
-        file.set_tokens("b@x.com", &tokens(2)).unwrap();
-        (paths, fake, file, text)
-    }
-
-    fn to_onepassword() -> SecretsConfigureRequest {
-        SecretsConfigureRequest {
-            backend: SecretsBackend::OnePassword,
-            vault: Some("Rail".into()),
-            op_account: None,
-            migrate: true,
-            confirm: true,
-        }
-    }
-
-    #[test]
-    fn switching_to_1password_moves_tokens_and_deletes_the_old_copies() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, fake, file, _text) = setup(&tmp);
-        let ids = ItemIdCache::default();
-        let done = switch_backend(&paths, &ids, &to_onepassword()).unwrap();
-        assert_eq!(done.previous, SecretsBackend::File);
-        assert_eq!(done.moved, ["a@x.com", "b@x.com"]);
-        assert!(done.old_copies_kept.is_empty());
-        assert_eq!(file.get_tokens("a@x.com").unwrap(), None);
-        let config = load(&paths.config_file()).unwrap();
-        assert_eq!(config.general.secrets, SecretsBackend::OnePassword);
-        assert_eq!(config.onepassword.as_ref().unwrap().vault, "Rail");
-        assert!(
-            std::fs::read_to_string(paths.config_file())
-                .unwrap()
-                .contains("# mine")
-        );
-        let onepassword = OnePasswordSecretStore::new(fake.cli(), "Rail".into(), ids);
-        assert_eq!(
-            config.onepassword.as_ref().unwrap().op_path.as_deref(),
-            Some(fake.path.as_path()),
-            "the hand-set op_path is kept"
-        );
-        assert_eq!(onepassword.get_tokens("b@x.com").unwrap(), Some(tokens(2)));
-    }
-
-    #[test]
-    fn a_failure_part_way_leaves_the_old_copies_and_the_config() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, fake, file, text) = setup(&tmp);
-        fake.fail_on("b@x.com");
-        let err = switch_backend(&paths, &ItemIdCache::default(), &to_onepassword()).unwrap_err();
-        assert_eq!(err.code, ErrorCode::Secrets);
-        assert!(!err.message.contains("access-2"), "{}", err.message);
-        assert!(
-            err.message
-                .contains("Copied before the failure (old copies kept): [a@x.com]"),
-            "{}",
-            err.message
-        );
-        assert!(
-            err.message.contains("not copied: [b@x.com]"),
-            "{}",
-            err.message
-        );
-        assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
-        assert_eq!(file.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
-        assert_eq!(file.get_tokens("b@x.com").unwrap(), Some(tokens(2)));
-    }
-
-    #[test]
-    fn a_locked_1password_stops_the_switch_before_anything_moves() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, fake, file, text) = setup(&tmp);
-        fake.lock();
-        let err = switch_backend(&paths, &ItemIdCache::default(), &to_onepassword()).unwrap_err();
-        assert!(err.hint.unwrap().contains("op signin"));
-        assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
-        assert_eq!(file.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
-    }
-
-    /// Review focus 6: no request field reaches `op_path`.
-    #[test]
-    fn a_request_cannot_choose_the_program_rail_runs() {
-        let schema =
-            serde_json::to_string(&schemars::schema_for!(SecretsConfigureRequest)).unwrap();
-        assert!(!schema.contains("op_path"), "{schema}");
-        let with_path =
-            serde_json::json!({"backend": "1password", "vault": "Rail", "op_path": "/tmp/evil"});
-        let request: SecretsConfigureRequest = serde_json::from_value(with_path).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = Paths::all_in(tmp.path());
-        std::fs::create_dir_all(&paths.config_dir).unwrap();
-        std::fs::write(paths.config_file(), TWO_ACCOUNTS).unwrap();
-        let _ = switch_backend(&paths, &ItemIdCache::default(), &request);
-        let written = std::fs::read_to_string(paths.config_file()).unwrap();
-        assert!(!written.contains("/tmp/evil"), "{written}");
-    }
-
-    #[test]
-    fn switching_without_migrate_only_changes_the_config() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, fake, file, _text) = setup(&tmp);
-        let request = SecretsConfigureRequest {
-            migrate: false,
-            ..to_onepassword()
-        };
-        let done = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap();
-        assert!(done.moved.is_empty());
-        assert_eq!(done.old_copies_kept, ["a@x.com", "b@x.com"]);
-        assert_eq!(file.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
-        assert!(fake.items().is_empty());
-    }
-
-    #[test]
-    fn the_same_backend_changes_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, _fake, _file, text) = setup(&tmp);
-        let request = SecretsConfigureRequest {
-            backend: SecretsBackend::File,
-            vault: None,
-            op_account: None,
-            migrate: true,
-            confirm: false,
-        };
-        let done = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap();
-        assert!(done.moved.is_empty());
-        assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
-    }
-
-    #[test]
-    fn onepassword_without_a_vault_is_invalid_input() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = Paths::all_in(tmp.path());
-        std::fs::create_dir_all(&paths.config_dir).unwrap();
-        std::fs::write(paths.config_file(), TWO_ACCOUNTS).unwrap();
-        let request = SecretsConfigureRequest {
-            backend: SecretsBackend::OnePassword,
-            vault: None,
-            op_account: None,
-            migrate: true,
-            confirm: true,
-        };
-        let err = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap_err();
-        assert_eq!(err.code, ErrorCode::InvalidInput);
-        assert!(err.hint.unwrap().contains("vault"));
-    }
-
-    #[test]
-    fn an_unconfirmed_change_is_refused_with_nothing_written() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, fake, file, text) = setup(&tmp);
-        let request = SecretsConfigureRequest {
-            confirm: false,
-            ..to_onepassword()
-        };
-        let err = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap_err();
-        assert_eq!(err.code, ErrorCode::InvalidInput);
-        assert_eq!(err.class, ErrorClass::Permanent);
-        assert_eq!(err.message, NEEDS_CONFIRMATION);
-        assert!(err.hint.unwrap().contains("2 account(s)"));
-        assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
-        assert_eq!(file.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
-        assert!(fake.items().is_empty());
-    }
-
-    #[test]
-    fn the_summary_names_the_target_and_warns_about_the_plain_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, _fake, _file, _text) = setup(&tmp);
-        let ids = ItemIdCache::default();
-        let summary = describe_switch(&paths, &ids, &to_onepassword()).unwrap();
-        assert!(summary.changes);
-        assert_eq!(summary.accounts_moving, 2);
-        let text = summary.text();
-        assert!(text.contains("to 1password (vault \"Rail\")"), "{text}");
-        assert!(text.contains("2 account(s)"), "{text}");
-        assert!(!text.contains(FILE_WARNING));
-        switch_backend(&paths, &ids, &to_onepassword()).unwrap();
-        let back = SecretsConfigureRequest {
-            backend: SecretsBackend::File,
-            vault: None,
-            op_account: None,
-            migrate: true,
-            confirm: true,
-        };
-        let text = describe_switch(&paths, &ids, &back).unwrap().text();
-        assert!(text.ends_with(FILE_WARNING), "{text}");
-    }
-
-    #[test]
-    fn changing_only_the_vault_moves_the_tokens() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, fake, _file, _text) = setup(&tmp);
-        let ids = ItemIdCache::default();
-        switch_backend(&paths, &ids, &to_onepassword()).unwrap();
-        let other = SecretsConfigureRequest {
-            vault: Some("Other".into()),
-            ..to_onepassword()
-        };
-        let done = switch_backend(&paths, &ids, &other).unwrap();
-        assert_eq!(done.moved, ["a@x.com", "b@x.com"]);
-        assert!(done.old_copies_kept.is_empty());
-        let config = load(&paths.config_file()).unwrap();
-        assert_eq!(config.onepassword.as_ref().unwrap().vault, "Other");
-        let store = OnePasswordSecretStore::new(fake.cli(), "Other".into(), ids.clone());
-        assert_eq!(store.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
-        let old = OnePasswordSecretStore::new(fake.cli(), "Rail".into(), ids);
-        assert_eq!(old.get_tokens("a@x.com").unwrap(), None);
-    }
-
-    #[test]
-    fn bad_vault_and_account_values_are_invalid_input() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, _fake, _file, text) = setup(&tmp);
-        for request in [
-            SecretsConfigureRequest {
-                vault: Some("a/b".into()),
-                ..to_onepassword()
-            },
-            SecretsConfigureRequest {
-                op_account: Some("  ".into()),
-                ..to_onepassword()
-            },
-        ] {
-            let err = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap_err();
-            assert_eq!(err.code, ErrorCode::InvalidInput, "{err:?}");
-        }
-        assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
-    }
-
-    fn account_cli(fake: &FakeOp, account: &str) -> crate::auth::OpCli {
-        let config = OnePasswordConfig {
-            account: Some(account.into()),
-            ..fake.config()
-        };
-        crate::auth::OpCli::from_config(Some(&config), &fake.runtime_dir)
-    }
-
-    /// Both accounts hold tokens in vault "Rail" of 1Password account `account`.
-    fn on_1password(tmp: &tempfile::TempDir, account: Option<&str>) -> (Paths, FakeOp) {
-        let paths = Paths::all_in(tmp.path());
-        let fake = FakeOp::install(tmp.path());
-        let account_line = account.map_or(String::new(), |a| format!("account = \"{a}\"\n"));
-        let table = fake.config_toml().replace(
-            "vault = \"Rail\"\n",
-            &format!("vault = \"Rail\"\n{account_line}"),
-        );
-        let text = format!(
-            "{}{table}",
-            TWO_ACCOUNTS.replace("secrets = \"file\"", "secrets = \"1password\"")
-        );
-        std::fs::create_dir_all(&paths.config_dir).unwrap();
-        std::fs::write(paths.config_file(), text).unwrap();
-        let cli = match account {
-            Some(a) => account_cli(&fake, a),
-            None => fake.cli(),
-        };
-        let store = OnePasswordSecretStore::new(cli, "Rail".into(), ItemIdCache::default());
-        store.set_tokens("a@x.com", &tokens(1)).unwrap();
-        store.set_tokens("b@x.com", &tokens(2)).unwrap();
-        (paths, fake)
-    }
-
-    fn same_backend_other_account(account: &str, vault: Option<&str>) -> SecretsConfigureRequest {
-        SecretsConfigureRequest {
-            vault: vault.map(Into::into),
-            op_account: Some(account.into()),
-            ..to_onepassword()
-        }
-    }
-
-    #[test]
-    fn another_account_with_the_same_vault_name_gets_the_tokens_and_loses_the_old_copies() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, fake) = on_1password(&tmp, Some("A"));
-        let ids = ItemIdCache::default();
-        let request = same_backend_other_account("B", None);
-        let done = switch_backend(&paths, &ids, &request).unwrap();
-        assert_eq!(done.moved, ["a@x.com", "b@x.com"]);
-        assert!(done.old_copies_kept.is_empty(), "{done:?}");
-        assert!(done.already_in_place.is_empty());
-        assert_eq!(fake.item_count("A", "rail"), 0, "old copies deleted");
-        assert_eq!(fake.item_count("B", "rail"), 2, "new copies written");
-        let new = OnePasswordSecretStore::new(account_cli(&fake, "B"), "Rail".into(), ids);
-        assert_eq!(new.get_tokens("b@x.com").unwrap(), Some(tokens(2)));
-    }
-
-    #[test]
-    fn one_store_named_two_ways_deletes_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, fake) = on_1password(&tmp, None);
-        let ids = ItemIdCache::default();
-        let request = same_backend_other_account("main", Some("rail"));
-        let done = switch_backend(&paths, &ids, &request).unwrap();
-        assert!(done.moved.is_empty(), "{done:?}");
-        assert_eq!(done.already_in_place, ["a@x.com", "b@x.com"]);
-        assert!(done.old_copies_kept.is_empty());
-        assert_eq!(fake.items().len(), 2, "the only copies survive");
-        let config = load(&paths.config_file()).unwrap();
-        let store = OnePasswordSecretStore::new(fake.cli(), config.onepassword.unwrap().vault, ids);
-        assert_eq!(store.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
-    }
-
-    #[test]
-    fn an_unverifiable_new_copy_keeps_the_old_one() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (paths, fake) = on_1password(&tmp, Some("A"));
-        // Account B's third `item list` on fails: after both copies, before they are checked.
-        fake.fail_list_from("B", 3);
-        let ids = ItemIdCache::default();
-        let done = switch_backend(&paths, &ids, &same_backend_other_account("B", None)).unwrap();
-        assert_eq!(done.old_copies_kept, ["a@x.com", "b@x.com"], "{done:?}");
-        assert!(done.already_in_place.is_empty());
-        assert_eq!(fake.item_count("A", "rail"), 2, "nothing was deleted");
-        let old = OnePasswordSecretStore::new(account_cli(&fake, "A"), "Rail".into(), ids);
-        assert_eq!(old.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
-    }
-}
+mod tests;

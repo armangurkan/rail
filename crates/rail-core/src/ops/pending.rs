@@ -75,6 +75,7 @@ pub enum PendingOutcome {
 
 /// `pending.wait`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WaitRequest {
     pub id: PendingId,
     /// At most 300; the default.
@@ -103,6 +104,7 @@ pub struct WaitResponse {
 
 /// `pending.cancel`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CancelRequest {
     pub id: PendingId,
 }

@@ -422,6 +422,15 @@ fn references_are_validated_before_op_runs() {
         assert!(validate_reference(bad).is_err(), "{bad}");
     }
     assert!(validate_reference("op://Rail/Google client/client_secret").is_ok());
+    let canary = "GOCSPX-canary-pasted-secret";
+    let err = validate_reference(canary).unwrap_err();
+    assert!(!err.to_string().contains(canary), "{err}");
+    assert!(!format!("{err:?}").contains(canary), "{err:?}");
+    let op = crate::ops::OpError::from(err);
+    assert!(
+        !serde_json::to_string(&op).unwrap().contains(canary),
+        "{op:?}"
+    );
     let tmp = tempfile::tempdir().unwrap();
     let fake = FakeOp::install(tmp.path());
     assert!(fake.cli().read_reference("op://vault").is_err());
