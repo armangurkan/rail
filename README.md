@@ -321,13 +321,15 @@ ai_send = "confirm"   # "confirm" (the default), "drafts", or "client"
 
 - `confirm`: Rail shows you, through your MCP client's confirmation dialog (MCP elicitation), the
   recipients, the subject and the start of the body, and sends only on an explicit yes. A client
-  without that dialog gets drafts-only behaviour.
+  without that dialog will get drafts-only behaviour; that fallback arrives with the send
+  tools.
 - `drafts`: the agent may create and edit drafts, never send.
 - `client`: Rail relies on your MCP client's own per-call approval prompt. This is the weakest
   option.
 
-The policy covers sending, replying, forwarding and deleting. Mail tools do not exist yet; today
-Rail checks the key, and `rail doctor` shows each account's policy.
+The policy will cover sending, replying, forwarding and deleting. Mail tools do not exist yet;
+today the key is only recorded and reported (`rail doctor`, `status`, `accounts.list`), and
+nothing enforces it.
 
 ### Where things live
 

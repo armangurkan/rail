@@ -12,24 +12,33 @@ use crate::ops::{OP_REFERENCE_PREFIX, OpError, SavedAccount, Secret};
 use crate::paths::Paths;
 use crate::store::Store;
 
-/// The account whose name or address is `who`, ignoring ASCII case.
-pub fn find_account<'a>(config: &'a Config, who: &str) -> Option<&'a AccountConfig> {
-    config
+/// The account whose name or address is `who`. An exact name or address match wins; otherwise
+/// a match ignoring ASCII case must be unique, or the answer is an error, never the first hit.
+pub fn find_account<'a>(config: &'a Config, who: &str) -> Result<&'a AccountConfig, OpError> {
+    let exact = |a: &&AccountConfig| a.name == who || a.address == who;
+    if let Some(account) = config.accounts.iter().find(exact) {
+        return Ok(account);
+    }
+    let mut matches = config
         .accounts
         .iter()
-        .find(|a| a.name.eq_ignore_ascii_case(who) || a.address.eq_ignore_ascii_case(who))
+        .filter(|a| a.name.eq_ignore_ascii_case(who) || a.address.eq_ignore_ascii_case(who));
+    match (matches.next(), matches.next()) {
+        (Some(account), None) => Ok(account),
+        (Some(_), Some(_)) => Err(OpError::invalid_input(format!(
+            "{who:?} matches more than one account ignoring case; use the exact name or address"
+        ))),
+        _ => Err(OpError::not_found(format!(
+            "no account named or addressed {who:?}; run `rail account list` to see the configured accounts"
+        ))),
+    }
 }
 
 /// The config and the account `who` names. An unknown account fails before any browser opens.
 pub fn account_for_login(paths: &Paths, who: &str) -> Result<(Config, AccountConfig), OpError> {
     let path = paths.config_file();
     let config = config::load(&path)?;
-    let account = find_account(&config, who).cloned().ok_or_else(|| {
-        OpError::not_found(format!(
-            "no account named or addressed {who:?} in {}; run `rail account list` to see the configured accounts",
-            path.display()
-        ))
-    })?;
+    let account = find_account(&config, who)?.clone();
     Ok((config, account))
 }
 
@@ -127,6 +136,21 @@ mod tests {
             find_account(&config, "Me@Example.com").unwrap().name,
             "work"
         );
+        let mut twin = config.accounts[0].clone();
+        twin.name = "WORK".into();
+        twin.address = "other@example.com".into();
+        let mut both = config.clone();
+        both.accounts.push(twin);
+        assert_eq!(
+            find_account(&both, "WORK").unwrap().address,
+            "other@example.com"
+        );
+        assert_eq!(
+            find_account(&both, "work").unwrap().address,
+            "me@example.com"
+        );
+        let err = find_account(&both, "Work").unwrap_err();
+        assert!(err.message.contains("more than one account"), "{err}");
         let err = account_for_login(&paths, "nobody").unwrap_err();
         assert!(
             err.message.contains("no account named or addressed"),

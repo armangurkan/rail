@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use crate::accounts::{is_url, require_absolute};
 use crate::daemon::registry::Call;
 use crate::onboarding::{PresetError, discover_presets, fetch_preset, read_preset};
 use crate::ops::{
@@ -36,10 +37,11 @@ pub(super) async fn preset_fetch(
     request: PresetFetchRequest,
 ) -> Result<PresetFetchResponse, OpError> {
     let source = request.source.trim().to_string();
-    let preset = if source.contains("://") {
+    let preset = if is_url(&source) {
         fetch_preset(&call.ctx.http, &source).await?
     } else {
         let path = PathBuf::from(&source);
+        require_absolute(&path)?;
         call.ctx
             .blocking(move || read_preset(&path).map_err(|e| PresetError::Parse(e).into()))
             .await?

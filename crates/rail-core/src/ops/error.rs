@@ -374,16 +374,22 @@ pub fn preset_file_message(error: &ConfigError) -> String {
         ConfigError::Parse {
             path, line, col, ..
         } => {
-            format!("{}:{line}:{col}: {NOT_A_PRESET}", path.display())
+            format!("{}:{line}:{col}: {NOT_A_PRESET}", one_line(path))
         }
         ConfigError::Invalid { path, message } if message == PRESET_TOO_LARGE => {
-            format!("{}: larger than 64 KiB; {NOT_A_PRESET}", path.display())
+            format!("{}: larger than 64 KiB; {NOT_A_PRESET}", one_line(path))
         }
         ConfigError::Invalid { path, .. } | ConfigError::Missing { path } => {
-            format!("{}: {NOT_A_PRESET}", path.display())
+            format!("{}: {NOT_A_PRESET}", one_line(path))
         }
         ConfigError::Io { path, source } => {
-            format!("{}: cannot be read ({})", path.display(), source.kind())
+            format!("{}: cannot be read ({})", one_line(path), source.kind())
         }
     }
+}
+
+/// A path on one line: newlines and control characters are escaped, so a hostile file name
+/// cannot start a line of its own in a message.
+fn one_line(path: &std::path::Path) -> String {
+    path.display().to_string().escape_debug().to_string()
 }

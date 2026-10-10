@@ -26,6 +26,22 @@ pub(crate) fn context(what: &str, error: impl Into<OpError>) -> OpError {
     error
 }
 
+/// True when a preset source names a URL (`http://` is still refused later, as not https).
+pub(crate) fn is_url(source: &str) -> bool {
+    source.starts_with("https://") || source.starts_with("http://")
+}
+
+/// The daemon's working directory is arbitrary, so a local path a client sends must be absolute.
+pub(crate) fn require_absolute(path: &std::path::Path) -> Result<(), OpError> {
+    if path.is_absolute() {
+        Ok(())
+    } else {
+        Err(OpError::invalid_input(
+            "use an absolute path: the daemon's working directory is not yours",
+        ))
+    }
+}
+
 /// Run synchronous file, keyring or `op` work on the blocking pool.
 pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OpError> + Send + 'static,

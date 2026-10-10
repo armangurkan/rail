@@ -113,8 +113,11 @@ fn validate(config: &Config) -> Result<(), String> {
                 account.name
             ));
         }
-        if !names.insert(account.name.as_str()) {
-            return Err(format!("duplicate account name {:?}", account.name));
+        if !names.insert(account.name.to_ascii_lowercase()) {
+            return Err(format!(
+                "duplicate account name {:?} (names are compared ignoring case)",
+                account.name
+            ));
         }
         if !account.address.contains('@') {
             return Err(format!(
@@ -234,6 +237,14 @@ unread = { bold = true }
             ref other => panic!("expected Parse, got {other:?}"),
         }
         assert!(err.to_string().starts_with("/etc/rail/config.toml:3:"));
+    }
+
+    #[test]
+    fn account_names_that_differ_only_in_case_are_duplicates() {
+        let text = "[[accounts]]\nname = \"Work\"\nkind = \"gmail\"\naddress = \"x@example.com\"\nclient_id = \"1\"\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"y@example.com\"\nclient_id = \"2\"\n";
+        let err = p(text).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }));
+        assert!(err.to_string().contains("duplicate account name"), "{err}");
     }
 
     #[test]

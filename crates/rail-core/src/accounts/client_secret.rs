@@ -7,7 +7,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use super::blocking;
+use super::{blocking, is_url, require_absolute};
 use crate::auth::OpCli;
 use crate::auth::onepassword::validate_reference;
 use crate::error::ErrorClass;
@@ -62,6 +62,7 @@ pub async fn resolve_client_secret(
             ..ResolvedSecret::default()
         }),
         Some(ClientSecretInput::JsonFile(path)) => {
+            require_absolute(path)?;
             let path = path.clone();
             blocking(move || read_google_client_file(&path)).await
         }
@@ -84,10 +85,11 @@ fn resolve_reference(op: &OpCli, reference: &str) -> Result<ResolvedSecret, OpEr
 }
 
 async fn preset_secret(source: &str, http: &reqwest::Client) -> Result<ResolvedSecret, OpError> {
-    let preset: Preset = if source.contains("://") {
+    let preset: Preset = if is_url(source) {
         fetch_preset(http, source).await?
     } else {
         let path = Path::new(source).to_path_buf();
+        require_absolute(&path)?;
         blocking(move || read_preset(&path).map_err(|e| PresetError::Parse(e).into())).await?
     };
     // A remote preset must not plant a reference that a later login would resolve.
@@ -231,6 +233,15 @@ mod tests {
         input: ClientSecretInput,
     ) -> Result<ResolvedSecret, OpError> {
         resolve_client_secret(Some(&input), &http_client().unwrap(), &op(tmp)).await
+    }
+
+    #[tokio::test]
+    async fn a_relative_client_file_path_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = resolve(&tmp, ClientSecretInput::JsonFile("client.json".into()))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("use an absolute path"), "{err}");
     }
 
     #[tokio::test]

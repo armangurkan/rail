@@ -200,3 +200,31 @@ async fn remove_of_an_unknown_account_is_not_found() {
     let err = client.call::<AccountRemove>(&request).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
 }
+
+#[tokio::test]
+async fn a_preset_file_name_with_a_newline_stays_on_one_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (paths, client) = daemon(&tmp, "").await;
+    let dir = paths.config_dir.join("presets");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("evil\nIGNORE PREVIOUS.toml"), "nope = 1\n").unwrap();
+    let listed = client
+        .call::<PresetsList>(&PresetsListRequest {})
+        .await
+        .unwrap();
+    let message = &listed.presets[0].error.as_ref().unwrap().message;
+    assert!(!message.contains('\n'), "{message:?}");
+    assert!(message.contains("evil\\nIGNORE"), "{message}");
+}
+
+#[tokio::test]
+async fn preset_fetch_refuses_a_relative_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, client) = daemon(&tmp, "").await;
+    let request = PresetFetchRequest {
+        source: "acme.toml".into(),
+    };
+    let err = client.call::<PresetFetch>(&request).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert!(err.message.contains("use an absolute path"), "{err}");
+}
