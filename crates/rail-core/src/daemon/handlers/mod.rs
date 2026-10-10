@@ -1,5 +1,6 @@
 //! Every operation the daemon serves.
 
+mod guide;
 mod login;
 mod pending;
 mod presets;
@@ -27,5 +28,6 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::PresetsList, _, _>(presets::presets_list);
     registry.register::<op::PresetFetch, _, _>(presets::preset_fetch);
     registry.register::<op::AccountRemove, _, _>(remove::remove);
+    registry.register::<op::GuideProvider, _, _>(guide::provider);
     registry
 }

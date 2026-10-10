@@ -58,6 +58,8 @@ pub enum StepKind {
     Ask,
     /// A Rail tool call.
     Rail,
+    /// Text for the user to keep or publish; the step's `content`. Nothing is run or asked.
+    Produce,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

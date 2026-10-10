@@ -33,6 +33,7 @@ fn the_registry_serves_exactly_the_implemented_operations() {
         names::CONSENT_BEGIN,
         names::DAEMON_INFO,
         names::DAEMON_STOP,
+        names::GUIDE_PROVIDER,
         names::HELLO,
         names::PENDING_CANCEL,
         names::PENDING_WAIT,

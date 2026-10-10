@@ -6,6 +6,7 @@ pub mod config;
 pub mod daemon;
 pub mod doctor;
 pub mod error;
+pub mod guide;
 pub mod onboarding;
 pub mod ops;
 pub mod paths;

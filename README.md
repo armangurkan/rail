@@ -131,6 +131,25 @@ wizard or with the flags shown here.
 
    A browser opens for consent. Google shows an "unverified app" warning for your own app; continue.
 
+<!-- guide:google v1 -->
+**The same steps with `gcloud`.** `gcloud` can create the project and enable the API, but it cannot
+create a desktop OAuth client, so steps 2 and 3 stay in the browser. Pick a project id (6 to 30
+lowercase letters, digits or hyphens):
+
+```sh
+gcloud auth login
+gcloud projects create <project-id>
+gcloud config set project <project-id>
+gcloud services enable gmail.googleapis.com
+```
+
+Then, in the browser:
+
+- the consent screen at `https://console.cloud.google.com/apis/credentials/consent?project=<project-id>`:
+  External, then publish ("In production");
+- the credentials page at `https://console.cloud.google.com/apis/credentials?project=<project-id>`:
+  Create credentials, OAuth client ID, Desktop app, and download the JSON file.
+
 ### Microsoft 365 / Outlook
 
 1. In Azure Portal, **App registrations** > New. Supported account types: pick what matches your
@@ -145,6 +164,28 @@ wizard or with the flags shown here.
        rail account add m365 --address you@corp.com --client-id <application-id>
 
    Add `--tenant <tenant-id-or-domain>` if your organisation restricts the `common` endpoint.
+
+<!-- guide:microsoft v1 -->
+**The same steps with `az`.** The Azure CLI can do the whole registration. Use the tenant id or a
+domain the tenant owns for `<tenant>`, and `AzureADMyOrg` (one organisation) or
+`AzureADMultipleOrgs` for `<audience>`:
+
+```sh
+az version
+az login --tenant <tenant>
+az account show --query tenantId --output tsv
+az ad app create --display-name Rail --sign-in-audience <audience> --public-client-redirect-uris http://127.0.0.1 --is-fallback-public-client true --query appId --output tsv
+az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "oauth2PermissionScopes[?value=='Mail.ReadWrite' || value=='Mail.Send' || value=='User.Read' || value=='offline_access'].{value:value, id:id}" --output table
+az ad app permission add --id <app-id> --api 00000003-0000-0000-c000-000000000000 --api-permissions <mail-readwrite-id>=Scope <mail-send-id>=Scope <user-read-id>=Scope <offline-access-id>=Scope
+```
+
+`az ad app create` prints the Application (client) ID; use it as `<app-id>` and as `--client-id`.
+`az ad sp show` lists the ids of the four Microsoft Graph permissions for `az ad app permission add`.
+An administrator can then approve Rail for the whole organisation:
+
+```sh
+az ad app permission admin-consent --id <app-id>
+```
 
 ### Work or school accounts
 
