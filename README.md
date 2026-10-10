@@ -99,7 +99,7 @@ status 2; use the flag form of `rail account add` instead.
 | `rail account add <gmail\|m365> --address <address> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>]` | Adds an account without the wizard, for scripts. `--address` needs the provider and `--client-id`; any other flag needs `--address`. A partial set exits with status 1 and names the missing flag. |
 | `rail account login <name-or-address>` | Logs in again to an account already in `config.toml` and replaces its tokens. Use it when tokens were revoked, expired or deleted from the keyring. |
 | `rail account list` | Lists configured accounts and whether their tokens are stored. |
-| `rail doctor` | Checks the config file, the store, the secrets backend and every account's tokens. Exits non-zero when anything needs attention. |
+| `rail doctor` | Checks the config file, the store, the secrets backend and every account's tokens. Exits non-zero for config, store, secrets-backend and token-read errors; an account with no stored tokens is listed as `missing` with the `rail account login` advice but does not fail the check. |
 
 ## Setup
 
@@ -158,8 +158,9 @@ registration open **Authentication** and set "Allow public client flows" to **Ye
 Microsoft answers with `AADSTS7000218`.
 
 **Permissions.** Under **API permissions** add Microsoft Graph *delegated* permissions
-`Mail.ReadWrite`, `Mail.Send`, `User.Read` and `offline_access`. None of them needs admin consent by
-itself, but many organisations block user consent for every app (see below).
+`Mail.ReadWrite`, `Mail.Send`, `User.Read` and `offline_access`. Under Microsoft's defaults these
+delegated permissions do not require admin consent, but many organisations block user consent for
+every app (see below).
 
 **Redirect URI.** Add the platform **Mobile and desktop applications** with the value
 `http://127.0.0.1`. Rail uses the same URI for login and for admin consent, and Azure matches any
@@ -175,8 +176,9 @@ approves Rail once for everyone, in either of two ways:
 - *From the portal.* In Azure Portal open the app's **API permissions** and choose **Grant admin
   consent for <organisation>**.
 
-After either, every user of the tenant logs in without a consent prompt, for exactly the permissions
-listed above. If you are not an administrator and your login fails with `AADSTS65001` or
+After either, users should no longer see the consent prompt for exactly the permissions listed above,
+unless the tenant's other policies (Conditional Access, app assignment, MFA) intervene; the table
+below lists the `AADSTS` codes for those. If you are not an administrator and your login fails with `AADSTS65001` or
 `AADSTS90094`, the wizard shows the exact admin-consent URL. Press `c` to copy it, send it to an
 administrator, and press `r` to retry once they have approved.
 
@@ -260,14 +262,18 @@ missing and names the same fix:
 
 The argument is the account's name or its address, matched without regard to case. Rail runs the
 browser login for the account already in `config.toml` and replaces its tokens; the config file is
-not touched. 
+not touched.
+
 ### Check everything
 
     rail doctor
     rail account list
 
 `rail doctor` reports the config file, the store and its schema version, the secrets backend, and
-token presence for every account. It exits non-zero when anything needs attention.
+token presence for every account. It exits non-zero for config, store,
+secrets-backend and token-read errors. An account with no stored tokens is listed as `missing`, with
+the `rail account login` advice, but does not make the exit status non-zero, so scripts that care
+should grep for `missing`.
 
 ## Configuration
 
