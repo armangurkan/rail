@@ -22,6 +22,8 @@ pub enum Command {
     },
     /// Check config, store, secrets, accounts and the daemon.
     Doctor,
+    /// Serve Rail's tools to an AI coding agent over MCP on stdin and stdout.
+    Mcp,
     /// The background daemon that runs every operation. Started on demand.
     Daemon {
         #[command(subcommand)]

@@ -41,6 +41,7 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
         Some(Command::Setup) => cmd::setup::wizard(&paths, None).await,
         Some(Command::Account { command }) => account(&paths, command).await,
         Some(Command::Doctor) => cmd::doctor::run(&paths).await,
+        Some(Command::Mcp) => cmd::mcp::run(&paths).await,
         Some(Command::Daemon { command }) => match command {
             DaemonCommand::Run => cmd::daemon::run(&paths).await,
             DaemonCommand::Status => cmd::daemon::status(&paths).await,

@@ -105,6 +105,60 @@ The wizard needs an interactive terminal. When stdout is a pipe or a file, every
 (`rail`, `rail setup`, `rail account add` without flags) prints a one-line hint and exits with
 status 2; use the flag form of `rail account add` instead.
 
+## Use Rail from an AI agent (MCP)
+
+Rail is also an [MCP](https://modelcontextprotocol.io) server, so a coding agent with a shell
+(Claude Code, Codex, Cursor and similar) can do everything the wizard does, including setting up
+the Google project or the Microsoft app registration. Register it once:
+
+    claude mcp add rail -- rail mcp
+
+(other clients: run the command `rail mcp` as a stdio server). Then ask the agent to run Rail's
+`setup` prompt. It checks `rail_status`, asks which providers you want, and walks you through
+`rail_provider_guide` one step at a time: it runs the `gcloud` or `az` commands with your
+approval, hands you the browser for the pages only you can complete (the Google consent screen
+and the desktop client download, and every login), and finishes with `rail_account_add` and
+`rail_wait`. No secret passes through the agent: `rail_account_add` takes the absolute path of the
+client secret JSON you downloaded, an `op://` reference or a preset, never the secret itself, and
+tokens stay in the daemon. File paths given to any tool must be absolute (the daemon's working
+directory is not the agent's); a relative one is refused with "use an absolute path".
+
+| Tool | What it does |
+|---|---|
+| `rail_status` | Everything `rail doctor` checks, including each account's `ai_send` policy, plus the daemon's state. Read-only. |
+| `rail_accounts_list` | Configured accounts, token presence, `ai_send` policy. Read-only. |
+| `rail_presets_list` | Presets installed on this machine. Read-only. |
+| `rail_preset_fetch` | A preset from an `https://` URL or an absolute file path. Read-only. |
+| `rail_provider_guide` | The Google or Microsoft setup steps, as data. Read-only. |
+| `rail_account_add` | Validates a new account, opens its login and returns the URL and an id. |
+| `rail_account_login` | Logs in again to a configured account. |
+| `rail_admin_consent` | Microsoft admin consent for one organisation. |
+| `rail_wait` | Waits, at most five minutes per call, for a login or consent to finish. Read-only. An agent giving up on a wait does not cancel the login. |
+| `rail_cancel` | Cancels a login or consent that has not reached the save. |
+| `rail_secrets_configure` | Moves tokens between the keyring, the file and 1Password (see below). Needs your confirmation. |
+| `rail_account_remove` | Removes an account's config entry and tokens; its mail stays. Destructive; needs your confirmation. |
+
+There are no tools that send mail yet.
+
+`rail_account_remove` and `rail_secrets_configure` ask you to confirm in the agent's own dialog
+(MCP elicitation), showing what changes: the account and what is removed, or the old and new
+token store, the vault and how many accounts' tokens move (and, when the target is the file, that
+tokens will sit in a plain 0600 file instead of the keyring or 1Password). Neither tool has an
+input that confirms for you. When you decline, nothing changes. A client that cannot show the
+dialog changes nothing either: the agent is told to ask you to run `rail account remove <name>`
+in a terminal, or to edit `secrets` (and `[onepassword]`) in `config.toml` yourself. A setting
+that is already in place needs no confirmation.
+
+Text from outside Rail, such as preset files, the mail provider's and the system's error messages
+now and email later, comes back marked as untrusted. In the summaries the agent reads, every such
+piece is quoted on one line, cut to 200 characters, and preceded by a notice that it is data,
+never instructions. That lowers the risk of a message or a preset steering the agent; the
+`ai_send` policy (see [Configuration](#what-an-ai-agent-may-do-with-your-mail-ai_send)) is the real
+control for sending.
+
+`rail mcp` writes only MCP messages to its standard output and logs to `rail.log`. It talks to the
+background daemon like every other command.
+
 ## Commands
 
 | Command | What it does |
@@ -119,6 +173,7 @@ status 2; use the flag form of `rail account add` instead.
 | `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
+| `rail mcp` | Serves Rail's tools to an AI agent over MCP on standard input and output (see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp)). |
 | `rail doctor` | Checks the config file, the store, the secrets backend, every account's tokens and `ai_send` policy, and the daemon. The checks run in the daemon, so if it cannot start, `rail doctor` fails outright with the reason (for example a socket path too long for a Unix socket; set `RAIL_RUNTIME_DIR` to a shorter directory). Exits non-zero for config, store, secrets-backend and token-read errors; accounts with no tokens show as `missing` without failing the check (see [Check everything](#check-everything)). |
 
 ## Setup
@@ -153,7 +208,8 @@ gcloud config set project <project-id>
 gcloud services enable gmail.googleapis.com
 ```
 
-Then, in the browser:
+An AI agent connected over MCP walks you through exactly these steps (see
+[Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp)). Then, in the browser:
 
 - the consent screen at `https://console.cloud.google.com/apis/credentials/consent?project=<project-id>`:
   External, then publish ("In production");
@@ -499,6 +555,13 @@ client_secret = "op://Rail/Google client/client_secret"
 Rail reads it with `op read` only when a login needs it, and never caches, logs or writes the
 value. This works with any token backend.
 
+To move existing tokens from the keyring or the file into 1Password (or back), ask an agent to call
+`rail_secrets_configure` with `backend = "1password"` and your vault, and confirm the change in its
+dialog. Rail copies each account's tokens, reads them back from the new backend, writes
+`config.toml`, and only then deletes the old copies; a failure part way leaves the old copies and
+the old config in charge. `op_path` is never set this way: only you choose, by editing
+`config.toml`, which program Rail runs as `op`.
+
 ## Project layout
 
 ```
@@ -507,11 +570,13 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding. No ter
   src/store/             SQLite open, migrations, accounts repository
   src/auth/              Secret stores, OAuth endpoints, loopback listener, login and admin-consent flows, token refresh
   src/onboarding/        Presets and the setup wizard's pure state machine
-crates/rail/             Binary: clap CLI, logging, `account`, `daemon`, `doctor` and `setup` commands
+crates/rail/             Binary: clap CLI, logging, `account`, `daemon`, `doctor`, `mcp` and `setup` commands
+  src/cmd/mcp/           The MCP server: tools, the setup prompt, confirmation through elicitation, summaries
   src/tui/               App shell: terminal guard, event loop, widgets, the wizard screen and its effects
   tests/cli.rs           End-to-end tests against the built binary in a temporary XDG layout
   tests/cli/daemon.rs    The daemon through the binary: on-demand start, status, stop, directories, signals
   tests/cli/pty.rs       The same in a pseudo-terminal: the wizard's Ctrl-C and `rail account remove`'s question
+  tests/mcp.rs           `rail mcp` driven by an MCP client that accepts, declines or cannot show confirmations
 assets/brand/            Logos for light and dark backgrounds, and the app icon
 docs/superpowers/        Design specs and phase plans
 deny.toml                Licence and advisory policy for `cargo deny`
