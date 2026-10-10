@@ -584,7 +584,16 @@ with the access and refresh tokens in concealed fields. Values reach `op` only t
 template on its standard input, never as command-line arguments (which other processes can read).
 Each `op` call may take up to 30 seconds, long enough for the 1Password app's unlock prompt. When
 1Password is locked or `op` is not signed in, Rail says so and asks you to unlock the app or run
-`op signin`; `rail doctor` checks this with `op whoami`. Rail resolves `op_path` once (following symlinks) and refuses it when it is
+`op signin`; `rail doctor` checks this with `op whoami`.
+
+Turn on the 1Password app's CLI integration (**Settings → Developer → Integrate with 1Password
+CLI**). `op` then asks the running, unlocked app, from any shell, so the daemon can refresh tokens
+however it was started. A session from `op signin` lives only in the shell that ran it (as
+`OP_SESSION_<account>`) and ends after about 30 minutes without use, so the daemon only has it when
+it was started from that shell, and it reports 1Password as locked once the session ends. With
+several 1Password accounts, set `account` under `[onepassword]` (or `OP_ACCOUNT` for `op` itself).
+
+Rail resolves `op_path` once (following symlinks) and refuses it when it is
 relative, not an executable file, owned by another user, or writable by anyone but its owner, or when
 any directory above it belongs to another user or is writable by others (a sticky directory such as
 `/tmp` is fine); the resolved file is what runs. `op_path`
