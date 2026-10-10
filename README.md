@@ -1,6 +1,10 @@
-# Rail
-
-**Modern email. Native to your terminal.**
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/rail-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/brand/rail-light.png">
+    <img alt="Rail. Modern email. Native to your terminal." src="assets/brand/rail-light.png" width="560">
+  </picture>
+</h1>
 
 [![ci](https://github.com/vitosans/rail/actions/workflows/ci.yml/badge.svg)](https://github.com/vitosans/rail/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
@@ -337,6 +341,7 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding. No ter
 crates/rail/             Binary: clap CLI, logging, `account`, `doctor` and `setup` commands
   src/tui/               App shell: terminal guard, event loop, widgets, the wizard screen and its effects
   tests/cli.rs           End-to-end tests against the built binary in a temporary XDG layout
+assets/brand/            Logos for light and dark backgrounds, and the app icon
 docs/superpowers/        Design specs and phase plans
 deny.toml                Licence and advisory policy for `cargo deny`
 ```
