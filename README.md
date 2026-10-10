@@ -527,13 +527,19 @@ The daemon starts with the environment of the command that started it: `DISPLAY`
 CLI) and `PATH`. It keeps that environment until it exits, ten idle minutes later; run
 `rail daemon stop` to have the next command start one with your current environment.
 
+After an upgrade, the first command of the new version stops the older daemon and starts its
+own. A program of the older version that is still running (an open `rail mcp`, the setup
+wizard) does not stop the newer daemon in turn: its next request fails with "Rail was upgraded;
+restart this program", and the hint names the running daemon's version. A daemon whose version
+Rail cannot read is refused and left running; stop it with `rail daemon stop`.
+
 It also works on the directories of the command that started it, made absolute (a relative
 `RAIL_CONFIG_DIR=cfg` means `cfg` under that command's working directory). A later command whose
 `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR` or `RAIL_STATE_DIR` names other directories (compared after
 resolving symlinks, so a symlinked config directory still counts as the same), but shares the
 same runtime directory, is refused with "a Rail daemon is already running with different
 directories" and changes nothing (as is one too old to say which directories it uses, unless
-its version differs, in which case it is replaced as usual); stop that daemon with `rail daemon stop` from the shell that
+it is older than the command, in which case it is replaced as usual); stop that daemon with `rail daemon stop` from the shell that
 started it, or use the same `RAIL_*` settings. Give each setup its own `RAIL_RUNTIME_DIR` to run
 two side by side.
 

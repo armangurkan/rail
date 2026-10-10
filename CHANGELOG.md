@@ -41,7 +41,8 @@ All notable changes to Rail are recorded here. The format follows
   drops connections from other users. Clients started together share one daemon, which keeps the
   environment and the `RAIL_*` directories of the client that started it and refuses clients whose
   directories differ. At most eight logins wait at once; SIGINT and SIGTERM let saves in flight
-  finish.
+  finish. A client replaces only an older daemon; a client older than the running daemon (an open
+  `rail mcp` after an upgrade) says "Rail was upgraded; restart this program" instead of stopping it.
 - The operation layer: every user operation is a typed request and response (JSON-RPC 2.0, one
   message per line, 1 MiB cap) shared by the TUI, the flag commands and the MCP server.
 - `rail mcp`, a stdio MCP server for AI coding agents (`claude mcp add rail -- rail mcp`) with

@@ -4,6 +4,7 @@
 //! client that finds the daemon silent waits on that lock before it clears the socket and
 //! spawns a successor, unless the socket answers meanwhile: then the daemon was only starting.
 
+use std::cmp::Ordering;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use tokio::net::UnixStream;
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::client::DaemonClient;
+use super::version;
 use super::wire::PROTOCOL_VERSION;
 use crate::error::ErrorClass;
 use crate::ops::op::{DaemonStop, Operation, names};
@@ -130,11 +132,14 @@ impl Connector {
         }
     }
 
-    /// A fresh connection to a daemon of this Rail version, starting one if needed. A daemon of
-    /// another version is asked to stop and replaced. A daemon that works on other directories
-    /// (another `RAIL_*_DIR` setting sharing this runtime directory) is refused, and left alone.
-    /// One that does not say which directories it uses (older than the field) is replaced on a
-    /// version change, and otherwise refused like a mismatch.
+    /// A fresh connection to a daemon of this Rail version, starting one if needed. Only a
+    /// daemon older than this client is asked to stop and replaced; a newer one means Rail was
+    /// upgraded under this long-lived program, which then refuses rather than stopping its
+    /// successor (no ping-pong). A daemon whose version cannot be ordered is refused and left
+    /// alone. A daemon that works on other directories (another `RAIL_*_DIR` setting sharing
+    /// this runtime directory) is refused, and left alone. One that does not say which
+    /// directories it uses (older than the field) is replaced when it is older, and otherwise
+    /// refused like a mismatch.
     pub async fn connect(&self) -> Result<DaemonClient, OpError> {
         for _ in 0..2 {
             let client = self.connect_or_start().await?;
@@ -142,18 +147,23 @@ impl Connector {
             if known {
                 self.check_dirs(client.daemon())?;
             }
-            if self.matches(client.daemon()) {
-                if !known {
+            match self.age(client.daemon()) {
+                DaemonAge::Same if known => return Ok(client),
+                DaemonAge::Same => {
                     return Err(self.dirs_mismatch(
                         "the daemon did not say which directories it uses".to_string(),
                     ));
                 }
-                return Ok(client);
+                DaemonAge::Newer => {
+                    return Err(upgraded_error(&client.daemon().version, &self.version));
+                }
+                DaemonAge::Unordered => return Err(unordered_error()),
+                DaemonAge::Older => {}
             }
             tracing::info!(
                 theirs = %client.daemon().version,
                 ours = %self.version,
-                "replacing a daemon of another version"
+                "replacing an older daemon"
             );
             self.stop(client).await?;
         }
@@ -234,8 +244,20 @@ impl Connector {
         )
     }
 
-    fn matches(&self, hello: &HelloResponse) -> bool {
-        hello.protocol == PROTOCOL_VERSION && hello.version == self.version
+    /// How the daemon's Rail version (then protocol) compares with this client's.
+    fn age(&self, hello: &HelloResponse) -> DaemonAge {
+        if hello.protocol == PROTOCOL_VERSION && hello.version == self.version {
+            return DaemonAge::Same;
+        }
+        let order = version::compare(&hello.version, &self.version)
+            .map(|order| order.then(hello.protocol.cmp(&PROTOCOL_VERSION)));
+        match order {
+            Some(Ordering::Less) => DaemonAge::Older,
+            Some(Ordering::Greater) => DaemonAge::Newer,
+            // Same version, same protocol, different spelling (build metadata): same Rail.
+            Some(Ordering::Equal) => DaemonAge::Same,
+            None => DaemonAge::Unordered,
+        }
     }
 
     async fn connect_or_start(&self) -> Result<DaemonClient, OpError> {
@@ -352,6 +374,40 @@ impl Connector {
             .map_err(|e| OpError::internal(format!("lock task failed: {e}")))?
             .map_err(|e| OpError::io(ErrorCode::Daemon, "locking the daemon start", &e))
     }
+}
+
+/// The running daemon's Rail version relative to this client's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DaemonAge {
+    Older,
+    Same,
+    Newer,
+    /// One of the two versions does not parse; which is newer is unknown.
+    Unordered,
+}
+
+/// A client older than the running daemon: Rail was upgraded while this program ran. The
+/// version is quoted only after it parsed as a version, so it is digits, dots, letters and
+/// hyphens.
+fn upgraded_error(daemon_version: &str, ours: &str) -> OpError {
+    OpError::new(
+        ErrorCode::Daemon,
+        ErrorClass::Permanent,
+        "Rail was upgraded; restart this program",
+    )
+    .with_hint(format!(
+        "the running daemon is Rail {daemon_version}; this program is Rail {ours}"
+    ))
+}
+
+/// Versions that cannot be ordered: refuse and leave the daemon alone.
+fn unordered_error() -> OpError {
+    OpError::new(
+        ErrorCode::Daemon,
+        ErrorClass::Permanent,
+        "a Rail daemon of another version is running",
+    )
+    .with_hint("run `rail daemon stop`, then try again")
 }
 
 /// False for a daemon too old to name its directories in the hello.

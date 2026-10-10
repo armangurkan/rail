@@ -10,6 +10,7 @@ mod handlers;
 mod pending;
 mod registry;
 pub mod server;
+mod version;
 pub mod wire;
 
 #[cfg(test)]

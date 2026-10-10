@@ -245,6 +245,55 @@ async fn a_version_mismatch_stops_the_old_daemon_and_starts_a_new_one() {
     assert_eq!(spawned.load(Ordering::SeqCst), 1);
 }
 
+/// Final review F1: a client older than the running daemon (a long-lived `rail mcp` after an
+/// upgrade) refuses instead of stopping its successor; a daemon whose version does not parse
+/// is refused too. Neither daemon is touched.
+#[tokio::test]
+async fn a_newer_or_unordered_daemon_is_refused_and_left_running() {
+    for (theirs, message) in [
+        ("99.0.0", "Rail was upgraded; restart this program"),
+        (
+            "not-a-version",
+            "a Rail daemon of another version is running",
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(tmp.path());
+        tokio::spawn(fake_daemon(paths.clone(), theirs));
+        wait_for_socket(&paths).await;
+        let (connector, spawned) = connector(&paths, VERSION);
+        let Err(err) = connector.connect().await else {
+            panic!("used a daemon of version {theirs}");
+        };
+        assert_eq!(err.class, crate::error::ErrorClass::Permanent);
+        assert_eq!(err.message, message);
+        if theirs == "99.0.0" {
+            let hint = err.hint.as_deref().unwrap();
+            assert!(
+                hint.contains("Rail 99.0.0") && hint.contains(VERSION),
+                "{hint}"
+            );
+        }
+        assert_eq!(spawned.load(Ordering::SeqCst), 0);
+        let existing = connector.connect_existing().await.unwrap().unwrap();
+        assert_eq!(existing.daemon().version, theirs, "the daemon was replaced");
+        connector.stop(existing).await.unwrap();
+    }
+}
+
+/// Final review F1: equal versions connect, whatever build metadata either side carries.
+#[tokio::test]
+async fn a_daemon_of_the_same_version_is_used() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    tokio::spawn(fake_daemon(paths.clone(), "1.2.3+daemon"));
+    wait_for_socket(&paths).await;
+    let (connector, spawned) = connector(&paths, VERSION);
+    let client = connector.with_version("1.2.3").connect().await.unwrap();
+    assert_eq!(client.daemon().version, "1.2.3+daemon");
+    assert_eq!(spawned.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test]
 async fn connect_existing_never_spawns() {
     let tmp = tempfile::tempdir().unwrap();
