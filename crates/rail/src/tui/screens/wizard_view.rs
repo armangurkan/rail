@@ -636,7 +636,10 @@ mod tests {
         consent_required(&mut screen);
         press(&mut screen, KeyCode::Char('c'));
         screen.update(Msg::Task(TaskResult::Copied(Ok(()))));
-        assert_shows(&screen, &["Sent to the terminal clipboard (OSC 52)"]);
+        assert_shows(
+            &screen,
+            &["Sent via OSC 52. If not copied, select the URL; it is also printed on quit"],
+        );
         press(&mut screen, KeyCode::Char('c'));
         screen.update(Msg::Task(TaskResult::Copied(Err("no tty".into()))));
         assert_shows(&screen, &["Could not copy: no tty; the URL is shown above"]);

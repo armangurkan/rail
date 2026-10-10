@@ -26,6 +26,13 @@ use crate::tui::widgets::text_input::TextInput;
 const FALLBACK_PANEL: (u16, u16) = (57, 10);
 
 /// What keys mean right now.
+/// The copy notice: the clipboard escape cannot confirm delivery, so it says where to look.
+/// The status line is one row, so both notices stay under 80 columns.
+const COPY_NOTICE: &str = "Sent via OSC 52. If not copied, select the URL on screen";
+/// The consent URL is the only one printed on exit, so only its notice says so.
+const COPY_CONSENT_NOTICE: &str =
+    "Sent via OSC 52. If not copied, select the URL; it is also printed on quit";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Mode {
     Choices,
@@ -155,9 +162,11 @@ impl WizardScreen {
     }
 
     fn copied(&mut self, result: Result<(), String>) {
+        // Only the consent URL survives a quit; the login URL dies with this process.
+        let consent = self.shows_consent_url();
         self.notice = Some(match result {
-            Ok(()) => "Sent to the terminal clipboard (OSC 52); if nothing was copied, the URL is printed when you quit"
-                .to_string(),
+            Ok(()) if consent => COPY_CONSENT_NOTICE.to_string(),
+            Ok(()) => COPY_NOTICE.to_string(),
             Err(e) => format!("Could not copy: {e}; the URL is shown above"),
         });
     }
@@ -270,13 +279,14 @@ impl WizardScreen {
         }
     }
 
+    /// True while a failure offers the consent URL to copy.
+    fn shows_consent_url(&self) -> bool {
+        (self.model.failure.as_ref()).is_some_and(|f| matches!(f.primary, Primary::CopyUrl(_)))
+    }
+
     /// The consent URL of a failure, or the login URL while the Login step shows one.
     fn can_copy_url(&self) -> bool {
-        let consent = self
-            .model
-            .failure
-            .as_ref()
-            .is_some_and(|f| matches!(f.primary, Primary::CopyUrl(_)));
+        let consent = self.shows_consent_url();
         consent || (self.step == Step::Login && self.model.url.is_some())
     }
 
@@ -640,14 +650,24 @@ mod tests {
     }
 
     #[test]
+    fn the_copy_notice_for_the_login_url_does_not_promise_a_printout() {
+        let mut screen = wizard_screen();
+        drive(&mut screen, gmail_own_app_keys("me@gmail.com"));
+        let login = Url::parse("https://accounts.example/auth?state=s").unwrap();
+        feed(&mut screen, Event::LoginUrl(login));
+        press(&mut screen, KeyCode::Char('c'));
+        screen.update(Msg::Task(TaskResult::Copied(Ok(()))));
+        let notice = screen.notice.as_deref().unwrap();
+        assert!(!notice.contains("printed"), "{notice}");
+    }
+
+    #[test]
     fn the_copy_notice_does_not_claim_success_it_cannot_verify() {
         let mut screen = wizard_screen();
         screen.update(Msg::Task(TaskResult::Copied(Ok(()))));
         assert_eq!(
             screen.notice.as_deref(),
-            Some(
-                "Sent to the terminal clipboard (OSC 52); if nothing was copied, the URL is printed when you quit"
-            )
+            Some("Sent via OSC 52. If not copied, select the URL on screen")
         );
     }
 

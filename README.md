@@ -83,8 +83,10 @@ ignored, and only `Ctrl-C` is deferred: it quits once the save finishes, so a ha
 never happens.
 
 `c` copies with the terminal clipboard escape sequence (OSC 52), which some terminals ignore without
-saying so. If the wizard ends before it finishes, Rail prints the last consent and login URLs it
-showed once the terminal is back, so you can always copy them from there.
+saying so; if nothing was copied, select the URL on screen. The login URL only works while Rail is
+running, so open it before you quit (select it on screen if the browser did not open). If the wizard
+ends before it finishes, Rail prints only the last admin-consent URL it showed once the terminal is
+back, so a non-administrator can forward it to an administrator. The login URL is never printed.
 
 When the wizard exits, the status is 0 if at least one account was saved (also when you quit after a
 save; Rail then prints "setup interrupted; saved: <names>"), and 1 with "setup cancelled; nothing was

@@ -45,7 +45,7 @@ pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre
     Ok(report(
         screen.added(),
         screen.finished(),
-        &screen.shown_urls(),
+        screen.shown_urls().0.as_ref(),
     ))
 }
 
@@ -57,16 +57,18 @@ struct Outcome {
 }
 
 /// A save is never half done at this point: the wizard holds Ctrl-C while saving. When the
-/// wizard did not finish, the URLs it last showed are printed so a terminal that ignores the
-/// clipboard escape still has a copy path. They carry no secret.
-fn report(added: &[String], finished: bool, urls: &(Option<Url>, Option<Url>)) -> ExitCode {
-    let outcome = outcome(added, finished, urls);
+/// wizard did not finish, the consent URL it last showed is printed, so a non-administrator can
+/// forward it and a terminal that ignores the clipboard escape still has a copy path. The login
+/// URL is never printed: it only works through the loopback listener of this process, which has
+/// closed by then. The consent URL carries no secret.
+fn report(added: &[String], finished: bool, consent: Option<&Url>) -> ExitCode {
+    let outcome = outcome(added, finished, consent);
     print!("{}", outcome.stdout);
     eprint!("{}", outcome.stderr);
     ExitCode::from(outcome.code)
 }
 
-fn outcome(added: &[String], finished: bool, urls: &(Option<Url>, Option<Url>)) -> Outcome {
+fn outcome(added: &[String], finished: bool, consent: Option<&Url>) -> Outcome {
     let mut out = Outcome {
         code: 0,
         stdout: String::new(),
@@ -85,12 +87,8 @@ fn outcome(added: &[String], finished: bool, urls: &(Option<Url>, Option<Url>)) 
     } else {
         out.stderr += &format!("rail: setup interrupted; saved: {}\n", added.join(", "));
     }
-    let (consent, login) = urls;
     if let Some(url) = consent {
         out.stderr += &format!("rail: the last consent URL shown:\n{url}\n");
-    }
-    if let Some(url) = login {
-        out.stderr += &format!("rail: the last login URL shown:\n{url}\n");
     }
     out
 }
@@ -99,11 +97,12 @@ fn outcome(added: &[String], finished: bool, urls: &(Option<Url>, Option<Url>)) 
 mod tests {
     use super::*;
     use crossterm::event::KeyCode;
-    use rail_core::onboarding::Event;
+    use rail_core::error::ErrorClass;
+    use rail_core::onboarding::{Event, Failure};
 
     use crate::tui::app::Msg;
     use crate::tui::screen::Screen;
-    use crate::tui::test_util::{feed, gmail_own_app_keys, press, wizard_screen};
+    use crate::tui::test_util::{feed, gmail_own_app_keys, press, type_text, wizard_screen};
 
     fn cancelled_from_login(url: Option<&str>) -> WizardScreen {
         let mut screen = wizard_screen();
@@ -119,30 +118,79 @@ mod tests {
     }
 
     #[test]
-    fn a_cancel_from_the_login_step_prints_the_login_url() {
+    fn a_cancel_from_the_login_step_does_not_print_the_login_url() {
         let url = "https://accounts.example/auth?state=abc&code_challenge=xyz";
         let screen = cancelled_from_login(Some(url));
-        let out = outcome(screen.added(), screen.finished(), &screen.shown_urls());
+        let out = outcome(
+            screen.added(),
+            screen.finished(),
+            screen.shown_urls().0.as_ref(),
+        );
         assert_eq!(out.code, 1);
-        assert!(out.stderr.contains("setup cancelled; nothing was saved"));
-        assert!(out.stderr.contains(url), "{}", out.stderr);
+        assert_eq!(out.stderr, "rail: setup cancelled; nothing was saved\n");
+        assert!(!out.stderr.contains("accounts.example"), "{}", out.stderr);
         assert!(out.stdout.is_empty());
+    }
+
+    #[test]
+    fn a_consent_url_shown_to_a_non_administrator_is_printed_after_a_cancel() {
+        let mut screen = wizard_screen();
+        for code in [
+            KeyCode::Down,
+            KeyCode::Enter,
+            KeyCode::Down,
+            KeyCode::Enter,
+            KeyCode::Enter,
+        ] {
+            press(&mut screen, code);
+        }
+        type_text(&mut screen, "me@contoso.com");
+        for code in [KeyCode::Tab, KeyCode::Tab, KeyCode::Tab] {
+            press(&mut screen, code);
+        }
+        type_text(&mut screen, "cid");
+        press(&mut screen, KeyCode::Enter);
+        let login = Url::parse("https://accounts.example/auth?state=abc").unwrap();
+        feed(&mut screen, Event::LoginUrl(login));
+        let failure = Failure {
+            message: "AADSTS65001: consent required".into(),
+            class: ErrorClass::Permanent,
+            consent_required: true,
+        };
+        feed(&mut screen, Event::LoginFinished(Err(failure)));
+        press(&mut screen, KeyCode::Esc);
+        assert!(!screen.finished());
+
+        let out = outcome(
+            screen.added(),
+            screen.finished(),
+            screen.shown_urls().0.as_ref(),
+        );
+
+        assert!(
+            out.stderr.contains("the last consent URL shown:\n"),
+            "{}",
+            out.stderr
+        );
+        assert!(out.stderr.contains("/adminconsent"), "{}", out.stderr);
+        assert!(!out.stderr.contains("accounts.example"), "{}", out.stderr);
     }
 
     #[test]
     fn nothing_extra_is_printed_when_no_url_was_shown() {
         let screen = cancelled_from_login(None);
-        let out = outcome(screen.added(), screen.finished(), &screen.shown_urls());
+        let out = outcome(
+            screen.added(),
+            screen.finished(),
+            screen.shown_urls().0.as_ref(),
+        );
         assert_eq!(out.stderr, "rail: setup cancelled; nothing was saved\n");
     }
 
     #[test]
     fn a_finished_setup_prints_the_accounts_and_no_urls() {
-        let urls = (
-            None,
-            Some(Url::parse("https://accounts.example/auth").unwrap()),
-        );
-        let out = outcome(&["work".to_string()], true, &urls);
+        let consent = Url::parse("https://login.microsoftonline.com/x/adminconsent").unwrap();
+        let out = outcome(&["work".to_string()], true, Some(&consent));
         assert_eq!(out.code, 0);
         assert!(out.stdout.contains("Added account \"work\"."));
         assert!(out.stderr.is_empty());
@@ -151,7 +199,7 @@ mod tests {
     #[test]
     fn an_interrupted_setup_lists_what_was_saved_and_the_consent_url() {
         let consent = Url::parse("https://login.microsoftonline.com/x/adminconsent").unwrap();
-        let out = outcome(&["work".to_string()], false, &(Some(consent), None));
+        let out = outcome(&["work".to_string()], false, Some(&consent));
         assert_eq!(out.code, 0);
         assert!(out.stderr.contains("setup interrupted; saved: work"));
         assert!(out.stderr.contains("adminconsent"), "{}", out.stderr);
