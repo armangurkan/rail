@@ -29,6 +29,13 @@ pub enum Step {
     Done,
 }
 
+/// The app registration and tenant an administrator approved Rail for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Consent {
+    pub(super) client_id: String,
+    pub(super) tenant: String,
+}
+
 /// The action in flight. Events that do not match it are stale and ignored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Busy {
@@ -55,7 +62,7 @@ pub struct Wizard {
     pub(super) preset_source: String,
     pub(super) consent_tenant: String,
     /// The tenant that granted admin consent in this session.
-    pub(super) consented: Option<String>,
+    pub(super) consented: Option<Consent>,
     pub(super) errors: BTreeMap<Field, String>,
     /// Set by Next on Details, so untouched fields show their errors too.
     pub(super) show_errors: bool,
@@ -143,11 +150,15 @@ impl Wizard {
             Input::Cancel => vec![Action::Quit],
             Input::Back => self.back(),
             Input::Edit(field, value) => {
-                self.edit(field, value);
+                if self.accepts_edits() {
+                    self.edit(field, value);
+                }
                 Vec::new()
             }
             Input::ToggleAdmin => {
-                self.toggle_admin();
+                if self.accepts_edits() {
+                    self.toggle_admin();
+                }
                 Vec::new()
             }
             Input::Choose(index) => self.choose(index),
@@ -179,12 +190,40 @@ impl Wizard {
         let Some(previous) = self.history.pop() else {
             return Vec::new();
         };
+        if self.step == Step::Login {
+            self.tokens = None;
+        }
         self.step = previous;
         self.clear_status();
         if self.busy.take().is_some() {
             vec![Action::CancelPending]
         } else {
             Vec::new()
+        }
+    }
+
+    /// Fields change only on the steps that show them, and never while an action is in flight.
+    fn accepts_edits(&self) -> bool {
+        self.busy.is_none()
+            && matches!(
+                self.step,
+                Step::Preset | Step::Details | Step::ConsentTenant
+            )
+    }
+
+    /// Whether the current client id and tenant still need an administrator's approval.
+    fn needs_consent(&self) -> bool {
+        let tenant = if self.draft.has_concrete_tenant() {
+            self.draft.tenant.trim()
+        } else {
+            self.consent_tenant.trim()
+        };
+        match &self.consented {
+            Some(done) => {
+                done.client_id != self.draft.client_id.trim()
+                    || !done.tenant.eq_ignore_ascii_case(tenant)
+            }
+            None => true,
         }
     }
 
@@ -315,9 +354,8 @@ impl Wizard {
         if !self.errors.is_empty() {
             return Vec::new();
         }
-        let wants_consent = self.draft.kind == Some(AccountKind::M365)
-            && self.draft.admin
-            && self.consented.is_none();
+        let wants_consent =
+            self.draft.kind == Some(AccountKind::M365) && self.draft.admin && self.needs_consent();
         if wants_consent {
             self.enter_consent();
             return Vec::new();
@@ -352,7 +390,7 @@ impl Wizard {
     }
 
     fn consent_or_continue(&mut self) -> Vec<Action> {
-        if self.consented.is_some() {
+        if !self.needs_consent() {
             self.go(Step::Login);
             return self.start_login();
         }
@@ -373,6 +411,7 @@ impl Wizard {
             return Vec::new();
         };
         self.clear_status();
+        self.tokens = None;
         self.busy = Some(Busy::Login);
         vec![Action::RunLogin(account)]
     }

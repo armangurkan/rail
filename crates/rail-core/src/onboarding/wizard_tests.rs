@@ -4,7 +4,10 @@ use std::path::PathBuf;
 
 use crate::config::AccountConfig;
 use crate::config::AccountKind;
+use crate::error::ErrorClass;
+use crate::onboarding::events::{Failure, Remedy};
 use crate::onboarding::view::StepState;
+use crate::onboarding::wizard::Consent;
 use crate::onboarding::{Action, Busy, Field, Input, Step, Wizard};
 use crate::test_support::{
     contoso_preset, edit, gmail_details, m365_details, own_app, walk, wizard,
@@ -357,4 +360,137 @@ fn a_provider_hint_skips_the_provider_step() {
         !gmail.draft().admin,
         "the administrator box is Microsoft only"
     );
+}
+
+fn tokens() -> crate::auth::TokenSet {
+    crate::auth::TokenSet {
+        access_token: "a".into(),
+        refresh_token: "r".into(),
+        expires_at: 0,
+    }
+}
+
+/// Pretend the in-flight action failed, as `apply` would.
+fn fail_pending(w: &mut Wizard) {
+    w.busy = None;
+    w.failure = Some((Failure::new("boom", ErrorClass::Permanent), Remedy::Retry));
+}
+
+#[test]
+fn retry_after_a_failed_save_reuses_the_tokens_for_an_unchanged_draft() {
+    let mut w = wizard();
+    walk(
+        &mut w,
+        concat(vec![
+            own_app(0),
+            gmail_details("me@gmail.com"),
+            vec![Input::Next],
+        ]),
+    );
+    w.busy = None;
+    assert!(matches!(
+        &w.start_persist(tokens())[..],
+        [Action::Persist { .. }]
+    ));
+    fail_pending(&mut w);
+    let actions = w.handle(Input::Retry);
+    assert!(
+        matches!(&actions[..], [Action::Persist { .. }]),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn retry_after_a_new_login_never_reuses_old_tokens() {
+    let mut w = wizard();
+    walk(
+        &mut w,
+        concat(vec![
+            own_app(0),
+            gmail_details("me@gmail.com"),
+            vec![Input::Next],
+        ]),
+    );
+    w.busy = None;
+    w.start_persist(tokens());
+    fail_pending(&mut w);
+    walk(&mut w, [Input::Back]);
+    assert_eq!(w.step(), Step::Details);
+    let login = walk(
+        &mut w,
+        [edit(Field::Address, "other@gmail.com"), Input::Next],
+    );
+    assert!(matches!(&login[..], [Action::RunLogin(_)]), "{login:?}");
+    fail_pending(&mut w);
+    let actions = w.handle(Input::Retry);
+    assert!(matches!(&actions[..], [Action::RunLogin(_)]), "{actions:?}");
+}
+
+fn consented_to(client_id: &str, tenant: &str) -> Option<Consent> {
+    Some(Consent {
+        client_id: client_id.into(),
+        tenant: tenant.into(),
+    })
+}
+
+#[test]
+fn changing_tenant_or_client_id_requires_consent_again() {
+    let mut w = wizard();
+    let admin_details = concat(vec![
+        own_app(1),
+        m365_details("me@contoso.com", "contoso.onmicrosoft.com"),
+        vec![Input::ToggleAdmin, Input::Next],
+    ]);
+    walk(&mut w, admin_details);
+    assert_eq!(w.step(), Step::AdminConsent);
+    w.consented = consented_to("cid", "contoso.onmicrosoft.com");
+    assert!(matches!(&w.handle(Input::Next)[..], [Action::RunLogin(_)]));
+    back_to_details(&mut w);
+    walk(&mut w, [Input::Next]);
+    assert_eq!(
+        w.step(),
+        Step::Login,
+        "unchanged identity keeps its consent"
+    );
+    back_to_details(&mut w);
+    walk(
+        &mut w,
+        [edit(Field::Tenant, "fabrikam.onmicrosoft.com"), Input::Next],
+    );
+    assert_eq!(w.step(), Step::AdminConsent, "new tenant");
+    w.consented = consented_to("cid", "fabrikam.onmicrosoft.com");
+    back_to_details(&mut w);
+    walk(&mut w, [edit(Field::ClientId, "other-app"), Input::Next]);
+    assert_eq!(w.step(), Step::AdminConsent, "new client id");
+    assert!(matches!(
+        &w.handle(Input::Next)[..],
+        [Action::RunAdminConsent { .. }]
+    ));
+}
+
+fn back_to_details(w: &mut Wizard) {
+    while w.step() != Step::Details {
+        w.handle(Input::Back);
+    }
+}
+
+#[test]
+fn edits_are_ignored_outside_editable_steps_and_while_busy() {
+    let mut w = wizard();
+    walk(&mut w, own_app(1));
+    walk(&mut w, [Input::Back]);
+    assert_eq!(w.step(), Step::Instructions);
+    assert!(walk(&mut w, [edit(Field::ClientId, "x"), Input::ToggleAdmin]).is_empty());
+    assert!(w.draft().client_id.is_empty() && !w.draft().admin);
+    walk(&mut w, [Input::Next]);
+    walk(&mut w, m365_details("me@contoso.com", ""));
+    walk(&mut w, [Input::Next]);
+    assert_eq!(w.busy(), Some(Busy::Login));
+    let actions = walk(
+        &mut w,
+        [edit(Field::Address, "evil@x.com"), Input::ToggleAdmin],
+    );
+    assert!(actions.is_empty());
+    assert_eq!(w.draft().address, "me@contoso.com");
+    assert!(!w.draft().admin);
 }

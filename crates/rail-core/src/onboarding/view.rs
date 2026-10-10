@@ -7,7 +7,7 @@ use super::draft::Field;
 use super::events::{Failure, Remedy};
 use super::instructions::{instructions, portal_url};
 use super::preset::Preset;
-use super::wizard::{Busy, DONE_CHOICES, PROVIDER_CHOICES, START_CHOICES, Step, Wizard};
+use super::wizard::{Busy, Consent, DONE_CHOICES, PROVIDER_CHOICES, START_CHOICES, Step, Wizard};
 use crate::config::AccountKind;
 use crate::error::ErrorClass;
 
@@ -259,7 +259,7 @@ impl Wizard {
     }
 
     fn consent_message(&self) -> String {
-        if let Some(tenant) = &self.consented {
+        if let Some(Consent { tenant, .. }) = &self.consented {
             return format!("Consent granted for {tenant}. Press Enter to log in.");
         }
         if self.busy == Some(Busy::Consent) {
