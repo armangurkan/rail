@@ -1,3 +1,27 @@
-/target
+# Build output
+/target/
+**/target/
+
+# Coverage and profiling
+/lcov.info
+*.profraw
+*.profdata
+
+# Logs and local scratch
 *.log
 .superpowers/
+
+# Local environment and secrets (never commit these)
+.env
+.env.*
+*.pem
+*.key
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
