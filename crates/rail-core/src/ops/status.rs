@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::daemon::DaemonInfo;
+use super::error::OpError;
 use super::untrusted::Untrusted;
 use crate::config::{AccountKind, AiSend};
 
@@ -24,8 +25,9 @@ pub struct DoctorReport {
     pub config_path: PathBuf,
     /// The number of accounts when the config loaded.
     pub config_accounts: Option<usize>,
-    /// Why the config did not load, with its path and line.
-    pub config_error: Option<String>,
+    /// Why the config did not load: the path and line in `message`, the parser's text (which
+    /// can quote the file) in `detail`.
+    pub config_error: Option<OpError>,
     pub db_path: PathBuf,
     pub db_size_bytes: Option<u64>,
     pub schema_version: Option<i64>,

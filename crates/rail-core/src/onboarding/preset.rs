@@ -120,6 +120,12 @@ pub fn read_preset(path: &Path) -> Result<Preset, ConfigError> {
         path: path.to_path_buf(),
         source,
     };
+    if !std::fs::metadata(path).map_err(io_error)?.is_file() {
+        return Err(ConfigError::Invalid {
+            path: path.to_path_buf(),
+            message: "the preset is not a regular file".to_string(),
+        });
+    }
     let file = std::fs::File::open(path).map_err(io_error)?;
     let mut bytes = Vec::new();
     file.take(MAX_PRESET_BYTES as u64 + 1)
@@ -441,6 +447,46 @@ help_url = "https://intranet.example/rail"
             matches!(&err, ConfigError::Invalid { message, .. } if message == PRESET_TOO_LARGE),
             "{err}"
         );
+    }
+
+    /// `ACME_GMAIL` padded with a comment line to exactly `total` bytes.
+    fn padded_preset(total: usize) -> String {
+        let mut text = ACME_GMAIL.to_string();
+        text.push('#');
+        let pad = total - text.len();
+        text.push_str(&" ".repeat(pad));
+        assert_eq!(text.len(), total);
+        text
+    }
+
+    #[test]
+    fn a_preset_file_of_exactly_64_kib_is_accepted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("edge.toml");
+        std::fs::write(&file, padded_preset(MAX_PRESET_BYTES)).unwrap();
+        assert!(read_preset(&file).is_ok());
+    }
+
+    #[test]
+    fn a_preset_file_one_byte_over_64_kib_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("over.toml");
+        std::fs::write(&file, padded_preset(MAX_PRESET_BYTES + 1)).unwrap();
+        let err = read_preset(&file).unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::Invalid { message, .. } if message == PRESET_TOO_LARGE),
+            "{err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_preset_path_that_is_not_a_regular_file_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = read_preset(tmp.path()).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        let message = crate::ops::preset_file_message(&err);
+        assert!(message.ends_with("not a valid Rail preset"), "{message}");
     }
 
     #[test]

@@ -522,3 +522,42 @@ fn a_preset_summary_says_whether_there_is_a_secret_but_never_carries_it() {
     assert!(!text.contains("GOCSPX-acme"), "{text}");
     assert!(text.contains("{\"untrusted\":\"Acme\"}"), "{text}");
 }
+
+#[test]
+fn a_doctor_report_keeps_config_parser_text_in_detail() {
+    let error: OpError = ConfigError::Parse {
+        path: "/c/config.toml".into(),
+        line: 2,
+        col: 1,
+        message: INJECTION.into(),
+    }
+    .into();
+    let report = DoctorReport {
+        config_path: "/c/config.toml".into(),
+        config_accounts: None,
+        config_error: Some(error),
+        db_path: "/d/rail.db".into(),
+        db_size_bytes: None,
+        schema_version: None,
+        store_error: None,
+        secrets_backend: "keyring".into(),
+        secrets_file: None,
+        secrets_error: None,
+        secrets_checked: false,
+        accounts: Vec::new(),
+    };
+    assert!(!report.is_healthy());
+    assert_isolated(report.config_error.as_ref().unwrap());
+    let wire = serde_json::to_value(&report).unwrap();
+    assert!(
+        !wire["config_error"]["message"]
+            .to_string()
+            .contains("IGNORE")
+    );
+    assert!(
+        wire["config_error"]["detail"]["untrusted"]
+            .as_str()
+            .unwrap()
+            .contains("IGNORE")
+    );
+}
