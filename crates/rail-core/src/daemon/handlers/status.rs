@@ -34,6 +34,9 @@ pub(super) async fn daemon_stop(
     call: Call,
     _: DaemonStopRequest,
 ) -> Result<DaemonStopResponse, OpError> {
+    // Refuse new logins before answering, so a client that heard "stopping" can rely on it;
+    // `Server::finish` does the same for the idle and signal paths.
+    call.ctx.pending.stop_new();
     call.server.request_shutdown();
     Ok(DaemonStopResponse { stopping: true })
 }
