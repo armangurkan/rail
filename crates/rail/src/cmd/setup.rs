@@ -4,12 +4,11 @@
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
-use rail_core::config::AccountKind;
+use rail_core::config::{AccountKind, load_text_or_empty};
 use rail_core::onboarding::Wizard;
 use rail_core::paths::Paths;
 use url::Url;
 
-use crate::cmd::account::load_or_empty;
 use crate::tui::effects::EffectContext;
 use crate::tui::run::run_app;
 use crate::tui::screens::wizard::WizardScreen;
@@ -36,7 +35,7 @@ pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre
         return Ok(ExitCode::from(2));
     }
     // A broken config.toml fails here, with its line number, before the terminal changes.
-    let (_, config) = load_or_empty(paths)?;
+    let (_, config) = load_text_or_empty(&paths.config_file())?;
     let screen = WizardScreen::new(
         Wizard::new(Some(config), kind_hint),
         EffectContext::new(paths.clone()),

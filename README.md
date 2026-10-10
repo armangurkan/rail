@@ -107,7 +107,7 @@ status 2; use the flag form of `rail account add` instead.
 | `rail` | Opens the setup wizard when there is no config yet. With a config it prints that the TUI is not built yet and exits with status 2. |
 | `rail setup` | Opens the setup wizard to add an account. |
 | `rail account add [<gmail\|m365>]` | With no arguments, or only a provider, opens the setup wizard. |
-| `rail account add <gmail\|m365> --address <address> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>]` | Adds an account without the wizard, for scripts. `--address` needs the provider and `--client-id`; any other flag needs `--address`. A partial set exits with status 1 and names the missing flag. |
+| `rail account add <gmail\|m365> --address <address> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>]` | Adds an account without the wizard, for scripts. `--address` needs the provider and `--client-id`; any other flag needs `--address`. A partial set exits with status 1 and names the missing flag. `--client-secret` may be an `op://` 1Password reference (see [Tokens in 1Password](#tokens-in-1password)). |
 | `rail account login <name-or-address>` | Logs in again to an account already in `config.toml` and replaces its tokens. Use it when tokens were revoked, expired or deleted from the keyring. |
 | `rail account list` | Lists configured accounts and whether their tokens are stored. |
 | `rail doctor` | Checks the config file, the store, the secrets backend and every account's tokens. Exits non-zero for config, store, secrets-backend and token-read errors; accounts with no tokens show as `missing` without failing the check (see [Check everything](#check-everything)). |
@@ -358,6 +358,17 @@ is only ever read from `config.toml`; no daemon request can set it. The daemon's
 operation switches backends, but only for a request a front end marked `confirm` after asking the
 user: tokens are copied to the new backend, read back to verify, and only
 then are the old copies deleted, so a failure part way leaves the old copies in place.
+
+A Gmail `client_secret` can live in 1Password too. In `config.toml`, or in
+`rail account add --client-secret`, give an `op://vault/item/field` secret reference instead of the
+value:
+
+```toml
+client_secret = "op://Rail/Google client/client_secret"
+```
+
+Rail reads it with `op read` only when a login needs it, and never caches, logs or writes the
+value. This works with any token backend.
 
 ## Project layout
 

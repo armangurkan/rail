@@ -1,5 +1,6 @@
 //! Rail core: everything that is not the terminal UI.
 
+pub mod accounts;
 pub mod auth;
 pub mod config;
 pub mod daemon;

@@ -6,22 +6,19 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use color_eyre::eyre::Report;
-use rail_core::auth::{
-    AuthError, ItemIdCache, SecretError, TokenSet, http_client, open_secret_store,
-    run_admin_consent, token_location,
-};
-use rail_core::config::{AccountConfig, ConfigError};
+use rail_core::accounts;
+use rail_core::auth::{ItemIdCache, TokenSet, http_client, run_admin_consent};
+use rail_core::config::AccountConfig;
 use rail_core::error::ErrorClass;
 use rail_core::onboarding::{
     Action, DoneReport, Event, Failure, PresetEntry, discover_presets, fetch_preset, read_preset,
 };
+use rail_core::ops::{AccountAddRequest, ClientSecretInput, ErrorCode, OpError};
 use rail_core::paths::Paths;
-use rail_core::store::StoreError;
 use url::Url;
 
 use crate::browser;
-use crate::cmd::account::{self, NewAccount};
+use crate::test_hooks;
 use crate::tui::app::{Effect, TaskResult, TaskSink};
 
 /// Starts the browser on a URL. Injected so tests never start a real one.
@@ -142,80 +139,88 @@ async fn admin_consent(opener: Opener, client_id: String, tenant: String, sink: 
 
 /// The flag form's order: every offline check, then the browser.
 async fn login(ctx: EffectContext, account: AccountConfig, sink: TaskSink) {
-    let (paths, checked) = (ctx.paths.clone(), account.clone());
-    let ready = blocking(move || check_new_account(&paths, checked))
-        .await
-        .and_then(|checked| checked);
-    if let Err(failure) = ready {
-        send(&sink, Event::LoginFinished(Err(failure)));
-        return;
-    }
-    let result = account::login(&account, |url| {
-        send(&sink, Event::LoginUrl(url.clone()));
-        open(&ctx.opener, url);
-    })
-    .await;
-    let result = result.map_err(|e| Failure::from_auth(&e));
+    let result = login_with(&ctx, &account, &sink).await;
     send(&sink, Event::LoginFinished(result));
 }
 
-/// What the flag form checks before its browser opens: no duplicate, a config that can take
-/// the account, and a reachable secret store.
-fn check_new_account(paths: &Paths, account: AccountConfig) -> Result<(), Failure> {
-    let pending =
-        account::prepare(paths, NewAccount::from(account)).map_err(|e| failure_from(&e))?;
-    let secrets = open_secret_store(&pending.config, paths, &ItemIdCache::default());
-    account::probe_secrets(secrets.as_ref(), &pending.account.address)
-        .map_err(|e| Failure::new(format!("secret storage is not usable: {e}"), e.class()))
+async fn login_with(
+    ctx: &EffectContext,
+    account: &AccountConfig,
+    sink: &TaskSink,
+) -> Result<TokenSet, Failure> {
+    let http = http_client().map_err(|e| Failure::from_auth(&e))?;
+    let ids = ItemIdCache::default();
+    let prepared = accounts::prepare_and_probe(&ctx.paths, &ids, &add_request(account), &http)
+        .await
+        .map_err(|e| failure(&e))?;
+    let token_url = test_hooks::token_url();
+    accounts::run_login(
+        &prepared.login_account(),
+        token_url.as_deref(),
+        &http,
+        |url| {
+            send(sink, Event::LoginUrl(url.clone()));
+            open(&ctx.opener, url);
+        },
+    )
+    .await
+    .map_err(|e| Failure::from_auth(&e))
+}
+
+/// The account the wizard built, as an add request. A client secret typed as `op://...` is a
+/// 1Password reference.
+fn add_request(account: &AccountConfig) -> AccountAddRequest {
+    AccountAddRequest {
+        kind: account.kind,
+        address: account.address.clone(),
+        client_id: Some(account.client_id.clone()),
+        client_secret: account
+            .client_secret
+            .clone()
+            .map(ClientSecretInput::from_flag),
+        tenant: account.tenant.clone(),
+        name: Some(account.name.clone()),
+        color: account.color.clone(),
+        store_secret_in_1password: false,
+        open_browser: true,
+    }
 }
 
 async fn persist(paths: Paths, account: AccountConfig, tokens: TokenSet, sink: TaskSink) {
-    let result = blocking(move || save_new_account(&paths, account, &tokens))
-        .await
-        .and_then(|saved| saved);
-    send(&sink, Event::Persisted(result));
+    let result = save_new_account(paths, account, tokens).await;
+    send(&sink, Event::Persisted(result.map_err(|e| failure(&e))));
 }
 
-/// The flag form's persist: tokens, then the store row, then config.toml last.
-fn save_new_account(
-    paths: &Paths,
+/// The flag form's persist: tokens, then the store row, then config.toml last. The checks are
+/// repeated first (no probe: the login already used the store).
+async fn save_new_account(
+    paths: Paths,
     account: AccountConfig,
-    tokens: &TokenSet,
-) -> Result<DoneReport, Failure> {
-    let pending =
-        account::prepare(paths, NewAccount::from(account)).map_err(|e| failure_from(&e))?;
-    let secrets = open_secret_store(&pending.config, paths, &ItemIdCache::default());
-    account::persist(paths, secrets.as_ref(), &pending, tokens).map_err(|e| failure_from(&e))?;
-    Ok(DoneReport {
-        config_path: pending.config_path,
-        token_backend: secrets.backend_name().to_string(),
-        token_location: token_location(&pending.config, paths, &pending.account.address),
-        store_path: paths.db_file(),
+    tokens: TokenSet,
+) -> Result<DoneReport, OpError> {
+    let http = http_client()?;
+    let prepared = accounts::prepare_request(&paths, &add_request(&account), &http).await?;
+    tokio::task::spawn_blocking(move || {
+        let saved = accounts::persist_new(&paths, &ItemIdCache::default(), &prepared, &tokens)?;
+        Ok(DoneReport {
+            config_path: saved.config_path,
+            token_backend: saved.token_backend,
+            token_location: saved.token_location,
+            store_path: saved.store_path,
+        })
     })
+    .await
+    .map_err(|e| OpError::internal("a blocking task failed").with_detail(e.to_string()))?
 }
 
-/// The flag path's error report as the wizard shows it: the same text the CLI prints (the
-/// whole cause chain, including the `secrets = "file"` hint), classified by the first typed
-/// cause found; an untyped message is permanent.
-fn failure_from(report: &Report) -> Failure {
-    let class = report
-        .chain()
-        .find_map(classify)
-        .unwrap_or(ErrorClass::Permanent);
-    Failure::new(format!("{report:#}"), class)
-}
-
-fn classify(cause: &(dyn std::error::Error + 'static)) -> Option<ErrorClass> {
-    if let Some(e) = cause.downcast_ref::<AuthError>() {
-        return Some(e.class());
+/// An operation error as the wizard shows it: the message, detail and hint, its class, and
+/// whether Microsoft wants an administrator's consent.
+fn failure(error: &OpError) -> Failure {
+    Failure {
+        message: error.text(),
+        class: error.class,
+        consent_required: error.code == ErrorCode::ConsentRequired,
     }
-    if let Some(e) = cause.downcast_ref::<SecretError>() {
-        return Some(e.class());
-    }
-    if let Some(e) = cause.downcast_ref::<StoreError>() {
-        return Some(e.class());
-    }
-    cause.downcast_ref::<ConfigError>().map(ConfigError::class)
 }
 
 #[cfg(test)]
@@ -463,23 +468,18 @@ mod tests {
     }
 
     #[test]
-    fn failures_are_classified_by_their_first_typed_cause() {
-        use color_eyre::eyre::WrapErr;
-        let io = SecretError::Io {
-            path: "/x".into(),
-            source: std::io::Error::other("disk busy"),
-        };
-        let report = Err::<(), _>(io).wrap_err("storing tokens").unwrap_err();
-        let failure = failure_from(&report);
-        assert_eq!(failure.class, ErrorClass::Transient);
-        assert!(
-            failure
-                .message
-                .starts_with("storing tokens: secrets file /x"),
-            "{}",
-            failure.message
+    fn operation_errors_become_failures_with_their_class_and_hint() {
+        let transient = OpError::new(ErrorCode::Secrets, ErrorClass::Transient, "disk busy")
+            .with_hint("try again");
+        let shown = failure(&transient);
+        assert_eq!(shown.class, ErrorClass::Transient);
+        assert_eq!(shown.message, "disk busy\nhint: try again");
+        assert!(!shown.consent_required);
+        let consent = OpError::new(
+            ErrorCode::ConsentRequired,
+            ErrorClass::Permanent,
+            "AADSTS65001",
         );
-        let plain = color_eyre::eyre::eyre!("already configured");
-        assert_eq!(failure_from(&plain).class, ErrorClass::Permanent);
+        assert!(failure(&consent).consent_required);
     }
 }
