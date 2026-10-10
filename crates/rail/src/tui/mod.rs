@@ -11,3 +11,4 @@ pub mod terminal;
 #[cfg(test)]
 pub mod test_util;
 pub mod theme;
+pub mod widgets;
