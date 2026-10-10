@@ -109,8 +109,12 @@ status 2; use the flag form of `rail account add` instead.
 | `rail account add [<gmail\|m365>]` | With no arguments, or only a provider, opens the setup wizard. |
 | `rail account add <gmail\|m365> --address <address> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>]` | Adds an account without the wizard, for scripts. `--address` needs the provider and `--client-id`; any other flag needs `--address`. A partial set exits with status 1 and names the missing flag. `--client-secret` may be an `op://` 1Password reference (see [Tokens in 1Password](#tokens-in-1password)). |
 | `rail account login <name-or-address>` | Logs in again to an account already in `config.toml` and replaces its tokens. Use it when tokens were revoked, expired or deleted from the keyring. |
-| `rail account list` | Lists configured accounts and whether their tokens are stored. |
-| `rail doctor` | Checks the config file, the store, the secrets backend and every account's tokens. Exits non-zero for config, store, secrets-backend and token-read errors; accounts with no tokens show as `missing` without failing the check (see [Check everything](#check-everything)). |
+| `rail account list` | Lists configured accounts and whether their tokens are stored, in columns as wide as the longest name and address. It asks the store whether tokens exist without reading them, so a 1Password backend never reveals a token to list accounts. |
+| `rail account remove <name-or-address>` | Removes an account's entry in `config.toml` and its stored tokens; its mail stays in the store. Interactive only: it shows what goes and asks `Remove? [y/N]`, and only `y` or `yes` removes. When stdin or stdout is not a terminal it removes nothing and exits with status 1; there is no flag to skip the question, so neither a script nor an agent can remove an account for you. |
+| `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
+| `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
+| `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
+| `rail doctor` | Checks the config file, the store, the secrets backend, every account's tokens and `ai_send` policy, and the daemon. Exits non-zero for config, store, secrets-backend and token-read errors; accounts with no tokens show as `missing` without failing the check (see [Check everything](#check-everything)). |
 
 ## Setup
 
@@ -329,8 +333,10 @@ not touched.
     rail doctor
     rail account list
 
-`rail doctor` reports the config file, the store and its schema version, the secrets backend, and
-token presence for every account. It exits non-zero for config, store,
+`rail doctor` reports the config file and how many accounts it holds, the store and its schema
+version, the secrets backend, and token presence for every account, then ends with an `ok   daemon`
+line naming the daemon that ran the checks. Text Rail did not write (a keyring's or SQLite's
+message, the config parser's) is shown in quotes with control characters escaped. It exits non-zero for config, store,
 secrets-backend and token-read errors. An account with no stored tokens is listed as `missing`, with
 the `rail account login` advice, but does not make the exit status non-zero, so scripts that care
 should grep for `missing`.
@@ -388,9 +394,11 @@ nothing enforces it.
 | Store | `~/.local/share/rail/rail.db` |
 | Tokens | OS keyring (service `rail`), `~/.local/share/rail/secrets.json` with `secrets = "file"`, or 1Password items with `secrets = "1password"` |
 | Logs | `~/.local/state/rail/rail.log` |
+| Daemon socket | `$XDG_RUNTIME_DIR/rail/rail.sock` (the state directory where there is no runtime directory, as on macOS) |
 
 macOS uses the platform directories under `~/Library/Application Support/rail` instead. Override any
-location with `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR`, `RAIL_CACHE_DIR` and `RAIL_STATE_DIR`.
+location with `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR`, `RAIL_CACHE_DIR`, `RAIL_STATE_DIR` and
+`RAIL_RUNTIME_DIR` (the directory that holds the daemon's socket).
 
 No Secret Service on your box (tty-only Linux)? Put this in `config.toml` before adding accounts:
 
@@ -400,6 +408,27 @@ secrets = "file"
 ```
 
 Files that hold mail or credentials are created owner-only and written atomically.
+
+### The background daemon
+
+The `rail account` commands and `rail doctor` talk to one background process, the Rail daemon,
+which runs every operation, so two of them running at once never race on the store, the config
+file or a login. (The setup wizard still runs its steps itself for now.)
+You never start it yourself: the first command that needs it starts `rail daemon run` in the
+background, and it exits after ten minutes with no client connected and no login waiting. Its
+logs go to `rail.log`; it never writes to the terminal.
+
+The daemon listens on a Unix socket (see [Where things live](#where-things-live)) in a directory
+only you can open (mode 0700); the socket itself is 0600, and the daemon drops any connection
+from another user. `rail daemon status` shows what it is doing and `rail daemon stop` stops it.
+A login you begin in a command keeps waiting in the daemon until you finish it in the browser,
+cancel it with Ctrl-C, or it times out after 15 minutes; once the account is being saved, the
+save finishes even if the command that started it is gone.
+
+When a command fails, it prints Rail's own message and, on a line starting `hint:`, what to do
+next. Words from outside Rail (a provider's error description, the system's error text) come on a
+line of their own, quoted and with control characters escaped. No error ever shows a token, a
+client secret or an authorization code.
 
 ### Tokens in 1Password
 
@@ -449,7 +478,7 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding. No ter
   src/store/             SQLite open, migrations, accounts repository
   src/auth/              Secret stores, OAuth endpoints, loopback listener, login and admin-consent flows, token refresh
   src/onboarding/        Presets and the setup wizard's pure state machine
-crates/rail/             Binary: clap CLI, logging, `account`, `doctor` and `setup` commands
+crates/rail/             Binary: clap CLI, logging, `account`, `daemon`, `doctor` and `setup` commands
   src/tui/               App shell: terminal guard, event loop, widgets, the wizard screen and its effects
   tests/cli.rs           End-to-end tests against the built binary in a temporary XDG layout
 assets/brand/            Logos for light and dark backgrounds, and the app icon
@@ -469,10 +498,11 @@ Line coverage (needs `cargo-llvm-cov`):
     cargo llvm-cov --workspace
 
 Tests never touch the real XDG directories, the real OS keyring, the network, or a real browser.
-Debug builds honour two test hooks, `RAIL_TEST_OPENER` (a program run instead of the browser) and
-`RAIL_TEST_TOKEN_URL` (a token endpoint served by the test); release builds ignore both. On Linux,
-one test drives the wizard in a pseudo-terminal through util-linux `script` and is skipped where
-`script` is missing. The one test that exercises the real keyring is ignored by default:
+Debug builds honour three test hooks, `RAIL_TEST_OPENER` (a program run instead of the browser),
+`RAIL_TEST_TOKEN_URL` (a token endpoint served by the test) and `RAIL_TEST_IDLE_SECS` (the daemon's
+idle timeout, so the daemons the binary tests start exit seconds after their last client); release
+builds ignore all three. On Linux, the tests that drive the wizard and `rail account remove` in a
+pseudo-terminal use util-linux `script` and are skipped where `script` is missing. The one test that exercises the real keyring is ignored by default:
 
     cargo test -p rail-core -- --ignored keyring_live
 

@@ -11,6 +11,14 @@ pub fn token_url() -> Option<String> {
     var("RAIL_TEST_TOKEN_URL")
 }
 
+/// How long the daemon waits idle before it exits, in seconds, instead of ten minutes, so the
+/// daemons the binary tests start do not outlive them.
+pub fn idle() -> Option<std::time::Duration> {
+    var("RAIL_TEST_IDLE_SECS")
+        .and_then(|secs| secs.parse().ok())
+        .map(std::time::Duration::from_secs)
+}
+
 fn var(name: &str) -> Option<String> {
     if !cfg!(debug_assertions) {
         return None;

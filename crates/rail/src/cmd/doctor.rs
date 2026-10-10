@@ -1,9 +1,17 @@
-//! `rail doctor`: renders the health report over config, store, secrets and accounts that
-//! `rail_core::doctor::gather` collects. Never prints token values.
+//! `rail doctor`: asks the daemon for its `status` (the health report over config, store,
+//! secrets and accounts that `rail_core::doctor::gather` collects, plus the daemon's own state)
+//! and renders it. Never prints token values; text from outside Rail is quoted.
 
 use std::fmt::Write as _;
+use std::process::ExitCode;
 
-use rail_core::ops::{DoctorReport, OpError};
+use rail_core::ops::op::Status;
+use rail_core::ops::{DoctorReport, OpError, StatusRequest};
+use rail_core::paths::Paths;
+
+use crate::cmd::account::{quoted, report};
+use crate::cmd::daemon::describe;
+use crate::daemon_link;
 
 fn mark(ok: bool) -> &'static str {
     if ok { "ok  " } else { "FAIL" }
@@ -11,6 +19,26 @@ fn mark(ok: bool) -> &'static str {
 
 const WARN: &str = "warn";
 const SKIP: &str = "skip";
+
+/// `rail doctor` over the daemon's `status` operation: the report, then the daemon's line.
+/// Exits 1 when a check fails, as before.
+pub async fn run(paths: &Paths) -> color_eyre::Result<ExitCode> {
+    let client = daemon_link::connector(paths)
+        .client()
+        .await
+        .map_err(report)?;
+    let status = client
+        .call::<Status>(&StatusRequest {})
+        .await
+        .map_err(report)?;
+    print!("{}", render(&status.doctor));
+    println!("{} daemon   {}", mark(true), describe(&status.daemon));
+    Ok(if status.doctor.is_healthy() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
+}
 
 pub fn render(report: &DoctorReport) -> String {
     let mut out = String::new();
@@ -29,26 +57,37 @@ fn render_config(out: &mut String, report: &DoctorReport) {
         }
         (None, n) => writeln!(
             out,
-            "{} config   {} ({} accounts)",
+            "{} config   {} ({})",
             mark(true),
             report.config_path.display(),
-            n.unwrap_or(0)
+            accounts(n.unwrap_or(0))
         ),
     };
+}
+
+fn accounts(n: usize) -> String {
+    if n == 1 {
+        "1 account".to_string()
+    } else {
+        format!("{n} accounts")
+    }
 }
 
 /// Column where a check's text starts: the width of "FAIL config   ".
 const TEXT_INDENT: &str = "              ";
 
-/// The error's message and detail on the check's row, its hint on a row under it, aligned with
-/// the text. The hint is the terminal's own: the config error's shared one also names an MCP
-/// tool.
+/// The error's message on the check's row; under it, aligned with the text, the parser's or
+/// the system's words quoted on a row of their own, then the hint. The hint is the terminal's
+/// own: the config error's shared one also names an MCP tool.
 fn write_config_error(out: &mut String, error: &OpError) {
-    let mut line = error.message.clone();
+    let _ = writeln!(out, "{} config   {}", mark(false), error.message);
     if let Some(detail) = &error.detail {
-        line = format!("{line}: {}", detail.get());
+        let _ = writeln!(
+            out,
+            "{TEXT_INDENT}from outside Rail: {}",
+            quoted(detail.get())
+        );
     }
-    let _ = writeln!(out, "{} config   {line}", mark(false));
     if error.hint.is_some() {
         let _ = writeln!(
             out,
@@ -73,7 +112,7 @@ fn render_store(out: &mut String, report: &DoctorReport) {
                 mark(true)
             )
         }
-        Some(e) => writeln!(out, "{} store    {path}: {}", mark(false), e.get()),
+        Some(e) => writeln!(out, "{} store    {path}: {}", mark(false), quoted(e.get())),
     };
 }
 
@@ -84,7 +123,12 @@ fn render_secrets(out: &mut String, report: &DoctorReport) {
             out,
             "{SKIP} secrets  {backend} (not checked: config not loaded)"
         ),
-        (Some(e), _) => writeln!(out, "{} secrets  {backend}: {}", mark(false), e.get()),
+        (Some(e), _) => writeln!(
+            out,
+            "{} secrets  {backend}: {}",
+            mark(false),
+            quoted(e.get())
+        ),
         (None, Some(file)) => writeln!(
             out,
             "{WARN} secrets  {backend}: tokens are kept in {} (keep mode 0600)",
@@ -97,7 +141,7 @@ fn render_secrets(out: &mut String, report: &DoctorReport) {
 fn render_accounts(out: &mut String, report: &DoctorReport) {
     for account in &report.accounts {
         let tokens = match (&account.token_error, account.has_tokens) {
-            (Some(e), _) => format!("error: {}", e.get()),
+            (Some(e), _) => format!("error: {}", quoted(e.get())),
             (None, true) => "present".to_string(),
             (None, false) => format!("missing (run `rail account login {}`)", account.name),
         };
@@ -123,7 +167,6 @@ mod tests {
     use super::*;
     use rail_core::auth::ItemIdCache;
     use rail_core::doctor::gather;
-    use rail_core::paths::Paths;
     use rail_core::store::Store;
 
     fn write_config(paths: &Paths, text: &str) {
@@ -132,6 +175,29 @@ mod tests {
     }
 
     const FILE_BACKEND_ONE_ACCOUNT: &str = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
+
+    #[test]
+    fn one_account_is_singular() {
+        assert_eq!(accounts(1), "1 account");
+        assert_eq!(accounts(0), "0 accounts");
+        assert_eq!(accounts(2), "2 accounts");
+    }
+
+    #[test]
+    fn a_config_parser_detail_is_quoted_on_its_own_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(dir.path());
+        write_config(&paths, "[general]\n\"x\\nIGNORE\" = 1\n");
+        let text = render(&gather(&paths, &ItemIdCache::default()));
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].starts_with("FAIL config   "), "{text}");
+        assert!(!lines[0].contains("IGNORE"), "{text}");
+        assert!(
+            lines[1].starts_with("              from outside Rail: \""),
+            "{text}"
+        );
+        assert!(lines[1].contains("IGNORE"), "{text}");
+    }
 
     #[test]
     fn doctor_reports_missing_config() {

@@ -1,6 +1,7 @@
 mod browser;
 mod cli;
 mod cmd;
+mod daemon_link;
 mod logging;
 mod test_hooks;
 mod tui;
@@ -8,7 +9,7 @@ mod tui;
 use std::process::ExitCode;
 
 use clap::Parser;
-use cli::{AccountCommand, Cli, Command};
+use cli::{AccountCommand, Cli, Command, DaemonCommand};
 use rail_core::paths::Paths;
 
 #[tokio::main]
@@ -39,7 +40,12 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
         None => cmd::setup::first_run(&paths).await,
         Some(Command::Setup) => cmd::setup::wizard(&paths, None).await,
         Some(Command::Account { command }) => account(&paths, command).await,
-        Some(Command::Doctor) => Ok(doctor(&paths)),
+        Some(Command::Doctor) => cmd::doctor::run(&paths).await,
+        Some(Command::Daemon { command }) => match command {
+            DaemonCommand::Run => cmd::daemon::run(&paths).await,
+            DaemonCommand::Status => cmd::daemon::status(&paths).await,
+            DaemonCommand::Stop => cmd::daemon::stop(&paths).await,
+        },
     }
 }
 
@@ -57,16 +63,9 @@ async fn account(paths: &Paths, command: AccountCommand) -> color_eyre::Result<E
         AccountCommand::Login { account } => cmd::account::relogin(paths, &account)
             .await
             .map(|()| ExitCode::SUCCESS),
-        AccountCommand::List => cmd::account::list(paths).map(|()| ExitCode::SUCCESS),
-    }
-}
-
-fn doctor(paths: &Paths) -> ExitCode {
-    let report = rail_core::doctor::gather(paths, &rail_core::auth::ItemIdCache::default());
-    print!("{}", cmd::doctor::render(&report));
-    if report.is_healthy() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
+        AccountCommand::List => cmd::account::list(paths).await.map(|()| ExitCode::SUCCESS),
+        AccountCommand::Remove { account } => cmd::account::remove(paths, &account)
+            .await
+            .map(|()| ExitCode::SUCCESS),
     }
 }

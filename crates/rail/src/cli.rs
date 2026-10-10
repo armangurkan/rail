@@ -20,8 +20,23 @@ pub enum Command {
         #[command(subcommand)]
         command: AccountCommand,
     },
-    /// Check config, store, secrets and accounts.
+    /// Check config, store, secrets, accounts and the daemon.
     Doctor,
+    /// The background daemon that runs every operation. Started on demand.
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DaemonCommand {
+    /// Run the daemon in the foreground (Rail starts it this way when needed).
+    Run,
+    /// Say whether the daemon is running, and what it is doing.
+    Status,
+    /// Ask the daemon to exit once running saves finish.
+    Stop,
 }
 
 #[derive(Debug, Subcommand)]
@@ -35,6 +50,12 @@ pub enum AccountCommand {
     },
     /// List configured accounts and whether tokens are stored.
     List,
+    /// Remove an account's config entry and stored tokens. Its mail stays in the store.
+    /// Asks first, so it runs only on an interactive terminal.
+    Remove {
+        /// Account name or email address.
+        account: String,
+    },
 }
 
 /// The flag form needs a provider, `--address` and `--client-id`; every other flag needs
