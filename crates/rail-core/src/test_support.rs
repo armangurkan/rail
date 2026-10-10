@@ -171,6 +171,13 @@ if [ -f "$state/locked" ]; then
   exit 1
 fi
 if [ -f "$state/hang" ]; then exec sleep 30; fi
+if [ "$1 $2" = "item list" ]; then
+  n=$(( $(cat "$state/lists_$acct" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$state/lists_$acct"
+  if [ -f "$state/fail_list_from_$acct" ] && [ "$n" -ge "$(cat "$state/fail_list_from_$acct")" ]; then
+    echo '[ERROR] 2026/10/10 08:00:00 could not list items' >&2
+    exit 1
+  fi
+fi
 case "$1" in
   whoami) echo '{"url":"my.1password.com","email":"me@example.com"}'; exit 0 ;;
   read) cat "$state/read.txt"; exit 0 ;;
@@ -267,6 +274,15 @@ impl FakeOp {
     /// Fail any `item create` whose template contains `needle`, echoing the template.
     pub(crate) fn fail_on(&self, needle: &str) {
         std::fs::write(self.state.join("fail_on"), needle).unwrap();
+    }
+
+    /// Make every `item list` for `account` from its `n`th call on fail.
+    pub(crate) fn fail_list_from(&self, account: &str, n: u32) {
+        std::fs::write(
+            self.state.join(format!("fail_list_from_{account}")),
+            n.to_string(),
+        )
+        .unwrap();
     }
 
     pub(crate) fn set_read(&self, value: &str) {

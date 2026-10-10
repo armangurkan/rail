@@ -485,13 +485,13 @@ impl SecretStore for OnePasswordSecretStore {
         "1password"
     }
 
-    /// An item lookup by tag and title: no token is fetched, so polling stays cheap and
-    /// loads nothing secret into memory.
     /// The item's id by an uncached lookup (no `--reveal`).
     fn item_id(&self, address: &str) -> Result<Option<String>, SecretError> {
         self.look_up(&item_title(address))
     }
 
+    /// An item lookup by tag and title: no token is fetched, so polling stays cheap and
+    /// loads nothing secret into memory.
     fn has_tokens(&self, address: &str) -> Result<bool, SecretError> {
         self.look_up(&item_title(address)).map(|id| id.is_some())
     }

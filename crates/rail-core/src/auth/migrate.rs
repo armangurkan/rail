@@ -345,7 +345,16 @@ enum Outcome {
 fn retire_one(old: &dyn SecretStore, new: &dyn SecretStore, address: &str) -> Outcome {
     let by_item = old.backend_name() == ONEPASSWORD;
     if by_item {
-        let new_id = new.item_id(address).ok().flatten();
+        // If the new copy cannot be identified, the old one cannot be told apart from it
+        // (they may be the same item), so it stays.
+        let new_id = if new.backend_name() == ONEPASSWORD {
+            match new.item_id(address) {
+                Ok(id) => id,
+                Err(e) => return kept(&e, "could not look up the new token copy"),
+            }
+        } else {
+            None
+        };
         match old.item_id(address) {
             Err(e) => return kept(&e, "could not look up an old token copy"),
             Ok(Some(id)) if new_id.as_ref() == Some(&id) => return Outcome::InPlace,
@@ -692,5 +701,20 @@ mod tests {
         let config = load(&paths.config_file()).unwrap();
         let store = OnePasswordSecretStore::new(fake.cli(), config.onepassword.unwrap().vault, ids);
         assert_eq!(store.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
+    }
+
+    #[test]
+    fn an_unverifiable_new_copy_keeps_the_old_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, fake) = on_1password(&tmp, Some("A"));
+        // Account B's third `item list` on fails: after both copies, before they are checked.
+        fake.fail_list_from("B", 3);
+        let ids = ItemIdCache::default();
+        let done = switch_backend(&paths, &ids, &same_backend_other_account("B", None)).unwrap();
+        assert_eq!(done.old_copies_kept, ["a@x.com", "b@x.com"], "{done:?}");
+        assert!(done.already_in_place.is_empty());
+        assert_eq!(fake.item_count("A", "rail"), 2, "nothing was deleted");
+        let old = OnePasswordSecretStore::new(account_cli(&fake, "A"), "Rail".into(), ids);
+        assert_eq!(old.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
     }
 }
