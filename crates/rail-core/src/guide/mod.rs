@@ -120,7 +120,6 @@ fn fill(step: GuideStep, swaps: &[(&'static str, String)]) -> GuideStep {
         text
     };
     GuideStep {
-        explanation: apply(step.explanation),
         command: step.command.map(apply),
         url: step.url.map(apply),
         tool: step.tool.map(apply),

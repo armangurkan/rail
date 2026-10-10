@@ -45,7 +45,7 @@ fn the_microsoft_steps_are_pinned_and_never_hard_code_permission_ids() {
     use StepKind::*;
     assert_eq!(
         kinds(&response.steps),
-        [Run, Run, Run, Run, Run, Run, Run, Rail, Produce]
+        [Run, Run, Run, Run, Run, Run, Run, Run, Rail, Produce]
     );
     let create = response.steps[3].command.as_deref().unwrap();
     for flag in [
@@ -67,14 +67,20 @@ fn the_microsoft_steps_are_pinned_and_never_hard_code_permission_ids() {
         );
     }
     assert!(
-        response.steps[6].optional,
-        "consent is optional for non-administrators"
+        response.steps[6].optional && response.steps[7].optional,
+        "service principal and consent are optional for non-administrators"
+    );
+    assert_eq!(
+        response.steps[6].command.as_deref(),
+        Some("az ad sp create --id <app-id>")
     );
     let admin = GuideInputs {
         admin: true,
         ..GuideInputs::default()
     };
-    assert!(!guide(&request(AccountKind::M365, admin)).unwrap().steps[6].optional);
+    let steps = guide(&request(AccountKind::M365, admin)).unwrap().steps;
+    assert!(!steps[6].optional && !steps[7].optional);
+    assert!(steps[7].explanation.contains("wait a minute"));
 }
 
 #[test]
@@ -98,6 +104,12 @@ fn inputs_fill_their_placeholders_and_nothing_else() {
             .ends_with("?project=rail-mail-123")
     );
     let microsoft = guide(&request(AccountKind::M365, inputs)).unwrap();
+    assert!(
+        microsoft.steps[3]
+            .explanation
+            .contains("audience is AzureADMyOrg for one organisation"),
+        "explanations are prose and are not substituted"
+    );
     assert_eq!(
         microsoft.steps[1].command.as_deref(),
         Some("az login --tenant contoso.onmicrosoft.com")
@@ -142,7 +154,7 @@ fn the_readme_setup_sections_agree_with_the_guides() {
             }
             if let Some(url) = &step.url {
                 let page = url.split('?').next().unwrap_or(url);
-                assert!(readme.contains(page), "README lacks {page}");
+                assert!(mentions_page(&readme, page), "README lacks {page}");
             }
         }
     }
@@ -232,4 +244,56 @@ fn no_step_prints_a_token_or_a_secret() {
             }
         }
     }
+}
+
+/// The page appears as a whole token, not as the prefix of a longer URL.
+fn mentions_page(readme: &str, page: &str) -> bool {
+    readme.match_indices(page).any(|(at, _)| {
+        readme[at + page.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| c.is_whitespace() || "`?)>".contains(c))
+    })
+}
+
+#[test]
+fn a_page_that_is_only_the_prefix_of_another_url_does_not_count() {
+    assert!(!mentions_page("see `https://x/a/b?p=1`", "https://x/a"));
+    assert!(mentions_page("see `https://x/a?p=1` and", "https://x/a"));
+    assert!(mentions_page("(https://x/a)", "https://x/a"));
+}
+
+#[test]
+fn project_ids_of_30_characters_pass_and_31_do_not() {
+    let id = |len: usize| format!("a{}", "b".repeat(len - 1));
+    let ok = GuideInputs {
+        project_id: Some(id(30)),
+        ..GuideInputs::default()
+    };
+    assert!(guide(&request(AccountKind::Gmail, ok)).is_ok());
+    let long = GuideInputs {
+        project_id: Some(id(31)),
+        ..GuideInputs::default()
+    };
+    assert!(guide(&request(AccountKind::Gmail, long)).is_err());
+}
+
+#[test]
+fn a_malformed_guid_like_tenant_is_refused() {
+    for bad in ["1234-", "12345678-1234-1234-1234-", "1234-5678-"] {
+        let err = refused(GuideInputs {
+            tenant: Some(bad.into()),
+            ..GuideInputs::default()
+        });
+        assert_eq!(err.code, ErrorCode::InvalidInput, "{bad}");
+    }
+}
+
+#[test]
+fn a_project_id_given_to_a_microsoft_guide_is_still_validated() {
+    let err = refused(GuideInputs {
+        project_id: Some("x; id".into()),
+        ..GuideInputs::default()
+    });
+    assert!(err.message.contains("project_id"));
 }

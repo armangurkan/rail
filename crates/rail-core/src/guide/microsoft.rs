@@ -18,6 +18,7 @@ pub(super) fn steps(admin: bool) -> Vec<GuideStep> {
         register_app(),
         look_up_permissions(),
         add_permissions(),
+        create_service_principal(admin),
         admin_consent(admin),
         add_account(),
         preset(),
@@ -66,7 +67,7 @@ fn register_app() -> GuideStep {
         ..step(
             StepKind::Run,
             "Register the app",
-            "Creates a public-client registration with the loopback redirect Rail listens on. <audience> is AzureADMyOrg for one organisation or AzureADMultipleOrgs for several. The output is the Application (client) ID: keep it as <app-id>.",
+            "Creates a public-client registration with the loopback redirect Rail listens on. The sign-in audience is AzureADMyOrg for one organisation or AzureADMultipleOrgs for several. The output is the Application (client) ID: keep it as <app-id>.",
         )
     }
 }
@@ -97,6 +98,18 @@ fn add_permissions() -> GuideStep {
     }
 }
 
+fn create_service_principal(admin: bool) -> GuideStep {
+    GuideStep {
+        command: Some("az ad sp create --id <app-id>".into()),
+        optional: !admin,
+        ..step(
+            StepKind::Run,
+            "Create the app's identity (administrators)",
+            "Creates the app's service principal, its identity in your tenant, which admin consent needs. An \"already exists\" error means it is done.",
+        )
+    }
+}
+
 fn admin_consent(admin: bool) -> GuideStep {
     GuideStep {
         command: Some("az ad app permission admin-consent --id <app-id>".into()),
@@ -105,7 +118,7 @@ fn admin_consent(admin: bool) -> GuideStep {
         ..step(
             StepKind::Run,
             "Grant admin consent (administrators)",
-            "An administrator approves Rail once for the whole organisation, with this command or with rail_admin_consent. Someone who is not an administrator skips this; when their login fails with AADSTS65001 they send the consent URL Rail shows to an administrator.",
+            "An administrator approves Rail once for the whole organisation, with this command or with rail_admin_consent. Someone who is not an administrator skips this; when their login fails with AADSTS65001 they send the consent URL Rail shows to an administrator. If the command reports that the permissions or the service principal are not found, wait a minute and run it again: directory changes take a moment to propagate.",
         )
     }
 }

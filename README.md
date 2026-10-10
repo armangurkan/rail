@@ -133,8 +133,9 @@ wizard or with the flags shown here.
 
 <!-- guide:google v1 -->
 **The same steps with `gcloud`.** `gcloud` can create the project and enable the API, but it cannot
-create a desktop OAuth client, so steps 2 and 3 stay in the browser. Pick a project id (6 to 30
-lowercase letters, digits or hyphens):
+create a desktop OAuth client, so steps 2 and 3 stay in the browser. Pick a project id: 6 to 30
+characters, lowercase letters, digits and hyphens, starting with a letter and not ending with a
+hyphen:
 
 ```sh
 gcloud auth login
@@ -166,7 +167,9 @@ Then, in the browser:
    Add `--tenant <tenant-id-or-domain>` if your organisation restricts the `common` endpoint.
 
 <!-- guide:microsoft v1 -->
-**The same steps with `az`.** The Azure CLI can do the whole registration. Use the tenant id or a
+**The same steps with `az`.** The Azure CLI can do the whole registration of an app for work or
+school accounts (single or multiple organisations); personal Microsoft accounts use the manual steps
+above. Use the tenant id or a
 domain the tenant owns for `<tenant>`, and `AzureADMyOrg` (one organisation) or
 `AzureADMultipleOrgs` for `<audience>`:
 
@@ -181,9 +184,13 @@ az ad app permission add --id <app-id> --api 00000003-0000-0000-c000-00000000000
 
 `az ad app create` prints the Application (client) ID; use it as `<app-id>` and as `--client-id`.
 `az ad sp show` lists the ids of the four Microsoft Graph permissions for `az ad app permission add`.
-An administrator can then approve Rail for the whole organisation:
+An administrator can then approve Rail for the whole organisation. Approval needs the app's identity
+in the tenant (an "already exists" error from the first command means it is done); if the second
+command reports that the permissions or the service principal are not found, wait a minute and run it
+again, because directory changes take a moment to propagate:
 
 ```sh
+az ad sp create --id <app-id>
 az ad app permission admin-consent --id <app-id>
 ```
 
