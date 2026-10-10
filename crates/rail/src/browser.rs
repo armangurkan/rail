@@ -36,11 +36,10 @@ pub fn reap(mut child: Child) {
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn a_reaped_child_leaves_no_zombie() {
         let child = Command::new("true").spawn().unwrap();
