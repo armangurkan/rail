@@ -164,6 +164,13 @@ either: the agent is told to ask you to run `rail account remove <name>` in a te
 edit `secrets` (and `[onepassword]`) in `config.toml` yourself. A setting that is already in place
 needs no confirmation.
 
+What this protects is the MCP path: through MCP, an account is removed and tokens move only after
+you confirm in your agent client's dialog. It is not a wall around Rail. An agent that can also
+run shell commands runs them as you, so it could drive `rail` (in a pseudo-terminal) or talk to the
+daemon's socket directly, like any program you run; Rail cannot stop a program running as the same
+user. There, the control is your agent client's own approval of shell commands: keep it on, and
+read a command that runs `rail` before you allow it.
+
 Text from outside Rail, such as preset files, the mail provider's and the system's error messages
 now and email later, comes back marked as untrusted. In the summaries the agent reads, every such
 piece is quoted on one line, cut to 200 characters, and preceded by a notice that it is data,
@@ -188,7 +195,7 @@ It talks to the background daemon like every other command.
 | `rail account add <gmail\|m365> --address <address> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>]` | Adds an account without the wizard, for scripts. `--address` needs the provider and `--client-id`; any other flag needs `--address`. A partial set exits with status 1 and names the missing flag. `--client-secret` may be an `op://` 1Password reference (see [Tokens in 1Password](#tokens-in-1password)). |
 | `rail account login <name-or-address>` | Logs in again to an account already in `config.toml` and replaces its tokens. Use it when tokens were revoked, expired or deleted from the keyring. |
 | `rail account list` | Lists configured accounts and whether their tokens are stored, in columns as wide as the longest name and address. It asks the store whether tokens exist without reading them, so a 1Password backend never reveals a token to list accounts. |
-| `rail account remove <name-or-address>` | Removes an account's entry in `config.toml` and its stored tokens; its mail stays in the store. Interactive only: it shows what goes (the daemon's text, with the name and address quoted) and asks `Remove? [y/N]`, and only `y` or `yes` removes; if the account changed while you answered, it says so, removes nothing, and asks you to run the command again. When stdin or stdout is not a terminal it removes nothing and exits with status 1; there is no flag to skip the question, so neither a script nor an agent can remove an account for you. |
+| `rail account remove <name-or-address>` | Removes an account's entry in `config.toml` and its stored tokens; its mail stays in the store. Interactive only: it shows what goes (the daemon's text, with the name and address quoted) and asks `Remove? [y/N]`, and only `y` or `yes` removes; if the account changed while you answered, it says so, removes nothing, and asks you to run the command again. When stdin or stdout is not a terminal it removes nothing and exits with status 1; there is no flag to skip the question, so a script cannot answer it through a pipe. An agent that can run shell commands could still drive it as you; see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp). |
 | `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |

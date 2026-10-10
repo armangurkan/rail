@@ -105,7 +105,10 @@ All notable changes to Rail are recorded here. The format follows
   group or others, or inside a directory that is.
 - Files an agent names (a client secret JSON, a preset path) must be absolute and are read with a
   64 KiB cap; a file that does not parse is never echoed back.
-- An agent can never confirm an account removal or a secret-store change for the user. The
+- Through MCP, an account removal or a secret-store change happens only after the user confirms
+  in the client's dialog; no tool input confirms for the user. An agent that can run shell
+  commands could drive `rail` (or the socket) as the user, and Rail cannot stop a program running
+  as the same user: the control there is the agent client's own command approval. The
   confirmation text is written by the daemon in plain ASCII (non-ASCII as `\u{..}`), never cut, and
   bound to a digest of the plan; if anything changed in between, nothing runs.
 - Text from outside Rail (presets, provider and system error text) reaches the agent marked as
