@@ -3,15 +3,24 @@
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rail_core::config::{AccountConfig, AccountKind, Config};
+use rail_core::daemon::{
+    BeginGate, Connector, DaemonContext, SaveGate, ServeConfig, Server, SpawnFn,
+};
 use rail_core::onboarding::{Event, Wizard};
+use rail_core::ops::OpError;
 use rail_core::paths::Paths;
 use ratatui::backend::TestBackend;
 use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
+use serde_json::json;
+use tokio::sync::mpsc;
 use url::Url;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::app::{Clipboard, Effect, Msg, TaskResult};
 use super::effects::{EffectContext, Opener};
@@ -118,19 +127,105 @@ pub fn existing_config() -> Config {
             client_secret: None,
             tenant: None,
             signature: None,
+            ai_send: None,
         }],
         ..Config::default()
     }
 }
 
-/// For screens whose effects are inspected, never run: the paths do not exist and the
-/// opener does nothing.
+/// For screens whose effects are inspected, never run: the paths do not exist, the opener
+/// does nothing and there is no daemon.
 pub fn test_ctx() -> EffectContext {
     let opener: Opener = Arc::new(|_: &Url| Ok(()));
-    EffectContext {
-        paths: Paths::all_in(Path::new("/nonexistent/rail-test")),
-        opener,
-    }
+    let paths = Paths::all_in(Path::new("/nonexistent/rail-test"));
+    let spawn: SpawnFn = Arc::new(|| Err(OpError::internal("no daemon in this test")));
+    EffectContext::with(opener, Connector::new(paths, spawn))
+}
+
+/// A context backed by a real in-process daemon over `paths`. The daemon's opener sends every
+/// login and consent URL to the receiver instead of starting a browser; `token_url` replaces
+/// the provider's token endpoint.
+pub async fn daemon_ctx(
+    paths: &Paths,
+    token_url: Option<String>,
+) -> (EffectContext, mpsc::UnboundedReceiver<Url>) {
+    let (ctx, urls, _) = gated_daemon_ctx(paths, token_url).await;
+    (ctx, urls)
+}
+
+/// The in-process daemon's hooks that hold its begins and saves part way (disarmed).
+pub struct Gates {
+    pub begin: Arc<BeginGate>,
+    pub save: Arc<SaveGate>,
+}
+
+/// `daemon_ctx`, with the daemon's gates.
+pub async fn gated_daemon_ctx(
+    paths: &Paths,
+    token_url: Option<String>,
+) -> (EffectContext, mpsc::UnboundedReceiver<Url>, Gates) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let daemon_opener: Opener = Arc::new(move |url: &Url| {
+        let _ = tx.send(url.clone());
+        Ok(())
+    });
+    let ctx = DaemonContext::new(paths.clone(), daemon_opener)
+        .expect("daemon context")
+        .with_token_url(token_url);
+    let gates = Gates {
+        begin: ctx.begin_gate.clone(),
+        save: ctx.save_gate.clone(),
+    };
+    let server = Server::bind(ctx, ServeConfig::default())
+        .await
+        .expect("bind the test daemon");
+    tokio::spawn(server.run());
+    let portal: Opener = Arc::new(|_: &Url| Ok(()));
+    let spawn: SpawnFn = Arc::new(|| Ok(()));
+    let connector = Connector::new(paths.clone(), spawn);
+    (EffectContext::with(portal, connector), rx, gates)
+}
+
+/// A token endpoint that answers every exchange with `access` and `refresh`.
+pub async fn token_server(access: &str, refresh: &str) -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": access, "refresh_token": refresh, "expires_in": 3600, "token_type": "Bearer"
+        })))
+        .mount(&server)
+        .await;
+    server
+}
+
+pub fn query(url: &Url, key: &str) -> String {
+    url.query_pairs()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.into_owned())
+        .expect("the URL carries the parameter")
+}
+
+/// Play the browser for `url`: follow its redirect back with an authorization code.
+pub async fn redirect(url: &Url) {
+    let redirect = query(url, "redirect_uri");
+    reqwest::get(format!(
+        "{redirect}/?code=c0de&state={}",
+        query(url, "state")
+    ))
+    .await
+    .expect("the loopback listener answered");
+}
+
+/// Play the browser for the next URL the daemon opens, waiting at most ten seconds for it.
+pub fn redirect_when_asked(mut urls: mpsc::UnboundedReceiver<Url>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let url = tokio::time::timeout(Duration::from_secs(10), urls.recv())
+            .await
+            .expect("the daemon opened a URL in time")
+            .expect("the opener channel is open");
+        redirect(&url).await;
+    })
 }
 
 pub fn wizard_screen() -> WizardScreen {

@@ -1,4 +1,4 @@
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 
 use url::Url;
 
@@ -16,25 +16,44 @@ fn opener() -> String {
 }
 
 /// Start the browser on `url` without printing anything, so it is safe while the TUI owns
-/// the terminal. The opener is not waited on; `xdg-open` and `open` hand off and exit.
+/// the terminal. The opener is not waited on here (`xdg-open` and `open` hand off and exit);
+/// a thread reaps it, so a long-lived daemon that opens many logins leaves no zombies.
 pub fn launch(url: &Url) -> std::io::Result<()> {
-    Command::new(opener())
+    let child = Command::new(opener())
         .arg(url.as_str())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .map(drop)
+        .spawn()?;
+    reap(child);
+    Ok(())
 }
 
-/// Print the URL and try to open it. Printing first means a failed opener still leaves the
-/// user a way in. Only for the flag commands; the wizard uses `launch`.
-pub fn open_in_browser(url: &Url) {
-    println!("Open this URL in your browser if it does not open by itself:\n\n  {url}\n");
-    if let Err(e) = launch(url) {
-        eprintln!(
-            "rail: could not run {} ({e}); open the URL above by hand",
-            opener()
-        );
+/// Wait for `child` on a thread of its own, so its exit status is collected whenever it ends.
+pub fn reap(mut child: Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reaped_child_leaves_no_zombie() {
+        let child = Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        reap(child);
+        let stat = format!("/proc/{pid}/stat");
+        for _ in 0..200 {
+            // Gone entirely once reaped; a zombie would linger with state `Z`.
+            if !std::path::Path::new(&stat).exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let state = std::fs::read_to_string(&stat).unwrap_or_default();
+        panic!("child {pid} was never reaped: {state}");
     }
 }

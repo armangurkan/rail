@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use super::preset::Preset;
-use crate::config::{AccountConfig, AccountKind, Config, default_account_name};
+use crate::config::{AccountConfig, AccountKind, Config, MAX_ADDRESS_CHARS, default_account_name};
 
 /// Tenants that name a group of directories rather than one organisation.
 pub const SHARED_TENANTS: [&str; 3] = ["common", "organizations", "consumers"];
@@ -266,6 +266,7 @@ impl AccountDraft {
                 AccountKind::Gmail => None,
             },
             signature: None,
+            ai_send: None,
         })
     }
 }
@@ -281,6 +282,7 @@ pub fn is_address(text: &str) -> bool {
         Some((local, domain)) => {
             !local.is_empty()
                 && !domain.is_empty()
+                && text.chars().count() <= MAX_ADDRESS_CHARS
                 && !domain.contains('@')
                 && !text.chars().any(char::is_whitespace)
         }
@@ -466,6 +468,7 @@ mod tests {
         assert!(!debug.contains("sec\""), "{debug}");
         assert!(debug.contains("<redacted>"), "{debug}");
         assert!(is_address("a@b"));
+        assert!(!is_address(&format!("{}@e.com", "x".repeat(250))));
         assert!(!is_address("a@b@c"));
         assert!(is_concrete_tenant("contoso.com"));
         assert!(!is_concrete_tenant("Organizations"));

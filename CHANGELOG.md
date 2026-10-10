@@ -35,6 +35,35 @@ All notable changes to Rail are recorded here. The format follows
 - `rail account login <name-or-address>` to log in again and replace an account's tokens.
 - The app shell the mail views will run in: terminal guard and panic hook that always restore the
   terminal, an async event loop with cancellable background tasks, and reusable widgets.
+- A background daemon (`rail daemon run|status|stop`) that owns the store, the token stores and
+  every login, started on demand and stopped after ten minutes idle. It listens on a Unix socket
+  in a 0700 runtime directory (`$XDG_RUNTIME_DIR/rail`, or `RAIL_RUNTIME_DIR`), mode 0600, and
+  drops connections from other users. Clients started together share one daemon, which keeps the
+  environment and the `RAIL_*` directories of the client that started it and refuses clients whose
+  directories differ. At most eight logins wait at once; SIGINT and SIGTERM let saves in flight
+  finish. A client replaces only an older daemon; a client older than the running daemon (an open
+  `rail mcp` after an upgrade) says "Rail was upgraded; restart this program" instead of stopping it.
+- The operation layer: every user operation is a typed request and response (JSON-RPC 2.0, one
+  message per line, 1 MiB cap) shared by the TUI, the flag commands and the MCP server.
+- `rail mcp`, a stdio MCP server for AI coding agents (`claude mcp add rail -- rail mcp`) with
+  twelve tools, a `setup` prompt and guided Google (`gcloud`) and Microsoft (`az`, work or school
+  accounts) app registration. `rail_account_add` takes the absolute path of a client secret file,
+  an `op://` reference or a preset, never a raw secret; tools refuse arguments they do not know.
+  `rail_account_remove` and `rail_secrets_configure` change things only after the user confirms
+  through MCP elicitation; without it nothing changes.
+- `rail secrets set <keyring|file|1password> [--vault V] [--account A] [--no-migrate]`, the
+  terminal's way to move tokens between backends (as `rail_secrets_configure` is the agent's):
+  interactive only, it shows the daemon's description of the change and asks `Change? [y/N]`.
+- `rail account add --store-secret-in-1password` stores the given client secret in 1Password and
+  writes an `op://` reference, as `store_secret_in_1password` on `rail_account_add` does.
+- `rail account remove <name-or-address>`, interactive only: it shows what goes and asks
+  `Remove? [y/N]`, has no flag to skip the question, and removes nothing when stdin or stdout is
+  not a terminal. The account's mail stays in the store.
+- The 1Password token backend (`secrets = "1password"`, `[onepassword]`), `op://` references for
+  client secrets (also in the wizard and `--client-secret`), and moving tokens between backends
+  with `rail_secrets_configure`.
+- The per-account `ai_send` policy (`confirm`, `drafts`, `client`), recorded and reported by
+  `rail doctor` and `rail_status`; enforcement arrives with the send tools.
 
 ### Changed
 
@@ -46,6 +75,18 @@ All notable changes to Rail are recorded here. The format follows
 - A missing config file now suggests `rail setup`.
 - The roadmap gains Phase 2 (app shell and onboarding); sync and everything after it move back one
   phase.
+- `rail account add`, `rail account login`, `rail account list` and `rail doctor` run through the
+  daemon. `rail doctor` ends with the daemon's line and reports each account's `ai_send` policy.
+- The setup wizard sends its actions to the daemon as requests; `Esc` or `Ctrl-C` cancels a login
+  waiting there, and a save already begun is never interrupted.
+- `rail account list` sizes its columns to the longest name and address, and `rail doctor` says
+  "1 account".
+- A preset file that does not parse is reported by path, line and column ("not a valid Rail
+  preset") instead of the parser's message, and preset files over 64 KiB are refused.
+- The Microsoft setup text names the *Application (client) ID* field, says single-tenant apps
+  must give the tenant, and lists admin consent during a normal login.
+- The roadmap gains Phase 3 (daemon, operations and MCP); Gmail sync and everything after it move
+  back one phase.
 
 ### Security
 
@@ -58,3 +99,33 @@ All notable changes to Rail are recorded here. The format follows
   output along with authorization codes.
 - The loopback listener ignores admin-consent redirects whose `state` is absent or wrong, as it
   already did for login redirects.
+- Tokens, client secrets and authorization codes never reach a daemon response, an MCP tool result,
+  a log line or an `op` command line: 1Password values go through templates on `op`'s stdin and
+  `op`'s errors are redacted.
+- After `op item edit` replaces an account's tokens, Rail reads the item back; if 1Password did
+  not keep the new values, the save fails ("1Password did not keep the new tokens; nothing was
+  saved") instead of reporting success.
+- No MCP tool can choose the program Rail runs: `op_path` is set only by hand in `config.toml`, and
+  Rail refuses one that is relative, not an executable file, owned by another user, or writable by
+  group or others, or inside a directory that is.
+- Files an agent names (a client secret JSON, a preset path) must be absolute and are read with a
+  64 KiB cap; a file that does not parse is never echoed back.
+- Through MCP, an account removal or a secret-store change happens only after the user confirms
+  in the client's dialog; no tool input confirms for the user. An agent that can run shell
+  commands could drive `rail` (or the socket) as the user, and Rail cannot stop a program running
+  as the same user: the control there is the agent client's own command approval. The
+  confirmation text is written by the daemon in plain ASCII (non-ASCII as `\u{..}`), never cut, and
+  bound to a digest of the plan; if anything changed in between, nothing runs.
+- Text from outside Rail (presets, provider and system error text) reaches the agent marked as
+  untrusted, quoted on one line, capped at 200 characters and behind a notice that it is data; a
+  provider's error text is kept apart from Rail's own message.
+- An account's address, colour and tenant may not contain spaces or control characters, at add
+  and when `config.toml` loads (with path and line), so none can carry a terminal escape.
+- `store_secret_in_1password` is refused for a client secret that is already an `op://`
+  reference, so Rail never copies an item a request named into its own vault.
+- Preset files and client secret files are read through one guarded open: only a regular file,
+  checked before and after opening, never blocking on a FIFO, at most 64 KiB.
+- A daemon answer too large to send becomes an internal error for the same request instead of
+  leaving the caller waiting.
+- `rail mcp` logs the MCP library only at error level, because its warnings can quote what an agent
+  sent.

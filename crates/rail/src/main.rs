@@ -1,6 +1,7 @@
 mod browser;
 mod cli;
 mod cmd;
+mod daemon_link;
 mod logging;
 mod test_hooks;
 mod tui;
@@ -8,7 +9,7 @@ mod tui;
 use std::process::ExitCode;
 
 use clap::Parser;
-use cli::{AccountCommand, Cli, Command};
+use cli::{AccountCommand, Cli, Command, DaemonCommand, SecretsCommand};
 use rail_core::paths::Paths;
 
 #[tokio::main]
@@ -34,12 +35,24 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
         tui::terminal::panic_test();
     }
     let paths = Paths::from_env()?;
-    let _log_guard = logging::init(&paths);
+    let mcp = matches!(cli.command, Some(Command::Mcp));
+    let _log_guard = logging::init(&paths, mcp);
     match cli.command {
         None => cmd::setup::first_run(&paths).await,
         Some(Command::Setup) => cmd::setup::wizard(&paths, None).await,
         Some(Command::Account { command }) => account(&paths, command).await,
-        Some(Command::Doctor) => Ok(doctor(&paths)),
+        Some(Command::Secrets {
+            command: SecretsCommand::Set(args),
+        }) => cmd::secrets::set(&paths, &args)
+            .await
+            .map(|()| ExitCode::SUCCESS),
+        Some(Command::Doctor) => cmd::doctor::run(&paths).await,
+        Some(Command::Mcp) => cmd::mcp::run(&paths).await,
+        Some(Command::Daemon { command }) => match command {
+            DaemonCommand::Run => cmd::daemon::run(&paths).await,
+            DaemonCommand::Status => cmd::daemon::status(&paths).await,
+            DaemonCommand::Stop => cmd::daemon::stop(&paths).await,
+        },
     }
 }
 
@@ -57,16 +70,9 @@ async fn account(paths: &Paths, command: AccountCommand) -> color_eyre::Result<E
         AccountCommand::Login { account } => cmd::account::relogin(paths, &account)
             .await
             .map(|()| ExitCode::SUCCESS),
-        AccountCommand::List => cmd::account::list(paths).map(|()| ExitCode::SUCCESS),
-    }
-}
-
-fn doctor(paths: &Paths) -> ExitCode {
-    let report = cmd::doctor::gather(paths);
-    print!("{}", cmd::doctor::render(&report));
-    if report.is_healthy() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
+        AccountCommand::List => cmd::account::list(paths).await.map(|()| ExitCode::SUCCESS),
+        AccountCommand::Remove { account } => cmd::account::remove(paths, &account)
+            .await
+            .map(|()| ExitCode::SUCCESS),
     }
 }

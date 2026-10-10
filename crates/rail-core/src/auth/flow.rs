@@ -2,31 +2,44 @@
 
 use oauth2::basic::{BasicErrorResponse, BasicErrorResponseType, BasicTokenResponse};
 use oauth2::{
-    AuthorizationCode, CsrfToken, PkceCodeChallenge, RequestTokenError, Scope, TokenResponse,
+    AuthorizationCode, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RequestTokenError, Scope,
+    TokenResponse,
 };
 use url::Url;
 
 use super::AuthError;
-use super::client::{build_client, send_token_request};
+use super::client::{OAuthClient, build_client, send_token_request};
 use super::endpoints::{OAuthEndpoints, admin_consent_url, is_concrete_tenant};
 use super::loopback::Loopback;
 use super::secrets::TokenSet;
 use crate::config::AccountConfig;
 
+/// A fresh unguessable token (16 random bytes from the OS, base64url), the same kind the OAuth
+/// `state` parameter uses.
+pub fn random_token() -> String {
+    CsrfToken::new_random().secret().clone()
+}
+
 const DEFAULT_EXPIRES_SECS: i64 = 3600;
 
-/// Run the full login. `open_url` is called once with the consent URL; `now` is unix seconds.
-pub async fn run_auth_code_flow(
+/// A login whose URL is ready: the loopback listener is bound and the PKCE verifier and CSRF
+/// state are held until the redirect arrives. No `Debug`: it holds the verifier.
+pub struct AuthSession {
+    loopback: Loopback,
+    client: OAuthClient,
+    verifier: PkceCodeVerifier,
+    csrf: CsrfToken,
+    url: Url,
+}
+
+/// Bind the loopback listener and build the authorization URL, without opening anything.
+pub async fn begin_auth_code(
     account: &AccountConfig,
     endpoints: &OAuthEndpoints,
-    http: &reqwest::Client,
-    open_url: impl FnOnce(&Url),
-    now: i64,
-) -> Result<TokenSet, AuthError> {
+) -> Result<AuthSession, AuthError> {
     let loopback = Loopback::bind().await?;
     let client = build_client(account, endpoints, Some(&loopback.redirect_url()))?;
-    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
-
+    let (pkce_challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let mut request = client
         .authorize_url(CsrfToken::new_random)
         .set_pkce_challenge(pkce_challenge);
@@ -37,30 +50,69 @@ pub async fn run_auth_code_flow(
         request = request.add_extra_param(key.clone(), value.clone());
     }
     let (url, csrf) = request.url();
-
-    tracing::info!(address = %account.address, "waiting for OAuth consent in the browser");
-    open_url(&url);
-    let code = loopback.wait_for_code(csrf.secret()).await?;
-
-    let response = client
-        .exchange_code(AuthorizationCode::new(code))
-        .set_pkce_verifier(pkce_verifier)
-        .request_async(&|req| send_token_request(http.clone(), req))
-        .await
-        .map_err(map_token_error)?;
-    token_set_from_response(&response, None, now)
+    tracing::info!(address = %account.address, "login URL ready");
+    Ok(AuthSession {
+        loopback,
+        client,
+        verifier,
+        csrf,
+        url,
+    })
 }
 
-/// Grant tenant-wide consent. `open_url` is called once with Microsoft's admin-consent URL;
-/// the result is the tenant that consented (empty if Microsoft omitted it).
+impl AuthSession {
+    /// The page the user opens. It carries the state and the PKCE challenge, never a secret.
+    pub fn url(&self) -> &Url {
+        &self.url
+    }
+
+    /// Wait for the redirect and exchange its code. `now` (unix seconds) is read when the
+    /// tokens arrive, for their expiry.
+    pub async fn finish(
+        self,
+        http: &reqwest::Client,
+        now: impl FnOnce() -> i64,
+    ) -> Result<TokenSet, AuthError> {
+        let code = self.loopback.wait_for_code(self.csrf.secret()).await?;
+        let response = self
+            .client
+            .exchange_code(AuthorizationCode::new(code))
+            .set_pkce_verifier(self.verifier)
+            .request_async(&|req| send_token_request(http.clone(), req))
+            .await
+            .map_err(map_token_error)?;
+        token_set_from_response(&response, None, now())
+    }
+}
+
+/// Run the full login. `open_url` is called once with the consent URL; `now` is unix seconds.
+pub async fn run_auth_code_flow(
+    account: &AccountConfig,
+    endpoints: &OAuthEndpoints,
+    http: &reqwest::Client,
+    open_url: impl FnOnce(&Url),
+    now: i64,
+) -> Result<TokenSet, AuthError> {
+    let session = begin_auth_code(account, endpoints).await?;
+    open_url(session.url());
+    session.finish(http, || now).await
+}
+
+/// An admin consent whose URL is ready.
+pub struct ConsentSession {
+    loopback: Loopback,
+    state: CsrfToken,
+    url: Url,
+}
+
+/// Bind the loopback listener and build Microsoft's admin-consent URL for `tenant`.
 ///
 /// `tenant` must name one organisation: `common`, `organizations`, `consumers` and the empty
-/// string are refused with `AuthError::Config` before anything is bound or opened.
-pub async fn run_admin_consent(
+/// string are refused with `AuthError::Config` before anything is bound.
+pub async fn begin_admin_consent(
     client_id: &str,
     tenant: &str,
-    open_url: impl FnOnce(&Url),
-) -> Result<String, AuthError> {
+) -> Result<ConsentSession, AuthError> {
     if !is_concrete_tenant(tenant) {
         return Err(AuthError::Config(
             "admin consent needs the organisation's tenant id or domain, not a shared alias"
@@ -70,9 +122,26 @@ pub async fn run_admin_consent(
     let loopback = Loopback::bind().await?;
     let state = CsrfToken::new_random();
     let url = admin_consent_url(client_id, tenant, &loopback.redirect_url(), state.secret());
-    tracing::info!(tenant, "waiting for admin consent in the browser");
-    open_url(&url);
-    loopback.wait_for_admin_consent(state.secret()).await
+    tracing::info!(tenant, "admin consent URL ready");
+    Ok(ConsentSession {
+        loopback,
+        state,
+        url,
+    })
+}
+
+impl ConsentSession {
+    pub fn url(&self) -> &Url {
+        &self.url
+    }
+
+    /// Wait for the redirect; the result is the tenant that consented (empty if Microsoft
+    /// omitted it).
+    pub async fn finish(self) -> Result<String, AuthError> {
+        self.loopback
+            .wait_for_admin_consent(self.state.secret())
+            .await
+    }
 }
 
 /// Build a `TokenSet`, keeping `previous_refresh` when the provider omits a new refresh token.
@@ -131,6 +200,18 @@ mod tests {
     use oauth2::AuthType;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// The admin consent the daemon drives through `begin_admin_consent` and
+    /// `ConsentSession::finish`, with `open_url` standing in for the browser.
+    async fn run_admin_consent(
+        client_id: &str,
+        tenant: &str,
+        open_url: impl FnOnce(&Url),
+    ) -> Result<String, AuthError> {
+        let session = begin_admin_consent(client_id, tenant).await?;
+        open_url(session.url());
+        session.finish().await
+    }
 
     fn account() -> AccountConfig {
         AccountConfig {

@@ -9,6 +9,7 @@ use url::Url;
 use crate::config::load::line_col;
 use crate::config::{AccountKind, ConfigError};
 use crate::error::ErrorClass;
+use crate::guarded::{GuardedReadError, read_capped};
 use crate::paths::Paths;
 
 /// Where an administrator installs presets for every user of a machine.
@@ -110,11 +111,24 @@ fn validate(preset: &Preset) -> Result<(), String> {
     Ok(())
 }
 
+/// What `read_preset` says about a file over `MAX_PRESET_BYTES`.
+pub const PRESET_TOO_LARGE: &str = "the preset is larger than 64 KiB";
+
+/// Read and parse a preset file, refusing anything over 64 KiB unread, like `fetch_preset`.
 pub fn read_preset(path: &Path) -> Result<Preset, ConfigError> {
-    let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+    let invalid = |message: &str| ConfigError::Invalid {
         path: path.to_path_buf(),
-        source,
+        message: message.to_string(),
+    };
+    let bytes = read_capped(path, MAX_PRESET_BYTES as u64).map_err(|e| match e {
+        GuardedReadError::NotRegular => invalid("the preset is not a regular file"),
+        GuardedReadError::TooLarge => invalid(PRESET_TOO_LARGE),
+        GuardedReadError::Io(source) => ConfigError::Io {
+            path: path.to_path_buf(),
+            source,
+        },
     })?;
+    let text = String::from_utf8(bytes).map_err(|_| invalid("the preset is not UTF-8 text"))?;
     parse_preset(&text, path)
 }
 
@@ -407,6 +421,77 @@ help_url = "https://intranet.example/rail"
                 PathBuf::from("/etc/rail/presets"),
             ]
         );
+    }
+
+    #[test]
+    fn a_preset_file_over_64_kib_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("big.toml");
+        let mut text = ACME_GMAIL.to_string();
+        text.push_str(&"#".repeat(65 * 1024));
+        std::fs::write(&file, text).unwrap();
+        let err = read_preset(&file).unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::Invalid { message, .. } if message == PRESET_TOO_LARGE),
+            "{err}"
+        );
+    }
+
+    /// `ACME_GMAIL` padded with a comment line to exactly `total` bytes.
+    fn padded_preset(total: usize) -> String {
+        let mut text = ACME_GMAIL.to_string();
+        text.push('#');
+        let pad = total - text.len();
+        text.push_str(&" ".repeat(pad));
+        assert_eq!(text.len(), total);
+        text
+    }
+
+    #[test]
+    fn a_preset_file_of_exactly_64_kib_is_accepted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("edge.toml");
+        std::fs::write(&file, padded_preset(MAX_PRESET_BYTES)).unwrap();
+        assert!(read_preset(&file).is_ok());
+    }
+
+    #[test]
+    fn a_preset_file_one_byte_over_64_kib_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("over.toml");
+        std::fs::write(&file, padded_preset(MAX_PRESET_BYTES + 1)).unwrap();
+        let err = read_preset(&file).unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::Invalid { message, .. } if message == PRESET_TOO_LARGE),
+            "{err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_preset_path_that_is_not_a_regular_file_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = read_preset(tmp.path()).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        let message = crate::ops::preset_file_message(&err);
+        assert!(message.ends_with("not a valid Rail preset"), "{message}");
+    }
+
+    #[test]
+    fn read_preset_refuses_a_fifo_without_blocking() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fifo = tmp.path().join("pipe.toml");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        assert!(made.is_ok_and(|s| s.success()), "mkfifo");
+        let (done, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(read_preset(&fifo).map(|_| ()).map_err(|e| e.to_string()));
+        });
+        let err = answer
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("a FIFO must be refused without blocking")
+            .unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
     }
 
     #[test]

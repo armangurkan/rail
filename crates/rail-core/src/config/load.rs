@@ -2,10 +2,13 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::model::Config;
+use super::model::{Config, SecretsBackend};
 use crate::error::ErrorClass;
 
 const MIN_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// The longest email address Rail takes (RFC 5321's limit for a forward path, less its
+/// brackets). Confirmations show addresses whole, so the length is limited here.
+pub const MAX_ADDRESS_CHARS: usize = 254;
 
 // `PathBuf` has no `Display`, so paths are formatted through `.display()`.
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +57,24 @@ pub fn load(path: &Path) -> Result<Config, ConfigError> {
     parse(&text, path)
 }
 
+/// The config text and its parsed value; a missing file counts as empty. For edits that
+/// create the file, such as adding the first account.
+pub fn load_text_or_empty(path: &Path) -> Result<(String, Config), ConfigError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let config = parse(&text, path)?;
+            Ok((text, config))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok((String::new(), Config::default()))
+        }
+        Err(source) => Err(ConfigError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
 /// Parse and validate config text. `path` is only used in error messages.
 pub fn parse(text: &str, path: &Path) -> Result<Config, ConfigError> {
     let config: Config = toml::from_str(text).map_err(|e| {
@@ -95,13 +116,22 @@ fn validate(config: &Config) -> Result<(), String> {
                 account.name
             ));
         }
-        if !names.insert(account.name.as_str()) {
-            return Err(format!("duplicate account name {:?}", account.name));
+        if !names.insert(account.name.to_ascii_lowercase()) {
+            return Err(format!(
+                "duplicate account name {:?} (names are compared ignoring case)",
+                account.name
+            ));
         }
         if !account.address.contains('@') {
             return Err(format!(
                 "account {:?}: {:?} is not an email address",
                 account.name, account.address
+            ));
+        }
+        if account.address.chars().count() > MAX_ADDRESS_CHARS {
+            return Err(format!(
+                "account {:?}: the address is longer than {MAX_ADDRESS_CHARS} characters",
+                account.name
             ));
         }
         if !addresses.insert(account.address.to_ascii_lowercase()) {
@@ -110,6 +140,20 @@ fn validate(config: &Config) -> Result<(), String> {
     }
     if config.general.poll_interval < MIN_POLL_INTERVAL {
         return Err("general.poll_interval must be at least 5s".to_string());
+    }
+    validate_onepassword(config)
+}
+
+fn validate_onepassword(config: &Config) -> Result<(), String> {
+    let vault = config.onepassword.as_ref().map(|o| o.vault.trim());
+    if config.general.secrets == SecretsBackend::OnePassword && vault.is_none_or(str::is_empty) {
+        return Err(
+            "secrets = \"1password\" needs an [onepassword] table with vault = \"<vault name>\""
+                .to_string(),
+        );
+    }
+    if vault.is_some_and(|v| v.contains('/')) {
+        return Err("onepassword.vault must not contain '/'".to_string());
     }
     Ok(())
 }
@@ -205,6 +249,14 @@ unread = { bold = true }
     }
 
     #[test]
+    fn account_names_that_differ_only_in_case_are_duplicates() {
+        let text = "[[accounts]]\nname = \"Work\"\nkind = \"gmail\"\naddress = \"x@example.com\"\nclient_id = \"1\"\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"y@example.com\"\nclient_id = \"2\"\n";
+        let err = p(text).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }));
+        assert!(err.to_string().contains("duplicate account name"), "{err}");
+    }
+
+    #[test]
     fn duplicate_account_name_is_invalid() {
         let text = r#"
 [[accounts]]
@@ -239,6 +291,43 @@ client_id = "2"
                 .to_string()
                 .contains("not an email address")
         );
+        let long = format!("{}@e.com", "x".repeat(250));
+        let too_long = format!(
+            "[[accounts]]\nname = \"ok\"\nkind = \"gmail\"\naddress = \"{long}\"\nclient_id = \"1\"\n"
+        );
+        let err = p(&too_long).unwrap_err().to_string();
+        assert!(err.contains("longer than 254"), "{err}");
+    }
+
+    /// Final review M2: spaces and control characters in an address, colour or tenant are
+    /// refused with the file path and the value's line.
+    #[test]
+    fn whitespace_and_control_characters_are_refused_with_path_and_line() {
+        let account = |field: &str| {
+            format!("[[accounts]]\nname = \"ok\"\nkind = \"m365\"\nclient_id = \"1\"\n{field}\n")
+        };
+        for (lines, field) in [
+            ("address = \"a b@example.com\"", "address"),
+            (
+                "address = \"\\u001b]52;c;eA==\\u0007me@example.com\"",
+                "address",
+            ),
+            (
+                "address = \"x@e.com\"\ncolor = \"blue\\u001b[31m\"",
+                "color",
+            ),
+            ("address = \"x@e.com\"\ntenant = \"con\\ttoso\"", "tenant"),
+        ] {
+            let text = account(lines);
+            let line = text.lines().count();
+            let err = p(&text).unwrap_err().to_string();
+            assert!(
+                err.starts_with(&format!("/etc/rail/config.toml:{line}:")),
+                "{field}: {err}"
+            );
+            assert!(err.contains(field), "{err}");
+            assert!(!err.contains('\u{1b}'), "{err}");
+        }
     }
 
     #[test]
@@ -255,6 +344,44 @@ client_id = "2"
         assert!(matches!(err, ConfigError::Missing { .. }));
         assert!(err.to_string().contains("rail account add"), "{err}");
         assert!(err.to_string().contains("rail setup"), "{err}");
+    }
+
+    #[test]
+    fn parses_the_onepassword_table() {
+        let text = "[general]\nsecrets = \"1password\"\n\n[onepassword]\nvault = \"Rail\"\naccount = \"my.1password.com\"\nop_path = \"/usr/bin/op\"\n";
+        let c = p(text).unwrap();
+        assert_eq!(c.general.secrets, SecretsBackend::OnePassword);
+        let op = c.onepassword.unwrap();
+        assert_eq!(op.vault, "Rail");
+        assert_eq!(op.account.as_deref(), Some("my.1password.com"));
+        assert_eq!(op.op_path, Some(PathBuf::from("/usr/bin/op")));
+        assert_eq!(SecretsBackend::OnePassword.as_str(), "1password");
+    }
+
+    #[test]
+    fn the_onepassword_backend_needs_a_vault() {
+        let err = p("[general]\nsecrets = \"1password\"\n").unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        assert!(err.to_string().contains("[onepassword]"), "{err}");
+        let empty = p("[general]\nsecrets = \"1password\"\n[onepassword]\nvault = \" \"\n");
+        assert!(empty.is_err());
+        let slash = p("[onepassword]\nvault = \"a/b\"\n").unwrap_err();
+        assert!(slash.to_string().contains("'/'"), "{slash}");
+        let typo = p("[onepassword]\nvalt = \"Rail\"\n").unwrap_err();
+        assert!(matches!(typo, ConfigError::Parse { line: 2, .. }), "{typo}");
+    }
+
+    #[test]
+    fn load_text_or_empty_treats_a_missing_file_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let (text, config) = load_text_or_empty(&path).unwrap();
+        assert!(text.is_empty());
+        assert_eq!(config, Config::default());
+        std::fs::write(&path, "[general]\nsecrets = \"file\"\n").unwrap();
+        let (text, config) = load_text_or_empty(&path).unwrap();
+        assert!(text.contains("file"));
+        assert_eq!(config.general.secrets, SecretsBackend::File);
     }
 
     #[test]

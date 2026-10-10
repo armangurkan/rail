@@ -4,6 +4,8 @@ pub mod client;
 pub mod endpoints;
 pub mod flow;
 pub mod loopback;
+pub mod migrate;
+pub mod onepassword;
 pub mod secrets;
 pub mod token_source;
 
@@ -12,11 +14,15 @@ pub use endpoints::{
     ADMIN_CONSENT_SCOPE, GMAIL_SCOPE, GRAPH_SCOPES, OAuthEndpoints, admin_consent_url,
     endpoints_for,
 };
-pub use flow::{run_admin_consent, run_auth_code_flow};
+pub use flow::{
+    AuthSession, ConsentSession, begin_admin_consent, begin_auth_code, random_token,
+    run_auth_code_flow,
+};
 pub use loopback::Redirect;
+pub use onepassword::{ItemIdCache, OnePasswordSecretStore, OpCli, store_client_secret};
 pub use secrets::{
-    FileSecretStore, KeyringSecretStore, MemorySecretStore, SecretError, SecretStore, TokenSet,
-    open_secret_store,
+    FileSecretStore, KeyringSecretStore, MemorySecretStore, PROBE_ADDRESS, SecretError,
+    SecretStore, TokenSet, open_secret_store, token_location,
 };
 
 pub use token_source::{TokenSource, unix_now};

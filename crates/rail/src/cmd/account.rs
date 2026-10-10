@@ -1,18 +1,26 @@
-use std::path::{Path, PathBuf};
+//! `rail account add|login|list|remove` as daemon clients. Output and exit codes are those of
+//! the in-process commands they replace, with the columns of `list` sized to their entries.
 
-use color_eyre::eyre::{WrapErr, bail, eyre};
-use rail_core::auth::{
-    AuthError, SecretError, SecretStore, TokenSet, endpoints_for, http_client, open_secret_store,
-    run_auth_code_flow, unix_now,
+use std::time::Duration;
+
+use color_eyre::eyre::{bail, eyre};
+use rail_core::config::{AccountKind, SecretsBackend};
+use rail_core::daemon::DaemonClient;
+use rail_core::ops::op::{
+    AccountAddBegin, AccountLoginBegin, AccountRemove, AccountsList, PendingCancel, PendingWait,
 };
-use rail_core::config::{self, AccountConfig, AccountKind, Config, ConfigError, SecretsBackend};
-use rail_core::paths::{Paths, write_private_atomic};
-use rail_core::store::Store;
-use url::Url;
+use rail_core::ops::{
+    AccountAddRequest, AccountRemoveRequest, AccountRemoveResponse, AccountSummary,
+    AccountsListRequest, BeginResponse, CancelRequest, ClientSecretInput, LoginBeginRequest,
+    OpError, PendingId, PendingOutcome, PendingState, SavedAccount, TokenState, WaitRequest,
+    WaitResponse,
+};
+use rail_core::paths::Paths;
+use tokio::signal::unix::{Signal, SignalKind, signal};
 
-use crate::browser::open_in_browser;
+use super::confirm;
 use crate::cli::{AddArgs, KindArg};
-use crate::test_hooks;
+use crate::daemon_link;
 
 impl From<KindArg> for AccountKind {
     fn from(kind: KindArg) -> Self {
@@ -23,37 +31,44 @@ impl From<KindArg> for AccountKind {
     }
 }
 
-/// An account to add, before its name is settled. The flag form and the wizard both build
-/// one. No `Debug`: it holds the client secret.
-pub(crate) struct NewAccount {
-    pub kind: AccountKind,
-    pub address: String,
-    pub client_id: String,
-    pub client_secret: Option<String>,
-    pub tenant: Option<String>,
-    /// `None` derives the name from the address.
-    pub name: Option<String>,
-    pub color: Option<String>,
+/// An operation error as the terminal shows it: see `error_text`.
+pub(crate) fn report(error: OpError) -> color_eyre::Report {
+    eyre!(error_text(&error))
 }
 
-impl From<AccountConfig> for NewAccount {
-    fn from(account: AccountConfig) -> Self {
-        Self {
-            kind: account.kind,
-            address: account.address,
-            client_id: account.client_id,
-            client_secret: account.client_secret,
-            tenant: account.tenant,
-            name: Some(account.name),
-            color: account.color,
-        }
+/// Rail's message, then the outside text (`detail`: a provider's, the system's or a parser's
+/// words) escaped and quoted on a line of its own that says where it came from, then the hint.
+pub(crate) fn error_text(error: &OpError) -> String {
+    let mut lines = vec![error.message.clone()];
+    if let Some(detail) = &error.detail {
+        lines.push(outside(detail.get()));
     }
+    if let Some(hint) = &error.hint {
+        lines.push(format!("hint: {hint}"));
+    }
+    lines.join("\n")
+}
+
+/// Text Rail did not write, labelled as such and quoted.
+pub(crate) fn outside(text: &str) -> String {
+    format!(
+        "from outside Rail (the provider or the system): {}",
+        quoted(text)
+    )
+}
+
+/// `text` in double quotes with control characters escaped, so outside text can neither break
+/// the line nor send escape sequences to the terminal.
+pub(crate) fn quoted(text: &str) -> String {
+    format!("{text:?}")
 }
 
 /// The flag form of `rail account add`, or `None` when no flag asks for it and the wizard
 /// should open (no arguments, or only a provider). A partial set of flags is an error that
-/// names the missing one.
-pub(crate) fn new_account_from_args(args: AddArgs) -> color_eyre::Result<Option<NewAccount>> {
+/// names the missing one. `--client-secret op://...` is a 1Password reference.
+pub(crate) fn new_account_from_args(
+    args: AddArgs,
+) -> color_eyre::Result<Option<AccountAddRequest>> {
     let Some(address) = args.address else {
         let others = [
             ("--client-id", args.client_id.is_some()),
@@ -61,6 +76,10 @@ pub(crate) fn new_account_from_args(args: AddArgs) -> color_eyre::Result<Option<
             ("--tenant", args.tenant.is_some()),
             ("--name", args.name.is_some()),
             ("--color", args.color.is_some()),
+            (
+                "--store-secret-in-1password",
+                args.store_secret_in_1password,
+            ),
         ];
         if let Some((flag, _)) = others.iter().find(|(_, given)| *given) {
             bail!("{flag} needs --address");
@@ -73,160 +92,104 @@ pub(crate) fn new_account_from_args(args: AddArgs) -> color_eyre::Result<Option<
     let Some(client_id) = args.client_id else {
         bail!("--address needs --client-id");
     };
-    Ok(Some(NewAccount {
+    Ok(Some(AccountAddRequest {
         kind: kind.into(),
         address,
-        client_id,
-        client_secret: args.client_secret,
+        client_id: Some(client_id),
+        client_secret: args.client_secret.map(ClientSecretInput::from_flag),
         tenant: args.tenant,
         name: args.name,
         color: args.color,
+        store_secret_in_1password: args.store_secret_in_1password,
+        open_browser: true,
     }))
 }
 
-/// Current config text and parsed value; an absent file counts as empty.
-pub(crate) fn load_or_empty(paths: &Paths) -> color_eyre::Result<(String, Config)> {
-    let path = paths.config_file();
-    match std::fs::read_to_string(&path) {
-        Ok(text) => {
-            let config = config::parse(&text, &path)?;
-            Ok((text, config))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok((String::new(), Config::default()))
-        }
-        Err(e) => Err(ConfigError::Io { path, source: e }.into()),
-    }
+async fn client(paths: &Paths) -> color_eyre::Result<DaemonClient> {
+    daemon_link::connector(paths).client().await.map_err(report)
 }
 
-/// Write `text` to `path` readable by the owner only. The config may hold a
-/// `client_secret`, so the directory is 0700 and the file 0600. The write is
-/// atomic: a crash or full disk leaves the previous config intact.
-pub(crate) fn write_config(path: &Path, text: &str) -> std::io::Result<()> {
-    write_private_atomic(path, text.as_bytes())
-}
-
-/// A validated account ready for login: the config text to write once it is stored.
-pub(crate) struct PendingAdd {
-    pub(crate) account: AccountConfig,
-    pub(crate) new_text: String,
-    pub(crate) config_path: PathBuf,
-    pub(crate) backend: SecretsBackend,
-}
-
-/// Order matters: everything that can be checked offline is checked before the
-/// browser opens, and config.toml is written last so a failure never leaves an
-/// account in config that `add` would then refuse as a duplicate.
-pub async fn add(paths: &Paths, new: NewAccount) -> color_eyre::Result<()> {
-    let pending = prepare(paths, new)?;
-    let secrets = open_secret_store(pending.backend, paths);
-    probe_secrets(secrets.as_ref(), &pending.account.address)
-        .wrap_err("secret storage is not usable")?;
-    let tokens = login(&pending.account, open_in_browser)
-        .await
-        .wrap_err("login failed")?;
-    persist(paths, secrets.as_ref(), &pending, &tokens)?;
-    warn_if_file_backend(paths, pending.backend);
-    let account = &pending.account;
+/// The daemon has already asked the browser to open; the URL is printed too, so a failed
+/// opener still leaves the user a way in.
+fn show(begun: &BeginResponse) {
     println!(
-        "Added {} ({}) as \"{}\". Tokens stored in the {}.",
-        account.address,
-        account.kind.as_str(),
-        account.name,
-        secrets.backend_name()
+        "Open this URL in your browser if it does not open by itself:\n\n  {}\n",
+        begun.url
     );
-    Ok(())
+    if !begun.opened {
+        eprintln!("rail: could not start the browser; open the URL above by hand");
+    }
 }
 
-/// Refuse a duplicate address and build the new config text, all before any login.
-pub(crate) fn prepare(paths: &Paths, new: NewAccount) -> color_eyre::Result<PendingAdd> {
-    let config_path = paths.config_file();
-    let (text, config) = load_or_empty(paths)?;
-    if config
-        .accounts
-        .iter()
-        .any(|a| a.address.eq_ignore_ascii_case(&new.address))
-    {
-        bail!(
-            "{} is already configured in {}; run `rail account login {}` to sign in again",
-            new.address,
-            config_path.display(),
-            new.address
-        );
-    }
-    let account = AccountConfig {
-        name: new
-            .name
-            .unwrap_or_else(|| config::default_account_name(&new.address, &config)),
-        kind: new.kind,
-        address: new.address.to_ascii_lowercase(),
-        color: new.color,
-        client_id: new.client_id,
-        client_secret: new.client_secret,
-        tenant: new.tenant,
-        signature: None,
+/// Ctrl-C from now on, delivered to `wait_or_cancel` instead of ending the process. Taken just
+/// before the login begins, so a Ctrl-C that arrives while it starts still cancels it; one while
+/// the daemon is still being reached ends the command as usual, with nothing begun.
+fn interrupts() -> color_eyre::Result<Signal> {
+    Ok(signal(SignalKind::interrupt())?)
+}
+
+/// Wait for the login to finish. Ctrl-C cancels it, unless the save has already started, in
+/// which case the save is waited for: it is never interrupted.
+async fn wait_or_cancel(
+    client: &DaemonClient,
+    id: &PendingId,
+    interrupt: &mut Signal,
+) -> color_eyre::Result<WaitResponse> {
+    let wait = WaitRequest {
+        id: id.clone(),
+        timeout_secs: None,
     };
-    // Pure: rejects a bad or duplicate-name account.
-    let new_text = config::append_account(&text, &config_path, &account)?;
-    Ok(PendingAdd {
-        account,
-        new_text,
-        config_path,
-        backend: config.general.secrets,
-    })
-}
-
-/// Read-only reachability probe, so a broken secret store fails before the browser opens.
-pub(crate) fn probe_secrets(secrets: &dyn SecretStore, address: &str) -> Result<(), SecretError> {
-    secrets.get_tokens(address).map(|_| ())
-}
-
-/// The browser login for `account`. `open_url` receives the consent URL.
-pub(crate) async fn login(
-    account: &AccountConfig,
-    open_url: impl FnOnce(&Url),
-) -> Result<TokenSet, AuthError> {
-    let mut endpoints = endpoints_for(account.kind, account.tenant.as_deref());
-    if let Some(token_url) = test_hooks::token_url() {
-        endpoints.token_url = token_url;
+    loop {
+        tokio::select! {
+            answer = client.call::<PendingWait>(&wait) => {
+                let answer = answer.map_err(report)?;
+                if answer.state.is_finished() {
+                    return Ok(answer);
+                }
+            }
+            _ = interrupt.recv() => {
+                let answer = cancel(client, id).await?;
+                if answer.state != PendingState::Saving {
+                    return Ok(answer);
+                }
+            }
+        }
     }
-    let http = http_client()?;
-    run_auth_code_flow(account, &endpoints, &http, open_url, unix_now()).await
 }
 
-/// Tokens, then the store row, then config.toml last.
-pub(crate) fn persist(
-    paths: &Paths,
-    secrets: &dyn SecretStore,
-    pending: &PendingAdd,
-    tokens: &TokenSet,
-) -> color_eyre::Result<()> {
-    secrets
-        .set_tokens(&pending.account.address, tokens)
-        .wrap_err("storing tokens")?;
-    let store = Store::open(&paths.db_file())?;
-    store.upsert_account(&pending.account)?;
-    write_config(&pending.config_path, &pending.new_text)
-        .wrap_err_with(|| format!("writing {}", pending.config_path.display()))
+/// The longest a Ctrl-C waits for the daemon to confirm the cancel.
+pub(crate) const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Send `pending.cancel`, bounded: a daemon that does not answer must not trap the user.
+async fn cancel(client: &DaemonClient, id: &PendingId) -> color_eyre::Result<WaitResponse> {
+    let request = CancelRequest { id: id.clone() };
+    match tokio::time::timeout(CANCEL_TIMEOUT, client.call::<PendingCancel>(&request)).await {
+        Ok(answer) => answer.map_err(report),
+        Err(_) => Err(cancel_unanswered(CANCEL_TIMEOUT)),
+    }
 }
 
-/// The login half of `persist` for an account already in config: tokens, then the store
-/// row (so an account whose row was lost gets it back). Never writes config.toml.
-pub(crate) fn persist_tokens_only(
-    paths: &Paths,
-    secrets: &dyn SecretStore,
-    account: &AccountConfig,
-    tokens: &TokenSet,
-) -> color_eyre::Result<()> {
-    secrets
-        .set_tokens(&account.address, tokens)
-        .wrap_err("storing tokens")?;
-    Store::open(&paths.db_file())?.upsert_account(account)?;
-    Ok(())
+fn cancel_unanswered(waited: Duration) -> color_eyre::Report {
+    eyre!(
+        "the daemon did not answer the cancel within {} seconds; the login may still be pending\nhint: run `rail daemon status` to see it, or `rail daemon stop` to end it",
+        waited.as_secs()
+    )
 }
 
-fn warn_if_file_backend(paths: &Paths, backend: SecretsBackend) {
-    if backend == SecretsBackend::File {
+/// The saved account, or the reason there is none.
+fn saved(finished: WaitResponse) -> color_eyre::Result<SavedAccount> {
+    match finished.state {
+        PendingState::Done {
+            outcome: PendingOutcome::Added { account } | PendingOutcome::LoggedIn { account },
+        } => Ok(account),
+        PendingState::Failed { error } => Err(eyre!("login failed: {}", error_text(&error))),
+        PendingState::Cancelled => bail!("login cancelled; nothing was saved"),
+        other => bail!("the login ended in an unexpected state: {other:?}"),
+    }
+}
+
+fn warn_if_file_backend(paths: &Paths, account: &SavedAccount) {
+    if account.token_backend == SecretsBackend::File.as_str() {
         eprintln!(
             "warning: tokens are stored in {} (mode 0600) because secrets = \"file\"; prefer the OS keyring where available",
             paths.secrets_file().display()
@@ -234,241 +197,153 @@ fn warn_if_file_backend(paths: &Paths, backend: SecretsBackend) {
     }
 }
 
-/// The account whose name or address is `who`, ignoring ASCII case.
-pub(crate) fn find_account<'a>(config: &'a Config, who: &str) -> Option<&'a AccountConfig> {
-    config
-        .accounts
-        .iter()
-        .find(|a| a.name.eq_ignore_ascii_case(who) || a.address.eq_ignore_ascii_case(who))
+/// `rail account add` with flags: the daemon validates, logs in and saves.
+pub async fn add(paths: &Paths, request: AccountAddRequest) -> color_eyre::Result<()> {
+    let client = client(paths).await?;
+    let mut interrupt = interrupts()?;
+    let begun = client
+        .call::<AccountAddBegin>(&request)
+        .await
+        .map_err(report)?;
+    show(&begun);
+    let account = saved(wait_or_cancel(&client, &begun.id, &mut interrupt).await?)?;
+    warn_if_file_backend(paths, &account);
+    println!(
+        "Added {} ({}) as \"{}\". Tokens stored in the {}.",
+        account.address,
+        account.kind.as_str(),
+        account.name,
+        account.token_backend
+    );
+    Ok(())
 }
 
 /// `rail account login <name-or-address>`: log in again and replace the stored tokens.
 /// An unknown account fails before the browser opens.
 pub async fn relogin(paths: &Paths, who: &str) -> color_eyre::Result<()> {
-    let config_path = paths.config_file();
-    let config = config::load(&config_path)?;
-    let account = find_account(&config, who).cloned().ok_or_else(|| {
-        eyre!(
-            "no account named or addressed {who:?} in {}; run `rail account list` to see the configured accounts",
-            config_path.display()
-        )
-    })?;
-    let secrets = open_secret_store(config.general.secrets, paths);
-    probe_secrets(secrets.as_ref(), &account.address).wrap_err("secret storage is not usable")?;
-    let tokens = login(&account, open_in_browser)
+    let client = client(paths).await?;
+    let mut interrupt = interrupts()?;
+    let request = LoginBeginRequest {
+        account: who.to_string(),
+        open_browser: true,
+    };
+    let begun = client
+        .call::<AccountLoginBegin>(&request)
         .await
-        .wrap_err("login failed")?;
-    persist_tokens_only(paths, secrets.as_ref(), &account, &tokens)?;
-    warn_if_file_backend(paths, config.general.secrets);
+        .map_err(report)?;
+    show(&begun);
+    let account = saved(wait_or_cancel(&client, &begun.id, &mut interrupt).await?)?;
+    warn_if_file_backend(paths, &account);
     println!(
         "Logged in to {} ({}) as \"{}\". Tokens stored in the {}.",
         account.address,
         account.kind.as_str(),
         account.name,
-        secrets.backend_name()
+        account.token_backend
     );
     Ok(())
 }
 
-pub fn list(paths: &Paths) -> color_eyre::Result<()> {
-    let config = config::load(&paths.config_file())?;
-    let secrets = open_secret_store(config.general.secrets, paths);
-    if config.accounts.is_empty() {
+/// `rail account list`. Token presence comes from the daemon, which asks the store whether
+/// tokens exist without reading them.
+pub async fn list(paths: &Paths) -> color_eyre::Result<()> {
+    let listed = client(paths)
+        .await?
+        .call::<AccountsList>(&AccountsListRequest {})
+        .await
+        .map_err(report)?;
+    if listed.accounts.is_empty() {
         println!("No accounts configured. Run `rail account add --help`.");
         return Ok(());
     }
-    println!("{:<12} {:<6} {:<32} TOKENS", "NAME", "KIND", "ADDRESS");
-    for account in &config.accounts {
-        let tokens = match secrets.get_tokens(&account.address) {
-            Ok(Some(_)) => "yes".to_string(),
-            Ok(None) => "missing".to_string(),
-            Err(e) => format!("error: {e}"),
+    print!("{}", table(&listed.accounts));
+    Ok(())
+}
+
+/// `rail account remove <name-or-address>`: removes only after a person at a terminal read
+/// the daemon's text and said yes (see `confirm`).
+pub async fn remove(paths: &Paths, who: &str) -> color_eyre::Result<()> {
+    confirm::require_terminal(&REMOVE_WORDS)?;
+    let client = client(paths).await?;
+    let probe = AccountRemoveRequest {
+        account: who.to_string(),
+        confirm: false,
+        plan: None,
+    };
+    let confirmed = |probe: AccountRemoveRequest, plan| AccountRemoveRequest {
+        confirm: true,
+        plan: Some(plan),
+        ..probe
+    };
+    let removed =
+        confirm::confirmed_call::<AccountRemove>(&client, probe, confirmed, &REMOVE_WORDS).await?;
+    print_removed(&removed);
+    Ok(())
+}
+
+const REMOVE_WORDS: confirm::Words = confirm::Words {
+    not_a_terminal: "refusing to remove an account without asking: stdin and stdout are not both a terminal; nothing was removed\nhint: run `rail account remove` yourself in a terminal",
+    question: "Remove? [y/N] ",
+    declined: "nothing was removed",
+    unexplained: "the daemon did not say what would be removed; nothing was removed",
+    // The daemon refused the yes, which was for the account as it was.
+    plan_changed: "the account changed while you answered; nothing was removed — run `rail account remove` again",
+};
+
+fn print_removed(removed: &AccountRemoveResponse) {
+    let entry = format!(
+        "Removed \"{}\" <{}> from config.toml",
+        removed.name, removed.address
+    );
+    match &removed.token_error {
+        None => println!("{entry} and deleted its tokens. Its mail stays in Rail's store."),
+        Some(error) => {
+            println!("{entry}. Its mail stays in Rail's store.");
+            eprintln!(
+                "warning: its tokens could not be deleted\n{}",
+                outside(error.get())
+            );
+        }
+    }
+}
+
+/// The account table, its name and address columns as wide as their longest entry.
+pub(crate) fn table(accounts: &[AccountSummary]) -> String {
+    let width = |header: &str, cell: fn(&AccountSummary) -> &str| {
+        accounts
+            .iter()
+            .map(|a| cell(a).chars().count())
+            .chain([header.len()])
+            .max()
+            .unwrap_or(0)
+    };
+    let name = width("NAME", |a| a.name.as_str());
+    let address = width("ADDRESS", |a| a.address.as_str());
+    let mut out = format!(
+        "{:<name$} {:<6} {:<address$} TOKENS\n",
+        "NAME", "KIND", "ADDRESS"
+    );
+    for account in accounts {
+        let tokens = match &account.tokens {
+            TokenState::Present => "yes".to_string(),
+            TokenState::Missing => "missing".to_string(),
+            TokenState::Error { message } => format!("error {}", outside(message.get())),
         };
-        println!(
-            "{:<12} {:<6} {:<32} {tokens}",
+        out += &format!(
+            "{:<name$} {:<6} {:<address$} {tokens}\n",
             account.name,
             account.kind.as_str(),
             account.address
         );
     }
-    Ok(())
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rail_core::auth::MemorySecretStore;
-
-    #[cfg(unix)]
-    fn mode(path: &Path) -> u32 {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
-    }
-
-    fn pending(paths: &Paths) -> PendingAdd {
-        let account = AccountConfig {
-            name: "me".into(),
-            kind: AccountKind::Gmail,
-            address: "me@example.com".into(),
-            color: None,
-            client_id: "cid".into(),
-            client_secret: None,
-            tenant: None,
-            signature: None,
-        };
-        let new_text = config::append_account("", &paths.config_file(), &account).unwrap();
-        PendingAdd {
-            account,
-            new_text,
-            config_path: paths.config_file(),
-            backend: SecretsBackend::Keyring,
-        }
-    }
-
-    fn tokens() -> TokenSet {
-        TokenSet {
-            access_token: "a".into(),
-            refresh_token: "r".into(),
-            expires_at: 0,
-        }
-    }
-
-    fn file_backend_paths(tmp: &tempfile::TempDir, accounts: &str) -> Paths {
-        let paths = Paths::all_in(tmp.path());
-        std::fs::create_dir_all(&paths.config_dir).unwrap();
-        let text = format!("[general]\nsecrets = \"file\"\n{accounts}");
-        std::fs::write(paths.config_file(), text).unwrap();
-        paths
-    }
-
-    const WORK: &str = "\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\n";
-
-    fn new_account(address: &str, name: Option<&str>) -> NewAccount {
-        NewAccount {
-            kind: AccountKind::Gmail,
-            address: address.into(),
-            client_id: "cid".into(),
-            client_secret: Some("sec".into()),
-            tenant: None,
-            name: name.map(str::to_string),
-            color: None,
-        }
-    }
-
-    #[test]
-    fn find_account_matches_name_or_address_ignoring_case() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = file_backend_paths(&tmp, WORK);
-        let config = config::load(&paths.config_file()).unwrap();
-        assert_eq!(find_account(&config, "WORK").unwrap().name, "work");
-        assert_eq!(
-            find_account(&config, "Me@Example.com").unwrap().name,
-            "work"
-        );
-        assert!(find_account(&config, "nobody").is_none());
-    }
-
-    #[test]
-    fn prepare_refuses_a_configured_address() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = file_backend_paths(&tmp, WORK);
-        let err = prepare(&paths, new_account("ME@example.com", None))
-            .err()
-            .expect("duplicate refused");
-        assert!(err.to_string().contains("already configured"), "{err}");
-    }
-
-    #[test]
-    fn prepare_derives_a_name_and_appends_the_account() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = file_backend_paths(&tmp, WORK);
-        let pending = prepare(&paths, new_account("Dana@Corp.com", None)).unwrap();
-        assert_eq!(pending.account.name, "dana");
-        assert_eq!(pending.account.address, "dana@corp.com");
-        assert_eq!(pending.backend, SecretsBackend::File);
-        let parsed = config::parse(&pending.new_text, &pending.config_path).unwrap();
-        assert_eq!(parsed.accounts.len(), 2);
-        let named = prepare(&paths, new_account("x@corp.com", Some("corp"))).unwrap();
-        assert_eq!(named.account.name, "corp");
-    }
-
-    #[test]
-    fn persist_tokens_only_replaces_tokens_and_never_touches_config() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = file_backend_paths(&tmp, WORK);
-        let before = std::fs::read_to_string(paths.config_file()).unwrap();
-        let config = config::load(&paths.config_file()).unwrap();
-        let account = config.accounts[0].clone();
-        let secrets = rail_core::auth::FileSecretStore::new(paths.secrets_file());
-        secrets.set_tokens(&account.address, &tokens()).unwrap();
-        let fresh = TokenSet {
-            access_token: "a2".into(),
-            refresh_token: "r2".into(),
-            expires_at: 9,
-        };
-        persist_tokens_only(&paths, &secrets, &account, &fresh).unwrap();
-        assert_eq!(secrets.get_tokens(&account.address).unwrap(), Some(fresh));
-        let rows = Store::open(&paths.db_file())
-            .unwrap()
-            .list_accounts()
-            .unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            std::fs::read_to_string(paths.config_file()).unwrap(),
-            before
-        );
-    }
-
-    #[test]
-    fn persist_writes_store_row_before_config() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = Paths::all_in(tmp.path());
-        let secrets = MemorySecretStore::default();
-        persist(&paths, &secrets, &pending(&paths), &tokens()).unwrap();
-        assert!(secrets.get_tokens("me@example.com").unwrap().is_some());
-        let rows = Store::open(&paths.db_file())
-            .unwrap()
-            .list_accounts()
-            .unwrap();
-        assert_eq!(rows.len(), 1);
-        let loaded = config::load(&paths.config_file()).unwrap();
-        assert_eq!(loaded.accounts[0].address, "me@example.com");
-    }
-
-    #[test]
-    fn persist_leaves_config_untouched_when_the_store_fails() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = Paths::all_in(tmp.path());
-        // A directory where the database should be makes Store::open fail.
-        std::fs::create_dir_all(paths.db_file()).unwrap();
-        let secrets = MemorySecretStore::default();
-        assert!(persist(&paths, &secrets, &pending(&paths), &tokens()).is_err());
-        assert!(!paths.config_file().exists(), "config must be written last");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn write_config_creates_private_dir_and_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("nested/rail/config.toml");
-        write_config(&path, "a = 1\n").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a = 1\n");
-        assert_eq!(mode(&path), 0o600);
-        assert_eq!(mode(path.parent().unwrap()), 0o700);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn write_config_tightens_and_truncates_an_existing_file() {
-        use std::os::unix::fs::PermissionsExt;
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("config.toml");
-        std::fs::write(&path, "a very long previous body\n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        write_config(&path, "b = 2\n").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "b = 2\n");
-        assert_eq!(mode(&path), 0o600);
-    }
+    use rail_core::config::AiSend;
+    use rail_core::ops::Secret;
 
     fn parse_add(args: &[&str]) -> AddArgs {
         use crate::cli::{AccountCommand, Cli, Command};
@@ -481,7 +356,7 @@ mod tests {
         }
     }
 
-    fn from_args(args: &[&str]) -> color_eyre::Result<Option<NewAccount>> {
+    fn from_args(args: &[&str]) -> color_eyre::Result<Option<AccountAddRequest>> {
         let mut all = vec!["rail", "account", "add"];
         all.extend_from_slice(args);
         new_account_from_args(parse_add(&all))
@@ -489,8 +364,7 @@ mod tests {
 
     fn message(args: &[&str]) -> String {
         from_args(args)
-            .err()
-            .expect("partial set refused")
+            .expect_err("partial set refused")
             .to_string()
     }
 
@@ -518,9 +392,65 @@ mod tests {
         let new = from_args(&flags).unwrap().unwrap();
         assert_eq!(new.kind, AccountKind::M365);
         assert_eq!(new.address, "a@b.c");
-        assert_eq!(new.client_id, "x");
+        assert_eq!(new.client_id.as_deref(), Some("x"));
         assert_eq!(new.tenant.as_deref(), Some("t"));
         assert_eq!(new.name, None);
+        assert!(new.open_browser);
+    }
+
+    #[test]
+    fn a_client_secret_flag_may_be_a_1password_reference() {
+        let base = [
+            "gmail",
+            "--address",
+            "a@b.c",
+            "--client-id",
+            "x",
+            "--client-secret",
+        ];
+        let mut reference = base.to_vec();
+        reference.push("op://Rail/google/client_secret");
+        assert_eq!(
+            from_args(&reference).unwrap().unwrap().client_secret,
+            Some(ClientSecretInput::Reference(
+                "op://Rail/google/client_secret".into()
+            ))
+        );
+        let mut value = base.to_vec();
+        value.push("GOCSPX-x");
+        assert_eq!(
+            from_args(&value).unwrap().unwrap().client_secret,
+            Some(ClientSecretInput::Value(Secret::new("GOCSPX-x")))
+        );
+    }
+
+    /// Final review F4: the flag reaches the request; without it the request stays false. On
+    /// its own (no --address) it names the missing flag like every other.
+    #[test]
+    fn store_secret_in_1password_maps_to_the_request() {
+        let base = [
+            "gmail",
+            "--address",
+            "a@b.c",
+            "--client-id",
+            "x",
+            "--client-secret",
+            "GOCSPX-x",
+        ];
+        assert!(!from_args(&base).unwrap().unwrap().store_secret_in_1password);
+        let mut flagged = base.to_vec();
+        flagged.push("--store-secret-in-1password");
+        assert!(
+            from_args(&flagged)
+                .unwrap()
+                .unwrap()
+                .store_secret_in_1password
+        );
+        let msg = message(&["gmail", "--store-secret-in-1password"]);
+        assert!(
+            msg.contains("--store-secret-in-1password needs --address"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -547,5 +477,78 @@ mod tests {
             let msg = message(&["gmail", flag[0], flag[1]]);
             assert!(msg.contains("--address"), "{flag:?}: {msg}");
         }
+    }
+
+    #[test]
+    fn a_report_carries_the_hint() {
+        let error = OpError::invalid_input("bad").with_hint("do this");
+        assert_eq!(report(error).to_string(), "bad\nhint: do this");
+    }
+    #[test]
+    fn outside_detail_is_quoted_escaped_and_on_its_own_line() {
+        let error = OpError::invalid_input("the provider refused")
+            .with_detail("bad\nline \u{1b}[2J \"quoted\"")
+            .with_hint("try again");
+        let text = error_text(&error);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "{text}");
+        assert_eq!(lines[0], "the provider refused");
+        assert_eq!(
+            lines[1],
+            r#"from outside Rail (the provider or the system): "bad\nline \u{1b}[2J \"quoted\"""#
+        );
+        assert_eq!(lines[2], "hint: try again");
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+    }
+
+    fn summary(name: &str, address: &str, tokens: TokenState) -> AccountSummary {
+        AccountSummary {
+            name: name.into(),
+            kind: AccountKind::Gmail,
+            address: address.into(),
+            color: None,
+            tokens,
+            ai_send: AiSend::Confirm,
+        }
+    }
+
+    #[test]
+    fn long_names_and_addresses_keep_the_columns_aligned() {
+        let text = table(&[
+            summary(
+                "a-very-long-account-name",
+                "someone.with.a.long.address@example.com",
+                TokenState::Present,
+            ),
+            summary("w", "w@x.io", TokenState::Present),
+        ]);
+        let lines: Vec<&str> = text.lines().collect();
+        let column = |line: &str, word: &str| line.find(word).unwrap();
+        assert_eq!(column(lines[0], "KIND"), column(lines[1], "gmail"));
+        assert_eq!(column(lines[1], "gmail"), column(lines[2], "gmail"));
+        assert_eq!(column(lines[0], "TOKENS"), column(lines[2], "yes"));
+        assert!(lines[2].starts_with("w "), "{text}");
+    }
+
+    #[test]
+    fn a_token_store_error_in_the_table_is_quoted() {
+        let message = "locked\n\u{1b}[31m".to_string().into();
+        let text = table(&[summary("w", "w@x.io", TokenState::Error { message })]);
+        assert_eq!(text.lines().count(), 2, "{text:?}");
+        assert!(
+            text.contains(
+                r#"error from outside Rail (the provider or the system): "locked\n\u{1b}[31m""#
+            ),
+            "{text:?}"
+        );
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+    }
+
+    #[test]
+    fn an_unanswered_cancel_says_the_login_may_still_be_pending() {
+        let text = cancel_unanswered(CANCEL_TIMEOUT).to_string();
+        assert!(text.starts_with("the daemon did not answer the cancel within 5 seconds"));
+        assert!(text.contains("the login may still be pending"), "{text}");
+        assert!(text.contains("\nhint: run `rail daemon status`"), "{text}");
     }
 }

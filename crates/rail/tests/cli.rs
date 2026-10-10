@@ -1,12 +1,55 @@
 use std::process::Command;
 
-/// Point a command's four XDG-style directories under `dir`, so no test ever reads or
-/// writes the real config, store or secrets.
+/// Point a command's five XDG-style directories under `dir`, so no test ever reads or
+/// writes the real config, store, secrets or daemon socket, and give it the stand-in browser
+/// (recording into `opened_url_file`), so no test, and no daemon a test starts, can ever open
+/// the real one. A test may set its own `RAIL_TEST_URL_FILE`. The daemon a command starts
+/// inherits this environment and exits two seconds after its last client leaves.
 fn rail_env<'a>(cmd: &'a mut Command, dir: &tempfile::TempDir) -> &'a mut Command {
-    cmd.env("RAIL_CONFIG_DIR", dir.path().join("config"))
+    cmd.env("RAIL_TEST_OPENER", write_opener(dir))
+        .env("RAIL_TEST_URL_FILE", opened_url_file(dir))
+        .env("RAIL_CONFIG_DIR", dir.path().join("config"))
         .env("RAIL_DATA_DIR", dir.path().join("data"))
         .env("RAIL_CACHE_DIR", dir.path().join("cache"))
         .env("RAIL_STATE_DIR", dir.path().join("state"))
+        .env("RAIL_RUNTIME_DIR", dir.path().join("run"))
+        .env("RAIL_TEST_IDLE_SECS", "2")
+}
+
+/// Runs `rail daemon stop` for `dir` when dropped, so a test that starts a daemon ends it,
+/// even when the test fails half way.
+struct StopsDaemon<'a>(&'a tempfile::TempDir);
+
+impl Drop for StopsDaemon<'_> {
+    fn drop(&mut self) {
+        let _ = rail_cmd(self.0).args(["daemon", "stop"]).output();
+    }
+}
+
+/// Wait for `child` at most `limit`, failing (and killing it) if it is still running then.
+fn finish_within(child: std::process::Child, limit: std::time::Duration) -> std::process::Output {
+    let mut running = KillsChild(Some(child));
+    let deadline = std::time::Instant::now() + limit;
+    while running.0.as_mut().unwrap().try_wait().unwrap().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "still running after {limit:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    running.0.take().unwrap().wait_with_output().unwrap()
+}
+
+/// Kills a spawned `rail` if the test fails before it is waited on.
+struct KillsChild(Option<std::process::Child>);
+
+impl Drop for KillsChild {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 /// A `rail` command confined to `dir` by `rail_env`.
@@ -38,6 +81,7 @@ fn rail_with_a_config_says_the_tui_is_not_built_yet() {
 #[test]
 fn account_list_without_config_explains_how_to_start() {
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let out = rail_cmd(&dir).args(["account", "list"]).output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -47,24 +91,22 @@ fn account_list_without_config_explains_how_to_start() {
 #[test]
 fn account_add_refuses_duplicate_address_before_opening_a_browser() {
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let config_dir = dir.path().join("config");
     std::fs::create_dir_all(&config_dir).unwrap();
     let config_file = config_dir.join("config.toml");
     let original = "[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
     std::fs::write(&config_file, original).unwrap();
 
-    let out = rail_cmd(&dir)
-        .args([
-            "account",
-            "add",
-            "gmail",
-            "--address",
-            "ME@example.com",
-            "--client-id",
-            "y",
-        ])
-        .output()
-        .unwrap();
+    let out = bounded(rail_cmd(&dir).args([
+        "account",
+        "add",
+        "gmail",
+        "--address",
+        "ME@example.com",
+        "--client-id",
+        "y",
+    ]));
 
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -75,31 +117,30 @@ fn account_add_refuses_duplicate_address_before_opening_a_browser() {
     assert!(!stdout.contains("http"), "got {stdout:?}");
     assert_eq!(std::fs::read_to_string(&config_file).unwrap(), original);
     assert!(!dir.path().join("data").exists());
+    assert!(!opened_url_file(&dir).exists(), "the browser was asked");
 }
 
 #[test]
 fn account_add_refuses_duplicate_name_before_opening_a_browser() {
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let config_dir = dir.path().join("config");
     std::fs::create_dir_all(&config_dir).unwrap();
     let config_file = config_dir.join("config.toml");
     let original = "[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
     std::fs::write(&config_file, original).unwrap();
 
-    let out = rail_cmd(&dir)
-        .args([
-            "account",
-            "add",
-            "gmail",
-            "--address",
-            "other@example.com",
-            "--client-id",
-            "x",
-            "--name",
-            "work",
-        ])
-        .output()
-        .unwrap();
+    let out = bounded(rail_cmd(&dir).args([
+        "account",
+        "add",
+        "gmail",
+        "--address",
+        "other@example.com",
+        "--client-id",
+        "x",
+        "--name",
+        "work",
+    ]));
 
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -112,11 +153,13 @@ fn account_add_refuses_duplicate_name_before_opening_a_browser() {
     assert!(!stdout.contains("http"), "got {stdout:?}");
     assert_eq!(std::fs::read_to_string(&config_file).unwrap(), original);
     assert!(!dir.path().join("data").exists());
+    assert!(!opened_url_file(&dir).exists(), "the browser was asked");
 }
 
 #[test]
 fn doctor_exits_nonzero_without_config() {
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let out = rail_cmd(&dir).arg("doctor").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -134,6 +177,7 @@ fn doctor_exits_nonzero_without_config() {
 #[test]
 fn account_add_fails_before_the_browser_when_secrets_file_is_corrupt() {
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let config_dir = dir.path().join("config");
     let data_dir = dir.path().join("data");
     std::fs::create_dir_all(&config_dir).unwrap();
@@ -141,18 +185,15 @@ fn account_add_fails_before_the_browser_when_secrets_file_is_corrupt() {
     let config = "[general]\nsecrets = \"file\"\n";
     std::fs::write(config_dir.join("config.toml"), config).unwrap();
     std::fs::write(data_dir.join("secrets.json"), "{not json").unwrap();
-    let out = rail_cmd(&dir)
-        .args([
-            "account",
-            "add",
-            "gmail",
-            "--address",
-            "new@example.com",
-            "--client-id",
-            "x",
-        ])
-        .output()
-        .unwrap();
+    let out = bounded(rail_cmd(&dir).args([
+        "account",
+        "add",
+        "gmail",
+        "--address",
+        "new@example.com",
+        "--client-id",
+        "x",
+    ]));
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("corrupt"), "got {stderr:?}");
@@ -162,6 +203,7 @@ fn account_add_fails_before_the_browser_when_secrets_file_is_corrupt() {
         std::fs::read_to_string(config_dir.join("config.toml")).unwrap(),
         config
     );
+    assert!(!opened_url_file(&dir).exists(), "the browser was asked");
 }
 
 #[test]
@@ -198,15 +240,37 @@ fn write_config(dir: &tempfile::TempDir, text: &str) -> std::path::PathBuf {
 }
 
 /// A browser stand-in: writes the URL it was given to `$RAIL_TEST_URL_FILE` (atomically,
-/// so a reader never sees half of it) and exits.
-#[cfg(unix)]
+/// so a reader never sees half of it) and exits. Created once per directory, by rename, so a
+/// daemon running it never meets a half-written script.
 fn write_opener(dir: &tempfile::TempDir) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let path = dir.path().join("opener.sh");
+    if path.exists() {
+        return path;
+    }
     let script = "#!/bin/sh\nprintf '%s' \"$1\" > \"$RAIL_TEST_URL_FILE.tmp\"\nmv \"$RAIL_TEST_URL_FILE.tmp\" \"$RAIL_TEST_URL_FILE\"\n";
-    std::fs::write(&path, script).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let temp = dir
+        .path()
+        .join(format!("opener.{:?}.tmp", std::thread::current().id()));
+    std::fs::write(&temp, script).unwrap();
+    std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::rename(&temp, &path).unwrap();
     path
+}
+
+/// Where the default stand-in browser records a URL; it exists only if a browser was asked.
+fn opened_url_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
+    dir.path().join("opened-url.txt")
+}
+
+/// Run `cmd` with its output captured, failing if it takes longer than half a minute.
+fn bounded(cmd: &mut Command) -> std::process::Output {
+    let child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    finish_within(child, std::time::Duration::from_secs(30))
 }
 
 #[cfg(debug_assertions)]
@@ -228,18 +292,17 @@ async fn wait_for_url(file: &std::path::Path) -> url::Url {
     panic!("the opener was never called");
 }
 
-#[cfg(unix)]
 #[test]
 fn account_login_unknown_account_fails_before_the_opener() {
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let config = write_config(&dir, WORK_FILE_BACKEND);
     let url_file = dir.path().join("url.txt");
-    let out = rail_cmd(&dir)
-        .args(["account", "login", "nobody"])
-        .env("RAIL_TEST_OPENER", write_opener(&dir))
-        .env("RAIL_TEST_URL_FILE", &url_file)
-        .output()
-        .unwrap();
+    let out = bounded(
+        rail_cmd(&dir)
+            .args(["account", "login", "nobody"])
+            .env("RAIL_TEST_URL_FILE", &url_file),
+    );
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -261,6 +324,7 @@ async fn account_login_replaces_tokens_in_the_file_backend() {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let config = write_config(&dir, WORK_FILE_BACKEND);
     let secrets = FileSecretStore::new(dir.path().join("data").join("secrets.json"));
     let old = TokenSet {
@@ -316,6 +380,153 @@ async fn account_login_replaces_tokens_in_the_file_backend() {
     assert_eq!(std::fs::read_to_string(config).unwrap(), WORK_FILE_BACKEND);
 }
 
+fn stdout_of(out: &std::process::Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn account_list_keeps_columns_aligned_for_long_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let config = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"a-very-long-account-name\"\nkind = \"gmail\"\naddress = \"someone.with.a.very.long.address@example.com\"\nclient_id = \"c\"\n\n[[accounts]]\nname = \"w\"\nkind = \"m365\"\naddress = \"w@x.io\"\nclient_id = \"c\"\n";
+    write_config(&dir, config);
+    let out = rail_cmd(&dir).args(["account", "list"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let text = stdout_of(&out);
+    let lines: Vec<&str> = text.lines().collect();
+    let tokens = lines[0].find("TOKENS").unwrap();
+    assert_eq!(lines[1].find("missing"), Some(tokens), "{text}");
+    assert_eq!(lines[2].find("missing"), Some(tokens), "{text}");
+}
+
+#[test]
+fn doctor_says_1_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    let out = rail_cmd(&dir).arg("doctor").output().unwrap();
+    let text = stdout_of(&out);
+    assert!(text.contains("(1 account)"), "{text}");
+    assert!(!text.contains("1 accounts"), "{text}");
+}
+
+/// Tokens for `me@example.com` in the file backend, so a removal test can see they stay.
+fn store_work_tokens(dir: &tempfile::TempDir) -> std::path::PathBuf {
+    use rail_core::auth::{FileSecretStore, SecretStore, TokenSet};
+    let file = dir.path().join("data").join("secrets.json");
+    let tokens = TokenSet {
+        access_token: "a".into(),
+        refresh_token: "r".into(),
+        expires_at: 1,
+    };
+    FileSecretStore::new(file.clone())
+        .set_tokens("me@example.com", &tokens)
+        .unwrap();
+    file
+}
+
+/// Ruling P6: without a terminal nothing is removed, whatever the account. `output()` pipes
+/// stdout and gives no terminal on stdin.
+#[test]
+fn account_remove_without_a_terminal_refuses_and_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = write_config(&dir, WORK_FILE_BACKEND);
+    let secrets = store_work_tokens(&dir);
+    let before = std::fs::read_to_string(&secrets).unwrap();
+    for who in ["work", "ME@example.com", "nobody"] {
+        let out = rail_cmd(&dir)
+            .args(["account", "remove", who])
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{who}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("run `rail account remove` yourself in a terminal"),
+            "{who}: {stderr}"
+        );
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), WORK_FILE_BACKEND);
+        assert_eq!(std::fs::read_to_string(&secrets).unwrap(), before);
+    }
+}
+
+/// Final review F4: `rail secrets set` without a terminal changes nothing, and says to run
+/// it in one. No daemon is started: the check comes first.
+#[test]
+fn secrets_set_without_a_terminal_refuses_and_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = write_config(&dir, WORK_FILE_BACKEND);
+    for backend in ["keyring", "file", "1password"] {
+        let out = rail_cmd(&dir)
+            .args(["secrets", "set", backend, "--vault", "Rail"])
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{backend}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("run `rail secrets set` yourself in a terminal"),
+            "{backend}: {stderr}"
+        );
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), WORK_FILE_BACKEND);
+    }
+    assert!(!dir.path().join("run").join("rail.sock").exists());
+}
+
+#[test]
+fn account_remove_has_no_yes_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = write_config(&dir, WORK_FILE_BACKEND);
+    let out = rail_cmd(&dir)
+        .args(["account", "remove", "work", "--yes"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), WORK_FILE_BACKEND);
+}
+
+/// Ctrl-C (SIGINT) while a flag login waits on the browser sends `pending.cancel`: the command
+/// says so, nothing is saved and the daemon holds nothing pending afterwards.
+#[cfg(unix)]
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn ctrl_c_during_a_flag_login_cancels_it_and_saves_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let config = write_config(&dir, WORK_FILE_BACKEND);
+    let url_file = dir.path().join("url.txt");
+    let child = rail_cmd(&dir)
+        .args(["account", "login", "work"])
+        .env("RAIL_TEST_OPENER", write_opener(&dir))
+        .env("RAIL_TEST_URL_FILE", &url_file)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut running = KillsChild(Some(child));
+    wait_for_url(&url_file).await;
+    let pid = running.0.as_ref().unwrap().id();
+    let interrupted = Command::new("kill")
+        .args(["-INT", &pid.to_string()])
+        .status()
+        .unwrap();
+    assert!(interrupted.success());
+    let child = running.0.take().unwrap();
+    let out = tokio::task::spawn_blocking(move || child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("login cancelled; nothing was saved"),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read_to_string(config).unwrap(), WORK_FILE_BACKEND);
+    assert!(!dir.path().join("data").join("secrets.json").exists());
+    let status = rail_cmd(&dir).args(["daemon", "status"]).output().unwrap();
+    assert!(stdout_of(&status).contains(" 0 pending,"), "{status:?}");
+    rail_cmd(&dir).args(["daemon", "stop"]).output().unwrap();
+}
+
 /// Review focus 1: the wizard never starts in a pipe. `output()` pipes stdout.
 fn assert_pipe_hint(dir: &tempfile::TempDir, args: &[&str]) {
     let out = rail_cmd(dir).args(args).output().unwrap();
@@ -366,11 +577,7 @@ fn rail_without_config_and_piped_stdout_prints_the_hint() {
 
 /// Run `rail account add <args>` and return (exit code, stderr).
 fn add_failure(dir: &tempfile::TempDir, args: &[&str]) -> (Option<i32>, String) {
-    let out = rail_cmd(dir)
-        .args(["account", "add"])
-        .args(args)
-        .output()
-        .unwrap();
+    let out = bounded(rail_cmd(dir).args(["account", "add"]).args(args));
     (
         out.status.code(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -395,162 +602,24 @@ fn account_add_flags_still_need_a_provider_and_a_client_id() {
 #[test]
 fn doctor_without_config_mentions_rail_setup() {
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let out = rail_cmd(&dir).arg("doctor").output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("run `rail setup`"), "got {stdout:?}");
+    assert!(
+        stdout.contains("\n              hint: run `rail setup`, or `rail account add`\n"),
+        "got {stdout:?}"
+    );
+    assert!(!stdout.contains("rail_account_add"), "got {stdout:?}");
 }
 
-/// Review focus 5, end to end: the real binary in a pseudo-terminal reaches the login wait,
-/// gets Ctrl-C (byte 0x03, a key in raw mode), restores the terminal and saves nothing.
+#[path = "cli/daemon.rs"]
+mod daemon;
+
+/// The flows that need a terminal, run in a pseudo-terminal: the wizard's Ctrl-C during the
+/// login wait, and the question `rail account remove` asks.
 #[cfg(target_os = "linux")]
 // Release builds skip the pty flows: the test opener is debug-only, so they would launch a real browser.
 #[cfg(debug_assertions)]
-mod pty {
-    use std::io::{Read, Write};
-    use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
-    use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
-
-    use super::{rail_env, write_config, write_opener};
-
-    const FILE_BACKEND: &str = "[general]\nsecrets = \"file\"\n";
-    const ACME: &str = "name = \"Acme Gmail\"\nkind = \"gmail\"\nclient_id = \"acme.apps.googleusercontent.com\"\nclient_secret = \"GOCSPX-acme\"\n";
-    /// Bound on every wait; the child is killed when the test ends either way.
-    const LIMIT: Duration = Duration::from_secs(30);
-
-    /// Kills the child if the test fails half way, so no wizard is left running.
-    struct Running(Child);
-
-    impl Drop for Running {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    fn script_available() -> bool {
-        Command::new("script")
-            .arg("--version")
-            .output()
-            .is_ok_and(|out| out.status.success())
-    }
-
-    /// Everything the pseudo-terminal shows, collected on a thread.
-    fn collect(mut out: impl Read + Send + 'static) -> Arc<Mutex<Vec<u8>>> {
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-        let sink = buffer.clone();
-        std::thread::spawn(move || {
-            let mut chunk = [0u8; 4096];
-            while let Ok(n) = out.read(&mut chunk) {
-                if n == 0 {
-                    break;
-                }
-                sink.lock().unwrap().extend_from_slice(&chunk[..n]);
-            }
-        });
-        buffer
-    }
-
-    fn text(buffer: &Mutex<Vec<u8>>) -> String {
-        String::from_utf8_lossy(&buffer.lock().unwrap()).into_owned()
-    }
-
-    /// Poll `done` until it holds; on timeout fail with what the terminal showed.
-    fn wait_until(what: &str, output: &Mutex<Vec<u8>>, mut done: impl FnMut() -> bool) {
-        let deadline = Instant::now() + LIMIT;
-        while !done() {
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for {what}; screen:\n{:?}",
-                text(output)
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-
-    /// Start `rail setup` under `script` with a preset available and an opener that never
-    /// redirects back.
-    fn start(dir: &tempfile::TempDir, url_file: &std::path::Path) -> (Running, ChildStdin) {
-        let presets = dir.path().join("config").join("presets");
-        std::fs::create_dir_all(&presets).unwrap();
-        std::fs::write(presets.join("acme.toml"), ACME).unwrap();
-        let command = format!(
-            "stty cols 100 rows 30; exec '{}' setup",
-            env!("CARGO_BIN_EXE_rail")
-        );
-        let mut script = Command::new("script");
-        rail_env(&mut script, dir)
-            .env("RAIL_TEST_OPENER", write_opener(dir))
-            .env("RAIL_TEST_URL_FILE", url_file)
-            .args(["-q", "-e", "-c", &command, "/dev/null"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let mut child = Running(script.spawn().unwrap());
-        let keys = child.0.stdin.take().unwrap();
-        (child, keys)
-    }
-
-    fn wait_for_exit(child: &mut Running, output: &Mutex<Vec<u8>>) -> ExitStatus {
-        let deadline = Instant::now() + LIMIT;
-        loop {
-            if let Some(status) = child.0.try_wait().unwrap() {
-                return status;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "rail did not quit:\n{:?}",
-                text(output)
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-
-    #[test]
-    fn ctrl_c_during_login_wait_restores_the_terminal_and_saves_nothing() {
-        if !script_available() {
-            eprintln!("skipping: util-linux `script` is not installed");
-            return;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let config = write_config(&dir, FILE_BACKEND);
-        let url_file = dir.path().join("url.txt");
-        let (mut child, mut keys) = start(&dir, &url_file);
-        let output = collect(child.0.stdout.take().unwrap());
-        let seen = |needle: &'static str| {
-            let output = output.clone();
-            move || text(&output).contains(needle)
-        };
-
-        wait_until("the start step", &output, seen("Use a preset"));
-        keys.write_all(b"\r").unwrap();
-        wait_until("the preset list", &output, seen("Acme Gmail"));
-        keys.write_all(b"\r").unwrap();
-        wait_until("the details step", &output, seen("Email address"));
-        keys.write_all(b"me@example.com\r").unwrap();
-        wait_until("the browser to be asked", &output, || url_file.exists());
-        keys.write_all(&[0x03]).unwrap();
-        keys.flush().unwrap();
-
-        let status = wait_for_exit(&mut child, &output);
-        drop(keys);
-        std::thread::sleep(Duration::from_millis(200));
-        let out = text(&output);
-        let entered = out
-            .find("\x1b[?1049h")
-            .expect("entered the alternate screen");
-        let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
-        assert!(left > entered, "{out:?}");
-        assert!(out[left..].contains("setup cancelled"), "{out:?}");
-        assert_eq!(status.code(), Some(1));
-        assert_eq!(std::fs::read_to_string(config).unwrap(), FILE_BACKEND);
-        assert!(
-            !dir.path().join("data").join("secrets.json").exists(),
-            "no tokens"
-        );
-        assert!(
-            !dir.path().join("data").join("rail.db").exists(),
-            "no store row"
-        );
-    }
-}
+#[path = "cli/pty.rs"]
+mod pty;

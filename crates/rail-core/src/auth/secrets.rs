@@ -4,11 +4,16 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::SecretsBackend;
+use super::onepassword::{ItemIdCache, OnePasswordSecretStore, OpCli};
+use crate::config::{Config, SecretsBackend};
 use crate::error::ErrorClass;
 use crate::paths::{Paths, write_private_atomic};
 
 const KEYRING_SERVICE: &str = "rail";
+
+/// Address used only to ask a secret store whether it is reachable. Nothing is ever stored
+/// under it.
+pub const PROBE_ADDRESS: &str = "rail-doctor-probe@invalid";
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenSet {
@@ -47,16 +52,61 @@ pub enum SecretError {
     Corrupt { path: PathBuf, message: String },
     #[error("token data is corrupt: {0}")]
     Encoding(String),
+    #[error(
+        "1Password is locked or not signed in ({0}); unlock the 1Password app or run `op signin`, then try again"
+    )]
+    OnePasswordLocked(String),
+    #[error(
+        "1Password did not answer in time; if it is waiting for you to unlock it, unlock it and try again"
+    )]
+    OnePasswordTimeout,
+    #[error(
+        "cannot run the 1Password CLI {program:?} ({message}); install it, or set op_path under [onepassword]"
+    )]
+    OnePasswordMissing { program: String, message: String },
+    #[error(
+        "refusing to run the 1Password CLI at {path}: {reason}; fix op_path under [onepassword]"
+    )]
+    OnePasswordUnsafe { path: String, reason: String },
+    #[error("1Password has no such item: {0}")]
+    OnePasswordNoItem(String),
+    #[error("1Password: {0}")]
+    OnePassword(String),
+    /// `op` wrote more than the cap on one stream; nothing of it is kept.
+    #[error("op's output exceeded 1 MiB")]
+    OnePasswordOutputTooLarge,
+    /// Rail's own complaint about a request or setting (no vault, a malformed reference).
+    #[error("{0}")]
+    OnePasswordInvalid(String),
+    /// Moving bytes to or from `op` failed: `what` is a fixed phrase, `message` the OS text.
+    #[error("could not {what} the 1Password CLI ({message})")]
+    OnePasswordIo { what: &'static str, message: String },
+    /// `op item edit` answered success, but reading the item back gave other values.
+    #[error(
+        "1Password did not keep the new tokens: reading the item back after the edit gave other values"
+    )]
+    OnePasswordEditUnverified,
 }
 
 impl SecretError {
     /// Filesystem and keyring hiccups may clear up; a missing keyring or a corrupt store will not.
     pub fn class(&self) -> ErrorClass {
         match self {
-            Self::Io { .. } | Self::Keyring(_) => ErrorClass::Transient,
-            Self::KeyringUnavailable(_) | Self::Corrupt { .. } | Self::Encoding(_) => {
-                ErrorClass::Permanent
-            }
+            Self::Io { .. }
+            | Self::Keyring(_)
+            | Self::OnePasswordTimeout
+            | Self::OnePasswordIo { .. } => ErrorClass::Transient,
+            Self::KeyringUnavailable(_)
+            | Self::Corrupt { .. }
+            | Self::Encoding(_)
+            | Self::OnePasswordLocked(_)
+            | Self::OnePasswordMissing { .. }
+            | Self::OnePasswordUnsafe { .. }
+            | Self::OnePasswordNoItem(_)
+            | Self::OnePasswordInvalid(_)
+            | Self::OnePasswordOutputTooLarge
+            | Self::OnePasswordEditUnverified
+            | Self::OnePassword(_) => ErrorClass::Permanent,
         }
     }
 }
@@ -66,18 +116,61 @@ pub trait SecretStore: Send + Sync {
     fn set_tokens(&self, address: &str, tokens: &TokenSet) -> Result<(), SecretError>;
     fn delete_tokens(&self, address: &str) -> Result<(), SecretError>;
     fn backend_name(&self) -> &'static str;
+
+    /// Whether `address` has tokens. Stores that can answer without reading the tokens
+    /// override this; the default reads them.
+    fn has_tokens(&self, address: &str) -> Result<bool, SecretError> {
+        self.get_tokens(address).map(|t| t.is_some())
+    }
+
+    /// The identity of the item holding `address`'s tokens, by a fresh lookup that reveals
+    /// nothing; `None` for stores that are not made of items (or when there is none).
+    fn item_id(&self, _address: &str) -> Result<Option<String>, SecretError> {
+        Ok(None)
+    }
+
+    /// Check the store can be reached without changing anything.
+    fn probe(&self) -> Result<(), SecretError> {
+        self.get_tokens(PROBE_ADDRESS).map(|_| ())
+    }
 }
 
-pub fn open_secret_store(backend: SecretsBackend, paths: &Paths) -> Arc<dyn SecretStore> {
-    match backend {
+/// The store `config` selects. `ids` caches 1Password item ids across calls; the daemon keeps
+/// one for its lifetime.
+pub fn open_secret_store(
+    config: &Config,
+    paths: &Paths,
+    ids: &ItemIdCache,
+) -> Arc<dyn SecretStore> {
+    match config.general.secrets {
         SecretsBackend::Keyring => Arc::new(KeyringSecretStore),
         SecretsBackend::File => Arc::new(FileSecretStore::new(paths.secrets_file())),
+        SecretsBackend::OnePassword => {
+            let op = config.onepassword.as_ref();
+            Arc::new(OnePasswordSecretStore::new(
+                OpCli::from_config(op, &paths.runtime_dir),
+                op.map(|o| o.vault.clone()).unwrap_or_default(),
+                ids.clone(),
+            ))
+        }
+    }
+}
+
+/// Where `address`'s tokens live, for a person to read. Never the tokens.
+pub fn token_location(config: &Config, paths: &Paths, address: &str) -> String {
+    match config.general.secrets {
+        SecretsBackend::Keyring => "OS keyring, service \"rail\"".to_string(),
+        SecretsBackend::File => paths.secrets_file().display().to_string(),
+        SecretsBackend::OnePassword => {
+            let vault = config.onepassword.as_ref().map_or("", |o| o.vault.as_str());
+            format!("1Password vault \"{vault}\", item \"Rail: {address}\"")
+        }
     }
 }
 
 /// Describe a JSON error by kind and position only. serde_json's own text
 /// quotes the offending value, which here may be a token.
-fn json_message(e: &serde_json::Error) -> String {
+pub(crate) fn json_message(e: &serde_json::Error) -> String {
     let kind = match e.classify() {
         serde_json::error::Category::Io => "I/O error",
         serde_json::error::Category::Syntax => "syntax error",
@@ -350,13 +443,38 @@ mod tests {
     fn open_secret_store_picks_backend() {
         let dir = tempfile::tempdir().unwrap();
         let paths = crate::paths::Paths::all_in(dir.path());
+        let ids = ItemIdCache::default();
+        let with = |secrets| Config {
+            general: crate::config::General {
+                secrets,
+                ..Default::default()
+            },
+            onepassword: Some(crate::config::OnePasswordConfig {
+                vault: "Rail".into(),
+                ..Default::default()
+            }),
+            ..Config::default()
+        };
+        let name = |b| open_secret_store(&with(b), &paths, &ids).backend_name();
+        assert_eq!(name(SecretsBackend::File), "file");
+        assert_eq!(name(SecretsBackend::Keyring), "keyring");
+        assert_eq!(name(SecretsBackend::OnePassword), "1password");
+    }
+
+    #[test]
+    fn token_location_names_the_place_never_the_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::paths::Paths::all_in(dir.path());
+        let mut config = Config::default();
+        assert!(token_location(&config, &paths, "a@x.com").contains("keyring"));
+        config.general.secrets = SecretsBackend::OnePassword;
+        config.onepassword = Some(crate::config::OnePasswordConfig {
+            vault: "Rail".into(),
+            ..Default::default()
+        });
         assert_eq!(
-            open_secret_store(SecretsBackend::File, &paths).backend_name(),
-            "file"
-        );
-        assert_eq!(
-            open_secret_store(SecretsBackend::Keyring, &paths).backend_name(),
-            "keyring"
+            token_location(&config, &paths, "a@x.com"),
+            "1Password vault \"Rail\", item \"Rail: a@x.com\""
         );
     }
 
@@ -393,6 +511,38 @@ mod tests {
             SecretError::Encoding("bad".into()).class(),
             ErrorClass::Permanent
         );
+        assert_eq!(
+            SecretError::OnePasswordTimeout.class(),
+            ErrorClass::Transient
+        );
+        assert_eq!(
+            SecretError::OnePasswordLocked("x".into()).class(),
+            ErrorClass::Permanent
+        );
+        let permanent = [
+            SecretError::OnePasswordMissing {
+                program: "op".into(),
+                message: "x".into(),
+            },
+            SecretError::OnePasswordUnsafe {
+                path: "/op".into(),
+                reason: "x".into(),
+            },
+            SecretError::OnePasswordNoItem("x".into()),
+            SecretError::OnePassword("x".into()),
+            SecretError::OnePasswordInvalid("x".into()),
+            SecretError::OnePasswordOutputTooLarge,
+            SecretError::OnePasswordEditUnverified,
+        ];
+        assert_eq!(
+            SecretError::OnePasswordIo {
+                what: "read from",
+                message: "x".into()
+            }
+            .class(),
+            ErrorClass::Transient
+        );
+        assert!(permanent.iter().all(|e| e.class() == ErrorClass::Permanent));
     }
 
     /// Talks to the real OS keyring. Run with `cargo test -- --ignored keyring_live`.

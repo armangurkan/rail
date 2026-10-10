@@ -14,7 +14,7 @@ pub use draft::{AccountDraft, Field, SHARED_TENANTS, is_address, is_concrete_ten
 pub use events::{Action, DoneReport, Event, Failure, Input, PresetEntry, Remedy};
 pub use instructions::{REDIRECT_URI, instructions, portal_url};
 pub use preset::{
-    MAX_PRESET_BYTES, Preset, PresetError, SYSTEM_PRESET_DIR, discover_presets,
+    MAX_PRESET_BYTES, PRESET_TOO_LARGE, Preset, PresetError, SYSTEM_PRESET_DIR, discover_presets,
     discover_presets_in, fetch_preset, parse_preset, preset_dirs, read_preset,
 };
 pub use view::{Body, FailureView, FieldView, Primary, STEP_LABELS, StepState, ViewModel};

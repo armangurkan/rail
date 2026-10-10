@@ -5,8 +5,8 @@ never let a secret reach a log or the terminal.
 
 ## Before you start
 
-- Read the design spec at `docs/superpowers/specs/2026-10-09-rail-design.md`. It is the authority
-  on behaviour; the plans under `docs/superpowers/plans/` show how each phase is sequenced.
+- Read the design specs under `docs/superpowers/specs/` (start with `2026-10-09-rail-design.md`).
+  They are the authority on behaviour; the plans under `docs/superpowers/plans/` show how each phase is sequenced.
 - Open an issue for anything bigger than a bug fix so the approach can be agreed first.
 
 ## Development loop
@@ -21,10 +21,11 @@ minimum supported Rust version (1.88), and reports line coverage.
 
 Write the test first. Every behaviour change ships with a test that fails without it. Tests use
 temporary directories and in-process mock servers; nothing may touch the real XDG directories, the
-real OS keyring, or the network. The one test that talks to the real keyring is `#[ignore]`d and run
-by hand:
+real OS keyring, a real browser, a real 1Password account or the network. The tests that talk to the
+real keyring and a real 1Password vault are `#[ignore]`d and run by hand:
 
     cargo test -p rail-core -- --ignored keyring_live
+    RAIL_OP_LIVE_VAULT=<vault> cargo test -p rail-core -- --ignored onepassword_live
 
 ## Ground rules
 
@@ -36,6 +37,11 @@ by hand:
   written atomically.
 - Source files stay under 800 lines and functions under 50. Split before you cross either.
 - `unsafe` is forbidden workspace-wide.
+- The README tracks behaviour. Any change a user can see or type (a command, a flag, a config key,
+  an environment variable, an output line, an MCP tool) updates `README.md` in the same change, and
+  reviewers check the README against the binary.
+- Every user operation is an operation in `rail-core::ops` that the daemon runs; the TUI, the flag
+  commands and `rail mcp` only send requests. No capability exists only in one front end.
 
 ## Commits and pull requests
 
@@ -46,6 +52,8 @@ Commit messages follow Conventional Commits with an optional scope:
     docs(readme): register the http://127.0.0.1 redirect URI for Azure
 
 Keep commits focused. The pull request template asks for a summary and a test plan; fill both in.
+Commit messages and pull request descriptions carry no tool or AI attribution: no `Co-Authored-By`
+trailer, no "Generated with" line and no session links.
 
 ## Licence
 
