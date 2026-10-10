@@ -11,3 +11,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # The tag is the Rust toolchain to install (the MSRV), not an action version.
+      - dependency-name: dtolnay/rust-toolchain
