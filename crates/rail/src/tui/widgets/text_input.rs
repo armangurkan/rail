@@ -144,11 +144,21 @@ pub struct TextField<'a> {
 impl TextField<'_> {
     /// Where the terminal cursor goes when this field has focus.
     pub fn cursor_position(&self, area: Rect) -> Position {
-        let room = area.width.saturating_sub(LABEL_WIDTH + 1);
-        let cursor = u16::try_from(self.input.cursor())
-            .unwrap_or(u16::MAX)
-            .min(room);
-        Position::new(area.x + LABEL_WIDTH + cursor, area.y)
+        let (start, _) = self.window(area.width);
+        let column = u16::try_from(self.input.cursor() - start).unwrap_or(u16::MAX);
+        Position::new(
+            area.x.saturating_add(LABEL_WIDTH).saturating_add(column),
+            area.y,
+        )
+    }
+
+    /// The slice of the value that is shown: its first character index and the columns
+    /// available after the label. The window follows the cursor so it is always visible.
+    /// Both `render` and `cursor_position` use this, so they cannot disagree.
+    fn window(&self, width: u16) -> (usize, usize) {
+        let room = usize::from(width.saturating_sub(LABEL_WIDTH));
+        let start = self.input.cursor().saturating_sub(room.saturating_sub(1));
+        (start, room)
     }
 }
 
@@ -160,9 +170,17 @@ impl Widget for TextField<'_> {
             self.theme.text
         };
         let width = usize::from(LABEL_WIDTH);
+        let (start, room) = self.window(area.width);
+        let shown: String = self
+            .input
+            .display()
+            .chars()
+            .skip(start)
+            .take(room)
+            .collect();
         let value = Line::from(vec![
             Span::styled(format!("{:<width$}", self.label), label_style),
-            Span::styled(self.input.display(), self.theme.text),
+            Span::styled(shown, self.theme.text),
         ]);
         let note = match (self.error, self.hint) {
             (Some(error), _) => Line::styled(format!("{:width$}{error}", ""), self.theme.error),
@@ -336,5 +354,69 @@ mod tests {
             field.cursor_position(area),
             Position::new(2 + LABEL_WIDTH + 3, 5)
         );
+    }
+
+    fn long_input() -> TextInput {
+        let long: String = (0..90u8).map(|i| char::from(b'a' + i % 26)).collect();
+        typed(&format!("{long}END"))
+    }
+
+    fn render_field(input: &TextInput) -> Vec<String> {
+        let theme = Theme::default();
+        render_lines(80, 24, |frame| {
+            let field = TextField {
+                label: "Name",
+                input,
+                focused: true,
+                error: None,
+                hint: None,
+                theme: &theme,
+            };
+            frame.render_widget(field, frame.area());
+        })
+    }
+
+    fn cursor_of(input: &TextInput) -> Position {
+        let theme = Theme::default();
+        let field = TextField {
+            label: "Name",
+            input,
+            focused: true,
+            error: None,
+            hint: None,
+            theme: &theme,
+        };
+        field.cursor_position(Rect::new(0, 0, 80, FIELD_HEIGHT))
+    }
+
+    #[test]
+    fn long_value_shows_its_tail_with_the_cursor_on_the_last_column() {
+        let mut input = long_input();
+        let lines = render_field(&input);
+        assert!(lines[0].trim_end().ends_with("END"), "tail not shown");
+        assert_eq!(cursor_of(&input), Position::new(79, 0));
+
+        input.handle_key(key(KeyCode::Home));
+        let lines = render_field(&input);
+        assert!(
+            lines[0].starts_with("Name           abcdef"),
+            "start not shown"
+        );
+        assert!(!lines[0].contains("END"), "tail still shown after Home");
+        assert_eq!(cursor_of(&input), Position::new(15, 0));
+    }
+
+    #[test]
+    fn masked_long_value_shows_only_dots() {
+        let mut input = long_input();
+        input.set_masked(true);
+        let lines = render_field(&input);
+        let shown = lines[0].trim_start_matches("Name           ").trim_end();
+        assert_eq!(shown.chars().count(), 64, "cursor sits in the 65th column");
+        assert!(
+            shown.chars().all(|c| c == '•'),
+            "non-dot character rendered"
+        );
+        assert_eq!(cursor_of(&input), Position::new(79, 0));
     }
 }
