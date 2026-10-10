@@ -1,11 +1,8 @@
 //! Logging in to an account, and saving what a re-login produced.
 
-use url::Url;
-
 use super::context;
 use crate::auth::{
-    AuthError, ItemIdCache, OAuthEndpoints, OpCli, TokenSet, endpoints_for, open_secret_store,
-    run_auth_code_flow, token_location, unix_now,
+    ItemIdCache, OAuthEndpoints, OpCli, TokenSet, endpoints_for, open_secret_store, token_location,
 };
 use crate::config::{self, AccountConfig, Config};
 use crate::ops::{OP_REFERENCE_PREFIX, OpError, SavedAccount, Secret};
@@ -68,18 +65,6 @@ pub fn endpoints_for_login(account: &AccountConfig, token_url: Option<&str>) -> 
         endpoints.token_url = token_url.to_string();
     }
     endpoints
-}
-
-/// The whole browser login for `account` (its `client_secret` already resolved). `open_url`
-/// receives the consent URL.
-pub async fn run_login(
-    account: &AccountConfig,
-    token_url: Option<&str>,
-    http: &reqwest::Client,
-    open_url: impl FnOnce(&Url),
-) -> Result<TokenSet, AuthError> {
-    let endpoints = endpoints_for_login(account, token_url);
-    run_auth_code_flow(account, &endpoints, http, open_url, unix_now()).await
 }
 
 /// After a re-login: tokens, then the store row (so an account whose row was lost gets it

@@ -296,7 +296,89 @@ async fn a_duplicate_address_is_refused_before_op_is_run() {
         ..request("ME@example.com")
     };
     let http = crate::auth::http_client().unwrap();
-    let err = prepare_request(&paths, &wants, &http).await.err().unwrap();
+    let err = resolve_and_prepare(&paths, &wants, &http)
+        .await
+        .err()
+        .unwrap();
     assert_eq!(err.code, ErrorCode::Duplicate);
     assert_eq!(fake.argv(), "", "no op call for a duplicate address");
+}
+
+/// Final review M7: a client secret that is already an `op://` reference is not copied into
+/// the Rail vault: the agent could name any item it likes. Refused before `op` runs.
+#[tokio::test]
+async fn storing_a_reference_in_1password_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = FakeOp::install(tmp.path());
+    let paths = paths_with(&tmp, &format!("{WORK}{}", fake.config_toml()));
+    let wants = AccountAddRequest {
+        client_secret: Some(ClientSecretInput::Reference(
+            "op://Private/someone-else/password".into(),
+        )),
+        store_secret_in_1password: true,
+        ..request("new@example.com")
+    };
+    let http = crate::auth::http_client().unwrap();
+    let err = resolve_and_prepare(&paths, &wants, &http)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert_eq!(
+        err.message,
+        "the client secret is already in 1Password; drop store_secret_in_1password"
+    );
+    assert_eq!(fake.argv(), "", "op never ran");
+    let resolved = ResolvedSecret {
+        login: Some(Secret::new("GOCSPX-real")),
+        stored: Some(Secret::new("op://Private/someone-else/password")),
+        ..ResolvedSecret::default()
+    };
+    let err = prepare_add(&paths, &wants, resolved).err().unwrap();
+    assert_eq!(err.code, ErrorCode::InvalidInput, "{err}");
+}
+
+/// Final review M2: the address, colour and tenant are shown in confirmations and on the
+/// terminal, so spaces and control characters (an OSC 52 clipboard escape, say) are refused
+/// at add, without echoing the value.
+#[test]
+fn whitespace_and_control_characters_are_refused_at_add() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = paths_with(&tmp, WORK);
+    let osc52 = "\u{1b}]52;c;ZXZpbA==\u{7}me@example.com";
+    for address in [
+        osc52,
+        "me @example.com",
+        "me@exam\tple.com",
+        "me@example.com\nx",
+    ] {
+        let err = prepare_add(&paths, &request(address), value("s"))
+            .err()
+            .unwrap();
+        assert_eq!(err.code, ErrorCode::InvalidInput, "{address:?}");
+        assert!(err.message.contains("address"), "{err}");
+        assert!(
+            !err.message.contains('\u{1b}') && !err.message.contains("ZXZp"),
+            "{err}"
+        );
+    }
+    let colored = AccountAddRequest {
+        color: Some("blue\u{1b}[31m".into()),
+        ..request("c@example.com")
+    };
+    let err = prepare_add(&paths, &colored, value("s")).err().unwrap();
+    assert!(err.message.contains("color"), "{err}");
+    let tenant = AccountAddRequest {
+        kind: AccountKind::M365,
+        tenant: Some("contoso .onmicrosoft.com".into()),
+        ..request("t@example.com")
+    };
+    let err = prepare_add(&paths, &tenant, value("s")).err().unwrap();
+    assert!(err.message.contains("tenant"), "{err}");
+    assert!(std::fs::read_to_string(paths.config_file()).unwrap() == WORK);
+    let fine = AccountAddRequest {
+        color: Some("blue".into()),
+        ..request("  Fine@Example.com ")
+    };
+    assert!(prepare_add(&paths, &fine, value("s")).is_ok());
 }

@@ -299,6 +299,37 @@ client_id = "2"
         assert!(err.contains("longer than 254"), "{err}");
     }
 
+    /// Final review M2: spaces and control characters in an address, colour or tenant are
+    /// refused with the file path and the value's line.
+    #[test]
+    fn whitespace_and_control_characters_are_refused_with_path_and_line() {
+        let account = |field: &str| {
+            format!("[[accounts]]\nname = \"ok\"\nkind = \"m365\"\nclient_id = \"1\"\n{field}\n")
+        };
+        for (lines, field) in [
+            ("address = \"a b@example.com\"", "address"),
+            (
+                "address = \"\\u001b]52;c;eA==\\u0007me@example.com\"",
+                "address",
+            ),
+            (
+                "address = \"x@e.com\"\ncolor = \"blue\\u001b[31m\"",
+                "color",
+            ),
+            ("address = \"x@e.com\"\ntenant = \"con\\ttoso\"", "tenant"),
+        ] {
+            let text = account(lines);
+            let line = text.lines().count();
+            let err = p(&text).unwrap_err().to_string();
+            assert!(
+                err.starts_with(&format!("/etc/rail/config.toml:{line}:")),
+                "{field}: {err}"
+            );
+            assert!(err.contains(field), "{err}");
+            assert!(!err.contains('\u{1b}'), "{err}");
+        }
+    }
+
     #[test]
     fn poll_interval_floor_is_five_seconds() {
         let err = p("[general]\npoll_interval = \"1s\"\n").unwrap_err();

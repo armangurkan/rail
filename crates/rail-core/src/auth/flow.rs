@@ -144,17 +144,6 @@ impl ConsentSession {
     }
 }
 
-/// Grant tenant-wide consent. `open_url` is called once with Microsoft's admin-consent URL.
-pub async fn run_admin_consent(
-    client_id: &str,
-    tenant: &str,
-    open_url: impl FnOnce(&Url),
-) -> Result<String, AuthError> {
-    let session = begin_admin_consent(client_id, tenant).await?;
-    open_url(session.url());
-    session.finish().await
-}
-
 /// Build a `TokenSet`, keeping `previous_refresh` when the provider omits a new refresh token.
 pub(crate) fn token_set_from_response(
     response: &BasicTokenResponse,
@@ -211,6 +200,18 @@ mod tests {
     use oauth2::AuthType;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// The admin consent the daemon drives through `begin_admin_consent` and
+    /// `ConsentSession::finish`, with `open_url` standing in for the browser.
+    async fn run_admin_consent(
+        client_id: &str,
+        tenant: &str,
+        open_url: impl FnOnce(&Url),
+    ) -> Result<String, AuthError> {
+        let session = begin_admin_consent(client_id, tenant).await?;
+        open_url(session.url());
+        session.finish().await
+    }
 
     fn account() -> AccountConfig {
         AccountConfig {

@@ -119,5 +119,13 @@ All notable changes to Rail are recorded here. The format follows
 - Text from outside Rail (presets, provider and system error text) reaches the agent marked as
   untrusted, quoted on one line, capped at 200 characters and behind a notice that it is data; a
   provider's error text is kept apart from Rail's own message.
+- An account's address, colour and tenant may not contain spaces or control characters, at add
+  and when `config.toml` loads (with path and line), so none can carry a terminal escape.
+- `store_secret_in_1password` is refused for a client secret that is already an `op://`
+  reference, so Rail never copies an item a request named into its own vault.
+- Preset files and client secret files are read through one guarded open: only a regular file,
+  checked before and after opening, never blocking on a FIFO, at most 64 KiB.
+- A daemon answer too large to send becomes an internal error for the same request instead of
+  leaving the caller waiting.
 - `rail mcp` logs the MCP library only at error level, because its warnings can quote what an agent
   sent.

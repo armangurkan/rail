@@ -95,7 +95,8 @@ pub struct AgentAccountAdd {
     pub name: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
-    /// Store the client secret in 1Password and keep only a reference in config.
+    /// Store the client secret in 1Password and keep only a reference in config. Refused for
+    /// an `op://` reference, which is already in 1Password.
     #[serde(default)]
     pub store_secret_in_1password: bool,
     /// Set when an agent sent a `client_secret` field. Its value is dropped unread, never kept

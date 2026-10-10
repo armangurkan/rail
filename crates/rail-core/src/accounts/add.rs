@@ -12,7 +12,10 @@ use crate::auth::{
 };
 use crate::config::{self, AccountConfig, AccountKind, Config, load_text_or_empty};
 use crate::error::ErrorClass;
-use crate::ops::{AccountAddRequest, ErrorCode, OpError, SavedAccount, Secret, write_config_text};
+use crate::ops::{
+    AccountAddRequest, ClientSecretInput, ErrorCode, OP_REFERENCE_PREFIX, OpError, SavedAccount,
+    Secret, write_config_text,
+};
 use crate::paths::Paths;
 use crate::store::Store;
 
@@ -47,19 +50,10 @@ pub fn prepare_add(
     let config_path = paths.config_file();
     let (text, config) = load_text_or_empty(&config_path)?;
     let account = build_account(request, &resolved, &config)?;
+    check_shown_fields(&account)?;
     appended(&text, &config_path, &config, &account)?;
     if request.store_secret_in_1password {
-        if config.onepassword.is_none() {
-            return Err(OpError::invalid_input(
-                "store_secret_in_1password needs a 1Password vault in config.toml",
-            )
-            .with_hint("configure one first with rail_secrets_configure, or add [onepassword] vault = \"Rail\""));
-        }
-        if resolved.login.is_none() {
-            return Err(OpError::invalid_input(
-                "store_secret_in_1password needs a client secret to store",
-            ));
-        }
+        check_store_in_1password(request, &config, &resolved)?;
     }
     Ok(PreparedAdd {
         account,
@@ -67,6 +61,66 @@ pub fn prepare_add(
         store_in_1password: request.store_secret_in_1password,
         config_path,
     })
+}
+
+/// `store_secret_in_1password` needs a vault and a client secret, and refuses a secret that is
+/// already an `op://` reference: copying it would put the value of an item the request named
+/// (any item the user can read) into Rail's vault.
+fn check_store_in_1password(
+    request: &AccountAddRequest,
+    config: &Config,
+    resolved: &ResolvedSecret,
+) -> Result<(), OpError> {
+    let reference = resolved
+        .stored
+        .as_ref()
+        .is_some_and(|s| s.expose().starts_with(OP_REFERENCE_PREFIX));
+    if reference || is_reference_copy(request) {
+        return Err(already_in_1password());
+    }
+    if config.onepassword.is_none() {
+        return Err(OpError::invalid_input(
+            "store_secret_in_1password needs a 1Password vault in config.toml",
+        )
+        .with_hint(
+            "configure one first with `rail secrets set 1password --vault <vault>` or rail_secrets_configure, or add [onepassword] vault = \"Rail\"",
+        ));
+    }
+    if resolved.login.is_none() {
+        return Err(OpError::invalid_input(
+            "store_secret_in_1password needs a client secret to store",
+        ));
+    }
+    Ok(())
+}
+
+/// A request to store in 1Password a client secret given as an `op://` reference.
+fn is_reference_copy(request: &AccountAddRequest) -> bool {
+    request.store_secret_in_1password
+        && matches!(request.client_secret, Some(ClientSecretInput::Reference(_)))
+}
+
+fn already_in_1password() -> OpError {
+    OpError::invalid_input(
+        "the client secret is already in 1Password; drop store_secret_in_1password",
+    )
+}
+
+/// The address, colour and tenant are shown on the terminal and in confirmations: refuse
+/// spaces and control characters (an escape sequence, say) without echoing the value.
+fn check_shown_fields(account: &AccountConfig) -> Result<(), OpError> {
+    let fields = [
+        ("address", Some(account.address.as_str())),
+        ("color", account.color.as_deref()),
+        ("tenant", account.tenant.as_deref()),
+    ];
+    match fields
+        .iter()
+        .find(|(_, value)| value.is_some_and(|v| !config::is_plain(v)))
+    {
+        Some((field, _)) => Err(OpError::invalid_input(config::not_plain(field))),
+        None => Ok(()),
+    }
 }
 
 fn build_account(
@@ -169,6 +223,9 @@ async fn resolve_and_prepare(
     request: &AccountAddRequest,
     http: &reqwest::Client,
 ) -> Result<(PreparedAdd, Config), OpError> {
+    if is_reference_copy(request) {
+        return Err(already_in_1password());
+    }
     let (config, op) = load_for_prepare(paths, &request.address).await?;
     let resolved = resolve_client_secret(request.client_secret.as_ref(), http, &op).await?;
     let paths = paths.clone();
@@ -177,20 +234,9 @@ async fn resolve_and_prepare(
     Ok((prepared, config))
 }
 
-/// Resolve the client secret, then run every offline check of `prepare_add`. The one place
-/// that sequence lives; the flag commands, the wizard and the daemon all call it.
-pub async fn prepare_request(
-    paths: &Paths,
-    request: &AccountAddRequest,
-    http: &reqwest::Client,
-) -> Result<PreparedAdd, OpError> {
-    resolve_and_prepare(paths, request, http)
-        .await
-        .map(|(prepared, _)| prepared)
-}
-
-/// `prepare_request`, then the secret store probe, so a broken store fails before any browser
-/// opens.
+/// Resolve the client secret, run every offline check of `prepare_add`, then probe the
+/// secret store, so a broken store fails before any browser opens. The one place that
+/// sequence lives; the daemon runs it for every front end.
 pub async fn prepare_and_probe(
     paths: &Paths,
     ids: &ItemIdCache,

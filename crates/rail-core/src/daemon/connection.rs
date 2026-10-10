@@ -202,11 +202,62 @@ fn hello_problem(request: &super::wire::Request) -> Option<RpcError> {
     }
 }
 
+/// Queue `response`. One that cannot be sent (over the frame limit, or not encodable) is
+/// replaced by an `INTERNAL` error for the same id, so the caller is never left waiting.
 fn reply(frames: &mpsc::UnboundedSender<Vec<u8>>, response: Response) {
-    match encode_frame(&response) {
+    let id = response.id;
+    let frame = encode_frame(&response).or_else(|e| {
+        tracing::error!(error = %e, "could not send a response; sending an error instead");
+        let message = match e {
+            WireError::TooLarge => "the answer was too large to send",
+            _ => "the answer could not be encoded",
+        };
+        encode_frame(&Response::err(
+            id,
+            RpcError::from_op(&OpError::internal(message)),
+        ))
+    });
+    match frame {
         Ok(frame) => {
             let _ = frames.send(frame);
         }
-        Err(e) => tracing::error!(error = %e, "could not encode a response"),
+        Err(e) => tracing::error!(error = %e, "could not encode an error response"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::wire::MAX_FRAME_BYTES;
+    use crate::ops::ErrorCode;
+
+    /// Final review M6: an answer over the frame limit becomes an INTERNAL error frame for the
+    /// same id, so the caller gets an answer instead of waiting forever.
+    #[test]
+    fn an_answer_too_large_to_send_becomes_an_internal_error() {
+        let (frames, mut sent) = mpsc::unbounded_channel();
+        let huge = serde_json::Value::String("x".repeat(MAX_FRAME_BYTES + 1));
+        reply(&frames, Response::ok(7, huge));
+        let frame = sent.try_recv().expect("an answer was sent");
+        assert!(frame.len() < 4096, "the error frame is small");
+        let Ok(Message::Response(answer)) = parse_message(&frame[..frame.len() - 1]) else {
+            panic!("not a response: {}", String::from_utf8_lossy(&frame));
+        };
+        assert_eq!(answer.id, Some(7));
+        assert!(answer.result.is_none());
+        let error: OpError = serde_json::from_value(answer.error.unwrap().data.unwrap()).unwrap();
+        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(error.message, "the answer was too large to send");
+    }
+
+    #[test]
+    fn an_answer_within_the_limit_is_sent_as_is() {
+        let (frames, mut sent) = mpsc::unbounded_channel();
+        reply(&frames, Response::ok(3, serde_json::json!({"fine": true})));
+        let frame = sent.try_recv().unwrap();
+        let Ok(Message::Response(answer)) = parse_message(&frame[..frame.len() - 1]) else {
+            panic!("not a response");
+        };
+        assert_eq!(answer.result, Some(serde_json::json!({"fine": true})));
     }
 }

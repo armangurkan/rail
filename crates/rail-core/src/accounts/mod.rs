@@ -7,15 +7,13 @@ pub mod client_secret;
 pub mod login;
 pub mod remove;
 
-pub use add::{
-    PreparedAdd, persist_new, prepare_add, prepare_and_probe, prepare_request, probe_secrets,
-};
+pub use add::{PreparedAdd, persist_new, prepare_add, prepare_and_probe, probe_secrets};
 pub use client_secret::{MAX_CLIENT_FILE_BYTES, ResolvedSecret, resolve_client_secret};
 pub use login::{
-    account_for_login, endpoints_for_login, find_account, login_secret, persist_login, run_login,
+    account_for_login, endpoints_for_login, find_account, login_secret, persist_login,
     saved_account,
 };
-pub use remove::{REMOVE_NEEDS_CONFIRMATION, removal_plan, remove_account, remove_confirmed};
+pub use remove::{REMOVE_NEEDS_CONFIRMATION, removal_plan, remove_confirmed};
 
 use crate::ops::OpError;
 

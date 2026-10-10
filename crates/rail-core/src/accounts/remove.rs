@@ -79,8 +79,9 @@ pub fn remove_confirmed(
 
 /// Remove the account `who` names. The config entry goes first, so a failure to delete the
 /// tokens leaves no entry whose tokens are gone: the response says the tokens remain and the
-/// config change stands. The caller holds the config lock and has the person's confirmation.
-pub fn remove_account(
+/// config change stands. The caller holds the config lock and has the person's confirmation;
+/// only `remove_confirmed`, which checks it, calls this.
+pub(crate) fn remove_account(
     paths: &Paths,
     ids: &ItemIdCache,
     who: &str,
@@ -129,22 +130,27 @@ mod tests {
         assert!(removal_plan(&paths, "nobody").is_err());
     }
 
-    /// Ruling S3: values from config cannot forge a line or hide text in the question.
+    /// Ruling S3: values from config cannot forge a line or hide text in the question. Since
+    /// final review M2 config refuses an address with a line break or space outright; a
+    /// format character config still takes (a right-to-left override) is shown escaped.
     #[test]
     fn a_hostile_address_cannot_forge_the_question() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths_with(&tmp);
+        let forged = WORK.replace(
+            "address = \"me@example.com\"",
+            "address = \"me@example.com, gmail)?\\nMail is kept.\"",
+        );
+        std::fs::write(paths.config_file(), forged).unwrap();
+        assert!(removal_plan(&paths, "work").is_err());
         let hostile = WORK.replace(
             "address = \"me@example.com\"",
-            "address = \"me@example.com, gmail)?\\nMail is kept. \\u202Eevil\"",
+            "address = \"me@example.com\\u202Eevil\"",
         );
         std::fs::write(paths.config_file(), hostile).unwrap();
         let text = removal_plan(&paths, "work").unwrap().text;
         assert_eq!(text.lines().count(), 3, "{text}");
-        assert!(
-            text.contains(r#""me@example.com, gmail)?\nMail is kept. \u{202e}evil""#),
-            "{text}"
-        );
+        assert!(text.contains(r#""me@example.com\u{202e}evil""#), "{text}");
         assert!(!text.contains('\u{202e}'), "{text}");
     }
 

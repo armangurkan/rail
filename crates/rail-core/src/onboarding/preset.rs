@@ -9,6 +9,7 @@ use url::Url;
 use crate::config::load::line_col;
 use crate::config::{AccountKind, ConfigError};
 use crate::error::ErrorClass;
+use crate::guarded::{GuardedReadError, read_capped};
 use crate::paths::Paths;
 
 /// Where an administrator installs presets for every user of a machine.
@@ -115,32 +116,19 @@ pub const PRESET_TOO_LARGE: &str = "the preset is larger than 64 KiB";
 
 /// Read and parse a preset file, refusing anything over 64 KiB unread, like `fetch_preset`.
 pub fn read_preset(path: &Path) -> Result<Preset, ConfigError> {
-    use std::io::Read;
-    let io_error = |source| ConfigError::Io {
+    let invalid = |message: &str| ConfigError::Invalid {
         path: path.to_path_buf(),
-        source,
+        message: message.to_string(),
     };
-    if !std::fs::metadata(path).map_err(io_error)?.is_file() {
-        return Err(ConfigError::Invalid {
+    let bytes = read_capped(path, MAX_PRESET_BYTES as u64).map_err(|e| match e {
+        GuardedReadError::NotRegular => invalid("the preset is not a regular file"),
+        GuardedReadError::TooLarge => invalid(PRESET_TOO_LARGE),
+        GuardedReadError::Io(source) => ConfigError::Io {
             path: path.to_path_buf(),
-            message: "the preset is not a regular file".to_string(),
-        });
-    }
-    let file = std::fs::File::open(path).map_err(io_error)?;
-    let mut bytes = Vec::new();
-    file.take(MAX_PRESET_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(io_error)?;
-    if bytes.len() > MAX_PRESET_BYTES {
-        return Err(ConfigError::Invalid {
-            path: path.to_path_buf(),
-            message: PRESET_TOO_LARGE.to_string(),
-        });
-    }
-    let text = String::from_utf8(bytes).map_err(|_| ConfigError::Invalid {
-        path: path.to_path_buf(),
-        message: "the preset is not UTF-8 text".to_string(),
+            source,
+        },
     })?;
+    let text = String::from_utf8(bytes).map_err(|_| invalid("the preset is not UTF-8 text"))?;
     parse_preset(&text, path)
 }
 
@@ -487,6 +475,23 @@ help_url = "https://intranet.example/rail"
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
         let message = crate::ops::preset_file_message(&err);
         assert!(message.ends_with("not a valid Rail preset"), "{message}");
+    }
+
+    #[test]
+    fn read_preset_refuses_a_fifo_without_blocking() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fifo = tmp.path().join("pipe.toml");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        assert!(made.is_ok_and(|s| s.success()), "mkfifo");
+        let (done, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(read_preset(&fifo).map(|_| ()).map_err(|e| e.to_string()));
+        });
+        let err = answer
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("a FIFO must be refused without blocking")
+            .unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
     }
 
     #[test]

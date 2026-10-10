@@ -2,7 +2,6 @@
 //! reference, or a preset. A JSON file may be any path the daemon can read, so its contents
 //! never appear in an error, a log line or a response.
 
-use std::io::Read;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -11,6 +10,7 @@ use super::{blocking, is_url, require_absolute};
 use crate::auth::OpCli;
 use crate::auth::onepassword::validate_reference;
 use crate::error::ErrorClass;
+use crate::guarded::{GuardedReadError, read_capped};
 use crate::onboarding::{Preset, PresetError, fetch_preset, read_preset};
 use crate::ops::{ClientSecretInput, ErrorCode, OP_REFERENCE_PREFIX, OpError, Secret};
 
@@ -125,80 +125,17 @@ struct GoogleClient {
     client_secret: String,
 }
 
-/// `O_NONBLOCK | O_NOCTTY` for the platforms whose values are known (checked against the
-/// `libc` crate): a swapped-in FIFO then opens without waiting for a writer, and a swapped-in
-/// terminal never becomes the controlling terminal. Elsewhere no flags are added; the path and
-/// handle checks still apply.
-#[cfg(all(
-    any(target_os = "linux", target_os = "android"),
-    any(
-        target_arch = "x86",
-        target_arch = "x86_64",
-        target_arch = "arm",
-        target_arch = "aarch64",
-        target_arch = "riscv32",
-        target_arch = "riscv64",
-        target_arch = "s390x",
-        target_arch = "powerpc",
-        target_arch = "powerpc64",
-        target_arch = "loongarch64"
-    )
-))]
-const OPEN_FLAGS: i32 = 0o4000 | 0o400;
-#[cfg(target_os = "macos")]
-const OPEN_FLAGS: i32 = 0x4 | 0x2_0000;
-#[cfg(not(any(
-    all(
-        any(target_os = "linux", target_os = "android"),
-        any(
-            target_arch = "x86",
-            target_arch = "x86_64",
-            target_arch = "arm",
-            target_arch = "aarch64",
-            target_arch = "riscv32",
-            target_arch = "riscv64",
-            target_arch = "s390x",
-            target_arch = "powerpc",
-            target_arch = "powerpc64",
-            target_arch = "loongarch64"
-        )
-    ),
-    target_os = "macos"
-)))]
-const OPEN_FLAGS: i32 = 0;
-
-/// Open `path` for reading without side effects on the device it might name. The caller has
-/// already refused anything that is not a regular file.
-fn open_guarded(path: &Path) -> std::io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, OPEN_FLAGS);
-    options.open(path)
-}
-
 /// Read Google's `client_secret_*.json` (`{"installed": {"client_id", "client_secret", ...}}`).
 /// Every failure names the path and a fixed reason, never a byte of the file.
 pub(crate) fn read_google_client_file(path: &Path) -> Result<ResolvedSecret, OpError> {
     let refuse = |reason: &str| OpError::invalid_input(format!("{}: {reason}", path.display()));
-    let cannot_read = |e: std::io::Error| refuse(&format!("cannot be read ({})", e.kind()));
-    let not_regular = || refuse(&format!("is not a regular file; {NOT_GOOGLE_JSON}"));
-    // By path first, so nothing that is not a regular file (a device, a FIFO) is ever opened.
-    if !std::fs::metadata(path).map_err(cannot_read)?.is_file() {
-        return Err(not_regular());
-    }
-    let file = open_guarded(path).map_err(cannot_read)?;
-    // Again on the open handle: the path may have been swapped between the two steps.
-    if !file.metadata().map_err(cannot_read)?.is_file() {
-        return Err(not_regular());
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_CLIENT_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(cannot_read)?;
-    if bytes.len() as u64 > MAX_CLIENT_FILE_BYTES {
-        return Err(refuse(&format!("larger than 64 KiB; {NOT_GOOGLE_JSON}")));
-    }
+    let bytes = read_capped(path, MAX_CLIENT_FILE_BYTES).map_err(|e| match e {
+        GuardedReadError::NotRegular => {
+            refuse(&format!("is not a regular file; {NOT_GOOGLE_JSON}"))
+        }
+        GuardedReadError::TooLarge => refuse(&format!("larger than 64 KiB; {NOT_GOOGLE_JSON}")),
+        GuardedReadError::Io(e) => refuse(&format!("cannot be read ({})", e.kind())),
+    })?;
     let parsed: GoogleClientFile =
         serde_json::from_slice(&bytes).map_err(|_| refuse(NOT_GOOGLE_JSON))?;
     let client = parsed

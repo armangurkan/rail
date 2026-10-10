@@ -98,20 +98,55 @@ impl SecretsBackend {
 pub struct AccountConfig {
     pub name: String,
     pub kind: AccountKind,
+    #[serde(deserialize_with = "plain_address")]
     pub address: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "plain_color")]
     pub color: Option<String>,
     pub client_id: String,
     #[serde(default)]
     pub client_secret: Option<String>,
     /// Microsoft only. Defaults to `common`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "plain_tenant")]
     pub tenant: Option<String>,
     #[serde(default)]
     pub signature: Option<PathBuf>,
     /// What an AI agent may do with this account's mail over MCP. Unset means `confirm`.
     #[serde(default)]
     pub ai_send: Option<AiSend>,
+}
+
+/// True when `text` holds no whitespace and no control character. An account's address,
+/// colour and tenant are shown on the terminal and in confirmations; neither a space nor an
+/// escape sequence belongs in any of them.
+pub fn is_plain(text: &str) -> bool {
+    !text.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// Why a value that is not `is_plain` is refused. Never quotes the value.
+pub fn not_plain(field: &str) -> String {
+    format!("the {field} must not contain spaces or control characters")
+}
+
+/// A plain string, or a deserialization error naming `field` (the parser adds the position).
+fn plain<'de, D: serde::Deserializer<'de>>(field: &str, d: D) -> Result<String, D::Error> {
+    let text = String::deserialize(d)?;
+    if is_plain(&text) {
+        Ok(text)
+    } else {
+        Err(serde::de::Error::custom(not_plain(field)))
+    }
+}
+
+fn plain_address<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    plain("address", d)
+}
+
+fn plain_color<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    plain("color", d).map(Some)
+}
+
+fn plain_tenant<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    plain("tenant", d).map(Some)
 }
 
 impl AccountConfig {

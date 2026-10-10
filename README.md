@@ -459,6 +459,11 @@ color = "blue"
 
 Tokens are never written to `config.toml`.
 
+An account's `address` must contain `@` and be at most 254 characters, and `address`, `color`
+and `tenant` must not contain spaces or control characters: they are shown on the terminal and
+in confirmations, where an escape sequence could otherwise act. `rail account add` refuses such a
+value, and a hand-edited `config.toml` holding one fails to load with its path and line.
+
 ### What an AI agent may do with your mail: `ai_send`
 
 Each account may set what a coding agent connected over MCP may do with its mail:
@@ -534,7 +539,9 @@ stops the same way on Ctrl-C or SIGTERM: saves in flight finish first, then it e
 The daemon starts with the environment of the command that started it: `DISPLAY` and
 `WAYLAND_DISPLAY` (where the browser opens), `BROWSER`, `OP_SESSION_*` (a signed-in 1Password
 CLI) and `PATH`. It keeps that environment until it exits, ten idle minutes later; run
-`rail daemon stop` to have the next command start one with your current environment.
+`rail daemon stop` to have the next command start one with your current environment. That
+includes where `op` is found: without `op_path`, the daemon runs the first `op` on the `PATH` it
+inherited. Set `op_path` under `[onepassword]` to pin it to one program.
 
 After an upgrade, the first command of the new version stops the older daemon and starts its
 own. A program of the older version that is still running (an open `rail mcp`, the setup
@@ -597,8 +604,10 @@ A Gmail `client_secret` can live in 1Password too. In `config.toml`, or in
 value. Or let Rail put it there: `rail account add ... --client-secret <secret>
 --store-secret-in-1password` (or `store_secret_in_1password` on `rail_account_add`, with the secret
 given by file) stores the secret in 1Password and writes an `op://` reference into `config.toml`.
-That needs a `[onepassword]` vault in `config.toml` and a client secret to store; the wizard
-never does this:
+That needs a `[onepassword]` vault in `config.toml` and a client secret to store, and is refused
+for a client secret that is already an `op://` reference ("the client secret is already in
+1Password; drop store_secret_in_1password"), so nothing is copied out of an item someone else
+named; the wizard never does this:
 
 ```toml
 client_secret = "op://Rail/Google client/client_secret"
