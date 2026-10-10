@@ -9,6 +9,30 @@ use super::AuthError;
 
 const SUCCESS_PAGE: &str = "<!doctype html><html><body style=\"font-family:sans-serif\"><h2>Rail is connected.</h2><p>You can close this tab and return to the terminal.</p></body></html>";
 
+const CONSENT_PAGE: &str = "<!doctype html><html><body style=\"font-family:sans-serif\"><h2>Rail is approved for your organisation.</h2><p>You can close this tab and return to the terminal.</p></body></html>";
+
+/// What a loopback redirect carried.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Redirect {
+    /// An authorization code, to exchange for tokens.
+    Code(String),
+    /// Microsoft's admin-consent confirmation for `tenant`.
+    AdminConsent { tenant: String },
+}
+
+/// Hides the authorization code, which must never reach a log or `Debug` output.
+impl std::fmt::Debug for Redirect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Code(_) => f.write_str("Code(<redacted>)"),
+            Self::AdminConsent { tenant } => f
+                .debug_struct("AdminConsent")
+                .field("tenant", tenant)
+                .finish(),
+        }
+    }
+}
+
 /// Longest a connection may take to send its request before it is dropped.
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -46,6 +70,21 @@ impl Loopback {
     /// Serve requests until one carries the OAuth redirect, then return its code.
     /// Only a failure to accept ends the flow early; stray connections are dropped.
     pub async fn wait_for_code(self, expected_state: &str) -> Result<String, AuthError> {
+        match self.wait_for_redirect(expected_state).await? {
+            Redirect::Code(code) => Ok(code),
+            Redirect::AdminConsent { .. } => Err(AuthError::MissingCode),
+        }
+    }
+
+    /// Serve requests until the admin-consent redirect arrives; return the consenting tenant.
+    pub async fn wait_for_admin_consent(self, expected_state: &str) -> Result<String, AuthError> {
+        match self.wait_for_redirect(expected_state).await? {
+            Redirect::AdminConsent { tenant } => Ok(tenant),
+            Redirect::Code(_) => Err(AuthError::MissingConsent),
+        }
+    }
+
+    async fn wait_for_redirect(self, expected_state: &str) -> Result<Redirect, AuthError> {
         loop {
             let (stream, _) = self.listener.accept().await?;
             if let Some(result) =
@@ -62,7 +101,7 @@ async fn handle_connection(
     stream: TcpStream,
     expected_state: &str,
     timeout: Duration,
-) -> Option<Result<String, AuthError>> {
+) -> Option<Result<Redirect, AuthError>> {
     let mut reader = BufReader::new(stream);
     let request_line = match tokio::time::timeout(timeout, read_request(&mut reader)).await {
         Ok(Ok(line)) => line,
@@ -77,17 +116,7 @@ async fn handle_connection(
     };
     let path = request_line.split_whitespace().nth(1).unwrap_or("/");
     let outcome = parse_redirect(path, expected_state);
-    let (status, body) = match &outcome {
-        Some(Ok(_)) => ("200 OK", SUCCESS_PAGE.to_string()),
-        Some(Err(e)) => (
-            "400 Bad Request",
-            format!(
-                "<html><body><h2>Rail: login failed</h2><p>{}</p></body></html>",
-                html_escape(&e.to_string())
-            ),
-        ),
-        None => ("404 Not Found", String::new()),
-    };
+    let (status, body) = response_for(&outcome);
     let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -98,6 +127,21 @@ async fn handle_connection(
     }
     let _ = stream.shutdown().await;
     outcome
+}
+
+fn response_for(outcome: &Option<Result<Redirect, AuthError>>) -> (&'static str, String) {
+    match outcome {
+        Some(Ok(Redirect::Code(_))) => ("200 OK", SUCCESS_PAGE.to_string()),
+        Some(Ok(Redirect::AdminConsent { .. })) => ("200 OK", CONSENT_PAGE.to_string()),
+        Some(Err(e)) => (
+            "400 Bad Request",
+            format!(
+                "<html><body><h2>Rail: login failed</h2><p>{}</p></body></html>",
+                html_escape(&e.to_string())
+            ),
+        ),
+        None => ("404 Not Found", String::new()),
+    }
 }
 
 /// Read the request line and discard the headers.
@@ -137,35 +181,73 @@ async fn drain_headers(reader: &mut BufReader<TcpStream>) -> std::io::Result<()>
     }
 }
 
-/// `None` for requests that are not the OAuth redirect (favicon, probes).
-pub fn parse_redirect(path: &str, expected_state: &str) -> Option<Result<String, AuthError>> {
+/// `None` for requests that are not the OAuth redirect (favicon, probes) and for redirects
+/// whose `state` is absent or wrong, so a stray or hostile request cannot end a login or a
+/// consent in progress.
+pub fn parse_redirect(path: &str, expected_state: &str) -> Option<Result<Redirect, AuthError>> {
     let url = url::Url::parse(&format!("http://127.0.0.1{path}")).ok()?;
-    let mut code = None;
-    let mut state = None;
-    let mut error = None;
-    let mut description = None;
-    for (key, value) in url.query_pairs() {
-        match key.as_ref() {
-            "code" => code = Some(value.into_owned()),
-            "state" => state = Some(value.into_owned()),
-            "error" => error = Some(value.into_owned()),
-            "error_description" => description = Some(value.into_owned()),
-            _ => {}
-        }
-    }
-    if code.is_none() && error.is_none() && state.is_none() {
+    let query = RedirectQuery::from_url(&url);
+    if query.is_empty() {
         return None;
     }
-    // Without the right state this is not our redirect: ignore it so a stray or
-    // hostile request cannot abort a login in progress.
-    if state.as_deref() != Some(expected_state) {
+    if query.state.as_deref() != Some(expected_state) {
         tracing::debug!("ignoring loopback redirect with a missing or mismatched state");
         return None;
     }
-    if let Some(error) = error {
-        return Some(Err(AuthError::Denied(description.unwrap_or(error))));
+    Some(query.into_outcome())
+}
+
+#[derive(Default)]
+struct RedirectQuery {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    description: Option<String>,
+    admin_consent: Option<String>,
+    tenant: Option<String>,
+}
+
+impl RedirectQuery {
+    fn from_url(url: &url::Url) -> Self {
+        let mut query = Self::default();
+        for (key, value) in url.query_pairs() {
+            let slot = match key.as_ref() {
+                "code" => &mut query.code,
+                "state" => &mut query.state,
+                "error" => &mut query.error,
+                "error_description" => &mut query.description,
+                "admin_consent" => &mut query.admin_consent,
+                "tenant" => &mut query.tenant,
+                _ => continue,
+            };
+            *slot = Some(value.into_owned());
+        }
+        query
     }
-    Some(code.ok_or(AuthError::MissingCode))
+
+    fn is_empty(&self) -> bool {
+        self.code.is_none()
+            && self.error.is_none()
+            && self.state.is_none()
+            && self.admin_consent.is_none()
+    }
+
+    /// The provider's error wins, then a consent confirmation, then the code.
+    fn into_outcome(self) -> Result<Redirect, AuthError> {
+        if let Some(error) = self.error {
+            return Err(AuthError::Denied(self.description.unwrap_or(error)));
+        }
+        let consented = self
+            .admin_consent
+            .as_deref()
+            .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+        if consented {
+            return Ok(Redirect::AdminConsent {
+                tenant: self.tenant.unwrap_or_default(),
+            });
+        }
+        self.code.map(Redirect::Code).ok_or(AuthError::MissingCode)
+    }
 }
 
 #[cfg(test)]
@@ -183,7 +265,46 @@ mod tests {
         let r = parse_redirect("/?code=abc%20def&state=s1", "s1")
             .unwrap()
             .unwrap();
-        assert_eq!(r, "abc def");
+        assert_eq!(r, Redirect::Code("abc def".into()));
+    }
+
+    #[test]
+    fn parse_returns_admin_consent_when_state_matches() {
+        let r = parse_redirect("/?admin_consent=True&tenant=tid-1&state=s1", "s1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            r,
+            Redirect::AdminConsent {
+                tenant: "tid-1".into()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ignores_admin_consent_with_a_mismatched_or_absent_state() {
+        assert!(parse_redirect("/?admin_consent=True&tenant=t&state=other", "s1").is_none());
+        assert!(parse_redirect("/?admin_consent=True&tenant=t", "s1").is_none());
+    }
+
+    #[test]
+    fn parse_reports_a_consent_error_with_its_description() {
+        let r = parse_redirect(
+            "/?error=access_denied&error_description=AADSTS65004%3A%20declined&state=s1",
+            "s1",
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(
+            matches!(r, AuthError::Denied(ref m) if m == "AADSTS65004: declined"),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn redirect_debug_hides_the_code() {
+        let debug = format!("{:?}", Redirect::Code("secret-code".into()));
+        assert!(!debug.contains("secret-code"), "{debug}");
     }
 
     #[test]
@@ -192,6 +313,8 @@ mod tests {
         assert!(parse_redirect("/?code=abc", "s1").is_none());
         assert!(parse_redirect("/?error=access_denied", "s1").is_none());
         assert!(parse_redirect("/?error=access_denied&state=other", "s1").is_none());
+        assert!(parse_redirect("/?admin_consent=True&tenant=t&state=other", "s1").is_none());
+        assert!(parse_redirect("/?admin_consent=True&tenant=t", "s1").is_none());
     }
 
     #[test]
@@ -273,5 +396,39 @@ mod tests {
         });
         assert_eq!(lb.wait_for_code("st").await.unwrap(), "c0de");
         browser.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wait_for_admin_consent_ignores_stray_requests() {
+        let lb = Loopback::bind().await.unwrap();
+        let base = lb.redirect_url();
+        let browser = tokio::spawn(async move {
+            let favicon = reqwest::get(format!("{base}/favicon.ico")).await.unwrap();
+            assert_eq!(favicon.status(), 404);
+            let forged = reqwest::get(format!("{base}/?admin_consent=True&tenant=evil&state=nope"))
+                .await
+                .unwrap();
+            assert_eq!(forged.status(), 404);
+            let done = reqwest::get(format!("{base}/?admin_consent=True&tenant=tid&state=st"))
+                .await
+                .unwrap();
+            assert_eq!(done.status(), 200);
+            assert!(done.text().await.unwrap().contains("approved"));
+        });
+        assert_eq!(lb.wait_for_admin_consent("st").await.unwrap(), "tid");
+        browser.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wait_for_code_rejects_a_consent_redirect() {
+        let lb = Loopback::bind().await.unwrap();
+        let base = lb.redirect_url();
+        tokio::spawn(async move {
+            reqwest::get(format!("{base}/?admin_consent=True&tenant=t&state=st"))
+                .await
+                .unwrap();
+        });
+        let err = lb.wait_for_code("st").await.unwrap_err();
+        assert!(matches!(err, AuthError::MissingCode), "{err:?}");
     }
 }
