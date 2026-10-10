@@ -123,17 +123,55 @@ struct GoogleClient {
     client_secret: String,
 }
 
-/// `O_NONBLOCK`: opening a FIFO then returns at once instead of waiting for a writer.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-const O_NONBLOCK: i32 = 0o4000;
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-const O_NONBLOCK: i32 = 0x4;
+/// `O_NONBLOCK | O_NOCTTY` for the platforms whose values are known (checked against the
+/// `libc` crate): a swapped-in FIFO then opens without waiting for a writer, and a swapped-in
+/// terminal never becomes the controlling terminal. Elsewhere no flags are added; the path and
+/// handle checks still apply.
+#[cfg(all(
+    any(target_os = "linux", target_os = "android"),
+    any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "arm",
+        target_arch = "aarch64",
+        target_arch = "riscv32",
+        target_arch = "riscv64",
+        target_arch = "s390x",
+        target_arch = "powerpc",
+        target_arch = "powerpc64",
+        target_arch = "loongarch64"
+    )
+))]
+const OPEN_FLAGS: i32 = 0o4000 | 0o400;
+#[cfg(target_os = "macos")]
+const OPEN_FLAGS: i32 = 0x4 | 0x2_0000;
+#[cfg(not(any(
+    all(
+        any(target_os = "linux", target_os = "android"),
+        any(
+            target_arch = "x86",
+            target_arch = "x86_64",
+            target_arch = "arm",
+            target_arch = "aarch64",
+            target_arch = "riscv32",
+            target_arch = "riscv64",
+            target_arch = "s390x",
+            target_arch = "powerpc",
+            target_arch = "powerpc64",
+            target_arch = "loongarch64"
+        )
+    ),
+    target_os = "macos"
+)))]
+const OPEN_FLAGS: i32 = 0;
 
-fn open_nonblocking(path: &Path) -> std::io::Result<std::fs::File> {
+/// Open `path` for reading without side effects on the device it might name. The caller has
+/// already refused anything that is not a regular file.
+fn open_guarded(path: &Path) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, O_NONBLOCK);
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, OPEN_FLAGS);
     options.open(path)
 }
 
@@ -142,10 +180,15 @@ fn open_nonblocking(path: &Path) -> std::io::Result<std::fs::File> {
 pub(crate) fn read_google_client_file(path: &Path) -> Result<ResolvedSecret, OpError> {
     let refuse = |reason: &str| OpError::invalid_input(format!("{}: {reason}", path.display()));
     let cannot_read = |e: std::io::Error| refuse(&format!("cannot be read ({})", e.kind()));
-    let file = open_nonblocking(path).map_err(cannot_read)?;
-    // Checked on the open handle, so a swap after the open cannot change what is read.
+    let not_regular = || refuse(&format!("is not a regular file; {NOT_GOOGLE_JSON}"));
+    // By path first, so nothing that is not a regular file (a device, a FIFO) is ever opened.
+    if !std::fs::metadata(path).map_err(cannot_read)?.is_file() {
+        return Err(not_regular());
+    }
+    let file = open_guarded(path).map_err(cannot_read)?;
+    // Again on the open handle: the path may have been swapped between the two steps.
     if !file.metadata().map_err(cannot_read)?.is_file() {
-        return Err(refuse(&format!("is not a regular file; {NOT_GOOGLE_JSON}")));
+        return Err(not_regular());
     }
     let mut bytes = Vec::new();
     file.take(MAX_CLIENT_FILE_BYTES + 1)
@@ -315,19 +358,25 @@ mod tests {
         assert_eq!(err.message, "a preset must not carry a 1Password reference");
     }
 
+    /// Nothing that is not a regular file is opened: a FIFO opened here would block this test.
     #[cfg(unix)]
     #[tokio::test]
-    async fn a_fifo_is_refused_without_blocking() {
+    async fn a_fifo_is_refused_without_being_opened() {
         let tmp = tempfile::tempdir().unwrap();
         let fifo = tmp.path().join("pipe.json");
         let made = std::process::Command::new("mkfifo").arg(&fifo).status();
-        if !made.is_ok_and(|s| s.success()) {
-            return;
-        }
-        let err = resolve(&tmp, ClientSecretInput::JsonFile(fifo))
-            .await
-            .unwrap_err();
-        assert!(err.message.contains("is not a regular file"), "{err}");
+        assert!(made.is_ok_and(|s| s.success()), "mkfifo");
+        let refused = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            resolve(&tmp, ClientSecretInput::JsonFile(fifo.clone())),
+        )
+        .await
+        .expect("a FIFO must be refused without blocking")
+        .unwrap_err();
+        assert!(
+            refused.message.contains("is not a regular file"),
+            "{refused}"
+        );
     }
 
     #[tokio::test]
