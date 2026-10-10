@@ -562,3 +562,49 @@ async fn daemon_stop_always_receives_its_reply() {
         daemon.await.unwrap().unwrap();
     }
 }
+
+/// Fix round 1: `run_until` stops through the same shutdown as `daemon.stop` once its future
+/// resolves (the binary's SIGINT and SIGTERM), removing the socket and releasing the lock.
+#[tokio::test]
+async fn run_until_stops_cleanly_when_its_future_resolves() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let (ctx, _) = daemon_context(&paths);
+    let server = super::Server::bind(ctx, ServeConfig::default())
+        .await
+        .unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let running = tokio::spawn(server.run_until(async {
+        let _ = stopped.await;
+    }));
+    assert!(paths.socket_file().exists());
+    stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(10), running)
+        .await
+        .expect("stopped")
+        .unwrap()
+        .unwrap();
+    assert!(!paths.socket_file().exists());
+    let lock = paths.daemon_lock_file();
+    tokio::task::spawn_blocking(move || super::wait_for_daemon_exit(&lock, Duration::from_secs(2)))
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+/// Fix round 1: the hello names the daemon's directories, so a client can refuse a daemon
+/// that works on another configuration.
+#[tokio::test]
+async fn the_hello_names_the_daemons_directories() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let (ctx, _) = daemon_context(&paths);
+    let _daemon = start_daemon(ctx, ServeConfig::default()).await;
+    let connector = Connector::new(paths.clone(), std::sync::Arc::new(|| Ok(())));
+    let client = connector.connect().await.unwrap();
+    let hello = client.daemon();
+    assert_eq!(hello.config_dir, paths.config_dir);
+    assert_eq!(hello.data_dir, paths.data_dir);
+    assert_eq!(hello.state_dir, paths.state_dir);
+    connector.stop(client).await.unwrap();
+}

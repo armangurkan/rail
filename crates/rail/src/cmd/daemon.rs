@@ -11,13 +11,16 @@ use rail_core::daemon::{
 use rail_core::ops::op::{DaemonInfoOp, DaemonStop};
 use rail_core::ops::{DaemonInfo, DaemonInfoRequest, DaemonStopRequest, ErrorCode, OpError};
 use rail_core::paths::Paths;
+use tokio::signal::unix::{SignalKind, signal};
 
 use crate::cmd::account::report;
 use crate::{browser, daemon_link, test_hooks};
 
-/// Serve until stopped or idle. The debug-only test hooks for the browser opener, the token
-/// endpoint and the idle timeout reach the daemon here. Nothing is printed: the daemon logs to
-/// `rail.log`, including why it could not start, since its stderr goes nowhere.
+/// Serve until stopped, idle, or SIGINT or SIGTERM (which shut down like `daemon.stop`: saves
+/// in flight get their grace, then the socket goes and the lock is released; exit 0). The
+/// debug-only test hooks for the browser opener, the token endpoint and the idle timeout reach
+/// the daemon here. Nothing is printed: the daemon logs to `rail.log`, including why it could
+/// not start, since its stderr goes nowhere.
 pub async fn run(paths: &Paths) -> color_eyre::Result<ExitCode> {
     serve(paths).await.map_err(|error| {
         tracing::error!(error = %error.message, "the daemon could not start or stopped on an error");
@@ -27,13 +30,22 @@ pub async fn run(paths: &Paths) -> color_eyre::Result<ExitCode> {
 }
 
 async fn serve(paths: &Paths) -> Result<(), OpError> {
+    let io = |e: std::io::Error| OpError::io(ErrorCode::Daemon, "listening for signals", &e);
+    let mut interrupt = signal(SignalKind::interrupt()).map_err(io)?;
+    let mut terminate = signal(SignalKind::terminate()).map_err(io)?;
+    let signalled = async move {
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+        }
+    };
     let opener: Opener = Arc::new(browser::launch);
     let ctx = DaemonContext::new(paths.clone(), opener)?.with_token_url(test_hooks::token_url());
     let config = ServeConfig {
         idle: test_hooks::idle().unwrap_or(IDLE_TIMEOUT),
         ..ServeConfig::default()
     };
-    Server::bind(ctx, config).await?.run().await
+    Server::bind(ctx, config).await?.run_until(signalled).await
 }
 
 /// Exit 0 when a daemon answers, 1 when none runs. Never starts one.
@@ -85,7 +97,10 @@ pub async fn stop(paths: &Paths) -> color_eyre::Result<ExitCode> {
     let lock = paths.daemon_lock_file();
     tokio::task::spawn_blocking(move || wait_for_daemon_exit(&lock, DAEMON_EXIT_TIMEOUT))
         .await?
-        .map_err(|_| not_stopped(pid))?;
+        .map_err(|e| match e.code {
+            ErrorCode::Timeout => not_stopped(pid),
+            _ => report(e),
+        })?;
     println!("rail daemon stopped");
     Ok(ExitCode::SUCCESS)
 }

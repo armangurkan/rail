@@ -114,7 +114,7 @@ status 2; use the flag form of `rail account add` instead.
 | `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
-| `rail doctor` | Checks the config file, the store, the secrets backend, every account's tokens and `ai_send` policy, and the daemon. Exits non-zero for config, store, secrets-backend and token-read errors; accounts with no tokens show as `missing` without failing the check (see [Check everything](#check-everything)). |
+| `rail doctor` | Checks the config file, the store, the secrets backend, every account's tokens and `ai_send` policy, and the daemon. The checks run in the daemon, so if it cannot start, `rail doctor` fails outright with the reason (for example a socket path too long for a Unix socket; set `RAIL_RUNTIME_DIR` to a shorter directory). Exits non-zero for config, store, secrets-backend and token-read errors; accounts with no tokens show as `missing` without failing the check (see [Check everything](#check-everything)). |
 
 ## Setup
 
@@ -336,7 +336,8 @@ not touched.
 `rail doctor` reports the config file and how many accounts it holds, the store and its schema
 version, the secrets backend, and token presence for every account, then ends with an `ok   daemon`
 line naming the daemon that ran the checks. Text Rail did not write (a keyring's or SQLite's
-message, the config parser's) is shown in quotes with control characters escaped. It exits non-zero for config, store,
+message, the config parser's) is marked `from outside Rail` and shown in quotes with control
+characters escaped. It exits non-zero for config, store,
 secrets-backend and token-read errors. An account with no stored tokens is listed as `missing`, with
 the `rail account login` advice, but does not make the exit status non-zero, so scripts that care
 should grep for `missing`.
@@ -423,7 +424,21 @@ only you can open (mode 0700); the socket itself is 0600, and the daemon drops a
 from another user. `rail daemon status` shows what it is doing and `rail daemon stop` stops it.
 A login you begin in a command keeps waiting in the daemon until you finish it in the browser,
 cancel it with Ctrl-C, or it times out after 15 minutes; once the account is being saved, the
-save finishes even if the command that started it is gone.
+save finishes even if the command that started it is gone. `rail daemon run` in the foreground
+stops the same way on Ctrl-C or SIGTERM: saves in flight finish first, then it exits 0.
+
+The daemon starts with the environment of the command that started it: `DISPLAY` and
+`WAYLAND_DISPLAY` (where the browser opens), `BROWSER`, `OP_SESSION_*` (a signed-in 1Password
+CLI) and `PATH`. It keeps that environment until it exits, ten idle minutes later; run
+`rail daemon stop` to have the next command start one with your current environment.
+
+It also works on the directories of the command that started it, made absolute (a relative
+`RAIL_CONFIG_DIR=cfg` means `cfg` under that command's working directory). A later command whose
+`RAIL_CONFIG_DIR`, `RAIL_DATA_DIR` or `RAIL_STATE_DIR` names other directories, but shares the
+same runtime directory, is refused with "a Rail daemon is already running with different
+directories" and changes nothing; stop that daemon with `rail daemon stop` from the shell that
+started it, or use the same `RAIL_*` settings. Give each setup its own `RAIL_RUNTIME_DIR` to run
+two side by side.
 
 When a command fails, it prints Rail's own message and, on a line starting `hint:`, what to do
 next. Words from outside Rail (a provider's error description, the system's error text) come on a
@@ -481,6 +496,8 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding. No ter
 crates/rail/             Binary: clap CLI, logging, `account`, `daemon`, `doctor` and `setup` commands
   src/tui/               App shell: terminal guard, event loop, widgets, the wizard screen and its effects
   tests/cli.rs           End-to-end tests against the built binary in a temporary XDG layout
+  tests/cli/daemon.rs    The daemon through the binary: on-demand start, status, stop, directories, signals
+  tests/cli/pty.rs       The same in a pseudo-terminal: the wizard's Ctrl-C and `rail account remove`'s question
 assets/brand/            Logos for light and dark backgrounds, and the app icon
 docs/superpowers/        Design specs and phase plans
 deny.toml                Licence and advisory policy for `cargo deny`

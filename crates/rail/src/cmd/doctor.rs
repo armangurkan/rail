@@ -1,6 +1,6 @@
 //! `rail doctor`: asks the daemon for its `status` (the health report over config, store,
 //! secrets and accounts that `rail_core::doctor::gather` collects, plus the daemon's own state)
-//! and renders it. Never prints token values; text from outside Rail is quoted.
+//! and renders it. Never prints token values; text from outside Rail is labelled and quoted.
 
 use std::fmt::Write as _;
 use std::process::ExitCode;
@@ -9,7 +9,7 @@ use rail_core::ops::op::Status;
 use rail_core::ops::{DoctorReport, OpError, StatusRequest};
 use rail_core::paths::Paths;
 
-use crate::cmd::account::{quoted, report};
+use crate::cmd::account::{outside, report};
 use crate::cmd::daemon::describe;
 use crate::daemon_link;
 
@@ -82,11 +82,7 @@ const TEXT_INDENT: &str = "              ";
 fn write_config_error(out: &mut String, error: &OpError) {
     let _ = writeln!(out, "{} config   {}", mark(false), error.message);
     if let Some(detail) = &error.detail {
-        let _ = writeln!(
-            out,
-            "{TEXT_INDENT}from outside Rail: {}",
-            quoted(detail.get())
-        );
+        let _ = writeln!(out, "{TEXT_INDENT}{}", outside(detail.get()));
     }
     if error.hint.is_some() {
         let _ = writeln!(
@@ -112,7 +108,7 @@ fn render_store(out: &mut String, report: &DoctorReport) {
                 mark(true)
             )
         }
-        Some(e) => writeln!(out, "{} store    {path}: {}", mark(false), quoted(e.get())),
+        Some(e) => writeln!(out, "{} store    {path}: {}", mark(false), outside(e.get())),
     };
 }
 
@@ -127,7 +123,7 @@ fn render_secrets(out: &mut String, report: &DoctorReport) {
             out,
             "{} secrets  {backend}: {}",
             mark(false),
-            quoted(e.get())
+            outside(e.get())
         ),
         (None, Some(file)) => writeln!(
             out,
@@ -141,7 +137,7 @@ fn render_secrets(out: &mut String, report: &DoctorReport) {
 fn render_accounts(out: &mut String, report: &DoctorReport) {
     for account in &report.accounts {
         let tokens = match (&account.token_error, account.has_tokens) {
-            (Some(e), _) => format!("error: {}", quoted(e.get())),
+            (Some(e), _) => format!("error {}", outside(e.get())),
             (None, true) => "present".to_string(),
             (None, false) => format!("missing (run `rail account login {}`)", account.name),
         };
@@ -193,7 +189,8 @@ mod tests {
         assert!(lines[0].starts_with("FAIL config   "), "{text}");
         assert!(!lines[0].contains("IGNORE"), "{text}");
         assert!(
-            lines[1].starts_with("              from outside Rail: \""),
+            lines[1]
+                .starts_with("              from outside Rail (the provider or the system): \""),
             "{text}"
         );
         assert!(lines[1].contains("IGNORE"), "{text}");

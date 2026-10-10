@@ -2,6 +2,7 @@
 //! the in-process commands they replace, with the columns of `list` sized to their entries.
 
 use std::io::{BufRead, IsTerminal, Write};
+use std::time::Duration;
 
 use color_eyre::eyre::{bail, eyre};
 use rail_core::accounts;
@@ -144,14 +145,32 @@ async fn wait_or_cancel(
                 }
             }
             _ = interrupt.recv() => {
-                let cancel = CancelRequest { id: id.clone() };
-                let answer = client.call::<PendingCancel>(&cancel).await.map_err(report)?;
+                let answer = cancel(client, id).await?;
                 if answer.state != PendingState::Saving {
                     return Ok(answer);
                 }
             }
         }
     }
+}
+
+/// The longest a Ctrl-C waits for the daemon to confirm the cancel.
+const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Send `pending.cancel`, bounded: a daemon that does not answer must not trap the user.
+async fn cancel(client: &DaemonClient, id: &PendingId) -> color_eyre::Result<WaitResponse> {
+    let request = CancelRequest { id: id.clone() };
+    match tokio::time::timeout(CANCEL_TIMEOUT, client.call::<PendingCancel>(&request)).await {
+        Ok(answer) => answer.map_err(report),
+        Err(_) => Err(cancel_unanswered(CANCEL_TIMEOUT)),
+    }
+}
+
+fn cancel_unanswered(waited: Duration) -> color_eyre::Report {
+    eyre!(
+        "the daemon did not answer the cancel within {} seconds; the login may still be pending\nhint: run `rail daemon status` to see it, or `rail daemon stop` to end it",
+        waited.as_secs()
+    )
 }
 
 /// The saved account, or the reason there is none.
@@ -318,7 +337,7 @@ pub(crate) fn table(accounts: &[AccountSummary]) -> String {
         let tokens = match &account.tokens {
             TokenState::Present => "yes".to_string(),
             TokenState::Missing => "missing".to_string(),
-            TokenState::Error { message } => format!("error: {}", quoted(message.get())),
+            TokenState::Error { message } => format!("error {}", outside(message.get())),
         };
         out += &format!(
             "{:<name$} {:<6} {:<address$} {tokens}\n",
@@ -516,6 +535,20 @@ mod tests {
         let message = "locked\n\u{1b}[31m".to_string().into();
         let text = table(&[summary("w", "w@x.io", TokenState::Error { message })]);
         assert_eq!(text.lines().count(), 2, "{text:?}");
-        assert!(text.contains(r#"error: "locked\n\u{1b}[31m""#), "{text:?}");
+        assert!(
+            text.contains(
+                r#"error from outside Rail (the provider or the system): "locked\n\u{1b}[31m""#
+            ),
+            "{text:?}"
+        );
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+    }
+
+    #[test]
+    fn an_unanswered_cancel_says_the_login_may_still_be_pending() {
+        let text = cancel_unanswered(CANCEL_TIMEOUT).to_string();
+        assert!(text.starts_with("the daemon did not answer the cancel within 5 seconds"));
+        assert!(text.contains("the login may still be pending"), "{text}");
+        assert!(text.contains("\nhint: run `rail daemon status`"), "{text}");
     }
 }

@@ -222,11 +222,25 @@ impl Server {
     }
 
     /// Serve until `daemon.stop` or the idle timeout, then remove the socket.
-    pub async fn run(mut self) -> Result<(), OpError> {
+    pub async fn run(self) -> Result<(), OpError> {
+        self.run_until(std::future::pending()).await
+    }
+
+    /// `run`, also stopping, through the same `finish`, once `stop` resolves (the binary passes
+    /// SIGINT and SIGTERM).
+    pub async fn run_until(
+        mut self,
+        stop: impl std::future::Future<Output = ()>,
+    ) -> Result<(), OpError> {
         tracing::info!(socket = %self.state.socket.display(), "daemon listening");
         let tick = check_interval(self.state.config.idle);
+        let mut stop = std::pin::pin!(stop);
         loop {
             tokio::select! {
+                () = &mut stop => {
+                    tracing::info!("asked to stop by a signal");
+                    break;
+                }
                 accepted = self.listener.accept() => match accepted {
                     Ok((stream, _)) => self.admit(stream),
                     Err(e) => {

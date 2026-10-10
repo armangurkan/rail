@@ -18,6 +18,11 @@ pub struct HelloResponse {
     /// The daemon's Rail version.
     pub version: String,
     pub pid: u32,
+    /// The directories the daemon works on. A client whose own differ must not use it: it
+    /// would read and write another configuration than the one it thinks it has.
+    pub config_dir: PathBuf,
+    pub data_dir: PathBuf,
+    pub state_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

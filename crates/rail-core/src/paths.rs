@@ -48,13 +48,24 @@ fn need(dirs: &Option<ProjectDirs>) -> Result<&ProjectDirs, NoHomeDir> {
 impl Paths {
     /// Resolve from `RAIL_*_DIR` environment variables, falling back to platform dirs.
     /// An empty variable counts as unset, so `RAIL_DATA_DIR=""` never means the current directory.
+    /// A relative override is made absolute against the current directory, so the daemon (which
+    /// runs elsewhere) and every client agree on what it names.
     pub fn from_env() -> Result<Self, NoHomeDir> {
-        Self::from_lookup(|key| std::env::var_os(key))
+        let cwd = std::env::current_dir().unwrap_or_default();
+        Self::from_lookup(|key| std::env::var_os(key), &cwd)
     }
 
-    /// `from_env` over an arbitrary variable lookup; lets tests avoid mutating the environment.
-    fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, NoHomeDir> {
-        let var = |key: &str| lookup(key).filter(|v| !v.is_empty()).map(PathBuf::from);
+    /// `from_env` over an arbitrary variable lookup and working directory; lets tests avoid
+    /// mutating the environment.
+    fn from_lookup(
+        lookup: impl Fn(&str) -> Option<OsString>,
+        cwd: &Path,
+    ) -> Result<Self, NoHomeDir> {
+        let var = |key: &str| {
+            lookup(key)
+                .filter(|v| !v.is_empty())
+                .map(|v| cwd.join(PathBuf::from(v)))
+        };
         Self::resolve(PathOverrides {
             config_dir: var("RAIL_CONFIG_DIR"),
             data_dir: var("RAIL_DATA_DIR"),
@@ -280,7 +291,9 @@ mod tests {
     fn runtime_dir_env_override_and_fallback() {
         let lookup = |key: &str| (key == "RAIL_RUNTIME_DIR").then(|| "/run/x".into());
         assert_eq!(
-            Paths::from_lookup(lookup).unwrap().runtime_dir,
+            Paths::from_lookup(lookup, Path::new("/cwd"))
+                .unwrap()
+                .runtime_dir,
             PathBuf::from("/run/x")
         );
         assert_eq!(
@@ -291,13 +304,32 @@ mod tests {
     }
 
     #[test]
+    fn relative_env_overrides_are_made_absolute_against_the_working_directory() {
+        let lookup = |key: &str| match key {
+            "RAIL_CONFIG_DIR" => Some("cfg".into()),
+            "RAIL_DATA_DIR" => Some("../data".into()),
+            "RAIL_CACHE_DIR" => Some("/abs/cache".into()),
+            "RAIL_STATE_DIR" => Some("./state".into()),
+            "RAIL_RUNTIME_DIR" => Some("run".into()),
+            _ => None,
+        };
+        let paths = Paths::from_lookup(lookup, Path::new("/home/me/work")).unwrap();
+        assert_eq!(paths.config_dir, PathBuf::from("/home/me/work/cfg"));
+        assert_eq!(paths.data_dir, PathBuf::from("/home/me/work/../data"));
+        assert_eq!(paths.cache_dir, PathBuf::from("/abs/cache"));
+        assert_eq!(paths.state_dir, PathBuf::from("/home/me/work/./state"));
+        assert_eq!(paths.runtime_dir, PathBuf::from("/home/me/work/run"));
+        assert!(paths.config_dir.is_absolute() && paths.runtime_dir.is_absolute());
+    }
+
+    #[test]
     fn empty_env_override_is_treated_as_unset() {
         let lookup = |key: &str| match key {
             "RAIL_CONFIG_DIR" => Some(std::ffi::OsString::new()),
             "RAIL_DATA_DIR" => Some(std::ffi::OsString::from("/d")),
             _ => None,
         };
-        let paths = Paths::from_lookup(lookup).unwrap();
+        let paths = Paths::from_lookup(lookup, Path::new("/cwd")).unwrap();
         let defaults = Paths::resolve(PathOverrides::default()).unwrap();
         assert_eq!(paths.config_dir, defaults.config_dir);
         assert_eq!(paths.data_dir, PathBuf::from("/d"));

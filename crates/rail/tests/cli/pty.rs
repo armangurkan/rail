@@ -7,7 +7,9 @@ use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::{WORK_FILE_BACKEND, rail_env, store_work_tokens, write_config, write_opener};
+use super::{
+    StopsDaemon, WORK_FILE_BACKEND, rail_env, store_work_tokens, write_config, write_opener,
+};
 
 const FILE_BACKEND: &str = "[general]\nsecrets = \"file\"\n";
 const ACME: &str = "name = \"Acme Gmail\"\nkind = \"gmail\"\nclient_id = \"acme.apps.googleusercontent.com\"\nclient_secret = \"GOCSPX-acme\"\n";
@@ -189,6 +191,7 @@ fn account_remove_on_a_terminal_removes_after_yes() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let config = write_config(&dir, WORK_FILE_BACKEND);
     let secrets = store_work_tokens(&dir);
     let (status, screen) = answer_removal(&dir, b"Yes\r");
@@ -216,6 +219,7 @@ fn account_remove_on_a_terminal_keeps_everything_after_no() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
     let config = write_config(&dir, WORK_FILE_BACKEND);
     let secrets = store_work_tokens(&dir);
     let before = std::fs::read_to_string(&secrets).unwrap();

@@ -86,10 +86,12 @@ impl Connector {
     }
 
     /// A fresh connection to a daemon of this Rail version, starting one if needed. A daemon of
-    /// another version is asked to stop and replaced.
+    /// another version is asked to stop and replaced. A daemon that works on other directories
+    /// (another `RAIL_*_DIR` setting sharing this runtime directory) is refused, and left alone.
     pub async fn connect(&self) -> Result<DaemonClient, OpError> {
         for _ in 0..2 {
             let client = self.connect_or_start().await?;
+            self.check_dirs(client.daemon())?;
             if self.matches(client.daemon()) {
                 return Ok(client);
             }
@@ -129,6 +131,37 @@ impl Connector {
             ErrorCode::Daemon,
             ErrorClass::Transient,
             format!("the daemon did not stop within {:?}", self.start_timeout),
+        ))
+    }
+
+    /// Refuse a daemon whose config, data or state directory is not this client's. The paths
+    /// go into `detail`: they come from the daemon, not from Rail's own words.
+    fn check_dirs(&self, hello: &HelloResponse) -> Result<(), OpError> {
+        let ours = [
+            &self.paths.config_dir,
+            &self.paths.data_dir,
+            &self.paths.state_dir,
+        ];
+        let theirs = [&hello.config_dir, &hello.data_dir, &hello.state_dir];
+        if ours == theirs {
+            return Ok(());
+        }
+        Err(OpError::new(
+            ErrorCode::Daemon,
+            ErrorClass::Permanent,
+            "a Rail daemon is already running with different directories",
+        )
+        .with_detail(format!(
+            "the daemon uses config {}, data {}, state {}; this command uses config {}, data {}, state {}",
+            theirs[0].display(),
+            theirs[1].display(),
+            theirs[2].display(),
+            ours[0].display(),
+            ours[1].display(),
+            ours[2].display()
+        ))
+        .with_hint(
+            "stop it with `rail daemon stop` from the shell that started it, or use the same RAIL_* settings",
         ))
     }
 
@@ -276,7 +309,7 @@ fn exit_io_error(error: &std::io::Error) -> OpError {
 
 fn exit_timeout_error() -> OpError {
     OpError::new(
-        ErrorCode::Daemon,
+        ErrorCode::Timeout,
         ErrorClass::Transient,
         "the running daemon did not exit in time",
     )
@@ -294,7 +327,8 @@ fn try_take_lock(file: &File) -> Result<bool, OpError> {
 
 /// Block until no daemon holds `daemon_lock` (`Paths::daemon_lock_file`), at most `timeout`:
 /// take the lock and let go of it at once. A daemon that is not running holds nothing, so this
-/// returns immediately. Blocking; call it from `spawn_blocking`.
+/// returns immediately. Blocking; call it from `spawn_blocking`. Running out of time is an
+/// `ErrorCode::Timeout` error; failing to open the lock file is an `ErrorCode::Daemon` one.
 pub fn wait_for_daemon_exit(daemon_lock: &Path, timeout: Duration) -> Result<(), OpError> {
     let dir = daemon_lock.parent().unwrap_or_else(|| Path::new("."));
     let file = open_lock_file(dir, daemon_lock).map_err(|e| exit_io_error(&e))?;

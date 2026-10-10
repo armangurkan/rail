@@ -12,19 +12,27 @@ use rail_core::paths::Paths;
 use crate::browser;
 
 pub fn connector(paths: &Paths) -> Connector {
-    Connector::new(paths.clone(), Arc::new(spawn_daemon))
+    let dirs = paths.clone();
+    Connector::new(paths.clone(), Arc::new(move || spawn_daemon(&dirs)))
 }
 
 /// Start `rail daemon run` in its own process group (so Ctrl-C in the terminal does not reach
 /// it) with stdio closed (so nothing it does can write to the terminal or hold a pipe open),
-/// in `/` (so it pins no directory; it refuses relative paths anyway). A thread reaps it if it
-/// exits while this process still runs.
-fn spawn_daemon() -> Result<(), OpError> {
+/// in `/` (so it pins no directory). Every `RAIL_*_DIR` is set to this client's resolved,
+/// absolute directories, so the daemon works on exactly the files this client means. The rest
+/// of the environment (display, browser, 1Password session, `PATH`) is inherited. A thread
+/// reaps it if it exits while this process still runs.
+fn spawn_daemon(paths: &Paths) -> Result<(), OpError> {
     let exe = std::env::current_exe()
         .map_err(|e| OpError::io(ErrorCode::Daemon, "finding the rail binary", &e))?;
     let child = Command::new(exe)
         .args(["daemon", "run"])
         .current_dir("/")
+        .env("RAIL_CONFIG_DIR", &paths.config_dir)
+        .env("RAIL_DATA_DIR", &paths.data_dir)
+        .env("RAIL_CACHE_DIR", &paths.cache_dir)
+        .env("RAIL_STATE_DIR", &paths.state_dir)
+        .env("RAIL_RUNTIME_DIR", &paths.runtime_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

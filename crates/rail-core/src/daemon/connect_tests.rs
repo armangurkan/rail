@@ -41,11 +41,15 @@ impl Operation for Fail {
     type Response = Ping;
 }
 
-fn answer(method: &str, id: u64, params: Value, version: &str) -> Response {
+fn answer(method: &str, id: u64, params: Value, version: &str, dirs: &Paths) -> Response {
     match method {
         names::HELLO => Response::ok(
             id,
-            json!({"protocol": PROTOCOL_VERSION, "version": version, "pid": 1}),
+            json!({
+                "protocol": PROTOCOL_VERSION, "version": version, "pid": 1,
+                "config_dir": dirs.config_dir, "data_dir": dirs.data_dir,
+                "state_dir": dirs.state_dir,
+            }),
         ),
         names::DAEMON_STOP => Response::ok(id, json!({"stopping": true})),
         "fail" => Response::err(
@@ -58,6 +62,11 @@ fn answer(method: &str, id: u64, params: Value, version: &str) -> Response {
 
 /// Listen on the socket and answer until `daemon.stop`, which removes the socket.
 async fn fake_daemon(paths: Paths, version: &'static str) {
+    fake_daemon_on(paths.clone(), version, paths).await;
+}
+
+/// `fake_daemon` on `paths`' socket, saying in the hello that it works on `dirs`.
+async fn fake_daemon_on(paths: Paths, version: &'static str, dirs: Paths) {
     create_private_dir(&paths.runtime_dir).unwrap();
     let socket = paths.socket_file();
     let listener = UnixListener::bind(&socket).unwrap();
@@ -69,6 +78,7 @@ async fn fake_daemon(paths: Paths, version: &'static str) {
         };
         let stopped = stopped.clone();
         let socket = socket.clone();
+        let dirs = dirs.clone();
         tokio::spawn(async move {
             let (read, mut write) = stream.into_split();
             let mut reader = BufReader::new(read);
@@ -76,7 +86,7 @@ async fn fake_daemon(paths: Paths, version: &'static str) {
                 let Ok(Message::Request(request)) = parse_message(&frame) else {
                     continue;
                 };
-                let response = answer(&request.method, request.id, request.params, version);
+                let response = answer(&request.method, request.id, request.params, version, &dirs);
                 let _ = write.write_all(&encode_frame(&response).unwrap()).await;
                 if request.method == names::DAEMON_STOP {
                     let _ = std::fs::remove_file(&socket);
@@ -307,7 +317,7 @@ fn waiting_for_a_daemon_that_never_exits_times_out_as_transient() {
     let _held = hold_daemon_lock(&paths);
     let err =
         wait_for_daemon_exit(&paths.daemon_lock_file(), Duration::from_millis(150)).unwrap_err();
-    assert_eq!(err.code, ErrorCode::Daemon);
+    assert_eq!(err.code, ErrorCode::Timeout);
     assert_eq!(err.class, crate::error::ErrorClass::Transient);
 }
 
@@ -377,7 +387,11 @@ async fn an_unparsable_answer_keeps_outside_text_in_detail() {
     let paths = Paths::all_in(tmp.path());
     tokio::spawn(lying_daemon(
         paths.clone(),
-        json!({"protocol": PROTOCOL_VERSION, "version": VERSION, "pid": 1}),
+        json!({
+            "protocol": PROTOCOL_VERSION, "version": VERSION, "pid": 1,
+            "config_dir": paths.config_dir, "data_dir": paths.data_dir,
+            "state_dir": paths.state_dir,
+        }),
     ));
     tokio::time::sleep(Duration::from_millis(50)).await;
     let stream = tokio::net::UnixStream::connect(paths.socket_file())
@@ -448,6 +462,7 @@ async fn an_oversized_reply_fails_calls_with_its_own_error() {
     let paths = Paths::all_in(tmp.path());
     create_private_dir(&paths.runtime_dir).unwrap();
     let listener = UnixListener::bind(paths.socket_file()).unwrap();
+    let dirs = paths.clone();
     tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let (read, mut write) = stream.into_split();
@@ -456,7 +471,7 @@ async fn an_oversized_reply_fails_calls_with_its_own_error() {
         let Ok(Message::Request(request)) = parse_message(&hello) else {
             return;
         };
-        let answer = answer(&request.method, request.id, request.params, VERSION);
+        let answer = answer(&request.method, request.id, request.params, VERSION, &dirs);
         let _ = write.write_all(&encode_frame(&answer).unwrap()).await;
         let _ = read_frame(&mut reader).await;
         let _ = write
@@ -471,4 +486,49 @@ async fn an_oversized_reply_fails_calls_with_its_own_error() {
     assert_eq!(err.code, ErrorCode::Daemon);
     assert_eq!(err.class, crate::error::ErrorClass::Permanent);
     assert!(err.message.contains("1 MiB"), "{}", err.message);
+}
+
+/// Fix round 1: a daemon that shares the runtime directory but works on another config, data
+/// or state directory is refused, never used, never stopped and never replaced.
+#[tokio::test]
+async fn a_daemon_with_other_directories_is_refused_and_left_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    for other in [
+        Paths {
+            config_dir: tmp.path().join("other-config"),
+            ..paths.clone()
+        },
+        Paths {
+            data_dir: tmp.path().join("other-data"),
+            ..paths.clone()
+        },
+        Paths {
+            state_dir: tmp.path().join("other-state"),
+            ..paths.clone()
+        },
+    ] {
+        let served = tokio::spawn(fake_daemon_on(paths.clone(), VERSION, other.clone()));
+        let (connector, spawned) = connector(&paths, VERSION);
+        while !paths.socket_file().exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let Err(err) = connector.connect().await else {
+            panic!("used a daemon with other directories");
+        };
+        assert_eq!(err.code, ErrorCode::Daemon);
+        assert_eq!(err.class, crate::error::ErrorClass::Permanent);
+        assert_eq!(
+            err.message,
+            "a Rail daemon is already running with different directories"
+        );
+        assert!(!err.message.contains(tmp.path().to_str().unwrap()));
+        let detail = err.detail.as_ref().unwrap().get().clone();
+        assert!(detail.contains("other-"), "{detail}");
+        assert!(err.hint.as_ref().unwrap().contains("rail daemon stop"));
+        assert_eq!(spawned.load(Ordering::SeqCst), 0);
+        assert!(paths.socket_file().exists(), "the other daemon still runs");
+        served.abort();
+        let _ = std::fs::remove_file(paths.socket_file());
+    }
 }
