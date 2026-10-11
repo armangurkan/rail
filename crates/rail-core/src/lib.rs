@@ -13,6 +13,7 @@ pub mod ops;
 pub mod paths;
 pub mod provider;
 pub mod store;
+pub mod sync;
 
 #[cfg(test)]
 pub(crate) mod test_support;

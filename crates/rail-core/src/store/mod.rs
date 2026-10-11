@@ -2,7 +2,11 @@
 
 pub mod accounts;
 pub mod migrations;
+mod rollup;
 pub mod sync_read;
+mod sync_write;
+#[cfg(test)]
+mod sync_write_tests;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
