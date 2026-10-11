@@ -272,13 +272,13 @@ fn the_confirmation_names_the_host_warns_about_userinfo_and_names_a_mail_recipie
     assert_eq!(
         lines("https://bank.com@evil.example/x"),
         [
-            "Host: evil.example",
             warning,
+            "Host: evil.example",
             "https://bank.com@evil.example/x"
         ]
     );
-    assert_eq!(lines("https://user:pw@evil.example/")[1], warning);
-    assert_eq!(lines("https://:pw@evil.example/")[1], warning);
+    assert_eq!(lines("https://user:pw@evil.example/")[0], warning);
+    assert_eq!(lines("https://:pw@evil.example/")[0], warning);
     assert_eq!(
         lines("mailto:dana@example.com"),
         ["To: dana@example.com", "mailto:dana@example.com"]
@@ -317,12 +317,12 @@ fn a_mailto_link_lists_every_recipient_and_warns_when_the_query_adds_some() {
             "mailto:boss@company.com?bcc=evil@x.example&CC=a@b.example,c@d.example&to=e@f.example"
         ),
         [
+            warning,
             "To: boss@company.com",
             "To: e@f.example",
             "Cc: a@b.example",
             "Cc: c@d.example",
             "Bcc: evil@x.example",
-            warning,
             "mailto:boss@company.com?bcc=evil@x.example&CC=a@b.example,c@d.example&to=e@f.example",
         ]
     );
@@ -346,7 +346,7 @@ fn a_mailto_path_is_decoded_and_an_empty_one_says_so() {
     );
     assert_eq!(mail("mailto:?subject=hi")[0], "To: (no recipient)");
     assert_eq!(
-        mail("mailto:?bcc=x@y.example")[..2],
+        mail("mailto:?bcc=x@y.example")[1..3],
         ["To: (no recipient)", "Bcc: x@y.example"]
     );
 }
@@ -370,4 +370,33 @@ fn a_long_address_is_cut_after_the_lines_that_say_where_it_goes() {
     let lines = link_lines(&url);
     assert_eq!(lines.len(), 3);
     assert!(lines[2].ends_with('…') && width(&lines[2]) <= 150);
+}
+
+#[test]
+fn percent_decode_leaves_a_plus_or_short_escape_literal() {
+    assert_eq!(super::text::percent_decode("a%+4b%4"), "a%+4b%4");
+    assert_eq!(super::text::percent_decode("a%41%2c"), "aA,");
+}
+
+#[test]
+fn a_long_host_is_shown_by_its_end_and_the_warning_names_only_the_last_two_labels() {
+    let label = "a".repeat(63);
+    let host = format!("bank.com.secure.{label}.{label}.{label}.evil.example");
+    let lines = link_lines(&safe_link(&format!("https://bank.com@{host}/")).unwrap());
+    assert!(lines[0].starts_with("Warning:") && lines[0].ends_with("It goes to evil.example."));
+    assert!(lines[1].starts_with("Host: …") && lines[1].ends_with("evil.example"));
+    assert!(width(&lines[1]) <= 106);
+    let ip = link_lines(&safe_link("https://u@192.0.2.7/").unwrap());
+    assert!(ip[0].ends_with("It goes to 192.0.2.7."));
+}
+
+#[test]
+fn recipients_are_capped_with_a_count_and_the_warning_comes_first() {
+    let bcc: String = (0..190).map(|_| "&bcc=u@x.y").collect();
+    let lines = mail(&format!("mailto:a@b.example?subject=s{bcc}"));
+    assert!(lines[0].starts_with("Warning: this link adds recipients"));
+    assert_eq!(lines.len(), 1 + 5 + 1 + 1);
+    assert_eq!(lines[6], "… and 186 more recipients");
+    let long = format!("mailto:a@b.example?bcc={}", "z".repeat(1_500));
+    assert!(mail(&long).iter().all(|l| width(l) <= 150));
 }

@@ -255,15 +255,21 @@ pub fn safe_link(address: &str) -> Option<Url> {
 }
 
 /// The longest address the `g x` confirmation shows, in columns: about three rows of the box.
-/// Longer ones are cut with `…`; the lines that say where the link goes come first.
 const SHOWN_ADDRESS_COLS: usize = 150;
+/// The longest host (or host in a warning) the confirmation shows; a longer one is cut from the
+/// left so its registrable end stays visible.
+const SHOWN_HOST_COLS: usize = 100;
+/// The longest recipient the confirmation shows.
+const SHOWN_RECIPIENT_COLS: usize = 100;
+/// How many recipient lines the confirmation shows before `... and K more recipients`.
+const SHOWN_RECIPIENTS: usize = 5;
 
-/// What the `g x` confirmation shows for `url` (from `safe_link`), each line escaped: first where
-/// it goes (the recipients of a `mailto:` link, or the host of any other, as the URL serialises
-/// it, so an IDN or lookalike host shows in its ASCII `xn--` form) and a warning when that is
-/// not what the address looks like (a user name or password, which reads like a host before `@`;
-/// recipients added by a `mailto:` query); then the address, cut to about three rows so a long
-/// one cannot push the rest off the screen.
+/// What the `g x` confirmation shows for `url` (from `safe_link`), each line escaped and bounded:
+/// first any warning (a user name or password, which reads like a host before `@`; recipients a
+/// `mailto:` query adds); then where it goes (the host as the URL serialises it, so an IDN or
+/// lookalike host shows in its ASCII `xn--` form, cut from the left when long; or the recipients
+/// of a `mailto:` link); then the address, cut to about three rows. The confirmation box also
+/// always keeps its answer line, so a warning or the hint cannot be pushed off by what follows.
 pub fn link_lines(url: &Url) -> Vec<String> {
     let mut lines = if url.scheme() == "mailto" {
         mail_lines(url)
@@ -274,21 +280,55 @@ pub fn link_lines(url: &Url) -> Vec<String> {
     lines
 }
 
+/// `text` escaped and, when wider than `cols`, cut from the left with a leading `…`.
+fn fit_end(text: &str, cols: usize) -> String {
+    let escaped = escape(text);
+    if width(&escaped) <= cols {
+        return escaped;
+    }
+    let mut kept: Vec<&str> = Vec::new();
+    let mut used = 1;
+    for grapheme in escaped.graphemes(true).rev() {
+        let w = width(grapheme);
+        if used + w > cols {
+            break;
+        }
+        kept.push(grapheme);
+        used += w;
+    }
+    kept.push(ELLIPSIS);
+    kept.reverse();
+    kept.concat()
+}
+
+/// The last two labels of `host`, or all of it for an address or a single label.
+fn registrable_end(host: &str) -> &str {
+    let labels: Vec<&str> = host.split('.').collect();
+    if host.parse::<std::net::IpAddr>().is_ok() || host.starts_with('[') || labels.len() < 3 {
+        return host;
+    }
+    let skip: usize = labels[..labels.len() - 2].iter().map(|l| l.len() + 1).sum();
+    &host[skip..]
+}
+
 fn host_lines(url: &Url) -> Vec<String> {
-    let Some(host) = url.host_str().map(escape) else {
+    let Some(host) = url.host_str() else {
         return Vec::new();
     };
-    let mut lines = vec![format!("Host: {host}")];
+    let mut lines = Vec::new();
     if !url.username().is_empty() || url.password().is_some() {
         lines.push(format!(
-            "Warning: the part before \"@\" is not where this link goes. It goes to {host}."
+            "Warning: the part before \"@\" is not where this link goes. It goes to {}.",
+            fit_end(registrable_end(host), SHOWN_HOST_COLS / 2)
         ));
     }
+    lines.push(format!("Host: {}", fit_end(host, SHOWN_HOST_COLS)));
     lines
 }
 
-/// `To:`, `Cc:` and `Bcc:` lines for every recipient of a `mailto:` link (its path and its `to`,
-/// `cc` and `bcc` parameters, decoded), and a warning when the parameters add any.
+/// A warning when the parameters of a `mailto:` link add recipients, then `To:`, `Cc:` and
+/// `Bcc:` lines (at most `SHOWN_RECIPIENTS`, then a count of the rest) for every recipient of its
+/// path and its `to`, `cc` and `bcc` parameters, decoded.
 fn mail_lines(url: &Url) -> Vec<String> {
     let mut to = recipients(&percent_decode(url.path()));
     let (mut cc, mut bcc) = (Vec::new(), Vec::new());
@@ -305,15 +345,25 @@ fn mail_lines(url: &Url) -> Vec<String> {
         list.extend(found);
     }
     let mut lines = Vec::new();
-    if to.is_empty() {
-        lines.push("To: (no recipient)".to_string());
-    }
-    for (label, list) in [("To", &to), ("Cc", &cc), ("Bcc", &bcc)] {
-        lines.extend(list.iter().map(|r| format!("{label}: {}", escape(r))));
-    }
     if added {
         lines
             .push("Warning: this link adds recipients beyond the address in its path.".to_string());
+    }
+    if to.is_empty() {
+        lines.push("To: (no recipient)".to_string());
+    }
+    let all: Vec<(&str, &String)> = [("To", &to), ("Cc", &cc), ("Bcc", &bcc)]
+        .into_iter()
+        .flat_map(|(label, list)| list.iter().map(move |r| (label, r)))
+        .collect();
+    for (label, recipient) in all.iter().take(SHOWN_RECIPIENTS) {
+        lines.push(format!("{label}: {}", fit(recipient, SHOWN_RECIPIENT_COLS)));
+    }
+    if all.len() > SHOWN_RECIPIENTS {
+        lines.push(format!(
+            "{ELLIPSIS} and {} more recipients",
+            all.len() - SHOWN_RECIPIENTS
+        ));
     }
     lines
 }
@@ -328,13 +378,14 @@ fn recipients(list: &str) -> Vec<String> {
 }
 
 /// `text` with `%XX` escapes decoded; bytes that are not UTF-8 become U+FFFD.
-fn percent_decode(text: &str) -> String {
+pub(super) fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut at = 0;
     while at < bytes.len() {
         let hex = bytes
             .get(at + 1..at + 3)
+            .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
             .and_then(|h| std::str::from_utf8(h).ok())
             .and_then(|h| u8::from_str_radix(h, 16).ok());
         match (bytes[at], hex) {

@@ -191,3 +191,28 @@ fn modal_snapshots() {
         }
     }
 }
+
+#[test]
+fn a_confirmation_taller_than_the_screen_keeps_its_answer_line_and_cuts_with_an_ellipsis() {
+    let lines = (0..30).map(|n| format!("line {n}")).collect();
+    let confirm = Confirm::new("Open?", lines, Command::ClearFilter);
+    for rows in [3u16, 4, 8, 12] {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, rows)).unwrap();
+        terminal
+            .draw(|f| confirm.render(f, f.area(), &Theme::default()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row =
+            |y: u16| -> String { (0..40).map(|x| buffer[(x, y)].symbol()).collect::<String>() };
+        let last = rows - 2;
+        assert!(row(last).contains("y yes"), "{rows}: {}", row(last));
+        if rows >= 4 {
+            assert!(
+                row(last - 1).trim_end_matches(['│', ' ']).ends_with('…'),
+                "{rows}: {}",
+                row(last - 1)
+            );
+        }
+    }
+}
