@@ -14,7 +14,7 @@ use crate::tui::clock::Clock;
 use crate::tui::data::{DaemonLink, StoreReader};
 use crate::tui::effects::Opener;
 use crate::tui::keys::Keymap;
-use crate::tui::run::run_app;
+use crate::tui::run::{finish_run, run_app};
 use crate::tui::screens::mail::{AccountEntry, MailContext, MailScreen};
 use crate::tui::text::hyperlinks_supported;
 use crate::{browser, daemon_link, test_hooks};
@@ -36,7 +36,9 @@ pub async fn run(paths: &Paths, text: &str, config: &Config) -> color_eyre::Resu
     let accounts = AccountEntry::from_config(config);
     let screen = MailScreen::new(context(paths, config, keymap.clone()), accounts)
         .with_panic_on_key(test_hooks::mail_panic());
-    run_app(screen, keymap).await?;
+    // The screen is dropped (it removes the files `o` wrote) before a signal may kill Rail.
+    drop(run_app(screen, keymap).await?);
+    finish_run().await;
     Ok(ExitCode::SUCCESS)
 }
 

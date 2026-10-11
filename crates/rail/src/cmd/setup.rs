@@ -14,7 +14,7 @@ use url::Url;
 use crate::cmd::account::report as report_error;
 use crate::tui::effects::{EffectContext, Settled};
 use crate::tui::keys::Keymap;
-use crate::tui::run::run_app;
+use crate::tui::run::{finish_run, run_app};
 use crate::tui::screens::wizard::WizardScreen;
 
 /// Printed instead of starting the wizard in a pipe.
@@ -56,6 +56,8 @@ pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre
         keymap.clone(),
     );
     let screen = run_app(screen, keymap).await;
+    // Nothing of the wizard screen needs cleaning up: a signal may end Rail from here on.
+    finish_run().await;
     // A quit mid-login leaves nothing waiting in the daemon.
     let settled = ctx.settle().await;
     let screen = screen?;
