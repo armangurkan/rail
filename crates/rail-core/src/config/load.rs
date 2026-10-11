@@ -245,6 +245,15 @@ unread = { bold = true }
     }
 
     #[test]
+    fn icons_default_to_unicode_and_take_ascii() {
+        assert_eq!(p("").unwrap().general.icons, crate::config::Icons::Unicode);
+        let ascii = p("[general]\nicons = \"ascii\"\n").unwrap();
+        assert_eq!(ascii.general.icons, crate::config::Icons::Ascii);
+        let err = p("[general]\nicons = \"emoji\"\n").unwrap_err().to_string();
+        assert!(err.contains(":2:"), "{err}");
+    }
+
+    #[test]
     fn unknown_key_reports_line_number() {
         let text = "[general]\neditor = \"vi\"\nbogus = 1\n";
         let err = p(text).unwrap_err();
