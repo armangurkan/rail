@@ -1,4 +1,4 @@
--- Rail schema v1. See docs/superpowers/specs/2026-10-09-rail-design.md §4.
+-- Rail schema v1: accounts, folders, threads, messages, attachments, addresses and the outbox.
 
 -- `name` is not unique here: config.toml enforces unique names among active
 -- accounts, while the store keeps historical rows keyed by address.

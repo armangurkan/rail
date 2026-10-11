@@ -1211,6 +1211,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashify"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd1246c0e5493286aeb2dde35b1f4eb9c4ce00e628641210a5e553fc001a1f26"
+dependencies = [
+ "indexmap",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "hashlink"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1740,6 +1752,15 @@ checksum = "b367b50a9be9a5d3b5718c1da74e5d6b9c17647f89752ee2562a470cc3c4eb1a"
 dependencies = [
  "nix 0.30.1",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mail-parser"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ec00bda90c6e645a54506c630c2820cd6b1890cfd2b0a169b50f74b2b8c7c86"
+dependencies = [
+ "hashify",
 ]
 
 [[package]]
@@ -2418,10 +2439,16 @@ dependencies = [
 name = "rail-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "base64 0.22.1",
  "directories",
+ "fastrand",
  "fs4",
+ "futures-util",
  "humantime-serde",
+ "icu_properties",
  "keyring",
+ "mail-parser",
  "oauth2",
  "reqwest",
  "rusqlite",
@@ -2435,6 +2462,7 @@ dependencies = [
  "toml",
  "toml_edit",
  "tracing",
+ "tracing-subscriber",
  "url",
  "wiremock",
 ]
@@ -2673,6 +2701,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "http-body-util",

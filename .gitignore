@@ -25,3 +25,6 @@
 *~
 .DS_Store
 Thumbs.db
+
+# Local design specs and plans (kept on disk, not in the repository)
+docs/superpowers/

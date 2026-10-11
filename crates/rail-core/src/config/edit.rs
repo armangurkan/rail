@@ -119,6 +119,12 @@ pub fn append_account(
     if let Some(ai_send) = account.ai_send {
         table["ai_send"] = value(ai_send.as_str());
     }
+    if let Some(days) = account.history_days {
+        table["history_days"] = value(i64::from(days));
+    }
+    if let Some(days) = account.body_cache_days {
+        table["body_cache_days"] = value(i64::from(days));
+    }
     accounts.push(table);
 
     let out = doc.to_string();
@@ -292,6 +298,22 @@ mod tests {
         assert!(out.contains("secrets = \"file\""), "{out}");
         let err = set_secrets("", Path::new("c.toml"), SecretsBackend::OnePassword, None);
         assert!(matches!(err, Err(ConfigError::Invalid { .. })), "{err:?}");
+    }
+
+    #[test]
+    fn append_writes_sync_overrides_only_when_set() {
+        let plain = append_account("", Path::new("c.toml"), &account("a", "a@x.com")).unwrap();
+        assert!(!plain.contains("history_days"), "{plain}");
+        let tuned = AccountConfig {
+            history_days: Some(2),
+            body_cache_days: Some(1),
+            ..account("b", "b@x.com")
+        };
+        let out = append_account("", Path::new("c.toml"), &tuned).unwrap();
+        assert!(out.contains("history_days = 2"), "{out}");
+        assert!(out.contains("body_cache_days = 1"), "{out}");
+        let config = parse(&out, Path::new("c.toml")).unwrap();
+        assert_eq!(config.accounts[0].history_days, Some(2));
     }
 
     #[test]

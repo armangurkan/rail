@@ -6,11 +6,12 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
+use tokio::time::{Instant, MissedTickBehavior, interval, interval_at};
 
 use super::connect::{
     START_TIMEOUT, VERSION, check_socket_path, open_lock_file, remove_stale_socket, socket_answers,
@@ -24,6 +25,7 @@ use crate::auth::unix_now;
 use crate::error::ErrorClass;
 use crate::ops::{DaemonInfo, ErrorCode, OpError};
 use crate::paths::{Paths, create_private_dir};
+use crate::sync::{CONFIG_CHECK, SyncManager};
 
 /// The longest `daemon.stop` (or an idle exit) waits for running saves.
 pub const SAVE_GRACE: Duration = Duration::from_secs(30);
@@ -38,6 +40,8 @@ pub struct ServeConfig {
     pub hello_timeout: Duration,
     /// The Rail version the daemon announces in the hello.
     pub version: String,
+    /// Let the daemon idle out even with accounts configured; a debug-build test hook.
+    pub idle_with_accounts: bool,
 }
 
 impl Default for ServeConfig {
@@ -46,12 +50,22 @@ impl Default for ServeConfig {
             idle: IDLE_TIMEOUT,
             hello_timeout: START_TIMEOUT,
             version: VERSION.to_string(),
+            idle_with_accounts: false,
         }
     }
 }
 
 /// How long `finish` waits for pending tasks to end after cancelling them.
 const TASK_JOIN: Duration = Duration::from_secs(5);
+
+/// The whole of `finish`, under `DAEMON_EXIT_TIMEOUT` (35 s), which `rail daemon stop` waits
+/// for the daemon to exit: sync's shutdown and the running saves together get at most
+/// `SAVE_GRACE` (30 s); the pending tasks get what is left of `TASK_JOIN` before the last
+/// `CLOSE_GRACE` (3 s), which the connections get. So 30 + 3 = 33 s at worst, then removing
+/// the socket, with 2 s to spare.
+const FINISH_BUDGET: Duration = Duration::from_secs(33);
+const _: () = assert!(SAVE_GRACE.as_secs() + CLOSE_GRACE.as_secs() <= FINISH_BUDGET.as_secs());
+const _: () = assert!(FINISH_BUDGET.as_secs() < crate::daemon::DAEMON_EXIT_TIMEOUT.as_secs());
 
 /// How long `finish` lets connections answer their last requests and flush before aborting.
 const CLOSE_GRACE: Duration = Duration::from_secs(3);
@@ -147,6 +161,7 @@ impl ServerState {
         self.clients.load(Ordering::SeqCst) == 0
             && ctx.pending_count() == 0
             && quiet >= self.config.idle
+            && (self.config.idle_with_accounts || !ctx.sync.has_accounts())
     }
 }
 
@@ -235,6 +250,16 @@ impl Server {
         tracing::info!(socket = %self.state.socket.display(), "daemon listening");
         let tick = check_interval(self.state.config.idle);
         let mut stop = std::pin::pin!(stop);
+        self.ctx.sync.count_accounts(&self.ctx.paths);
+        SyncManager::reconcile_in_background(self.ctx.clone());
+        // Intervals, not a sleep re-armed each turn: another arm firing more often than the
+        // idle check would otherwise keep re-arming it, and the daemon would never idle out.
+        // The first check waits one `CONFIG_CHECK`: the startup reconcile above covers now,
+        // and a second one at once would plan the same accounts (two 1Password prompts).
+        let mut config_tick = interval_at(Instant::now() + CONFIG_CHECK, CONFIG_CHECK);
+        config_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut idle_tick = interval(tick);
+        idle_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 () = &mut stop => {
@@ -249,7 +274,8 @@ impl Server {
                     }
                 },
                 () = self.state.shutdown.notified() => break,
-                () = tokio::time::sleep(tick) => {
+                _ = config_tick.tick() => SyncManager::tick(&self.ctx),
+                _ = idle_tick.tick() => {
                     if self.state.idle_expired(&self.ctx) {
                         tracing::info!("no clients and nothing pending; exiting");
                         break;
@@ -284,20 +310,35 @@ impl Server {
         self.connections.spawn(connection.serve(stream));
     }
 
-    /// The single shutdown point, in the one order that matters: stop listening; end the
-    /// logins still waiting for a browser; give running saves their time to finish; end every
+    /// The single shutdown point, in the one order that matters: stop listening; refuse new
+    /// logins; stop the sync engines and let the writer commit its batch; end the logins
+    /// still waiting for a browser; give running saves their time to finish; end every
     /// connection so none serves a request after this; remove the socket; and only then
     /// release `daemon.lock`.
     async fn finish(mut self) -> Result<(), OpError> {
+        let deadline = Instant::now() + FINISH_BUDGET;
+        let left = |reserve: Duration| {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .saturating_sub(reserve)
+        };
         drop(self.listener);
         self.ctx.pending.stop_new();
         self.ctx.pending.cancel_waiting();
-        self.ctx.pending.wait_for_saves(SAVE_GRACE).await;
-        self.ctx.pending.join_tasks(TASK_JOIN).await;
+        // The sync writer and the saves of logins write different things: they finish side
+        // by side, inside one grace.
+        tokio::join!(
+            self.ctx.sync.shutdown(SAVE_GRACE),
+            self.ctx.pending.wait_for_saves(SAVE_GRACE)
+        );
+        self.ctx
+            .pending
+            .join_tasks(TASK_JOIN.min(left(CLOSE_GRACE)))
+            .await;
         // Connections stop reading, let their requests answer and flush what is queued (the
         // reply to `daemon.stop` among it); whatever is slower than that is aborted.
         self.state.begin_close();
-        let drained = tokio::time::timeout(CLOSE_GRACE, async {
+        let drained = tokio::time::timeout(CLOSE_GRACE.min(left(Duration::ZERO)), async {
             while self.connections.join_next().await.is_some() {}
         })
         .await;

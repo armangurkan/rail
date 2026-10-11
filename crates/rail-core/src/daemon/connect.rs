@@ -22,8 +22,9 @@ use crate::ops::{DaemonStopRequest, ErrorCode, HelloResponse, OpError};
 use crate::paths::{Paths, canonical_dir, create_private_dir};
 
 /// The operations a client may send again after the connection closed under them: they only
-/// read, or (`pending.cancel`) have the same effect however often they run.
-const RETRY_SAFE: [&str; 8] = [
+/// read, or (`pending.cancel`, `sync.now`, `search`) have the same effect however often they
+/// run.
+const RETRY_SAFE: [&str; 11] = [
     names::STATUS,
     names::ACCOUNTS_LIST,
     names::PRESETS_LIST,
@@ -32,6 +33,9 @@ const RETRY_SAFE: [&str; 8] = [
     names::PENDING_WAIT,
     names::PENDING_CANCEL,
     names::DAEMON_INFO,
+    names::SYNC_STATUS,
+    names::SYNC_NOW,
+    names::SEARCH,
 ];
 
 /// True when `operation` may be sent again on a fresh connection.
@@ -386,17 +390,19 @@ enum DaemonAge {
     Unordered,
 }
 
-/// A client older than the running daemon: Rail was upgraded while this program ran. The
-/// version is quoted only after it parsed as a version, so it is digits, dots, letters and
-/// hyphens.
+/// A client older than the running daemon: Rail was upgraded while this program ran. Only the
+/// daemon's `MAJOR.MINOR.PATCH` is quoted, and only after it parsed: build metadata is
+/// unchecked text from another process.
 fn upgraded_error(daemon_version: &str, ours: &str) -> OpError {
+    let theirs =
+        super::version::core(daemon_version).unwrap_or_else(|| "of an unknown version".to_string());
     OpError::new(
         ErrorCode::Daemon,
         ErrorClass::Permanent,
         "Rail was upgraded; restart this program",
     )
     .with_hint(format!(
-        "the running daemon is Rail {daemon_version}; this program is Rail {ours}"
+        "the running daemon is Rail {theirs}; this program is Rail {ours}"
     ))
 }
 
@@ -515,4 +521,24 @@ pub(crate) fn check_socket_path(socket: &Path) -> Result<(), OpError> {
         .with_hint("set RAIL_RUNTIME_DIR to a shorter directory"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod upgrade_tests {
+    use super::*;
+
+    /// Parked item 1: a daemon's build metadata is unchecked text from another process.
+    #[test]
+    fn the_upgrade_hint_shows_only_the_version_core() {
+        let error = upgraded_error("9.9.9+\u{1b}]52;c;ZXZpbA==\u{7}", "0.1.0");
+        assert_eq!(
+            error.hint.as_deref(),
+            Some("the running daemon is Rail 9.9.9; this program is Rail 0.1.0")
+        );
+        let unknown = upgraded_error("\u{1b}[2J", "0.1.0");
+        assert_eq!(
+            unknown.hint.as_deref(),
+            Some("the running daemon is Rail of an unknown version; this program is Rail 0.1.0")
+        );
+    }
 }

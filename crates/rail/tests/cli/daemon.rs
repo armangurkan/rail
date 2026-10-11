@@ -125,7 +125,7 @@ fn a_second_daemon_logs_why_it_cannot_start() {
     assert!(log.contains("another rail daemon is running"), "{log}");
 }
 
-/// Fix round 1: relative `RAIL_*_DIR` settings name directories under the command's working
+/// Relative `RAIL_*_DIR` settings name directories under the command's working
 /// directory, and the daemon (which runs in `/`) works on those same directories.
 #[test]
 fn relative_directory_settings_work_through_the_daemon() {
@@ -143,6 +143,13 @@ fn relative_directory_settings_work_through_the_daemon() {
             .env("RAIL_TEST_IDLE_SECS", "2")
             .env("RAIL_TEST_OPENER", write_opener(&dir))
             .env("RAIL_TEST_URL_FILE", opened_url_file(&dir))
+            // As in `rail_env`: the account this daemon syncs can never reach Google.
+            .env(
+                "RAIL_TEST_GMAIL_URL",
+                "http://127.0.0.1:9/gmail/v1/users/me/",
+            )
+            .env("RAIL_TEST_TOKEN_URL", "http://127.0.0.1:9/token")
+            .env("RAIL_TEST_IDLE_WITH_ACCOUNTS", "1")
             .args(args)
             .output()
             .unwrap()
@@ -151,12 +158,21 @@ fn relative_directory_settings_work_through_the_daemon() {
     assert!(list.status.success(), "{list:?}");
     assert!(stdout_of(&list).contains("me@example.com"), "{list:?}");
     // The absolute spelling reaches the same daemon: same directories, no refusal.
+    // The account has no tokens, so its sync line fails the check; the daemon still answers.
     let doctor = rail_cmd(&dir).arg("doctor").output().unwrap();
-    assert!(doctor.status.success(), "{doctor:?}");
+    let text = stdout_of(&doctor);
+    assert!(
+        text.contains("ok   daemon   rail daemon running"),
+        "{doctor:?}"
+    );
+    assert!(
+        text.contains("FAIL sync     work: needs a login"),
+        "{doctor:?}"
+    );
     assert!(dir.path().join("data").join("rail.db").exists());
 }
 
-/// Fix round 1: a command whose config, data or state directory differs from the running
+/// A command whose config, data or state directory differs from the running
 /// daemon's (sharing its runtime directory) is refused and changes nothing on either side.
 #[test]
 fn a_daemon_with_other_directories_is_refused_and_nothing_changes() {
@@ -211,7 +227,7 @@ fn a_daemon_with_other_directories_is_refused_and_nothing_changes() {
     );
 }
 
-/// Fix round 1: SIGTERM or SIGINT to a foreground `rail daemon run` shuts it down like
+/// SIGTERM or SIGINT to a foreground `rail daemon run` shuts it down like
 /// `rail daemon stop`: exit 0, the socket removed and `daemon.lock` released.
 #[cfg(unix)]
 #[test]
@@ -257,7 +273,7 @@ fn signals_stop_a_foreground_daemon_cleanly() {
     }
 }
 
-/// Fix round 3: directories are compared after resolving symlinks, so a config directory
+/// Directories are compared after resolving symlinks, so a config directory
 /// reached through a symlink (a dotfiles setup, or macOS's `/var` -> `/private/var`) uses the
 /// running daemon instead of being refused.
 #[test]
@@ -279,4 +295,49 @@ fn a_config_dir_reached_through_a_symlink_shares_the_daemon() {
     rail_cmd(&dir).args(["daemon", "stop"]).output().unwrap();
     let log = std::fs::read_to_string(dir.path().join("state").join("rail.log")).unwrap();
     assert_eq!(log.matches("daemon listening").count(), 1, "{log}");
+}
+
+/// Spec §3: a daemon started without a display still opens the browser where the user is.
+#[test]
+fn a_login_opens_the_browser_on_the_display_of_the_client_that_began_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    let seen = dir.path().join("display.txt");
+    let opener = dir.path().join("display-opener.sh");
+    std::fs::write(
+        &opener,
+        format!(
+            "#!/bin/sh\nprintf '%s' \"$DISPLAY\" > '{0}.tmp'\nmv '{0}.tmp' '{0}'\n",
+            seen.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let started = rail_cmd(&dir)
+        .env_remove("DISPLAY")
+        .env("RAIL_TEST_OPENER", &opener)
+        .args(["account", "list"])
+        .output()
+        .unwrap();
+    assert!(started.status.success(), "{started:?}");
+    let login = rail_cmd(&dir)
+        .env("DISPLAY", ":42")
+        .env("RAIL_TEST_OPENER", &opener)
+        .args(["account", "login", "work"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let _login = KillsChild(Some(login));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !seen.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the browser was never opened"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(std::fs::read_to_string(&seen).unwrap(), ":42");
 }

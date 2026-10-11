@@ -183,7 +183,13 @@ async fn a_refused_add_fails_at_begin_before_the_browser() {
         h.urls.try_recv().is_err(),
         "no browser for a refused account"
     );
-    assert!(!h.paths.data_dir.exists(), "nothing written");
+    // The daemon syncs the configured account (so the store exists), but the refused add
+    // wrote nothing: no tokens, config unchanged.
+    assert!(!h.paths.secrets_file().exists(), "no tokens written");
+    assert_eq!(
+        std::fs::read_to_string(h.paths.config_file()).unwrap(),
+        WORK
+    );
 }
 
 #[tokio::test]

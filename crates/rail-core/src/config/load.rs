@@ -202,6 +202,15 @@ unread = { bold = true }
     }
 
     #[test]
+    fn an_address_with_a_bidi_override_is_refused_with_its_line() {
+        let text = "[[accounts]]\nname = \"ok\"\nkind = \"gmail\"\nclient_id = \"1\"\naddress = \"moc.elpmaxe@\u{202E}me\"\n";
+        let err = p(text).unwrap_err().to_string();
+        assert!(err.starts_with("/etc/rail/config.toml:5:"), "{err}");
+        assert!(err.contains("address"), "{err}");
+        assert!(!err.contains('\u{202E}'), "{err:?}");
+    }
+
+    #[test]
     fn parses_full_example() {
         let c = p(FULL).unwrap();
         assert_eq!(c.general.editor.as_deref(), Some("nvim"));

@@ -120,9 +120,20 @@ fn rail_env<'a>(
         .env("RAIL_CACHE_DIR", dir.path().join("cache"))
         .env("RAIL_STATE_DIR", dir.path().join("state"))
         .env("RAIL_RUNTIME_DIR", dir.path().join("run"))
+        .env("XDG_CONFIG_HOME", dir.path().join("xdg"))
+        // On macOS the launchd agent lives under HOME, so there HOME is the test's too.
+        .envs(cfg!(target_os = "macos").then(|| ("HOME", dir.path().join("home"))))
         .env("RAIL_TEST_IDLE_SECS", "2")
         .env("RAIL_TEST_OPENER", write_opener(dir))
         .env("RAIL_TEST_URL_FILE", dir.path().join("url.txt"))
+        // A configured account in a test must never reach Google, and its daemon must still
+        // idle out. `start` sets RAIL_TEST_TOKEN_URL again when a test serves one.
+        .env(
+            "RAIL_TEST_GMAIL_URL",
+            "http://127.0.0.1:9/gmail/v1/users/me/",
+        )
+        .env("RAIL_TEST_TOKEN_URL", "http://127.0.0.1:9/token")
+        .env("RAIL_TEST_IDLE_WITH_ACCOUNTS", "1")
 }
 
 /// Runs `rail daemon stop` for its directory when dropped, so the daemon `rail mcp` started
@@ -170,8 +181,21 @@ impl Session {
 
 /// Start `rail mcp` confined to `dir`, with the test hooks pointing at `token_url`.
 async fn start(dir: &tempfile::TempDir, host: Host, token_url: Option<String>) -> Session {
+    start_with_gmail(dir, host, token_url, None).await
+}
+
+/// `start`, with the daemon's Gmail at `gmail_url` (a fake) when given.
+async fn start_with_gmail(
+    dir: &tempfile::TempDir,
+    host: Host,
+    token_url: Option<String>,
+    gmail_url: Option<String>,
+) -> Session {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_rail"));
     rail_env(command.arg("mcp"), dir);
+    if let Some(gmail_url) = gmail_url {
+        command.env("RAIL_TEST_GMAIL_URL", gmail_url);
+    }
     if let Some(token_url) = token_url {
         command.env("RAIL_TEST_TOKEN_URL", token_url);
     }
@@ -267,6 +291,8 @@ async fn the_tools_carry_their_hints_and_no_raw_secret_input() {
         writes("rail_cancel", false, false),
         writes("rail_secrets_configure", false, false),
         writes("rail_account_remove", true, false),
+        read_only("rail_sync_status", false),
+        writes("rail_sync_now", false, true),
     ]
     .into_iter()
     .collect();
@@ -295,6 +321,13 @@ async fn the_tools_carry_their_hints_and_no_raw_secret_input() {
         !configure.contains("confirm"),
         "the agent cannot confirm for the user: {configure}"
     );
+    let now = schema("rail_sync_now").to_string();
+    assert!(
+        !now.contains("watch"),
+        "an agent cannot subscribe the server: {now}"
+    );
+    assert_eq!(schema("rail_sync_now")["additionalProperties"], false);
+    assert_eq!(schema("rail_sync_status")["additionalProperties"], false);
     client.close().await;
 }
 
@@ -364,6 +397,8 @@ fn config_text(dir: &tempfile::TempDir) -> String {
 
 #[path = "mcp/guarded.rs"]
 mod guarded;
+#[path = "mcp/sync.rs"]
+mod sync;
 
 #[tokio::test]
 async fn a_relative_path_is_refused_with_the_daemons_reason() {
@@ -379,7 +414,7 @@ async fn a_relative_path_is_refused_with_the_daemons_reason() {
     );
 }
 
-/// Ruling A1: a client secret from an agent is refused with fixed text, and a pasted secret
+/// A client secret from an agent is refused with fixed text, and a pasted secret
 /// in the reference field is never echoed.
 #[tokio::test]
 async fn a_client_secret_from_an_agent_is_refused_and_never_echoed() {
@@ -427,7 +462,7 @@ async fn a_tool_without_parameters_refuses_unknown_arguments() {
     client.close().await;
 }
 
-/// Ruling L1: rmcp's text for a wrong-typed argument quotes the value, which may be a pasted
+/// Rmcp's text for a wrong-typed argument quotes the value, which may be a pasted
 /// secret; it goes back to the agent that sent it, never into `rail.log`.
 #[tokio::test]
 async fn a_wrong_typed_argument_never_reaches_the_log() {

@@ -12,6 +12,7 @@ pub mod pending;
 pub mod presets;
 pub mod secrets;
 pub mod status;
+pub mod sync;
 pub mod untrusted;
 
 #[cfg(test)]
@@ -24,8 +25,8 @@ pub use accounts::{
 };
 pub use confirm::{ConfirmPlan, MAX_NAME_CHARS, plan_digest, shown};
 pub use daemon::{
-    DaemonInfo, DaemonInfoRequest, DaemonStopRequest, DaemonStopResponse, HelloRequest,
-    HelloResponse,
+    BrowserEnv, DaemonInfo, DaemonInfoRequest, DaemonStopRequest, DaemonStopResponse, HelloRequest,
+    HelloResponse, MAX_BROWSER_ENV_CHARS,
 };
 pub(crate) use error::write_config_text;
 pub use error::{ErrorCode, OpError, preset_file_message};
@@ -43,6 +44,11 @@ pub use secrets::{SecretsConfigureRequest, SecretsConfigureResponse};
 pub use status::{
     AccountStatus, AccountSummary, AccountsListRequest, AccountsListResponse, DoctorReport,
     StatusRequest, StatusResponse, TokenState,
+};
+pub use sync::{
+    AccountSyncStatus, AgentSyncNow, DEFAULT_SEARCH_LIMIT, HitSource, MAX_QUERY_CHARS,
+    MAX_SEARCH_LIMIT, SearchFailure, SearchHit, SearchRequest, SearchResponse, SyncErrorInfo,
+    SyncNowRequest, SyncNowResponse, SyncPhase, SyncStatusRequest, SyncStatusResponse, SyncTarget,
 };
 pub use untrusted::{Secret, Untrusted};
 

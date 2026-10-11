@@ -42,6 +42,9 @@ fn every_operation_name_is_unique_and_matches_its_marker() {
         GuideProvider::NAME,
         PendingWait::NAME,
         PendingCancel::NAME,
+        SyncStatus::NAME,
+        SyncNow::NAME,
+        Search::NAME,
     ];
     assert_eq!(markers, names::ALL);
     for internal in [Hello::NAME, DaemonInfoOp::NAME, DaemonStop::NAME] {
@@ -64,6 +67,9 @@ fn every_request_and_response_has_an_object_schema() {
         object_schemas::<GuideProvider>(),
         object_schemas::<PendingWait>(),
         object_schemas::<PendingCancel>(),
+        object_schemas::<SyncStatus>(),
+        object_schemas::<SyncNow>(),
+        object_schemas::<Search>(),
     ];
     for (request, response) in all {
         assert_eq!(request["type"], "object", "{request}");
@@ -637,4 +643,20 @@ fn a_doctor_report_keeps_config_parser_text_in_detail() {
             .unwrap()
             .contains("IGNORE")
     );
+}
+
+#[test]
+fn sync_requests_refuse_unknown_fields_and_hello_takes_an_optional_browser() {
+    let err = serde_json::from_value::<SyncNowRequest>(json!({"account": "w", "force": true}));
+    assert!(err.is_err());
+    let hello: HelloRequest =
+        serde_json::from_value(json!({"protocol": 1, "version": "0.1.0"})).unwrap();
+    assert_eq!(hello.browser, BrowserEnv::default());
+    let checked = BrowserEnv {
+        display: Some(":0".into()),
+        wayland_display: Some("x".repeat(MAX_BROWSER_ENV_CHARS + 1)),
+        browser: Some("firefox\u{1b}[2J".into()),
+    }
+    .checked();
+    assert_eq!(checked.vars(), [("DISPLAY", ":0")]);
 }

@@ -15,6 +15,8 @@ pub(crate) fn sample_account() -> AccountConfig {
         tenant: None,
         signature: None,
         ai_send: None,
+        history_days: None,
+        body_cache_days: None,
     }
 }
 
@@ -92,6 +94,8 @@ pub(crate) fn tokens() -> TokenSet {
 }
 
 /// A daemon context over `paths` whose opener records every URL instead of starting a browser.
+/// Its token and Gmail URLs are unreachable and its providers offline, so nothing reaches
+/// Google.
 pub(crate) fn daemon_context(
     paths: &crate::paths::Paths,
 ) -> (
@@ -99,12 +103,60 @@ pub(crate) fn daemon_context(
     tokio::sync::mpsc::UnboundedReceiver<url::Url>,
 ) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let opener: crate::daemon::Opener = std::sync::Arc::new(move |url: &url::Url| {
-        let _ = tx.send(url.clone());
-        Ok(())
-    });
-    let ctx = crate::daemon::DaemonContext::new(paths.clone(), opener).expect("http client");
-    (ctx, rx)
+    let opener: crate::daemon::Opener =
+        std::sync::Arc::new(move |url: &url::Url, _: &crate::ops::BrowserEnv| {
+            let _ = tx.send(url.clone());
+            Ok(())
+        });
+    (offline_context(paths, opener), rx)
+}
+
+/// A provider factory for tests that never touches the network: an empty mock mailbox.
+pub(crate) fn offline_factory() -> crate::sync::ProviderFactory {
+    std::sync::Arc::new(|_| {
+        Ok(
+            std::sync::Arc::new(crate::provider::mock::MockProvider::new())
+                as std::sync::Arc<dyn crate::provider::Provider>,
+        )
+    })
+}
+
+/// A factory handing every account `mock`.
+pub(crate) fn mock_factory(
+    mock: &crate::provider::mock::MockProvider,
+) -> crate::sync::ProviderFactory {
+    let mock = mock.clone();
+    std::sync::Arc::new(move |_| {
+        Ok(std::sync::Arc::new(mock.clone()) as std::sync::Arc<dyn crate::provider::Provider>)
+    })
+}
+
+/// `daemon_context`, recording each launch's browser environment with its URL.
+pub(crate) fn daemon_context_with_browsers(
+    paths: &crate::paths::Paths,
+) -> (
+    crate::daemon::DaemonContext,
+    tokio::sync::mpsc::UnboundedReceiver<(url::Url, crate::ops::BrowserEnv)>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let opener: crate::daemon::Opener =
+        std::sync::Arc::new(move |url: &url::Url, env: &crate::ops::BrowserEnv| {
+            let _ = tx.send((url.clone(), env.clone()));
+            Ok(())
+        });
+    (offline_context(paths, opener), rx)
+}
+
+/// A context whose endpoints are unreachable and whose providers are offline.
+fn offline_context(
+    paths: &crate::paths::Paths,
+    opener: crate::daemon::Opener,
+) -> crate::daemon::DaemonContext {
+    crate::daemon::DaemonContext::new(paths.clone(), opener)
+        .expect("http client")
+        .with_token_url(Some("http://127.0.0.1:9/token".into()))
+        .with_gmail_url(Some("http://127.0.0.1:9/gmail/v1/users/me/".into()))
+        .with_provider_factory(offline_factory())
 }
 
 /// Bind a real daemon on `paths` and run it on a task.
@@ -347,4 +399,42 @@ pub(crate) fn files_containing(
         }
     }
     found
+}
+
+/// Run `work` on a fresh runtime with `rail_core` debug logs captured; return its output
+/// and the log text.
+///
+/// While only one dispatcher is alive, tracing-core decides a callsite's interest from the
+/// default of whichever thread hits it first, and a parallel test thread without a
+/// subscriber caches `never` for the request line. A second dispatcher kept alive for the
+/// whole test process makes every callsite's interest consider all live subscribers.
+pub(crate) fn logged<R>(work: impl std::future::Future<Output = R>) -> (R, String) {
+    static KEEP_TWO: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+    KEEP_TWO.get_or_init(|| tracing::Dispatch::new(tracing_subscriber::registry()));
+    let buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = buffer.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new("rail_core=debug"))
+        .with_ansi(false)
+        .with_writer(move || Capture(sink.clone()))
+        .finish();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let out = tracing::subscriber::with_default(subscriber, || runtime.block_on(work));
+    let log = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+    (out, log)
+}
+
+struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Capture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }

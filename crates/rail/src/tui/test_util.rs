@@ -8,10 +8,11 @@ use std::time::Duration;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rail_core::config::{AccountConfig, AccountKind, Config};
 use rail_core::daemon::{
-    BeginGate, Connector, DaemonContext, SaveGate, ServeConfig, Server, SpawnFn,
+    BeginGate, Connector, DaemonContext, Opener as DaemonOpener, SaveGate, ServeConfig, Server,
+    SpawnFn,
 };
 use rail_core::onboarding::{Event, Wizard};
-use rail_core::ops::OpError;
+use rail_core::ops::{BrowserEnv, OpError};
 use rail_core::paths::Paths;
 use ratatui::backend::TestBackend;
 use ratatui::widgets::Paragraph;
@@ -27,6 +28,10 @@ use super::effects::{EffectContext, Opener};
 use super::screen::Screen;
 use super::screens::wizard::WizardScreen;
 use super::theme::Theme;
+
+/// Where the in-process test daemons send token refreshes and Gmail calls: nothing listens.
+const UNREACHABLE_TOKEN_URL: &str = "http://127.0.0.1:9/token";
+const UNREACHABLE_GMAIL_URL: &str = "http://127.0.0.1:9/gmail/v1/users/me/";
 
 /// The two sizes every rendering test checks: a classic terminal and a roomy one.
 pub const SIZES: [(u16, u16); 2] = [(80, 24), (120, 40)];
@@ -128,6 +133,8 @@ pub fn existing_config() -> Config {
             tenant: None,
             signature: None,
             ai_send: None,
+            history_days: None,
+            body_cache_days: None,
         }],
         ..Config::default()
     }
@@ -165,13 +172,17 @@ pub async fn gated_daemon_ctx(
     token_url: Option<String>,
 ) -> (EffectContext, mpsc::UnboundedReceiver<Url>, Gates) {
     let (tx, rx) = mpsc::unbounded_channel();
-    let daemon_opener: Opener = Arc::new(move |url: &Url| {
+    let daemon_opener: DaemonOpener = Arc::new(move |url: &Url, _: &BrowserEnv| {
         let _ = tx.send(url.clone());
         Ok(())
     });
+    // Never Google: an account the test configures syncs against unreachable addresses.
     let ctx = DaemonContext::new(paths.clone(), daemon_opener)
         .expect("daemon context")
-        .with_token_url(token_url);
+        .with_token_url(Some(
+            token_url.unwrap_or_else(|| UNREACHABLE_TOKEN_URL.to_string()),
+        ))
+        .with_gmail_url(Some(UNREACHABLE_GMAIL_URL.to_string()));
     let gates = Gates {
         begin: ctx.begin_gate.clone(),
         save: ctx.save_gate.clone(),

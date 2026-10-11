@@ -207,7 +207,7 @@ fn an_unconfirmed_change_is_refused_with_nothing_written() {
     assert!(fake.items().is_empty());
 }
 
-/// Ruling S3: what the person confirmed is what runs. An account whose tokens appear
+/// What the person confirmed is what runs. An account whose tokens appear
 /// between the question and the answer changes the plan, so the answer no longer counts.
 #[test]
 fn a_plan_that_changed_after_the_question_is_refused_with_the_fresh_one() {
@@ -248,31 +248,36 @@ fn a_confirmed_change_without_a_plan_is_refused() {
     assert!(fake.items().is_empty());
 }
 
-/// Ruling S3: a vault name cannot forge part of the text or hide characters in it.
+/// A vault name cannot forge part of the text or hide characters in it.
 #[test]
 fn a_vault_name_cannot_forge_or_hide_text_in_the_confirmation() {
     let tmp = tempfile::tempdir().unwrap();
     let (paths, _fake, _file, _text) = setup(&tmp);
     let ids = ItemIdCache::default();
-    for (vault, quoted) in [
-        (
-            "Rail\"). Tokens for 0 account(s) will be moved.",
-            r#"(vault "Rail\"). Tokens for 0 account(s) will be moved.")"#,
-        ),
-        ("Rail\u{202e}lanosrep", r#"(vault "Rail\u{202e}lanosrep")"#),
-    ] {
-        let request = SecretsConfigureRequest {
-            vault: Some(vault.into()),
-            ..to_onepassword()
-        };
-        let text = describe_switch(&paths, &ids, &request).unwrap().text();
-        assert!(text.contains(quoted), "{text}");
-        assert!(
-            text.contains(". Tokens for 2 account(s) will be moved."),
-            "{text}"
-        );
-        assert!(!text.contains('\n') && !text.contains('\u{202e}'), "{text}");
-    }
+    let vault = "Rail\"). Tokens for 0 account(s) will be moved.";
+    let request = SecretsConfigureRequest {
+        vault: Some(vault.into()),
+        ..to_onepassword()
+    };
+    let text = describe_switch(&paths, &ids, &request).unwrap().text();
+    assert!(
+        text.contains(r#"(vault "Rail\"). Tokens for 0 account(s) will be moved.")"#),
+        "{text}"
+    );
+    assert!(
+        text.contains(". Tokens for 2 account(s) will be moved."),
+        "{text}"
+    );
+    // A bidi override is refused before any text is built (parked item 3).
+    let request = SecretsConfigureRequest {
+        vault: Some("Rail\u{202e}lanosrep".into()),
+        ..to_onepassword()
+    };
+    let err = describe_switch(&paths, &ids, &request).unwrap_err();
+    assert!(
+        err.message.contains("control or format characters"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -444,7 +449,7 @@ fn an_unverifiable_new_copy_keeps_the_old_one() {
     assert_eq!(old.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
 }
 
-/// Ruling S4: names longer than the limit are refused at input, without echoing them.
+/// Names longer than the limit are refused at input, without echoing them.
 #[test]
 fn a_vault_or_account_over_the_limit_is_refused_without_echo() {
     let tmp = tempfile::tempdir().unwrap();
@@ -472,6 +477,47 @@ fn a_vault_or_account_over_the_limit_is_refused_without_echo() {
         assert!(!format!("{err:?}").contains(&long), "{err:?}");
     }
     assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
+}
+
+/// Parked item 2: the daemon refuses what MCP used to refuse alone, so `rail secrets set`
+/// and `rail_secrets_configure` check the same way.
+#[test]
+fn a_vault_or_account_with_control_or_format_characters_is_refused_without_echo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (paths, _fake, _file, text) = setup(&tmp);
+    for (field, request) in [
+        (
+            "vault",
+            SecretsConfigureRequest {
+                vault: Some("Rail\"). Tokens for 0 account(s) will be moved.\n".into()),
+                ..to_onepassword()
+            },
+        ),
+        (
+            "vault",
+            SecretsConfigureRequest {
+                vault: Some("Ra\u{202E}il".into()),
+                ..to_onepassword()
+            },
+        ),
+        (
+            "op_account",
+            SecretsConfigureRequest {
+                op_account: Some("me\rx".into()),
+                ..to_onepassword()
+            },
+        ),
+    ] {
+        let err = switch_backend(&paths, &ItemIdCache::default(), &request).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput, "{err:?}");
+        assert!(err.message.starts_with(field), "{err}");
+        assert!(
+            err.message.contains("control or format characters"),
+            "{err}"
+        );
+        assert!(!err.message.contains("Tokens for"), "{err}");
+        assert_eq!(std::fs::read_to_string(paths.config_file()).unwrap(), text);
+    }
 }
 
 /// The old vault and 1Password account decide where tokens are read and deleted, so a hand

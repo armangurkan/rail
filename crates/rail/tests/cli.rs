@@ -13,7 +13,19 @@ fn rail_env<'a>(cmd: &'a mut Command, dir: &tempfile::TempDir) -> &'a mut Comman
         .env("RAIL_CACHE_DIR", dir.path().join("cache"))
         .env("RAIL_STATE_DIR", dir.path().join("state"))
         .env("RAIL_RUNTIME_DIR", dir.path().join("run"))
+        // `rail doctor` looks for the login unit here, never in the real one.
+        .env("XDG_CONFIG_HOME", dir.path().join("xdg"))
+        // On macOS the launchd agent lives under HOME, so there HOME is the test's too.
+        .envs(cfg!(target_os = "macos").then(|| ("HOME", dir.path().join("home"))))
         .env("RAIL_TEST_IDLE_SECS", "2")
+        // A configured account in a test must never reach Google, and its daemon must still
+        // idle out. Tests that serve a token endpoint set RAIL_TEST_TOKEN_URL again later.
+        .env(
+            "RAIL_TEST_GMAIL_URL",
+            "http://127.0.0.1:9/gmail/v1/users/me/",
+        )
+        .env("RAIL_TEST_TOKEN_URL", "http://127.0.0.1:9/token")
+        .env("RAIL_TEST_IDLE_WITH_ACCOUNTS", "1")
 }
 
 /// Runs `rail daemon stop` for `dir` when dropped, so a test that starts a daemon ends it,
@@ -95,7 +107,8 @@ fn account_add_refuses_duplicate_address_before_opening_a_browser() {
     let config_dir = dir.path().join("config");
     std::fs::create_dir_all(&config_dir).unwrap();
     let config_file = config_dir.join("config.toml");
-    let original = "[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
+    // The file backend: the daemon syncs this account, and must never read the real keyring.
+    let original = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
     std::fs::write(&config_file, original).unwrap();
 
     let out = bounded(rail_cmd(&dir).args([
@@ -116,7 +129,8 @@ fn account_add_refuses_duplicate_address_before_opening_a_browser() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stdout.contains("http"), "got {stdout:?}");
     assert_eq!(std::fs::read_to_string(&config_file).unwrap(), original);
-    assert!(!dir.path().join("data").exists());
+    // The daemon opens the store for the configured account; the refusal wrote no tokens.
+    assert!(!dir.path().join("data").join("secrets.json").exists());
     assert!(!opened_url_file(&dir).exists(), "the browser was asked");
 }
 
@@ -127,7 +141,8 @@ fn account_add_refuses_duplicate_name_before_opening_a_browser() {
     let config_dir = dir.path().join("config");
     std::fs::create_dir_all(&config_dir).unwrap();
     let config_file = config_dir.join("config.toml");
-    let original = "[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
+    // The file backend: the daemon syncs this account, and must never read the real keyring.
+    let original = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
     std::fs::write(&config_file, original).unwrap();
 
     let out = bounded(rail_cmd(&dir).args([
@@ -152,7 +167,8 @@ fn account_add_refuses_duplicate_name_before_opening_a_browser() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stdout.contains("http"), "got {stdout:?}");
     assert_eq!(std::fs::read_to_string(&config_file).unwrap(), original);
-    assert!(!dir.path().join("data").exists());
+    // The daemon opens the store for the configured account; the refusal wrote no tokens.
+    assert!(!dir.path().join("data").join("secrets.json").exists());
     assert!(!opened_url_file(&dir).exists(), "the browser was asked");
 }
 
@@ -311,7 +327,7 @@ fn account_login_unknown_account_fails_before_the_opener() {
     );
     assert!(!url_file.exists(), "the opener must not run");
     assert_eq!(std::fs::read_to_string(config).unwrap(), WORK_FILE_BACKEND);
-    assert!(!dir.path().join("data").exists());
+    assert!(!dir.path().join("data").join("secrets.json").exists());
 }
 
 #[cfg(unix)]
@@ -425,7 +441,7 @@ fn store_work_tokens(dir: &tempfile::TempDir) -> std::path::PathBuf {
     file
 }
 
-/// Ruling P6: without a terminal nothing is removed, whatever the account. `output()` pipes
+/// Without a terminal nothing is removed, whatever the account. `output()` pipes
 /// stdout and gives no terminal on stdin.
 #[test]
 fn account_remove_without_a_terminal_refuses_and_changes_nothing() {
@@ -623,3 +639,9 @@ mod daemon;
 #[cfg(debug_assertions)]
 #[path = "cli/pty.rs"]
 mod pty;
+
+#[path = "cli/service.rs"]
+mod service;
+
+#[path = "cli/sync.rs"]
+mod sync;

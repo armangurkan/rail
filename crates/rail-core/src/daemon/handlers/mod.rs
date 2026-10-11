@@ -7,6 +7,7 @@ mod presets;
 mod remove;
 mod secrets;
 mod status;
+mod sync;
 
 use super::registry::Registry;
 use crate::ops::op;
@@ -29,5 +30,8 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::PresetFetch, _, _>(presets::preset_fetch);
     registry.register::<op::AccountRemove, _, _>(remove::remove);
     registry.register::<op::GuideProvider, _, _>(guide::provider);
+    registry.register::<op::SyncStatus, _, _>(sync::status);
+    registry.register::<op::SyncNow, _, _>(sync::now);
+    registry.register::<op::Search, _, _>(sync::search);
     registry
 }

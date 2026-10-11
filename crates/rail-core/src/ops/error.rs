@@ -39,6 +39,8 @@ pub enum ErrorCode {
     ConsentRequired,
     /// Network trouble talking to a provider or a preset URL.
     Network,
+    /// The mail provider refused a request or sent something Rail could not read.
+    Provider,
     /// A preset could not be read, fetched or parsed.
     Preset,
     /// The operation was cancelled.
@@ -51,6 +53,9 @@ pub enum ErrorCode {
     Daemon,
     /// A bug in Rail.
     Internal,
+    /// The account's provider cannot do this in this version of Rail (Microsoft 365 sync and
+    /// server search, for now).
+    Unsupported,
 }
 
 /// A failed operation. `message` is Rail's own text, written for a person (or a model) to read;
@@ -300,7 +305,9 @@ impl From<StoreError> for OpError {
                 format!("cannot create {}", path.display()),
             )
             .with_detail(source.to_string()),
-            StoreError::TooNew { .. } => Self::new(ErrorCode::Store, class, error.to_string()),
+            StoreError::TooNew { .. } | StoreError::NotSetUp { .. } => {
+                Self::new(ErrorCode::Store, class, error.to_string())
+            }
         }
     }
 }

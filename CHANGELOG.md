@@ -64,6 +64,30 @@ All notable changes to Rail are recorded here. The format follows
   with `rail_secrets_configure`.
 - The per-account `ai_send` policy (`confirm`, `drafts`, `client`), recorded and reported by
   `rail doctor` and `rail_status`; enforcement arrives with the send tools.
+- Gmail sync in the daemon: labels, envelopes for `history_days` (the whole mailbox by default)
+  and bodies for threads newer than `body_cache_days`, kept current every `poll_interval` by an
+  always-on daemon while accounts are configured. Backfill runs newest first, so the inbox is
+  usable within seconds, and resumes after a crash; an expired history cursor triggers a full
+  resync, a revoked login pauses only that account, and rate limits are paced and retried. A first
+  sync of a large mailbox takes hours (about 250 messages a minute, from Gmail's quota). HTML
+  bodies become plain text through Rail's own linear scanner without loading anything remote;
+  tables, list numbers and link addresses are not rendered, and display-quality rendering is a
+  later-phase item.
+- Per-account `history_days` and `body_cache_days` overrides.
+- `rail sync [<account>] [--no-wait]` with progress, followed with no overall limit (it stops
+  watching after 10 minutes without change, and the sync continues in the daemon), and exit codes
+  0 (caught up), 1 (failed), 2 (needs a login; 2 wins over 1).
+- `rail search <query> [--account <name>] [--limit N]`: the local store and Gmail's whole mailbox,
+  merged by date, one escaped line per thread; results on standard output, notes on standard error.
+- `rail daemon install` / `rail daemon uninstall`: start the daemon at login (systemd user unit or
+  launchd agent). The unit sets the `RAIL_*` directories and a fixed `PATH`, unsets display,
+  browser and 1Password variables, refuses binary paths systemd cannot run, checks the unit's daemon
+  starts, and is rolled back if enabling fails. The launchd path has not been tried on a real Mac.
+- `rail doctor` shows each account's sync and whether the login unit is installed, enabled and
+  current, and fails for a Gmail account with no tokens or whose sync stopped on a permanent error.
+- MCP tools `rail_sync_status` and `rail_sync_now`, which return no mail content.
+- An ignored, read-only live test against a real Gmail account
+  (`RAIL_GMAIL_LIVE_ACCOUNT=<name> cargo test -p rail-core -- --ignored gmail_live`).
 
 ### Changed
 
@@ -87,6 +111,16 @@ All notable changes to Rail are recorded here. The format follows
   must give the tenant, and lists admin consent during a normal login.
 - The roadmap gains Phase 3 (daemon, operations and MCP); Gmail sync and everything after it move
   back one phase.
+- The daemon stays up while any account is configured; the ten-minute idle exit now applies only
+  with no accounts.
+- The roadmap marks Phase 4 done; display-quality HTML rendering moves to Phase 5.
+
+### Fixed
+
+- The "Rail was upgraded" hint shows only the daemon's `MAJOR.MINOR.PATCH`, and Rail's own error
+  text is escaped on the terminal.
+- `rail secrets set` refuses control and format characters in `--vault`/`--account`, as MCP did.
+- Account addresses refuse Unicode format characters (bidi overrides, zero-width spaces).
 
 ### Security
 
@@ -129,3 +163,13 @@ All notable changes to Rail are recorded here. The format follows
   leaving the caller waiting.
 - `rail mcp` logs the MCP library only at error level, because its warnings can quote what an agent
   sent.
+- Mail is hostile input: header values are flattened to one line and capped, decoded words are
+  capped, HTML is scanned by Rail's own linear scanner (no parser tree) that runs nothing and
+  fetches nothing, and a body over 10 MiB is stored cut with a marker.
+- Sync requests are pinned to the Gmail API origin, carry no mail text in URLs logged at debug
+  (no query strings), and are paced under Gmail's quota with retries on rate limits.
+- No MCP result carries mail content: no subject, sender, snippet or body, and Gmail's error text
+  reaches agents only as outside text.
+- `rail search` and sync output escape control and invisible formatting characters.
+- The login unit keeps display, browser and 1Password variables out of the daemon where it can,
+  and `rail daemon install` quotes paths for systemd and XML-escapes them for launchd.

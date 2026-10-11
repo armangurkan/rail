@@ -85,6 +85,23 @@ impl TokenSource {
         Ok(access)
     }
 
+    /// A new access token whatever the cached one's expiry says: the API refused it (HTTP 401).
+    pub async fn force_refresh(&self) -> Result<String, AuthError> {
+        let mut cached = self.cached.lock().await;
+        let now = (self.clock)();
+        let current = match cached.take() {
+            Some(tokens) => tokens,
+            None => self
+                .secrets
+                .get_tokens(&self.address)?
+                .ok_or_else(|| AuthError::NeedsAuth("no stored tokens".to_string()))?,
+        };
+        let tokens = self.refresh(&current, now).await?;
+        let access = tokens.access_token.clone();
+        *cached = Some(tokens);
+        Ok(access)
+    }
+
     async fn refresh(&self, current: &TokenSet, now: i64) -> Result<TokenSet, AuthError> {
         tracing::debug!(address = %self.address, "refreshing access token");
         let response = self
@@ -153,6 +170,24 @@ mod tests {
         let src = source(&server.uri(), stored(10_000), 1_000);
         assert_eq!(src.access_token().await.unwrap(), "old-access");
         assert_eq!(src.access_token().await.unwrap(), "old-access");
+    }
+
+    /// A 401 from the API means the access token is bad however fresh it looks.
+    #[tokio::test]
+    async fn force_refresh_refreshes_even_a_fresh_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "forced", "expires_in": 3600, "token_type": "Bearer"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let src = source(&server.uri(), stored(10_000), 1_000);
+        assert_eq!(src.access_token().await.unwrap(), "old-access");
+        assert_eq!(src.force_refresh().await.unwrap(), "forced");
+        assert_eq!(src.access_token().await.unwrap(), "forced");
     }
 
     #[tokio::test]

@@ -7,12 +7,14 @@ use url::Url;
 
 use super::pending::PendingTable;
 use crate::auth::{ItemIdCache, http_client};
-use crate::ops::OpError;
+use crate::ops::{BrowserEnv, OpError};
 use crate::paths::Paths;
+use crate::sync::SyncManager;
 
 /// Starts the browser on a URL. Injected so tests never start a real one; the binary passes
 /// its opener, which honours `RAIL_TEST_OPENER` in debug builds.
-pub type Opener = Arc<dyn Fn(&Url) -> std::io::Result<()> + Send + Sync>;
+/// It gets the display and browser of the client that began the login.
+pub type Opener = Arc<dyn Fn(&Url, &BrowserEnv) -> std::io::Result<()> + Send + Sync>;
 
 pub struct DaemonContext {
     pub paths: Paths,
@@ -23,6 +25,11 @@ pub struct DaemonContext {
     /// release builds so nothing can redirect a real login.
     #[cfg(debug_assertions)]
     token_url: Option<String>,
+    /// The Gmail API root used instead of Google's: a debug-build test hook like `token_url`.
+    #[cfg(debug_assertions)]
+    gmail_url: Option<String>,
+    /// One sync engine per configured Gmail account, their writer and status board.
+    pub(crate) sync: SyncManager,
     /// 1Password item ids, kept for the daemon's lifetime.
     pub(crate) op_ids: ItemIdCache,
     /// Held by every handler that writes config.toml or moves tokens, so two front ends can
@@ -102,6 +109,9 @@ impl DaemonContext {
             opener,
             #[cfg(debug_assertions)]
             token_url: None,
+            #[cfg(debug_assertions)]
+            gmail_url: None,
+            sync: SyncManager::new(Arc::new(crate::sync::providers::gmail_for)),
             op_ids: ItemIdCache::default(),
             config_lock: Mutex::new(()),
             pending: PendingTable::default(),
@@ -132,6 +142,35 @@ impl DaemonContext {
         {
             None
         }
+    }
+
+    /// Replace the Gmail API root. Honoured in debug builds only.
+    #[cfg_attr(not(debug_assertions), allow(unused_mut, unused_variables))]
+    pub fn with_gmail_url(mut self, gmail_url: Option<String>) -> Self {
+        #[cfg(debug_assertions)]
+        {
+            self.gmail_url = gmail_url;
+        }
+        self
+    }
+
+    /// The Gmail API root override, if the hook is set and this is a debug build.
+    pub(crate) fn gmail_url(&self) -> Option<&str> {
+        #[cfg(debug_assertions)]
+        {
+            self.gmail_url.as_deref()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            None
+        }
+    }
+
+    /// Build every account's provider with `factory` instead of Gmail's (tests).
+    #[cfg(any(test, feature = "test-gates"))]
+    pub fn with_provider_factory(mut self, factory: crate::sync::ProviderFactory) -> Self {
+        self.sync = SyncManager::new(factory);
+        self
     }
 
     /// Logins and consents waiting on a browser or saving.

@@ -12,10 +12,16 @@ pub(super) async fn remove(
     call: Call,
     request: AccountRemoveRequest,
 ) -> Result<AccountRemoveResponse, OpError> {
-    call.ctx
+    let removed = call
+        .ctx
         .write_locked(move |ctx| {
             let plan = request.plan.as_deref().filter(|_| request.confirm);
             remove_confirmed(&ctx.paths, &ctx.op_ids, &request.account, plan)
         })
-        .await
+        .await;
+    // Its engine stops; its mail stays in the store.
+    if removed.is_ok() {
+        call.ctx.sync.reconcile(&call.ctx).await;
+    }
+    removed
 }

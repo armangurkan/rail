@@ -11,6 +11,11 @@ pub struct Cli {
     pub panic_test: bool,
 }
 
+/// `rail search`'s default `--limit`: the daemon's.
+const DEFAULT_LIMIT: u8 = 20;
+/// `rail search`'s largest `--limit`: the daemon's.
+const MAX_LIMIT: i64 = 100;
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Add an account with the interactive setup wizard.
@@ -25,11 +30,37 @@ pub enum Command {
         #[command(subcommand)]
         command: SecretsCommand,
     },
-    /// Check config, store, secrets, accounts and the daemon.
+    /// Sync now: wake an account's (or every account's) sync and show progress until it is
+    /// caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs a login.
+    Sync {
+        /// Account name or email address; every account when absent.
+        account: Option<String>,
+        /// Wake the sync and return at once.
+        #[arg(long)]
+        no_wait: bool,
+    },
+    /// Search the local store and Gmail's whole mailbox: one line per thread.
+    Search {
+        /// What to look for (Gmail's search syntax works for the Gmail part).
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        query: Vec<String>,
+        /// Only this account (name or address).
+        #[arg(long)]
+        account: Option<String>,
+        /// At most this many threads, 1 to 100.
+        #[arg(
+            long,
+            default_value_t = DEFAULT_LIMIT,
+            value_parser = clap::value_parser!(u8).range(1..=MAX_LIMIT)
+        )]
+        limit: u8,
+    },
+    /// Check config, store, secrets, accounts, each account's sync and the daemon.
     Doctor,
     /// Serve Rail's tools to an AI coding agent over MCP on stdin and stdout.
     Mcp,
-    /// The background daemon that runs every operation. Started on demand.
+    /// The background daemon that runs every operation. Started on demand, or at login once
+    /// `rail daemon install` has run.
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,
@@ -44,6 +75,11 @@ pub enum DaemonCommand {
     Status,
     /// Ask the daemon to exit once running saves finish.
     Stop,
+    /// Start the daemon at login: write and enable a systemd user unit (Linux) or a launchd
+    /// agent (macOS) that runs this binary. Stops a daemon already running first.
+    Install,
+    /// Stop, disable and remove the login unit.
+    Uninstall,
 }
 
 #[derive(Debug, Subcommand)]
@@ -131,4 +167,43 @@ pub struct AddArgs {
 pub enum KindArg {
     Gmail,
     M365,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The search limits here are the daemon's.
+    #[test]
+    fn the_search_limits_match_the_daemon() {
+        assert_eq!(
+            usize::from(DEFAULT_LIMIT),
+            rail_core::ops::DEFAULT_SEARCH_LIMIT
+        );
+        assert_eq!(
+            usize::try_from(MAX_LIMIT).unwrap(),
+            rail_core::ops::MAX_SEARCH_LIMIT
+        );
+    }
+
+    #[test]
+    fn a_search_limit_is_1_to_100() {
+        let parse = |limit: &str| Cli::try_parse_from(["rail", "search", "--limit", limit, "x"]);
+        assert!(parse("0").is_err());
+        assert!(parse("101").is_err());
+        assert!(parse("-1").is_err());
+        for ok in ["1", "100"] {
+            match parse(ok).unwrap().command {
+                Some(Command::Search { limit, .. }) => assert_eq!(limit.to_string(), ok),
+                other => panic!("{other:?}"),
+            }
+        }
+        match Cli::try_parse_from(["rail", "search", "x"])
+            .unwrap()
+            .command
+        {
+            Some(Command::Search { limit, .. }) => assert_eq!(limit, 20),
+            other => panic!("{other:?}"),
+        }
+    }
 }

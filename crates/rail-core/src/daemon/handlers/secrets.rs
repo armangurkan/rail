@@ -10,7 +10,13 @@ pub(super) async fn configure(
     call: Call,
     request: SecretsConfigureRequest,
 ) -> Result<SecretsConfigureResponse, OpError> {
-    call.ctx
+    let switched = call
+        .ctx
         .write_locked(move |ctx| switch_backend(&ctx.paths, &ctx.op_ids, &request))
-        .await
+        .await;
+    // The engines' token stores changed: they restart on the new backend.
+    if switched.is_ok() {
+        call.ctx.sync.reconcile(&call.ctx).await;
+    }
+    switched
 }

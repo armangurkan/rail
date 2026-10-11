@@ -19,6 +19,30 @@ pub fn idle() -> Option<std::time::Duration> {
         .map(std::time::Duration::from_secs)
 }
 
+/// The Gmail API root, so a binary test can serve it with wiremock (or make it unreachable).
+pub fn gmail_url() -> Option<String> {
+    var("RAIL_TEST_GMAIL_URL")
+}
+
+/// How long `rail sync` watches with no change before it leaves the sync to the daemon,
+/// instead of ten minutes.
+pub fn sync_stall() -> Option<std::time::Duration> {
+    var("RAIL_TEST_SYNC_STALL_SECS")
+        .and_then(|secs| secs.parse().ok())
+        .map(std::time::Duration::from_secs)
+}
+
+/// Let a test daemon idle out even with accounts configured.
+pub fn idle_with_accounts() -> bool {
+    var("RAIL_TEST_IDLE_WITH_ACCOUNTS").is_some()
+}
+
+/// A file that receives the service-manager commands (`systemctl`, `launchctl`) instead of
+/// running them, one line each, so no test ever reaches the real service manager.
+pub fn service_log() -> Option<std::path::PathBuf> {
+    var("RAIL_TEST_SERVICE_LOG").map(Into::into)
+}
+
 fn var(name: &str) -> Option<String> {
     if !cfg!(debug_assertions) {
         return None;

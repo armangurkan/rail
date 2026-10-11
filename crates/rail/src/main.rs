@@ -46,12 +46,20 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
         }) => cmd::secrets::set(&paths, &args)
             .await
             .map(|()| ExitCode::SUCCESS),
+        Some(Command::Sync { account, no_wait }) => cmd::sync::run(&paths, account, no_wait).await,
+        Some(Command::Search {
+            query,
+            account,
+            limit,
+        }) => cmd::search::run(&paths, query.join(" "), account, usize::from(limit)).await,
         Some(Command::Doctor) => cmd::doctor::run(&paths).await,
         Some(Command::Mcp) => cmd::mcp::run(&paths).await,
         Some(Command::Daemon { command }) => match command {
             DaemonCommand::Run => cmd::daemon::run(&paths).await,
             DaemonCommand::Status => cmd::daemon::status(&paths).await,
             DaemonCommand::Stop => cmd::daemon::stop(&paths).await,
+            DaemonCommand::Install => cmd::service::install(&paths).await,
+            DaemonCommand::Uninstall => cmd::service::uninstall(&paths).await,
         },
     }
 }

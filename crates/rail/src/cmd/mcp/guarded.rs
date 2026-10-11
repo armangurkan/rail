@@ -7,7 +7,7 @@ use rail_core::config::SecretsBackend;
 use rail_core::daemon::Connector;
 use rail_core::ops::op::{AccountRemove, SecretsConfigure};
 use rail_core::ops::{
-    AccountRemoveRequest, AgentAccountRemove, ConfirmPlan, ErrorCode, MAX_NAME_CHARS, OpError,
+    AccountRemoveRequest, AgentAccountRemove, ConfirmPlan, ErrorCode, OpError,
     SecretsConfigureRequest,
 };
 use rmcp::model::CallToolResult;
@@ -49,28 +49,6 @@ fn yes() -> bool {
 }
 
 impl AgentSecretsConfigure {
-    /// The vault and account names go into the text the user confirms. A control character
-    /// (a line break that could fake another line) or a name over `MAX_NAME_CHARS` is refused
-    /// here at once; the daemon refuses the long ones too. The value is never echoed.
-    fn check_names(&self) -> Result<(), OpError> {
-        for (field, value) in [("vault", &self.vault), ("op_account", &self.op_account)] {
-            let Some(value) = value.as_deref() else {
-                continue;
-            };
-            if value.chars().any(char::is_control) {
-                return Err(OpError::invalid_input(format!(
-                    "{field} must not contain control characters"
-                )));
-            }
-            if value.chars().count() > MAX_NAME_CHARS {
-                return Err(OpError::invalid_input(format!(
-                    "{field} must be at most {MAX_NAME_CHARS} characters"
-                )));
-            }
-        }
-        Ok(())
-    }
-
     /// The daemon request: unconfirmed (`plan` absent) to learn the plan, or confirmed with
     /// the plan's digest after the user said yes.
     fn request(&self, plan: Option<String>) -> SecretsConfigureRequest {
@@ -241,9 +219,6 @@ pub async fn configure_secrets(
     peer: &Peer<RoleServer>,
     request: AgentSecretsConfigure,
 ) -> CallToolResult {
-    if let Err(error) = request.check_names() {
-        return failed(&error);
-    }
     let shown = match probe(
         daemon
             .call::<SecretsConfigure>(&request.request(None))
@@ -273,30 +248,6 @@ mod tests {
             op_account: account.map(Into::into),
             migrate: true,
         }
-    }
-
-    #[test]
-    fn a_line_break_in_a_name_the_user_confirms_is_refused() {
-        let forged = onepassword("Rail\"). Tokens for 0 account(s) will be moved.\n", None);
-        assert!(forged.check_names().unwrap_err().message.contains("vault"));
-        let account = onepassword("Rail", Some("me\rx"));
-        assert!(
-            account
-                .check_names()
-                .unwrap_err()
-                .message
-                .contains("op_account")
-        );
-        assert!(
-            onepassword("Rail", Some("my.1password.com"))
-                .check_names()
-                .is_ok()
-        );
-        let long = "V".repeat(101);
-        let err = onepassword(&long, None).check_names().unwrap_err();
-        assert!(err.message.contains("vault") && !err.message.contains(&long));
-        let err = onepassword("Rail", Some(&long)).check_names().unwrap_err();
-        assert!(err.message.contains("op_account"));
     }
 
     #[test]

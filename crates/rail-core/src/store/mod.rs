@@ -2,12 +2,19 @@
 
 pub mod accounts;
 pub mod migrations;
+mod rollup;
+pub mod sync_read;
+mod sync_write;
+#[cfg(test)]
+mod sync_write_tests;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub use accounts::AccountRow;
+pub use sync_read::{StoreCounts, StoredHit, SyncStateRow, fts_query};
 
-use rusqlite::{Connection, ErrorCode};
+use rusqlite::{Connection, ErrorCode, OpenFlags};
 
 use crate::error::ErrorClass;
 use crate::paths::create_private_dir;
@@ -26,6 +33,10 @@ pub enum StoreError {
         "database schema version {found} is newer than this build supports ({supported}); upgrade rail"
     )]
     TooNew { found: i64, supported: i64 },
+    #[error(
+        "the store is at schema version {found}, not {expected}; start the daemon so it can set the store up"
+    )]
+    NotSetUp { found: i64, expected: i64 },
 }
 
 impl StoreError {
@@ -40,7 +51,10 @@ impl StoreError {
             {
                 ErrorClass::Transient
             }
-            Self::Sqlite(_) | Self::CreateDir { .. } | Self::TooNew { .. } => ErrorClass::Permanent,
+            Self::Sqlite(_)
+            | Self::CreateDir { .. }
+            | Self::TooNew { .. }
+            | Self::NotSetUp { .. } => ErrorClass::Permanent,
         }
     }
 }
@@ -74,6 +88,10 @@ fn restrict_to_owner(_file: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// How long any connection waits for another's write lock before it reports busy. The writer
+/// commits a batch in milliseconds; the account pipeline's upserts are as short.
+pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub struct Store {
     conn: Connection,
 }
@@ -102,7 +120,28 @@ impl Store {
         Self::init(Connection::open_in_memory()?)
     }
 
+    /// A connection that can only read, for the sync engine and search. The database must
+    /// already exist and be migrated (the daemon opens it with `Store::open` first); a missing
+    /// file is an error, never a new empty database.
+    pub fn open_reader(path: &Path) -> Result<Self, StoreError> {
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI;
+        let conn = Connection::open_with_flags(path, flags)?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        conn.pragma_update(None, "query_only", "ON")?;
+        let found: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if found != migrations::LATEST_VERSION {
+            return Err(StoreError::NotSetUp {
+                found,
+                expected: migrations::LATEST_VERSION,
+            });
+        }
+        Ok(Self { conn })
+    }
+
     fn init(mut conn: Connection) -> Result<Self, StoreError> {
+        conn.busy_timeout(BUSY_TIMEOUT)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -231,8 +270,8 @@ mod tests {
         )
         .unwrap();
         c.execute(
-            "INSERT INTO messages (account_id, thread_id, remote_id, subject, from_json, body_text)
-             VALUES (1, 1, 'm1', ?1, '[{\"name\":\"Dana\",\"address\":\"dana@example.com\"}]', 'hello world')",
+            "INSERT INTO messages (account_id, thread_id, remote_id, subject, from_json, body_text, internal_date)
+             VALUES (1, 1, 'm1', ?1, '[{\"name\":\"Dana\",\"address\":\"dana@example.com\"}]', 'hello world', 1000)",
             params![subject],
         )
         .unwrap();
@@ -371,5 +410,143 @@ mod tests {
         let wal = data_dir.join("rail.db-wal");
         assert!(wal.exists(), "expected a WAL file after a write");
         assert_eq!(mode(&wal), 0o600);
+        let shm = data_dir.join("rail.db-shm");
+        assert!(shm.exists(), "expected a shared-memory file in WAL mode");
+        assert_eq!(mode(&shm), 0o600);
+    }
+
+    #[test]
+    fn migration_0002_adds_the_sync_columns_with_their_defaults() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
+        store
+            .conn()
+            .execute_batch(
+                "INSERT INTO accounts (name, kind, address) VALUES ('a', 'gmail', 'a@example.com');
+                 INSERT INTO threads (account_id, remote_id) VALUES (1, 't1');
+                 INSERT INTO messages (account_id, thread_id, remote_id) VALUES (1, 1, 'm1');",
+            )
+            .unwrap();
+        let (origin, internal, searched, synced): (String, i64, Option<i64>, Option<i64>) = store
+            .conn()
+            .query_row(
+                "SELECT origin, internal_date, searched_at, synced_at FROM messages",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (origin.as_str(), internal, searched, synced),
+            ("sync", 0, None, None)
+        );
+        let (phase, needs_auth): (String, i64) = store
+            .conn()
+            .query_row("SELECT sync_phase, needs_auth FROM accounts", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((phase.as_str(), needs_auth), ("idle", 0));
+        let bad = store
+            .conn()
+            .execute("UPDATE messages SET origin = 'other'", []);
+        assert!(bad.is_err(), "origin is checked");
+    }
+
+    #[test]
+    fn a_version_1_database_upgrades_and_keeps_its_rows() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("migrations/0001_init.sql"))
+            .unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (name, kind, address) VALUES ('a', 'gmail', 'a@example.com');
+             INSERT INTO threads (account_id, remote_id) VALUES (1, 't1');
+             INSERT INTO messages (account_id, thread_id, remote_id, subject, date) VALUES (1, 1, 'm1', 'old', 1700000000);",
+        )
+        .unwrap();
+        migrations::migrate(&mut conn).unwrap();
+        let (subject, origin, internal): (String, String, i64) = conn
+            .query_row(
+                "SELECT subject, origin, internal_date FROM messages",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((subject.as_str(), origin.as_str()), ("old", "sync"));
+        assert_eq!(internal, 1_700_000_000_000, "seconds become milliseconds");
+    }
+
+    /// 0003 adds the resume token columns to a version 2 database and keeps its
+    /// backfill state; the token columns start empty.
+    #[test]
+    fn a_version_2_database_upgrades_to_3_and_keeps_its_backfill_state() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("migrations/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("migrations/0002_sync.sql"))
+            .unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (name, kind, address, backfill_before, backfill_cursor)
+               VALUES ('a', 'gmail', 'a@example.com', 1700000000000, '42');",
+        )
+        .unwrap();
+        migrations::migrate(&mut conn).unwrap();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!((version, migrations::LATEST_VERSION), (3, 3));
+        let store = Store { conn };
+        let state = store.sync_state(1).unwrap();
+        assert_eq!(state.backfill_before, Some(1_700_000_000_000));
+        assert_eq!(state.backfill_cursor.as_deref(), Some("42"));
+        assert_eq!(state.backfill_resume, None);
+    }
+
+    #[test]
+    fn every_connection_waits_for_a_busy_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rail.db");
+        let store = Store::open(&path).unwrap();
+        let reader = Store::open_reader(&path).unwrap();
+        for conn in [store.conn(), reader.conn()] {
+            let ms: i64 = conn
+                .pragma_query_value(None, "busy_timeout", |r| r.get(0))
+                .unwrap();
+            assert_eq!(ms, 5000);
+        }
+        let only: i64 = reader
+            .conn()
+            .pragma_query_value(None, "query_only", |r| r.get(0))
+            .unwrap();
+        assert_eq!(only, 1);
+        assert!(reader.conn().execute("DELETE FROM accounts", []).is_err());
+    }
+
+    #[test]
+    fn open_reader_refuses_an_unmigrated_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rail.db");
+        Connection::open(&path).unwrap();
+        let err = Store::open_reader(&path)
+            .err()
+            .expect("unmigrated is an error");
+        assert!(
+            matches!(err, StoreError::NotSetUp { found: 0, .. }),
+            "{err}"
+        );
+        assert!(err.to_string().contains("set the store up"), "{err}");
+    }
+
+    #[test]
+    fn open_reader_does_not_create_a_missing_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rail.db");
+        let err = Store::open_reader(&path)
+            .err()
+            .expect("a missing database is an error");
+        assert!(matches!(err, StoreError::Sqlite(_)), "{err}");
+        assert!(!path.exists(), "no file was created");
+        assert!(!dir.path().join("rail.db-wal").exists());
     }
 }

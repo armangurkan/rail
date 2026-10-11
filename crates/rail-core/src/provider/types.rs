@@ -1,0 +1,205 @@
+//! The mail types every provider speaks. No provider's own JSON leaks past its module.
+
+use serde::{Deserialize, Serialize};
+
+/// A provider's identifier for a message, thread or folder.
+pub type RemoteId = String;
+
+/// Where the next delta starts (Gmail: a `historyId`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncCursor(pub String);
+
+/// The next page of a listing (Gmail's `nextPageToken`). A backfill stores it with the page it
+/// follows, so a later pass goes on with the same listing; it is only ever valid for the query
+/// it was issued for.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PageToken(pub String);
+
+/// The longest page token Rail sends back or stores.
+pub const MAX_PAGE_TOKEN_BYTES: usize = 512;
+
+impl PageToken {
+    /// `text` as a page token, if Rail accepts it: 1 to `MAX_PAGE_TOKEN_BYTES` bytes of ASCII
+    /// letters, digits and `-_.~+/=`. It is outside text, sent back only as a percent-encoded
+    /// query value, never in a path.
+    pub fn checked(text: &str) -> Option<Self> {
+        let safe = !text.is_empty()
+            && text.len() <= MAX_PAGE_TOKEN_BYTES
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.~+/=".contains(&b));
+        safe.then(|| Self(text.to_string()))
+    }
+}
+
+/// The `folders.kind` values of the store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderKind {
+    Inbox,
+    Sent,
+    Drafts,
+    Trash,
+    Spam,
+    Archive,
+    /// A provider's own label that is not one of the above (Gmail's `IMPORTANT`, categories).
+    Label,
+    /// A label or folder the user made.
+    User,
+}
+
+impl FolderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inbox => "inbox",
+            Self::Sent => "sent",
+            Self::Drafts => "drafts",
+            Self::Trash => "trash",
+            Self::Spam => "spam",
+            Self::Archive => "archive",
+            Self::Label => "label",
+            Self::User => "user",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteFolder {
+    pub remote_id: RemoteId,
+    pub name: String,
+    pub kind: FolderKind,
+}
+
+/// One address of a `From`, `To`, `Cc` or `Bcc` header, as stored in `*_json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mailbox {
+    #[serde(default)]
+    pub name: Option<String>,
+    pub address: String,
+}
+
+/// A message's metadata. Every string is mail content: outside text.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Envelope {
+    pub remote_id: RemoteId,
+    pub thread_id: RemoteId,
+    pub message_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
+    pub subject: String,
+    pub from: Vec<Mailbox>,
+    pub to: Vec<Mailbox>,
+    pub cc: Vec<Mailbox>,
+    pub bcc: Vec<Mailbox>,
+    /// The `Date:` header in Unix seconds (the receive time when it is missing or absurd).
+    pub date: i64,
+    /// When the provider received it, in milliseconds (Gmail's `internalDate`).
+    pub internal_date: i64,
+    pub snippet: String,
+    /// Folder (label) ids, without the flag labels.
+    pub folders: Vec<RemoteId>,
+    pub is_read: bool,
+    pub is_starred: bool,
+    pub is_draft: bool,
+    pub size: i64,
+}
+
+/// Which receive times a listing covers, in milliseconds. Providers compare in whole seconds,
+/// as Gmail's `after:` and `before:` do.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Window {
+    /// Received at or after this.
+    pub after_ms: Option<i64>,
+    /// Received before this.
+    pub before_ms: Option<i64>,
+}
+
+impl Window {
+    pub fn contains(&self, internal_ms: i64) -> bool {
+        let second = internal_ms.div_euclid(1000);
+        self.after_ms.is_none_or(|a| second >= a.div_euclid(1000))
+            && self.before_ms.is_none_or(|b| second < b.div_euclid(1000))
+    }
+}
+
+/// One page of a listing: message ids in the provider's order, which for Gmail is only
+/// roughly newest first (the live test saw spreads of hours).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IdPage {
+    pub ids: Vec<RemoteId>,
+    pub next: Option<PageToken>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EnvelopePage {
+    pub envelopes: Vec<Envelope>,
+    /// Ids whose metadata could not be read; logged by id and retried by the next full backfill.
+    pub skipped: Vec<RemoteId>,
+    pub next: Option<PageToken>,
+}
+
+/// A change to one message's folders and flags. `None` leaves a flag as it is.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Relabel {
+    pub remote_id: RemoteId,
+    pub add_folders: Vec<RemoteId>,
+    pub remove_folders: Vec<RemoteId>,
+    pub read: Option<bool>,
+    pub starred: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChangeSet {
+    pub added: Vec<Envelope>,
+    pub deleted: Vec<RemoteId>,
+    pub relabeled: Vec<Relabel>,
+    pub skipped: Vec<RemoteId>,
+    /// Where the next call starts.
+    pub cursor: SyncCursor,
+    /// True when more changes wait after `cursor`: call again.
+    pub more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentMeta {
+    pub part_id: String,
+    /// Outside text.
+    pub filename: String,
+    pub mime_type: String,
+    pub size: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Body {
+    /// Rail's rendered plain text: what FTS indexes and replies quote.
+    pub text: String,
+    /// The HTML part as received, never rendered by a browser engine.
+    pub html: Option<String>,
+    /// True when the body was over `MAX_BODY_BYTES` and `text` ends with the marker.
+    pub truncated: bool,
+    pub attachments: Vec<AttachmentMeta>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Profile {
+    pub cursor: SyncCursor,
+    pub messages_total: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_page_token_is_checked_like_other_gmail_values() {
+        assert_eq!(
+            PageToken::checked("09876543210987654321"),
+            Some(PageToken("09876543210987654321".into()))
+        );
+        assert!(PageToken::checked("aB-_.~+/=9").is_some());
+        for bad in ["", "a b", "a&b", "a%20", "tok\n", "\u{e9}", "a?b", "a#b"] {
+            assert_eq!(PageToken::checked(bad), None, "{bad:?}");
+        }
+        assert!(PageToken::checked(&"a".repeat(MAX_PAGE_TOKEN_BYTES)).is_some());
+        assert!(PageToken::checked(&"a".repeat(MAX_PAGE_TOKEN_BYTES + 1)).is_none());
+    }
+}

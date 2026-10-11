@@ -1,5 +1,6 @@
 use std::process::{Child, Command, Stdio};
 
+use rail_core::ops::BrowserEnv;
 use url::Url;
 
 use crate::test_hooks;
@@ -16,10 +17,16 @@ fn opener() -> String {
 }
 
 /// Start the browser on `url` without printing anything, so it is safe while the TUI owns
-/// the terminal. The opener is not waited on here (`xdg-open` and `open` hand off and exit);
-/// a thread reaps it, so a long-lived daemon that opens many logins leaves no zombies.
-pub fn launch(url: &Url) -> std::io::Result<()> {
-    let child = Command::new(opener())
+/// the terminal, with the display and browser of the client that began the login (the rest of
+/// the daemon's environment is inherited). The opener is not waited on here (`xdg-open` and
+/// `open` hand off and exit); a thread reaps it, so a long-lived daemon that opens many logins
+/// leaves no zombies.
+pub fn launch(url: &Url, browser: &BrowserEnv) -> std::io::Result<()> {
+    let mut command = Command::new(opener());
+    for (key, value) in browser.vars() {
+        command.env(key, value);
+    }
+    let child = command
         .arg(url.as_str())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
