@@ -149,6 +149,14 @@ fn one_line(text: &str) -> String {
         .collect()
 }
 
+/// The first `max` characters of `text` on one line (each control character a space).
+pub(super) fn one_line_capped(text: &str, max: usize) -> String {
+    text.chars()
+        .take(max)
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
 fn capped_id(id: &str) -> String {
     id.chars().take(MAX_ID_CHARS).collect()
 }

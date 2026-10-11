@@ -1,6 +1,7 @@
 //! Gmail labels as Rail folders. `UNREAD` and `STARRED` are flags, not folders; archive is
 //! "no `INBOX` label", so it has no folder of its own.
 
+use super::metadata::one_line_capped;
 use super::wire::Label;
 use crate::provider::{FolderKind, RemoteFolder};
 
@@ -24,7 +25,7 @@ pub(super) fn folder(label: Label) -> Option<RemoteFolder> {
         id if system => (FolderKind::Label, system_name(id)),
         _ => (
             FolderKind::User,
-            label.name.chars().take(MAX_NAME_CHARS).collect(),
+            one_line_capped(&label.name, MAX_NAME_CHARS),
         ),
     };
     Some(RemoteFolder {
@@ -47,5 +48,24 @@ fn system_name(id: &str) -> String {
     match id.strip_prefix("CATEGORY_") {
         Some(category) => format!("Category: {}", title(category)),
         None => title(id),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Review minor 2: a user label's name is one line, capped, like envelope fields.
+    #[test]
+    fn a_label_name_is_one_line_and_capped() {
+        let label = |name: &str| Label {
+            id: "Label_1".into(),
+            name: name.into(),
+            kind: Some("user".into()),
+        };
+        let named = folder(label("Work\r\nInbox\u{7}")).unwrap();
+        assert_eq!(named.name, "Work  Inbox ");
+        let long = folder(label(&"y".repeat(5_000))).unwrap();
+        assert_eq!(long.name.chars().count(), MAX_NAME_CHARS);
     }
 }

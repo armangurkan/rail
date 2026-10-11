@@ -403,3 +403,28 @@ async fn standard_base64_is_read_too() {
     let body = body_of(&gmail, part).await.unwrap();
     assert_eq!(body.text, "a\u{fb}\u{ff}?>");
 }
+
+/// Review minor 2: an attachment's name and type are one line each, like envelope fields.
+#[tokio::test]
+async fn attachment_names_and_types_are_one_line_and_capped() {
+    let gmail = Gmail::start().await;
+    let long = "x".repeat(5_000);
+    let payload = json!({
+        "partId": "", "mimeType": "multipart/mixed", "filename": "", "headers": [], "body": {"size": 0},
+        "parts": [
+            {"partId": "0", "mimeType": "text/plain", "filename": "",
+             "headers": [], "body": {"size": 2, "data": b64(b"hi")}},
+            {"partId": "1", "mimeType": "application/pdf\r\nX-Evil: 1", "filename": "a\r\nb\u{0}.pdf",
+             "headers": [], "body": {"size": 1, "attachmentId": "ANGjdJ_a"}},
+            {"partId": "2", "mimeType": long, "filename": long,
+             "headers": [], "body": {"size": 1, "attachmentId": "ANGjdJ_b"}}
+        ]
+    });
+    let body = body_of(&gmail, payload).await.unwrap();
+    let first = &body.attachments[0];
+    assert_eq!(first.filename, "a  b .pdf");
+    assert_eq!(first.mime_type, "application/pdf  x-evil: 1");
+    let second = &body.attachments[1];
+    assert!(second.filename.chars().count() < 5_000);
+    assert!(second.mime_type.chars().count() < 5_000);
+}

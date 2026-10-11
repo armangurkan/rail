@@ -10,7 +10,7 @@ use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 
 use super::html::html_text;
-use super::metadata::cut;
+use super::metadata::{cut, one_line_capped};
 use super::wire::{AttachmentBody, Message, Part};
 use super::{COST_ATTACHMENT, COST_GET, GmailProvider, checked_id, safe_id};
 use crate::config::model::is_format_char;
@@ -172,8 +172,8 @@ fn collect_attachments(part: &Part, attachments: &mut Vec<AttachmentMeta>, depth
         if part_id_ok(&part.part_id) {
             attachments.push(AttachmentMeta {
                 part_id: part.part_id.clone(),
-                filename: part.filename.chars().take(MAX_FILENAME_CHARS).collect(),
-                mime_type: mime.chars().take(MAX_MIME_CHARS).collect(),
+                filename: one_line_capped(&part.filename, MAX_FILENAME_CHARS),
+                mime_type: one_line_capped(&mime, MAX_MIME_CHARS),
                 size: part.body.size.max(0),
             });
         }
