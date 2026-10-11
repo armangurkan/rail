@@ -1,0 +1,66 @@
+//! The `/` filter line: the text, edited in place, and the operators Rail reads from it.
+
+use crossterm::event::{KeyCode, KeyEvent};
+use rail_core::store::filter::{MAX_FILTER_CHARS, parse};
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, Paragraph};
+
+use super::{Command, ModalOutcome};
+use crate::tui::text::{escape, fit, width};
+use crate::tui::theme::Theme;
+use crate::tui::widgets::text_input::TextInput;
+
+pub struct FilterLine {
+    input: TextInput,
+}
+
+impl FilterLine {
+    pub fn new(text: &str) -> Self {
+        let mut input = TextInput::default();
+        input.set_value(text);
+        Self { input }
+    }
+
+    /// The operators as Rail reads them, joined.
+    pub fn parsed(&self) -> String {
+        parse(self.input.value()).describe().join(" · ")
+    }
+
+    pub(super) fn key(&mut self, key: KeyEvent) -> ModalOutcome {
+        match key.code {
+            KeyCode::Enter => ModalOutcome::Close,
+            KeyCode::Esc => ModalOutcome::Run(Command::ClearFilter),
+            _ => {
+                let before = self.input.clone();
+                if !self.input.handle_key(key) {
+                    return ModalOutcome::Stay;
+                }
+                if self.input.value().chars().count() > MAX_FILTER_CHARS {
+                    self.input = before;
+                    return ModalOutcome::Stay;
+                }
+                ModalOutcome::Typed(self.input.value().to_string())
+            }
+        }
+    }
+
+    /// Drawn in the bottom row of `area`: `/text` and, muted, the parsed operators.
+    pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        let Some(y) = (area.y + area.height).checked_sub(1) else {
+            return;
+        };
+        let row = Rect::new(area.x, y, area.width, 1);
+        let cols = usize::from(area.width);
+        let typed = fit(&format!("/{}", escape(self.input.value())), cols);
+        let parsed = format!("   {}", escape(&self.parsed()));
+        let room = cols.saturating_sub(width(&typed));
+        let line = Line::from(vec![
+            Span::styled(typed, theme.accent),
+            Span::styled(fit(&parsed, room), theme.muted),
+        ]);
+        frame.render_widget(Clear, row);
+        frame.render_widget(Paragraph::new(line), row);
+    }
+}

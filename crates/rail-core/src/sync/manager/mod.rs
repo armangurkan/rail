@@ -19,8 +19,8 @@ use tokio::time::Instant;
 pub(crate) use self::parts::unobserved;
 use self::parts::{
     Engines, PlannedAccount, Prepared, Running, failed_status, finish_writer, initial_status, key,
-    named, not_running, not_syncing, read_config, retry_observer, shutting_down, stop_engine,
-    stop_engine_within, unsupported, writer_gone,
+    named, needs_login, not_running, not_syncing, read_config, retry_observer, shutting_down,
+    stop_engine, stop_engine_within, unsupported, writer_gone,
 };
 use super::batch::{Batch, StateUpdate};
 use super::engine::{Engine, EngineParts};
@@ -71,6 +71,13 @@ pub struct SearchTarget {
     pub name: String,
     pub account_id: i64,
     pub provider: Arc<dyn Provider>,
+}
+
+/// Whether an account can fetch bodies now: its engine's provider, or the error every id
+/// gets.
+pub enum Reach {
+    Ready(SearchTarget),
+    Unavailable(OpError),
 }
 
 pub struct SyncManager {
@@ -630,6 +637,29 @@ impl SyncManager {
             }
         }
         (targets, skipped)
+    }
+
+    /// The account `who` names (name or address), for `body.fetch`. An account no one
+    /// configured is an error; one paused for a login, Microsoft 365, or one without a running
+    /// engine is `Unavailable` with the reason.
+    pub async fn body_target(&self, who: &str) -> Result<Reach, OpError> {
+        self.settled().await;
+        let engines = self.engines.lock().await;
+        let all = self.board.all();
+        let Some(status) = all.iter().find(|s| named(s, who)) else {
+            return Err(not_syncing(who));
+        };
+        if status.needs_auth {
+            return Ok(Reach::Unavailable(needs_login(&status.name)));
+        }
+        Ok(match engines.running.get(&status.address) {
+            Some(running) => Reach::Ready(SearchTarget {
+                name: running.name.clone(),
+                account_id: running.account_id,
+                provider: running.provider.clone(),
+            }),
+            None => Reach::Unavailable(self.reason(&engines, status)),
+        })
     }
 
     /// Refuse new starts at once, then stop every engine at its next await point (all at

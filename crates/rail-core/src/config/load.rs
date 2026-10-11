@@ -225,7 +225,10 @@ unread = { bold = true }
         assert_eq!(c.accounts[0].client_secret.as_deref(), Some("shh"));
         assert_eq!(c.accounts[1].kind, AccountKind::M365);
         assert_eq!(c.accounts[1].tenant.as_deref(), Some("common"));
-        assert_eq!(c.keys.get("archive").map(String::as_str), Some("e"));
+        assert_eq!(
+            c.keys.get("archive").map(|k| k.get_ref().as_str()),
+            Some("e")
+        );
         assert!(c.theme.contains_key("unread"));
     }
 
@@ -239,6 +242,15 @@ unread = { bold = true }
         assert_eq!(c.general.split_threshold, 140);
         assert_eq!(c.general.secrets, SecretsBackend::Keyring);
         assert!(c.accounts.is_empty());
+    }
+
+    #[test]
+    fn icons_default_to_unicode_and_take_ascii() {
+        assert_eq!(p("").unwrap().general.icons, crate::config::Icons::Unicode);
+        let ascii = p("[general]\nicons = \"ascii\"\n").unwrap();
+        assert_eq!(ascii.general.icons, crate::config::Icons::Ascii);
+        let err = p("[general]\nicons = \"emoji\"\n").unwrap_err().to_string();
+        assert!(err.contains(":2:"), "{err}");
     }
 
     #[test]

@@ -157,6 +157,17 @@ pub(super) fn not_syncing(who: &str) -> OpError {
         .with_hint("`rail account list` shows the configured accounts")
 }
 
+/// Why an account paused for a login cannot fetch: its name is a config name (letters, digits,
+/// `-`, `_`), safe in the hint.
+pub(super) fn needs_login(name: &str) -> OpError {
+    OpError::new(
+        ErrorCode::Auth,
+        ErrorClass::Permanent,
+        "this account needs a new login",
+    )
+    .with_hint(format!("log in again with `rail account login {name}`"))
+}
+
 pub(super) fn unsupported() -> OpError {
     OpError::new(
         ErrorCode::Unsupported,

@@ -3,12 +3,20 @@
 //! screen is up.
 
 pub mod app;
+pub mod clock;
+pub mod data;
 pub mod effects;
+pub mod keys;
+pub mod modals;
+pub mod open;
 pub mod run;
 pub mod screen;
 pub mod screens;
 pub mod terminal;
 #[cfg(test)]
 pub mod test_util;
+pub mod text;
+#[cfg(test)]
+mod text_tests;
 pub mod theme;
 pub mod widgets;

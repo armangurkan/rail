@@ -137,7 +137,7 @@ fn ctrl_c_during_login_wait_restores_the_terminal_and_saves_nothing() {
     let entered = out
         .find("\x1b[?1049h")
         .expect("entered the alternate screen");
-    let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
+    let left = out.find("\x1b[?1049l").expect("left the alternate screen");
     assert!(left > entered, "{out:?}");
     assert!(out[left..].contains("setup cancelled"), "{out:?}");
     assert_eq!(status.code(), Some(1));
@@ -375,4 +375,215 @@ fn secrets_set_to_the_current_store_says_nothing_needed_changing() {
     assert!(screen.contains("already in place"), "{screen:?}");
     assert!(!screen.contains("Change? [y/N]"), "{screen:?}");
     assert_eq!(std::fs::read_to_string(&config).unwrap(), FILE_BACKEND);
+}
+
+/// Spec §7: a panic in the mail screen leaves the user's terminal restored, then prints.
+#[test]
+fn a_panic_in_the_mail_screen_restores_the_terminal() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    let command = format!(
+        "stty cols 100 rows 30; exec '{}'",
+        env!("CARGO_BIN_EXE_rail")
+    );
+    let mut script = Command::new("script");
+    rail_env(&mut script, &dir)
+        .env("RAIL_TEST_MAIL_PANIC", "1")
+        .args(["-q", "-e", "-c", &command, "/dev/null"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = Running(script.spawn().unwrap());
+    let mut keys = child.0.stdin.take().unwrap();
+    let output = collect(child.0.stdout.take().unwrap());
+    let shown = output.clone();
+    wait_until("the mail screen", &output, move || {
+        text(&shown).contains("All inboxes")
+    });
+    keys.write_all(b"x").unwrap();
+    keys.flush().unwrap();
+    let status = wait_for_exit(&mut child, &output);
+    drop(keys);
+    std::thread::sleep(Duration::from_millis(200));
+    let out = text(&output);
+    assert!(!status.success());
+    let entered = out
+        .find("\x1b[?1049h")
+        .expect("entered the alternate screen");
+    let left = out.find("\x1b[?1049l").expect("left the alternate screen");
+    let panicked = out
+        .rfind("rail test panic in the mail screen")
+        .expect("the panic message");
+    assert!(entered < left && left < panicked, "{out:?}");
+}
+
+/// Start `rail` under `script` and wait for `wanted` on the screen, then quit with `q`.
+fn mail_screen_shows(dir: &tempfile::TempDir, wanted: &str, tweak: impl FnOnce(&mut Command)) {
+    let command = format!(
+        "stty cols 100 rows 30; exec '{}'",
+        env!("CARGO_BIN_EXE_rail")
+    );
+    let mut script = Command::new("script");
+    rail_env(&mut script, dir)
+        .args(["-q", "-e", "-c", &command, "/dev/null"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    tweak(&mut script);
+    let mut child = Running(script.spawn().unwrap());
+    let mut keys = child.0.stdin.take().unwrap();
+    let output = collect(child.0.stdout.take().unwrap());
+    let shown = output.clone();
+    let wanted_text = wanted.to_string();
+    wait_until(wanted, &output, move || text(&shown).contains(&wanted_text));
+    keys.write_all(b"q").unwrap();
+    keys.flush().unwrap();
+    wait_for_exit(&mut child, &output);
+}
+
+#[test]
+fn a_store_that_is_not_set_up_shows_the_hint_in_the_list_area() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    mail_screen_shows(&dir, "Run `rail sync`", |_| {});
+}
+
+#[test]
+fn a_daemon_that_cannot_be_reached_shows_in_the_status_bar() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    // A runtime directory under a regular file can never be created, so no daemon can start.
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, b"x").unwrap();
+    mail_screen_shows(&dir, "daemon unreachable", |cmd| {
+        cmd.env("RAIL_RUNTIME_DIR", blocker.join("run"));
+    });
+}
+
+/// A store for `WORK_FILE_BACKEND`'s account holding one inbox thread whose body has HTML.
+fn seed_html_thread(dir: &tempfile::TempDir) {
+    use rail_core::provider::{Body, Envelope, FolderKind, Mailbox, RemoteFolder};
+    use rail_core::store::Store;
+    use rail_core::sync::Batch;
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let mut store = Store::open(&data.join("rail.db")).unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (name, kind, address) VALUES ('work', 'gmail', 'me@example.com')",
+            [],
+        )
+        .unwrap();
+    let envelope = Envelope {
+        remote_id: "m1".into(),
+        thread_id: "t1".into(),
+        subject: "Quarterly plan".into(),
+        from: vec![Mailbox {
+            name: Some("Tom".into()),
+            address: "tom@example.com".into(),
+        }],
+        date: 1_760_000_000,
+        internal_date: 1_760_000_000_000,
+        folders: vec!["INBOX".into()],
+        ..Envelope::default()
+    };
+    let body = Body {
+        text: "The plan is ready.".into(),
+        html: Some("<p>The plan is ready.</p>".into()),
+        ..Body::default()
+    };
+    let batch = Batch {
+        folders: Some(vec![RemoteFolder {
+            remote_id: "INBOX".into(),
+            name: "Inbox".into(),
+            kind: FolderKind::Inbox,
+        }]),
+        upserts: vec![envelope],
+        bodies: vec![("m1".into(), body)],
+        ..Batch::new(1)
+    };
+    store.apply(&batch, 1_760_000_000).unwrap();
+}
+
+/// Closing the terminal window or `kill` ends Rail as `q` does: the file `o` wrote is gone
+/// and the terminal is restored (spec §6: "deleted on close").
+#[test]
+fn sigterm_with_a_file_open_removes_it_and_restores_the_terminal() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    seed_html_thread(&dir);
+    let pid_file = dir.path().join("rail.pid");
+    let url_file = dir.path().join("url.txt");
+    // After `exec` the shell's pid is Rail's.
+    let command = format!(
+        "stty cols 100 rows 30; echo $$ > '{}'; exec '{}'",
+        pid_file.display(),
+        env!("CARGO_BIN_EXE_rail")
+    );
+    let mut script = Command::new("script");
+    rail_env(&mut script, &dir)
+        .env("RAIL_TEST_URL_FILE", &url_file)
+        .args(["-q", "-e", "-c", &command, "/dev/null"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = Running(script.spawn().unwrap());
+    let mut keys = child.0.stdin.take().unwrap();
+    let output = collect(child.0.stdout.take().unwrap());
+    let seen = |needle: &'static str| {
+        let output = output.clone();
+        move || text(&output).contains(needle)
+    };
+    wait_until("the thread in the list", &output, seen("Quarterly plan"));
+    keys.write_all(b"\r").unwrap();
+    keys.flush().unwrap();
+    wait_until("the reader", &output, seen("ready."));
+    keys.write_all(b"o").unwrap();
+    keys.flush().unwrap();
+    wait_until("the confirmation", &output, seen("Remote"));
+    keys.write_all(b"y").unwrap();
+    keys.flush().unwrap();
+    wait_until("the browser to be asked", &output, || url_file.exists());
+    let open_dir = dir.path().join("cache").join("open");
+    let files = || std::fs::read_dir(&open_dir).map_or(0, Iterator::count);
+    assert_eq!(files(), 1, "the file `o` wrote");
+
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    let killed = Command::new("kill")
+        .args(["-TERM", pid.trim()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let status = wait_for_exit(&mut child, &output);
+    drop(keys);
+    std::thread::sleep(Duration::from_millis(200));
+    let out = text(&output);
+    assert!(status.success(), "{status:?}: {out:?}");
+    assert_eq!(files(), 0, "the file went with Rail");
+    let entered = out
+        .find("\x1b[?1049h")
+        .expect("entered the alternate screen");
+    let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
+    assert!(entered < left, "{out:?}");
 }

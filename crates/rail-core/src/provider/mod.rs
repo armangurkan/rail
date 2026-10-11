@@ -5,6 +5,9 @@
 pub mod error;
 pub mod gmail;
 pub mod http;
+pub mod links;
+#[cfg(test)]
+mod links_tests;
 pub mod tokens;
 pub mod types;
 

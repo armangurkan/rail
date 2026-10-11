@@ -286,9 +286,11 @@ fn store_body(
     let Some((message, thread)) = message_row(tx, account, remote)? else {
         return Ok(());
     };
+    let links = (!body.links.is_empty()).then(|| json(&body.links));
     tx.execute(
-        "UPDATE messages SET body_text = ?2, body_html = ?3, body_fetched_at = ?4 WHERE id = ?1",
-        params![message, body.text, body.html, now],
+        "UPDATE messages SET body_text = ?2, body_html = ?3, body_fetched_at = ?4, links = ?5
+         WHERE id = ?1",
+        params![message, body.text, body.html, now, links],
     )?;
     tx.execute(
         "DELETE FROM attachments WHERE message_id = ?1",

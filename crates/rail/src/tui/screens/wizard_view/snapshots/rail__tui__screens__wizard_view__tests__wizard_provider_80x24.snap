@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/wizard_view.rs
+expression: text
+---
+ Rail setup      │
+                 │  Which provider hosts your mail?
+ ✓ Start         │
+ ▸ Provider      │  ▸ Gmail / Google Workspace
+   Instructions  │    Microsoft 365 / Outlook
+   Details       │
+ – Admin consent │
+   Login         │
+   Done          │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+
+↑/↓ move · Enter choose · Esc back · q quit

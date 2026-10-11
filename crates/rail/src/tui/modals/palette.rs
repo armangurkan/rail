@@ -1,0 +1,157 @@
+//! The `:` palette: every command, account and label, fuzzy-matched with `nucleo-matcher` as
+//! you type, each with the key bound to it.
+
+use crossterm::event::{KeyCode, KeyEvent};
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Config, Matcher};
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
+
+use super::{Command, ModalOutcome, boxed};
+use crate::tui::data::ScopeChoice;
+use crate::tui::keys::Action;
+use crate::tui::text::{escape, fit, pad, width};
+use crate::tui::theme::Theme;
+use crate::tui::widgets::text_input::TextInput;
+
+/// Rows of matches shown.
+const SHOWN: usize = 12;
+/// The palette's width, its border included.
+const PALETTE_WIDTH: u16 = 70;
+
+/// What an entry does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    Action(Action),
+    Errors,
+    Scope(ScopeChoice),
+}
+
+/// One entry: what it shows (raw: label names are outside text), what it is matched by, and
+/// the key bound to it (empty when none).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteEntry {
+    pub text: String,
+    pub search: String,
+    pub key: String,
+    pub target: Target,
+}
+
+struct Candidate<'a> {
+    index: usize,
+    text: &'a str,
+}
+
+impl AsRef<str> for Candidate<'_> {
+    fn as_ref(&self) -> &str {
+        self.text
+    }
+}
+
+pub struct Palette {
+    entries: Vec<PaletteEntry>,
+    input: TextInput,
+    matcher: Matcher,
+    /// Indices of the matching entries, best first.
+    shown: Vec<usize>,
+    selected: usize,
+}
+
+impl Palette {
+    pub fn new(entries: Vec<PaletteEntry>) -> Self {
+        let shown = (0..entries.len()).collect();
+        Self {
+            entries,
+            input: TextInput::default(),
+            matcher: Matcher::new(Config::DEFAULT),
+            shown,
+            selected: 0,
+        }
+    }
+
+    pub fn shown(&self) -> Vec<&PaletteEntry> {
+        self.shown
+            .iter()
+            .filter_map(|&i| self.entries.get(i))
+            .collect()
+    }
+
+    fn refilter(&mut self) {
+        let query = self.input.value();
+        self.shown = if query.trim().is_empty() {
+            (0..self.entries.len()).collect()
+        } else {
+            let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+            let candidates = self.entries.iter().enumerate().map(|(index, e)| Candidate {
+                index,
+                text: &e.search,
+            });
+            pattern
+                .match_list(candidates, &mut self.matcher)
+                .into_iter()
+                .map(|(candidate, _)| candidate.index)
+                .collect()
+        };
+        self.selected = 0;
+    }
+
+    pub(super) fn key(&mut self, key: KeyEvent) -> ModalOutcome {
+        match key.code {
+            KeyCode::Esc => ModalOutcome::Close,
+            KeyCode::Down => {
+                self.selected = (self.selected + 1).min(self.shown.len().saturating_sub(1));
+                ModalOutcome::Stay
+            }
+            KeyCode::Up => {
+                self.selected = self.selected.saturating_sub(1);
+                ModalOutcome::Stay
+            }
+            KeyCode::Enter => self
+                .shown
+                .get(self.selected)
+                .and_then(|&i| self.entries.get(i))
+                .map_or(ModalOutcome::Stay, |e| {
+                    ModalOutcome::Run(Command::Palette(e.target.clone()))
+                }),
+            _ => {
+                if self.input.handle_key(key) {
+                    self.refilter();
+                }
+                ModalOutcome::Stay
+            }
+        }
+    }
+
+    pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        let height = u16::try_from(SHOWN + 4).unwrap_or(u16::MAX);
+        let inner = boxed(frame, area, PALETTE_WIDTH, height, "Command palette", theme);
+        let cols = usize::from(inner.width);
+        let typed = format!(":{}▏", escape(self.input.value()));
+        let mut lines = vec![
+            Line::styled(fit(&typed, cols), theme.accent),
+            Line::default(),
+        ];
+        // A window of SHOWN rows that keeps the selection in view.
+        let first = (self.selected + 1).saturating_sub(SHOWN);
+        for (row, entry) in self.shown().into_iter().enumerate().skip(first).take(SHOWN) {
+            let style = if row == self.selected {
+                theme.selected
+            } else {
+                theme.text
+            };
+            let key = escape(&entry.key);
+            let room = cols.saturating_sub(width(&key) + 1);
+            lines.push(Line::from(vec![
+                Span::styled(pad(&escape(&entry.text), room), style),
+                Span::raw(" "),
+                Span::styled(key, theme.muted),
+            ]));
+        }
+        if self.shown.is_empty() {
+            lines.push(Line::styled("Nothing matches.", theme.muted));
+        }
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
+}

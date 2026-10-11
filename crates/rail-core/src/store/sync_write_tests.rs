@@ -671,3 +671,50 @@ fn backfilled_count_counts_sync_rows_inside_the_listing() {
     assert_eq!(store.backfilled_count(1, &below, None).unwrap(), 1);
     assert_eq!(store.backfilled_count(2, &all, None).unwrap(), 0);
 }
+
+#[test]
+fn a_body_stores_its_links_as_json_and_none_as_null() {
+    let mut store = store();
+    store
+        .apply(
+            &upserts(vec![
+                envelope("m1", "t1", DAY_MS),
+                envelope("m2", "t1", DAY_MS),
+            ]),
+            NOW,
+        )
+        .unwrap();
+    let with_links = Body {
+        text: "see[1]".into(),
+        links: vec!["https://a.example/\"q\"".into()],
+        ..Body::default()
+    };
+    let without = Body {
+        text: "plain".into(),
+        ..Body::default()
+    };
+    store
+        .apply(
+            &Batch {
+                bodies: vec![("m1".into(), with_links), ("m2".into(), without)],
+                ..Batch::new(1)
+            },
+            NOW,
+        )
+        .unwrap();
+    let links = |remote: &str| -> Option<String> {
+        store
+            .conn()
+            .query_row(
+                "SELECT links FROM messages WHERE remote_id = ?1",
+                params![remote],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        links("m1").as_deref(),
+        Some(r#"["https://a.example/\"q\""]"#)
+    );
+    assert_eq!(links("m2"), None);
+}

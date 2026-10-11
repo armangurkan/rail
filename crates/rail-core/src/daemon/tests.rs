@@ -30,6 +30,7 @@ fn the_registry_serves_exactly_the_implemented_operations() {
         names::ACCOUNT_LOGIN_BEGIN,
         names::ACCOUNT_REMOVE,
         names::ACCOUNTS_LIST,
+        names::BODY_FETCH,
         names::CONSENT_BEGIN,
         names::DAEMON_INFO,
         names::DAEMON_STOP,

@@ -22,6 +22,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 url.workspace = true
+unicode-width.workspace = true
+unicode-segmentation.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 futures-util.workspace = true
@@ -29,10 +31,13 @@ rmcp.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+jiff.workspace = true
+nucleo-matcher.workspace = true
 
 [dev-dependencies]
 rail-core = { workspace = true, features = ["test-gates"] }
 tempfile.workspace = true
+insta.workspace = true
 reqwest.workspace = true
 wiremock.workspace = true
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }

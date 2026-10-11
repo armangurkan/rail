@@ -1,20 +1,25 @@
 //! Helpers shared by the TUI unit tests.
 
+use std::collections::VecDeque;
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rail_core::config::{AccountConfig, AccountKind, Config};
+use rail_core::config::{AccountConfig, AccountKind, Config, Icons};
 use rail_core::daemon::{
     BeginGate, Connector, DaemonContext, Opener as DaemonOpener, SaveGate, ServeConfig, Server,
     SpawnFn,
 };
 use rail_core::onboarding::{Event, Wizard};
-use rail_core::ops::{BrowserEnv, OpError};
+use rail_core::ops::{AccountSyncStatus, BrowserEnv, OpError, SyncPhase};
 use rail_core::paths::Paths;
+use rail_core::provider::{Envelope, FolderKind, Mailbox, RemoteFolder};
+use rail_core::store::Store;
+use rail_core::sync::Batch;
 use ratatui::backend::TestBackend;
+use ratatui::style::Color;
 use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 use serde_json::json;
@@ -23,9 +28,13 @@ use url::Url;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::app::{Clipboard, Effect, Msg, TaskResult};
+use super::app::{Clipboard, Effect, Msg, TaskResult, TaskSink};
+use super::clock::Clock;
+use super::data::{DaemonLink, FakeDaemon, StoreReader};
 use super::effects::{EffectContext, Opener};
+use super::keys::Keymap;
 use super::screen::Screen;
+use super::screens::mail::{AccountEntry, MailContext};
 use super::screens::wizard::WizardScreen;
 use super::theme::Theme;
 
@@ -58,6 +67,16 @@ pub fn render_lines(width: u16, height: u16, draw: impl FnOnce(&mut Frame)) -> V
         .collect()
 }
 
+/// `render_lines` as one snapshot text: each row trimmed of trailing spaces (so an editor that
+/// trims them cannot break a snapshot), joined by line breaks.
+pub fn snapshot(width: u16, height: u16, draw: impl FnOnce(&mut Frame)) -> String {
+    render_lines(width, height, draw)
+        .iter()
+        .map(|row| row.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Records copies instead of touching the real clipboard.
 #[derive(Clone, Default)]
 pub struct RecordingClipboard(pub Arc<Mutex<Vec<String>>>);
@@ -76,19 +95,25 @@ impl Clipboard for RecordingClipboard {
 /// keys with `on_key`.
 pub struct Hello {
     pub typing: bool,
+    /// Whether the screen claims every key (see `Screen::claims_key`).
+    pub claims: bool,
     pub keys: Vec<KeyEvent>,
     /// Every `TaskResult::Copied` the screen was told about.
     pub copied: Vec<Result<(), String>>,
     pub on_key: Box<dyn FnMut(KeyEvent) -> Vec<Effect>>,
+    /// Quit before the first frame (see `Screen::start`).
+    pub quit_at_start: bool,
 }
 
 impl Default for Hello {
     fn default() -> Self {
         Self {
             typing: false,
+            claims: false,
             keys: Vec::new(),
             copied: Vec::new(),
             on_key: Box::new(|_| Vec::new()),
+            quit_at_start: false,
         }
     }
 }
@@ -115,8 +140,20 @@ impl Screen for Hello {
         );
     }
 
+    fn start(&mut self) -> Vec<Effect> {
+        if self.quit_at_start {
+            vec![Effect::Quit]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn captures_text(&self) -> bool {
         self.typing
+    }
+
+    fn claims_key(&self, _key: KeyEvent) -> bool {
+        self.claims
     }
 }
 
@@ -239,8 +276,17 @@ pub fn redirect_when_asked(mut urls: mpsc::UnboundedReceiver<Url>) -> tokio::tas
     })
 }
 
+/// The default keymap, shared.
+pub fn keymap() -> Arc<Keymap> {
+    Arc::new(Keymap::defaults())
+}
+
 pub fn wizard_screen() -> WizardScreen {
-    WizardScreen::new(Wizard::new(Some(existing_config()), None), test_ctx())
+    WizardScreen::new(
+        Wizard::new(Some(existing_config()), None),
+        test_ctx(),
+        keymap(),
+    )
 }
 
 pub fn press(screen: &mut WizardScreen, code: KeyCode) -> Vec<Effect> {
@@ -273,4 +319,164 @@ pub fn gmail_own_app_keys(address: &str) -> Vec<KeyEvent> {
     keys.extend("sec".chars().map(|c| key(KeyCode::Char(c))));
     keys.push(key(KeyCode::Enter));
     keys
+}
+
+/// Receive times in fixtures start here (2025-10-09, a fixed point: no test reads the clock).
+pub const BASE_MS: i64 = 1_760_000_000_000;
+
+/// A one-message fixture in the inbox, unread, from Sender <sender@example.com>, with
+/// subject `subject <id>`.
+pub fn mail_envelope(id: &str, thread: &str, ms: i64) -> Envelope {
+    Envelope {
+        remote_id: id.to_string(),
+        thread_id: thread.to_string(),
+        subject: format!("subject {id}"),
+        from: vec![Mailbox {
+            name: Some("Sender".into()),
+            address: "sender@example.com".into(),
+        }],
+        date: ms / 1000,
+        internal_date: ms,
+        snippet: format!("snippet {id}"),
+        folders: vec!["INBOX".into()],
+        ..Envelope::default()
+    }
+}
+
+/// `n` one-message inbox threads `{prefix}t0`.., a minute apart, the last the newest.
+pub fn inbox_threads(prefix: &str, n: usize) -> Vec<Envelope> {
+    (0..n)
+        .map(|i| {
+            let ms = BASE_MS + i64::try_from(i).unwrap() * 60_000;
+            mail_envelope(&format!("{prefix}m{i}"), &format!("{prefix}t{i}"), ms)
+        })
+        .collect()
+}
+
+/// A migrated store at `paths` with these accounts (name, address) and their Inbox,
+/// Projects and Sent folders, holding `envelopes` (each for the account at its index).
+pub fn seed_store(
+    paths: &Paths,
+    accounts: &[(&str, &str)],
+    envelopes: &[(usize, Envelope)],
+) -> Store {
+    let mut store = Store::open(&paths.db_file()).expect("open the store");
+    for (name, address) in accounts {
+        store
+            .conn()
+            .execute(
+                "INSERT INTO accounts (name, kind, address) VALUES (?1, 'gmail', ?2)",
+                [name, address],
+            )
+            .expect("insert an account");
+    }
+    let folders = vec![
+        RemoteFolder {
+            remote_id: "INBOX".into(),
+            name: "Inbox".into(),
+            kind: FolderKind::Inbox,
+        },
+        RemoteFolder {
+            remote_id: "Label_1".into(),
+            name: "Projects".into(),
+            kind: FolderKind::User,
+        },
+        RemoteFolder {
+            remote_id: "SENT".into(),
+            name: "Sent".into(),
+            kind: FolderKind::Sent,
+        },
+    ];
+    for index in 0..accounts.len() {
+        let id = i64::try_from(index).unwrap() + 1;
+        let upserts = envelopes
+            .iter()
+            .filter(|(i, _)| *i == index)
+            .map(|(_, e)| e.clone())
+            .collect();
+        let batch = Batch {
+            folders: Some(folders.clone()),
+            upserts,
+            ..Batch::new(id)
+        };
+        store.apply(&batch, BASE_MS / 1000).expect("seed the store");
+    }
+    store
+}
+
+/// The fixed "now" of every mail-screen test: 2025-10-10 12:40 UTC.
+pub const NOW: i64 = 1_760_100_000;
+
+/// An opener that records instead of starting a browser.
+pub fn recording_opener() -> (Opener, Arc<Mutex<Vec<Url>>>) {
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let log = opened.clone();
+    let opener: Opener = Arc::new(move |url: &Url| {
+        log.lock().expect("opener log").push(url.clone());
+        Ok(())
+    });
+    (opener, opened)
+}
+
+/// A mail context over the store at `paths`, a scripted daemon, a fixed clock in UTC, the
+/// default keymap and glyphs, hyperlinks off.
+pub fn mail_ctx(paths: &Paths, fake: Arc<FakeDaemon>) -> MailContext {
+    MailContext {
+        paths: paths.clone(),
+        keymap: keymap(),
+        store: StoreReader::new(paths.db_file()),
+        link: DaemonLink::fake(fake),
+        opener: recording_opener().0,
+        clock: Clock::fixed(NOW, jiff::tz::TimeZone::UTC),
+        icons: Icons::Unicode,
+        split_threshold: 140,
+        hyperlinks: false,
+    }
+}
+
+/// `work` <w@example.com> (cyan) and `home` <h@example.com> (magenta), in that order.
+pub fn work_and_home() -> Vec<AccountEntry> {
+    vec![
+        AccountEntry {
+            name: "work".into(),
+            address: "w@example.com".into(),
+            kind: AccountKind::Gmail,
+            color: Color::Cyan,
+        },
+        AccountEntry {
+            name: "home".into(),
+            address: "h@example.com".into(),
+            kind: AccountKind::Gmail,
+            color: Color::Magenta,
+        },
+    ]
+}
+
+pub fn status(name: &str, address: &str, phase: SyncPhase) -> AccountSyncStatus {
+    AccountSyncStatus {
+        phase,
+        last_success_at: Some(NOW - 60),
+        ..AccountSyncStatus::new(name, address, AccountKind::Gmail)
+    }
+}
+
+/// Run every job `effects` start, feeding what each reports back to `screen`, until nothing
+/// is left. Each job must finish (the fake daemon's always do); timers really sleep.
+pub async fn settle<S: Screen>(screen: &mut S, effects: Vec<Effect>) {
+    let mut queue: VecDeque<Effect> = effects.into();
+    let mut ran = 0;
+    while let Some(effect) = queue.pop_front() {
+        ran += 1;
+        assert!(ran < 1_000, "the effects never settled");
+        let Effect::Spawn(job) = effect else {
+            continue;
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tokio::time::timeout(Duration::from_secs(10), job(TaskSink::new(tx, 0)))
+            .await
+            .expect("a job finished in time");
+        while let Ok((_, result)) = rx.try_recv() {
+            queue.extend(screen.update(Msg::Task(result)));
+        }
+    }
 }

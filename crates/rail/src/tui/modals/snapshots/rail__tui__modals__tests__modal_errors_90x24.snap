@@ -1,0 +1,26 @@
+---
+source: crates/rail/src/tui/modals/tests.rs
+expression: text
+---
+
+
+  ┌ Recent errors ─────────────────────────────────────────────────────────────────────┐
+  │11:40  the connection to the daemon closed                                          │
+  │11:39  Rail does not open this link: javascript:alert(1)                            │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  │                                                                                    │
+  └────────────────────────────────────────────────────────────────────────────────────┘

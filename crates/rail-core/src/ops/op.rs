@@ -8,6 +8,7 @@ use super::accounts::{
     AccountAddRequest, AccountRemoveRequest, AccountRemoveResponse, BeginResponse,
     ConsentBeginRequest, LoginBeginRequest,
 };
+use super::body::{BodyFetchRequest, BodyFetchResponse};
 use super::daemon::{
     DaemonInfo, DaemonInfoRequest, DaemonStopRequest, DaemonStopResponse, HelloRequest,
     HelloResponse,
@@ -41,9 +42,10 @@ pub mod names {
     pub const SYNC_STATUS: &str = "sync.status";
     pub const SYNC_NOW: &str = "sync.now";
     pub const SEARCH: &str = "search";
+    pub const BODY_FETCH: &str = "body.fetch";
 
     /// Every user operation, in the order of the specs' tables.
-    pub const ALL: [&str; 15] = [
+    pub const ALL: [&str; 16] = [
         STATUS,
         ACCOUNTS_LIST,
         PRESETS_LIST,
@@ -59,6 +61,7 @@ pub mod names {
         SYNC_STATUS,
         SYNC_NOW,
         SEARCH,
+        BODY_FETCH,
     ];
 
     /// The daemon's own methods: the handshake and its lifecycle. Not user operations.
@@ -152,6 +155,10 @@ operation!(
 operation!(
     /// Search the store and the provider's whole mailbox.
     Search, names::SEARCH, SearchRequest, SearchResponse
+);
+operation!(
+    /// Fetch bodies the store does not hold yet; one outcome per message, never a body.
+    BodyFetch, names::BODY_FETCH, BodyFetchRequest, BodyFetchResponse
 );
 operation!(
     /// The handshake: protocol and Rail versions.

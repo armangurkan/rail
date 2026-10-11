@@ -17,16 +17,15 @@ terminal and want something in the spirit of mutt with threads, a unified inbox 
 readable HTML and a command palette. It also speaks MCP, so an AI coding agent can help you set it
 up without ever seeing your secrets.
 
-> **Rail is pre-1.0 and you cannot read mail in it yet.** Account setup, background sync and
-> search work today. The mail views (thread list, reader) are the next thing being built. Running
-> `rail` with an account configured prints that the TUI is not built yet and exits with
-> status 2.
+> **Rail is pre-1.0.** Account setup, background sync, search and reading mail work today;
+> actions (archive, label, reply, compose) are next.
 
 ## Contents
 
 - [Status](#status)
 - [Install](#install)
 - [Quick start](#quick-start)
+- [Reading mail](#reading-mail)
 - [Account setup](#account-setup)
 - [Using Rail from an AI agent (MCP)](#using-rail-from-an-ai-agent-mcp)
 - [Security and privacy](#security-and-privacy)
@@ -47,17 +46,21 @@ up without ever seeing your secrets.
 - Gmail sync into the local store: labels, message envelopes, and bodies of recent threads, kept
   current by a background daemon that can start at login (`rail daemon install`).
 - `rail search` over the local store and, through Gmail's own search, the whole mailbox.
+- Reading mail in the terminal: a unified inbox and per-account and per-label lists over the local
+  store, a sidebar with unread counts, a reader with folded quotes and numbered (clickable) links,
+  filter as you type, a command palette, keys you can change in `config.toml`, and `o` to open a
+  message's HTML in the browser. See [Reading mail](#reading-mail).
 - `rail doctor`, a single health check for config, store, tokens, sync and the daemon.
 - An MCP server (`rail mcp`) for setting up and inspecting Rail from an AI agent.
 
 **Coming**
 
-- Next: reading mail in the terminal (thread list, sidebar, reader, palette, display-quality HTML).
-- Then: actions (archive, label, delete) and composing and sending, with agent sends governed by
-  the per-account `ai_send` policy.
+- Next: actions (archive, label, delete, mark read) and composing and sending, with agent sends
+  governed by the per-account `ai_send` policy.
 - Then: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
   sync and are searched locally only.
-- Later: search operators, layout and theme options, inline images.
+- Later: search operators, layout and theme options, inline images, display-quality HTML in the
+  terminal.
 
 **Pre-1.0 caveats.** Config keys, command output and the store's schema may change between
 releases. The store migrates forward on its own; there is no downgrade path. Rail is tested on
@@ -80,6 +83,7 @@ of the new version replaces any older daemon still running.
 ## Quick start
 
 ```sh
+rail                       # read your mail
 rail setup                 # add an account: guided steps, then a browser login
 rail sync                  # fill the local store and watch progress
 rail search invoice        # one line per matching thread
@@ -87,25 +91,26 @@ rail doctor                # check that everything is in order
 rail daemon install        # keep syncing after you log out and back in
 ```
 
-1. **`rail setup`** opens the setup wizard (running `rail` with no config does the same). Choose a
+1. **`rail`** opens the mail screen (see [Reading mail](#reading-mail)).
+2. **`rail setup`** opens the setup wizard (running `rail` with no config does the same). Choose a
    preset your organisation gave you, or set up your own app: the wizard shows the portal steps
    from [Account setup](#account-setup), opens the portal with `o`, asks for the values it gave
    you, and logs you in through the browser. It needs an interactive terminal; in scripts use
    [`rail account add` with flags](#commands).
-2. **`rail sync`** wakes the background sync and shows progress (counts only, never mail) until
+3. **`rail sync`** wakes the background sync and shows progress (counts only, never mail) until
    each account is caught up. Newest mail arrives first, so recent mail is searchable within
    seconds, but a first sync of a large mailbox takes hours (about 250 messages a minute, under
    Gmail's quota). Set [`history_days`](#sync-settings) to sync only recent mail. Ctrl-C stops
    watching, not the sync.
-3. **`rail search <query>`** prints date, account, sender and subject for each matching thread,
+4. **`rail search <query>`** prints date, account, sender and subject for each matching thread,
    newest first. Gmail's search syntax works for the Gmail part.
-4. **`rail doctor`** reports on the config, store, token backend, each account's tokens and sync,
+5. **`rail doctor`** reports on the config, store, token backend, each account's tokens and sync,
    the daemon and the login unit.
-5. **`rail daemon install`** writes a systemd user unit (Linux) or a launchd agent (macOS) so the
+6. **`rail daemon install`** writes a systemd user unit (Linux) or a launchd agent (macOS) so the
    daemon starts at login. Without it, the daemon starts on demand whenever a `rail` command needs
    it and keeps running while any account is configured.
 
-### Wizard keys
+### Keys
 
 | Key | Action |
 |---|---|
@@ -121,12 +126,157 @@ rail daemon install        # keep syncing after you log out and back in
 | `q` | Quit, except while typing in a text field. |
 | `Ctrl-C` | Quit from anywhere. While an account is being saved, it waits for the save to finish. |
 
+These are the wizard's default keys, the `wizard.*` actions in the table below; each can be changed.
+
 The wizard exits 0 if at least one account was saved and 1 with `setup cancelled; nothing was
 saved` otherwise. Quitting while the browser login is pending cancels that login. An account whose
 save had already started is always finished, never left half-written; Rail then says so and exits
 0. If you quit after an admin-consent error, Rail prints the admin-consent URL once the terminal is
 back so you can forward it to an administrator. When stdout is not a terminal, every way of opening
 the wizard prints a hint and exits 2.
+
+Every key Rail reads is an *action* with an id and a default key. Change one in `config.toml`:
+
+```toml
+[keys]
+"list.filter" = "/"
+"reader.open_browser" = "O"
+"global.palette" = ":"
+```
+
+A key name is a character (`a`, `O`, `/`), a named key (`enter`, `esc`, `tab`, `backtab`,
+`space`, `up`, `down`, `left`, `right`, `pageup`, `pagedown`, `home`, `end`, `f1` to `f12`),
+either with `ctrl-`, `alt-` or `shift-` in front (`ctrl-r`, `shift-tab`), or two keys with a
+space between them for a sequence (`g x`). A key you set replaces that action's default keys.
+Both `rail` and `rail setup` refuse to start, naming the file and line and exiting 1, when `[keys]`
+names an action it does not know, a key it cannot read, `Ctrl-C` (which always quits), or a key
+another action of the same view already uses (a key that starts another action's sequence
+counts). They check before the terminal changes. A view's own key wins over a global one: `q`
+closes the reader but quits from the list.
+
+The `global.*`, `list.*`, `sidebar.*` and `reader.*` actions below take effect in the mail screen
+and the `wizard.*` ones in the setup wizard. In the mail screen `?` lists the keys of the view you
+are in, with `*` after the ones set in `config.toml`.
+
+| Action | Works in | Default keys | What it does |
+|---|---|---|---|
+| `global.quit` | global | `q` | Quit Rail. |
+| `global.palette` | global | `:` | Open the command palette. |
+| `global.help` | global | `?` | Show the keys for this view. |
+| `list.open` | list | `enter` | Open the thread. |
+| `list.filter` | list | `/` | Filter the list as you type. |
+| `list.sidebar` | list, sidebar | `b` | Show or hide the sidebar. |
+| `list.account_1` | list, sidebar | `1` | Go to account 1's inbox. |
+| `list.account_2` | list, sidebar | `2` | Go to account 2's inbox. |
+| `list.account_3` | list, sidebar | `3` | Go to account 3's inbox. |
+| `list.account_4` | list, sidebar | `4` | Go to account 4's inbox. |
+| `list.account_5` | list, sidebar | `5` | Go to account 5's inbox. |
+| `list.account_6` | list, sidebar | `6` | Go to account 6's inbox. |
+| `list.account_7` | list, sidebar | `7` | Go to account 7's inbox. |
+| `list.account_8` | list, sidebar | `8` | Go to account 8's inbox. |
+| `list.account_9` | list, sidebar | `9` | Go to account 9's inbox. |
+| `list.unified` | list, sidebar | `0` | Go to the unified inbox. |
+| `list.refresh` | list, sidebar, reader | `ctrl-r` | Sync now; reconnect to the daemon. |
+| `list.down` | list | `j` `down` | Next thread. |
+| `list.up` | list | `k` `up` | Previous thread. |
+| `list.page_down` | list | `pagedown` `ctrl-d` | One page down. |
+| `list.page_up` | list | `pageup` `ctrl-u` | One page up. |
+| `list.top` | list | `home` `g g` | Newest thread. |
+| `list.bottom` | list | `end` `G` | Oldest thread. |
+| `sidebar.focus` | list, sidebar | `tab` | Move between the sidebar and the list. |
+| `sidebar.down` | sidebar | `j` `down` | Next mailbox. |
+| `sidebar.up` | sidebar | `k` `up` | Previous mailbox. |
+| `sidebar.open` | sidebar | `enter` | Show this mailbox. |
+| `reader.next` | reader | `n` | Next message. |
+| `reader.prev` | reader | `p` | Previous message. |
+| `reader.expand` | reader | `tab` | Expand or collapse the message. |
+| `reader.unfold` | reader | `enter` | Show or hide the quoted lines. |
+| `reader.open_browser` | reader | `o` | Open the message in the browser. |
+| `reader.attachments` | reader | `a` | List the attachments. |
+| `reader.follow_link` | reader | `g x` | Open a link. |
+| `reader.back` | reader | `q` `esc` | Close the thread. |
+| `reader.down` | reader | `j` `down` | Next line. |
+| `reader.up` | reader | `k` `up` | Previous line. |
+| `reader.page_down` | reader | `pagedown` `space` | One page down. |
+| `reader.page_up` | reader | `pageup` | One page up. |
+| `reader.top` | reader | `home` `g g` | First line. |
+| `reader.bottom` | reader | `end` `G` | Last line. |
+| `wizard.back` | wizard | `esc` | Go back one step. |
+| `wizard.portal` | wizard | `f1` | Open the provider portal or the preset's help. |
+| `wizard.next_field` | wizard | `tab` | Next field. |
+| `wizard.prev_field` | wizard | `backtab` | Previous field. |
+| `wizard.next` | wizard | `enter` | Choose or continue. |
+| `wizard.up` | wizard | `up` `k` | Move up. |
+| `wizard.down` | wizard | `down` `j` | Move down. |
+| `wizard.page_up` | wizard | `pageup` | Scroll one page up. |
+| `wizard.page_down` | wizard | `pagedown` | Scroll one page down. |
+| `wizard.top` | wizard | `home` | Scroll to the top. |
+| `wizard.bottom` | wizard | `end` | Scroll to the end. |
+| `wizard.open_portal` | wizard | `o` | Open the portal from the instructions. |
+| `wizard.toggle` | wizard | `space` | Tick or untick the checkbox. |
+| `wizard.retry` | wizard | `r` | Retry after an error. |
+| `wizard.copy_url` | wizard | `c` | Copy the URL shown. |
+
+## Reading mail
+
+`rail` with an account configured opens the mail screen. It needs an interactive terminal; in a
+pipe it prints a hint and exits 2. It reads the local store at once, and connects to the background
+daemon (starting it if needed) for sync progress. If the store is not set up yet, the list says so
+and points to `rail sync`; if the daemon cannot be reached, the status bar says so and `Ctrl-r`
+retries.
+
+The thread list shows the unified inbox: the account's colour dot, the date, the people, the
+message count, `★` for starred and `📎` for attachments, and the subject; unread threads are bold.
+`1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
+and wider; `b` toggles it, `Tab` moves into it) lists every account and label with its unread
+count; `Enter` opens one.
+
+`Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
+beside the list; narrower, it covers the screen. `q` or `Esc` closes it. Messages are oldest
+first; unread ones and the latest are expanded. `j`/`k` move the cursor, `n`/`p` jump between
+messages, `Tab` expands or collapses one, and `Enter` on `[n quoted lines]` shows the quoted text.
+
+HTML mail is shown as Rail's plain-text rendering, with each link as a numbered marker such as
+`[1]`; in terminals that support hyperlinks (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows
+Terminal, Hyper, foot, Alacritty, GNOME Terminal and other VTE terminals; not inside tmux or
+screen) the marker is clickable. `g x` opens a link: the marker on the cursor line, or the number
+you type when the line has none or several. Rail shows the address first and opens only `http`,
+`https` and `mailto` links. `a` lists the thread's attachments (name, type, size); opening and
+saving them is not possible in this version.
+
+`o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file in
+the `open` folder of its cache directory (`~/.cache/rail/open/` on Linux; `RAIL_CACHE_DIR`
+overrides the cache directory) with scripts, frames and connections blocked, and removes the file
+when you close the reader, quit Rail, close the terminal window or stop Rail with `kill`. Files a
+crashed session left behind are removed the next time the mail screen starts, once they are a day
+old. The first time in a session Rail asks first, because
+**remote images, styles, fonts and media in the message load in the browser**, which can tell the
+sender you opened it; Rail itself never loads them. A message whose body is not stored yet is
+fetched first. A message with no HTML part says so: its text is all there is.
+
+Bodies of recent mail (`body_cache_days`) are already in the store. An older message shows
+**fetching…** while the daemon fetches its body from Gmail; the rest of the thread stays readable,
+and the text appears when it lands. If the fetch fails the message says why.
+
+`/` filters the list as you type: plain words search subjects, senders, recipients and stored
+bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`, `is:unread`, `is:starred`,
+`before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
+`account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread matches when
+one of its messages matches all of them. Anything else is searched as words, and the status bar
+shows how Rail read your filter, so a typo such as `form:dana` shows up as a word. `Enter` keeps
+the filter; `Esc` clears it. The filter searches the local store only (`rail search` also asks
+Gmail).
+
+`:` opens the command palette: type a few letters of a key action for the current view, an account
+or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
+the session's recent errors. `?` shows the keys of the view you are in, marking with `*` the ones
+set in `config.toml`.
+
+The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
+the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`
+for Microsoft 365 accounts), whether the daemon can be reached (`connecting to the daemon…`,
+`daemon unreachable`), and notices. When the daemon cannot be reached the list still reads from
+the store; `Ctrl-r` reconnects (and starts a sync).
 
 ## Account setup
 
@@ -358,6 +508,10 @@ syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. M
 finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail does not
 change or delete mail on the server.
 
+Remote content in mail is loaded only by your browser, never by Rail, and only when you ask for
+it: `o` opens a message's HTML there, after you confirm once per session, and `g x` opens a link
+there, after you have seen its address. The reader shows text only.
+
 **Mail and AI agents.** Through MCP, mail content never reaches an agent today. Text from outside
 Rail (preset files, provider and system error messages) comes back to the agent marked as
 untrusted: quoted on one line, cut to 200 characters, and preceded by a notice that it is data, not
@@ -405,7 +559,10 @@ running syncs carry on unchanged.
 | `poll_interval` | `"60s"` | How often each account is checked for new mail. At least `5s`. |
 | `history_days` | `0` | How many days of mail the store keeps; `0` is the whole mailbox. |
 | `body_cache_days` | `30` | Bodies of threads with mail this recent are fetched ahead of time. |
-| `editor`, `layout`, `split_threshold` | unset, `"auto"`, `140` | Reserved for the mail UI; accepted but no effect yet. |
+| `icons` | `"unicode"` | `"unicode"` or `"ascii"`. The mail screen's glyphs; `"ascii"` swaps them for `*`, `+`, `@`, `ok`, `~`, `|`, `v` and `>`, for fonts without them. |
+| `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
+| `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
+| `editor` | unset | Reserved for composing; accepted but no effect yet. |
 
 ### `[[accounts]]`
 
@@ -546,7 +703,7 @@ pass in.
 
 | Command | What it does |
 |---|---|
-| `rail` | Opens the setup wizard when there is no config. With one, prints that the TUI is not built yet and exits 2. |
+| `rail` | Opens the mail screen when an account is configured, otherwise the setup wizard. Both need a terminal: in a pipe they print a hint and exit 2. A bad `config.toml` or `[keys]` entry is reported with its line before the terminal changes (exit 1). |
 | `rail setup` | Opens the setup wizard to add an account. |
 | `rail account add [gmail\|m365]` | With no flags, opens the wizard (with that provider chosen, if given). |
 | `rail account add <gmail\|m365> --address <addr> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>] [--store-secret-in-1password]` | Adds an account without the wizard, then opens the browser login. A partial set of flags exits 1 and names the missing one. |
@@ -556,7 +713,7 @@ pass in.
 | `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves them there (`--no-migrate`: setting only; each account then needs `rail account login`). Asks `Change? [y/N]`; interactive only. |
 | `rail sync [<account>] [--no-wait]` | Wakes the sync for one account or all and shows progress until caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs `rail account login`, 130 on Ctrl-C. If nothing changes for 10 minutes it stops watching (the sync goes on). `--no-wait` wakes it and exits 0. |
 | `rail search <query> [--account <account>] [--limit N]` | Searches the local store and, for Gmail, the whole mailbox. One line per thread: date (UTC), account, sender, subject; never a snippet or body. `--limit` is 1 to 100 (default 20). Results go to stdout, notes to stderr. Exits 1 for an unknown account, or when nothing was found and a Gmail search failed. |
-| `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit. Exits non-zero for config, store, token-backend and token-read errors, and for a Gmail account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
+| `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit; notes a `general.layout` this version treats as `auto`. Exits non-zero for config, store, token-backend and token-read errors, and for a Gmail account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
 | `rail daemon status` | Shows whether the daemon runs, with pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any save in flight is written; waits up to 35 seconds. |
 | `rail daemon run` | Runs the daemon in the foreground (Ctrl-C or SIGTERM stops it cleanly). Rarely needed. |

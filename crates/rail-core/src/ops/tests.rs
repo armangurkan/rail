@@ -45,6 +45,7 @@ fn every_operation_name_is_unique_and_matches_its_marker() {
         SyncStatus::NAME,
         SyncNow::NAME,
         Search::NAME,
+        BodyFetch::NAME,
     ];
     assert_eq!(markers, names::ALL);
     for internal in [Hello::NAME, DaemonInfoOp::NAME, DaemonStop::NAME] {
@@ -70,6 +71,7 @@ fn every_request_and_response_has_an_object_schema() {
         object_schemas::<SyncStatus>(),
         object_schemas::<SyncNow>(),
         object_schemas::<Search>(),
+        object_schemas::<BodyFetch>(),
     ];
     for (request, response) in all {
         assert_eq!(request["type"], "object", "{request}");
@@ -628,6 +630,7 @@ fn a_doctor_report_keeps_config_parser_text_in_detail() {
         secrets_error: None,
         secrets_checked: false,
         accounts: Vec::new(),
+        layout_note: None,
     };
     assert!(!report.is_healthy());
     assert_isolated(report.config_error.as_ref().unwrap());
@@ -659,4 +662,32 @@ fn sync_requests_refuse_unknown_fields_and_hello_takes_an_optional_browser() {
     }
     .checked();
     assert_eq!(checked.vars(), [("DISPLAY", ":0")]);
+}
+
+#[test]
+fn body_fetch_outcomes_are_flat_and_carry_no_body() {
+    let response = BodyFetchResponse {
+        results: vec![
+            BodyFetchResult {
+                message_id: "m1".into(),
+                outcome: BodyOutcome::Fetched,
+            },
+            BodyFetchResult {
+                message_id: "m2".into(),
+                outcome: BodyOutcome::Failed(OpError::invalid_input("x")),
+            },
+        ],
+    };
+    let value = serde_json::to_value(&response).unwrap();
+    assert_eq!(
+        value["results"][0],
+        json!({"message_id": "m1", "outcome": "fetched"})
+    );
+    assert_eq!(
+        value["results"][1]["outcome"]["failed"]["code"],
+        "invalid_input"
+    );
+    let back: BodyFetchResponse = serde_json::from_value(value).unwrap();
+    assert_eq!(back, response);
+    assert!(properties::<BodyFetchRequest>().contains("message_ids"));
 }

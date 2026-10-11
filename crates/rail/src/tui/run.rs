@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
@@ -15,6 +16,7 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use super::app::{App, Effect, Job, Msg, Osc52, TaggedResult, TaskResult, TaskSink, update, view};
+use super::keys::Keymap;
 use super::screen::Screen;
 use super::terminal;
 
@@ -24,10 +26,11 @@ pub const TICK: Duration = Duration::from_millis(250);
 /// The message a panicking job reports when its payload is not a string.
 const PANIC_FALLBACK: &str = "task panicked";
 
-/// Run `screen` full-screen until it quits, restore the terminal, and hand the screen back.
-pub async fn run_app<S: Screen>(screen: S) -> io::Result<S> {
+/// Run `screen` full-screen with `keymap` until it quits, restore the terminal, and hand the
+/// screen back.
+pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>) -> io::Result<S> {
     let mut tui = terminal::enter()?;
-    let mut app = App::new(screen, Box::new(Osc52));
+    let mut app = App::new(screen, Box::new(Osc52)).with_keymap(keymap);
     let events = Box::pin(EventStream::new());
     let result = run_loop(&mut tui.terminal, &mut app, events).await;
     drop(tui);
@@ -50,6 +53,14 @@ where
     let mut tasks = Tasks::new(sink);
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut signals = QuitSignals::new()?;
+    let mut pending: VecDeque<Msg> = VecDeque::new();
+    for effect in app.screen.start() {
+        pending.extend(apply(effect, app, &mut tasks));
+    }
+    for msg in pending {
+        dispatch(msg, app, &mut tasks);
+    }
     draw(terminal, app)?;
     while !app.quit {
         let msg = tokio::select! {
@@ -66,11 +77,56 @@ where
                 None => continue,
             },
             _ = tick.tick() => Msg::Tick,
+            () = signals.recv() => {
+                app.quit = true;
+                continue;
+            }
         };
         dispatch(msg, app, &mut tasks);
         draw(terminal, app)?;
     }
     Ok(())
+}
+
+/// SIGHUP (the terminal window closed) and SIGTERM. Either ends the loop as `q` does, so the
+/// screen is dropped (and the files `o` wrote removed) and the terminal restored.
+#[cfg(unix)]
+struct QuitSignals {
+    hangup: tokio::signal::unix::Signal,
+    terminate: tokio::signal::unix::Signal,
+}
+
+#[cfg(unix)]
+impl QuitSignals {
+    fn new() -> io::Result<Self> {
+        use tokio::signal::unix::{SignalKind, signal};
+        Ok(Self {
+            hangup: signal(SignalKind::hangup())?,
+            terminate: signal(SignalKind::terminate())?,
+        })
+    }
+
+    async fn recv(&mut self) {
+        tokio::select! {
+            _ = self.hangup.recv() => {}
+            _ = self.terminate.recv() => {}
+        }
+    }
+}
+
+/// No such signals here: never fires.
+#[cfg(not(unix))]
+struct QuitSignals;
+
+#[cfg(not(unix))]
+impl QuitSignals {
+    fn new() -> io::Result<Self> {
+        Ok(Self)
+    }
+
+    async fn recv(&mut self) {
+        std::future::pending::<()>().await;
+    }
 }
 
 fn to_msg(event: TermEvent) -> Option<Msg> {
@@ -270,6 +326,20 @@ mod tests {
             .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
             .collect();
         assert_eq!(row, "hello from rail");
+    }
+
+    #[tokio::test]
+    async fn start_effects_run_before_the_first_key() {
+        let mut terminal = terminal();
+        let screen = Hello {
+            quit_at_start: true,
+            ..Hello::default()
+        };
+        let mut app = App::new(screen, Box::new(RecordingClipboard::default()));
+        let events = keys(vec![key(KeyCode::Char('x'))]);
+        run_loop(&mut terminal, &mut app, events).await.unwrap();
+        assert!(app.quit);
+        assert!(app.screen.keys.is_empty(), "quit before reading a key");
     }
 
     #[tokio::test]

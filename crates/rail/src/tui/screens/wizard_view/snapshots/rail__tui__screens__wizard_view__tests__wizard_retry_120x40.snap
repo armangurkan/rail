@@ -1,0 +1,44 @@
+---
+source: crates/rail/src/tui/screens/wizard_view.rs
+expression: text
+---
+ Rail setup      │
+                 │  Log in
+ ✓ Start         │
+ ✓ Provider      │  The login did not finish. Retry it, or go back to change the details.
+ ✓ Instructions  │
+ ✓ Details       │
+ – Admin consent │
+ ▸ Login         │
+   Done          │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │  Temporary problem: boom
+                 │  Press r to retry.
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+
+Enter continue · r retry · Esc back · q quit

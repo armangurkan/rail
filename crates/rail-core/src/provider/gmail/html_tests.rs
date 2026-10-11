@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::html::{MAX_TAG_BYTES, html_text};
+use super::html::{MAX_TAG_BYTES, html_render, html_text};
 
 const SMALL: usize = 256 * 1024;
 const LARGE: usize = 10 * 1024 * 1024;
@@ -168,7 +168,7 @@ fn links_keep_their_text_and_references_decode() {
                 &lt;notes&gt; &eacute;t&eacute; &#233;&#x20AC; &nbsp;&hellip; &unknown; &amp</p>";
     assert_eq!(
         html_text(html),
-        "See the report & <notes> été é€ \u{a0}… &unknown; &amp"
+        "See the report[1] & <notes> été é€ \u{a0}… &unknown; &amp"
     );
 }
 
@@ -216,4 +216,111 @@ fn head_floods_stay_linear() {
     both_sizes("head metas", "<head>", "<meta a=b>", true);
     both_sizes("head styles", "<head>", "<style></sty", false);
     both_sizes("head comments", "<head>", "<!-- x --> ", true);
+}
+
+#[test]
+fn links_are_numbered_by_first_appearance() {
+    let rendered = html_render(
+        "<p><a href=\"https://a.example/x?y=1&amp;z=2\">Read more</a> and \
+         <A HREF='mailto:dana@example.com'>mail Dana</A>, \
+         <a title=\"href=javascript:evil\" href=https://a.example/x?y=1&z=2>again</a>.</p>",
+    );
+    assert_eq!(rendered.text, "Read more[1] and mail Dana[2], again[1].");
+    assert_eq!(
+        rendered.links,
+        ["https://a.example/x?y=1&z=2", "mailto:dana@example.com"]
+    );
+}
+
+#[test]
+fn refused_and_missing_addresses_get_no_marker() {
+    let rendered = html_render(
+        "<a href=\"javascript:alert(1)\">x</a> <a href=\"data:,y\">y</a> \
+         <a href=\"/relative\">z</a> <a name=\"top\">w</a> <a href>v</a> \
+         <a href=\"https://e.com/\u{1}\">u</a> <a href=\"  https://ok.example  \">t</a>",
+    );
+    assert_eq!(rendered.text, "x y z w v u t[1]");
+    assert_eq!(rendered.links, ["https://ok.example"]);
+}
+
+#[test]
+fn an_unclosed_link_is_marked_where_the_next_begins_or_at_the_end() {
+    let rendered =
+        html_render("<a href=\"https://a.example\">one <a href=\"https://b.example\">two");
+    assert_eq!(rendered.text, "one [1]two[2]");
+    assert_eq!(rendered.links.len(), 2);
+}
+
+#[test]
+fn link_caps_hold_in_html() {
+    let many: String = (0..250)
+        .map(|n| format!("<a href=\"https://e.com/{n}\">{n}</a> "))
+        .collect();
+    let rendered = html_render(&many);
+    assert_eq!(rendered.links.len(), 200);
+    assert!(
+        rendered.text.contains("199[200]"),
+        "{}",
+        &rendered.text[..80]
+    );
+    assert!(
+        rendered.text.contains(" 200 201 "),
+        "no markers after the cap"
+    );
+    let long = format!("<a href=\"https://e.com/{}\">long</a>", "a".repeat(2049));
+    assert_eq!(html_render(&long).text, "long");
+    // An address is measured after its character references are decoded.
+    let encoded = format!("<a href=\"https://e.com/{}\">x</a>", "&#x61;".repeat(400));
+    let rendered = html_render(&encoded);
+    assert_eq!(rendered.text, "x[1]");
+    assert_eq!(
+        rendered.links,
+        [format!("https://e.com/{}", "a".repeat(400))]
+    );
+}
+
+#[test]
+fn link_floods_stay_linear_and_short() {
+    both_sizes(
+        "anchors",
+        "",
+        "<a href=\"https://example.com/a\">x</a>",
+        true,
+    );
+    // An anchor never closed keeps its marker for the end of the text, after the tail; every
+    // anchor shares the one address, hence the one number.
+    for (name, pattern) in [
+        ("bare anchors", "<a href=http:>"),
+        ("unclosed anchors", "<a href=\"https://e.com/\">"),
+    ] {
+        for (size, limit) in [(SMALL, SMALL_LIMIT), (LARGE, LARGE_LIMIT)] {
+            let text = bounded(&format!("{name} @{size}"), &build("", pattern, size), limit);
+            assert!(text.ends_with("zzend\n[1]"), "{name}: {:?}", tail(&text));
+        }
+    }
+    // Many attributes before href, still within one tag's byte cap.
+    let attributes: String = (0..300).map(|i| format!(" x{i}=\"v\"")).collect();
+    both_sizes(
+        "anchors with many attributes",
+        "",
+        &format!("<a{attributes} href=\"https://e.com/\">y</a>"),
+        true,
+    );
+}
+
+#[test]
+fn a_marker_follows_everything_inside_its_link() {
+    let marked = |html: &str| html_render(html).text;
+    assert_eq!(
+        marked("<a href=\"https://a.example\"><div>Text</div></a>"),
+        "Text\n[1]"
+    );
+    assert_eq!(
+        marked("<a href=\"https://a.example\"><table><tr><td>Button</td></tr></table></a>"),
+        "Button\n\n[1]"
+    );
+    assert_eq!(
+        marked("<a href=\"https://a.example\">Line one<br>line two</a>"),
+        "Line one\nline two[1]"
+    );
 }

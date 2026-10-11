@@ -27,6 +27,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 async-trait = "0.1.92"
 fastrand = "2.5"
 url = "2.5"
+unicode-width = "0.2.2"
+unicode-segmentation = "1.13.3"
 icu_properties = "2.2"
 humantime-serde = "1.1"
 clap = { version = "4.6", features = ["derive"] }
@@ -43,6 +45,9 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 schemars = "1.2.2"
 fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 sha2 = "0.11"
+insta = { version = "1.49.0", default-features = false }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
+nucleo-matcher = "0.3.1"
 rmcp = { version = "3.5.1", default-features = false, features = ["server", "macros", "transport-io", "elicitation", "schemars"] }
 
 [workspace.lints.rust]

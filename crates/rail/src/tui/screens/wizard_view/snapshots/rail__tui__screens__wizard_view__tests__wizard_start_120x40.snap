@@ -1,0 +1,44 @@
+---
+source: crates/rail/src/tui/screens/wizard_view.rs
+expression: text
+---
+ Rail setup      │
+                 │  How do you want to set up your account?
+ ▸ Start         │
+   Provider      │  ▸ Use a preset from my organisation
+   Instructions  │    Set up my own app
+   Details       │
+ – Admin consent │
+   Login         │
+   Done          │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+
+↑/↓ move · Enter choose · Esc back · q quit

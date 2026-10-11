@@ -81,13 +81,63 @@ fn version_flag_prints_name_and_version() {
 }
 
 #[test]
-fn rail_with_a_config_says_the_tui_is_not_built_yet() {
+fn rail_with_a_config_but_no_account_opens_the_wizard_which_needs_a_terminal() {
     let dir = tempfile::tempdir().unwrap();
     write_config(&dir, "[general]\nsecrets = \"file\"\n");
     let out = rail_cmd(&dir).output().expect("run rail");
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("not built yet"), "got {stderr:?}");
+    assert!(
+        stderr.contains("setup wizard needs an interactive terminal"),
+        "got {stderr:?}"
+    );
+    assert!(!stderr.contains("not built yet"), "got {stderr:?}");
+}
+
+#[test]
+fn rail_with_an_account_in_a_pipe_says_the_mail_screen_needs_a_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    let out = bounded(&mut rail_cmd(&dir));
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("mail screen needs an interactive terminal"),
+        "got {stderr:?}"
+    );
+}
+
+#[test]
+fn a_bad_keys_entry_stops_rail_with_its_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(
+        &dir,
+        &format!("{WORK_FILE_BACKEND}\n[keys]\n\"list.archive\" = \"e\"\n"),
+    );
+    let out = bounded(rail_cmd(&dir).args(["setup"]));
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("config.toml:12:"), "got {stderr:?}");
+    assert!(
+        stderr.contains("\"list.archive\" is not an action Rail knows"),
+        "got {stderr:?}"
+    );
+}
+
+#[test]
+fn a_bad_keys_entry_stops_plain_rail_with_its_line_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(
+        &dir,
+        &format!("{WORK_FILE_BACKEND}\n[keys]\n\"list.archive\" = \"e\"\n"),
+    );
+    let out = bounded(&mut rail_cmd(&dir));
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("config.toml:12:"), "got {stderr:?}");
 }
 
 #[test]

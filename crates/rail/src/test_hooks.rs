@@ -43,6 +43,12 @@ pub fn service_log() -> Option<std::path::PathBuf> {
     var("RAIL_TEST_SERVICE_LOG").map(Into::into)
 }
 
+/// Make the mail screen panic on its first key, so a binary test can check that the terminal
+/// is restored.
+pub fn mail_panic() -> bool {
+    var("RAIL_TEST_MAIL_PANIC").is_some()
+}
+
 fn var(name: &str) -> Option<String> {
     if !cfg!(debug_assertions) {
         return None;

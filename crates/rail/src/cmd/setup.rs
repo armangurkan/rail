@@ -1,8 +1,10 @@
-//! The entry points that open the onboarding wizard: `rail` on first run, `rail setup`, and
-//! `rail account add` without flags. The wizard never starts when stdout is not a terminal.
+//! The entry points that open the onboarding wizard (`rail setup`, `rail account add` without
+//! flags) and `rail` itself, which opens the mail screen once an account exists. The wizard
+//! never starts when stdout is not a terminal.
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use rail_core::config::{AccountKind, load_text_or_empty};
 use rail_core::onboarding::Wizard;
@@ -11,37 +13,49 @@ use url::Url;
 
 use crate::cmd::account::report as report_error;
 use crate::tui::effects::{EffectContext, Settled};
+use crate::tui::keys::Keymap;
 use crate::tui::run::run_app;
 use crate::tui::screens::wizard::WizardScreen;
 
 /// Printed instead of starting the wizard in a pipe.
 pub const PIPE_HINT: &str = "rail: the setup wizard needs an interactive terminal; use `rail account add <gmail|m365> --address <address> --client-id <id>` instead";
 
-const NOT_BUILT: &str = "rail: the TUI is not built yet; run `rail --help` for available commands";
-
-/// `rail` with no subcommand: the wizard on first run, otherwise the placeholder until the
-/// Phase 4 TUI exists.
+/// `rail` with no subcommand: the wizard when no account is configured yet, otherwise the
+/// mail screen. A broken config fails here, with its line, before the terminal changes.
 pub async fn first_run(paths: &Paths) -> color_eyre::Result<ExitCode> {
-    if paths.config_file().exists() {
-        eprintln!("{NOT_BUILT}");
-        return Ok(ExitCode::from(2));
+    if !paths.config_file().exists() {
+        return wizard(paths, None).await;
     }
-    wizard(paths, None).await
+    let (text, config) = load_text_or_empty(&paths.config_file())?;
+    if config.accounts.is_empty() {
+        return wizard(paths, None).await;
+    }
+    crate::cmd::mail::run(paths, &text, &config).await
 }
 
 /// Run the wizard full-screen. Everything it prints, it prints after the terminal is back.
 pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre::Result<ExitCode> {
+    // A broken config.toml (or [keys] entry) fails here, with its line number, before the
+    // terminal changes.
+    let (text, config) = load_text_or_empty(&paths.config_file())?;
+    let keymap = Arc::new(Keymap::from_config(
+        &config.keys,
+        &text,
+        &paths.config_file(),
+    )?);
     if !std::io::stdout().is_terminal() {
         eprintln!("{PIPE_HINT}");
         return Ok(ExitCode::from(2));
     }
-    // A broken config.toml fails here, with its line number, before the terminal changes.
-    let (_, config) = load_text_or_empty(&paths.config_file())?;
     // The daemon starts (or fails, with its reason) before the terminal changes.
     let ctx = EffectContext::new(paths.clone());
     ctx.daemon.client().await.map_err(report_error)?;
-    let screen = WizardScreen::new(Wizard::new(Some(config), kind_hint), ctx.clone());
-    let screen = run_app(screen).await;
+    let screen = WizardScreen::new(
+        Wizard::new(Some(config), kind_hint),
+        ctx.clone(),
+        keymap.clone(),
+    );
+    let screen = run_app(screen, keymap).await;
     // A quit mid-login leaves nothing waiting in the daemon.
     let settled = ctx.settle().await;
     let screen = screen?;

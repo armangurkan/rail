@@ -15,6 +15,8 @@ never let a secret reach a log or the terminal.
 crates/rail-core/        Library: paths, config, store, auth, onboarding, operations, daemon, sync. No terminal dependency.
   src/config/            TOML model, loading with line-numbered errors, comment-preserving edits
   src/store/             SQLite open, migrations, repositories
+    store/view.rs        Read-only queries the mail screen runs: thread pages, the sidebar, one thread, a message's HTML
+    store/filter.rs      The filter line's syntax as SQL conditions
   src/auth/              Secret stores (keyring, file, 1Password), OAuth endpoints, loopback listener, login and admin consent, token refresh
   src/onboarding/        Presets and the setup wizard's pure state machine
   src/ops/               The operation layer: every request and response type, OpError, Untrusted
@@ -23,10 +25,17 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
   src/guide/             Google and Microsoft setup steps as versioned data
   src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries) and the Gmail provider with its HTML-to-text scanner
   src/sync/              Per-account sync engines, backfill and history passes, the single store writer, search
+    sync/body_fetch.rs   Fetches bodies the store does not hold yet (the `body.fetch` operation)
   src/doctor.rs          The `rail doctor` checks
 crates/rail/             Binary: clap CLI, logging, and the account, daemon, doctor, mcp, search, secrets, setup and sync commands
   src/cmd/mcp/           The MCP server: tools, the setup prompt, confirmation through elicitation, summaries
   src/tui/               App shell: terminal guard, event loop, widgets, the wizard screen and its effects
+    tui/keys             Actions, their default keys and `[keys]` overrides: the keymap every screen reads
+    tui/text             Escaping, width, wrapping and hyperlinks for text that came from outside
+    tui/data             The mail screen's read side (the store reader) and its link to the daemon
+    tui/screens/mail     The mail screen: thread list, sidebar, status bar
+    tui/screens/reader   The reader: messages, folded quotes, numbered links
+    tui/modals           The palette, filter line, help, confirmations and the error list
   tests/                 End-to-end tests against the built binary, in a pseudo-terminal, and over MCP
 assets/brand/            Logos and the app icon
 deny.toml                Licence and advisory policy for `cargo deny`
@@ -51,13 +60,28 @@ temporary directories and in-process mock servers; nothing may touch the real XD
 real OS keyring, a real browser, a real 1Password account (a fake `op` script stands in), a real
 systemd or launchd unit, or the network.
 
+### Snapshot tests
+
+Screens are checked with [insta](https://insta.rs) snapshots of a `TestBackend` frame: the
+`.snap` files live in a `snapshots/` directory next to the test module and are committed.
+
+- A new snapshot: `INSTA_UPDATE=unseen cargo test -p rail <test>` writes it; read it before
+  committing.
+- A change you meant: `cargo test` fails and writes `<name>.snap.new` beside the old file. Review
+  with `cargo insta review` (from `cargo install cargo-insta`), or compare the two files and
+  rename the `.snap.new` over the `.snap`.
+- CI never writes snapshots (insta sees `CI`): a missing or changed snapshot fails the build.
+- Snapshot rows are trimmed of trailing spaces, and every clock in a snapshot test is fixed, in
+  UTC; hyperlinks are off.
+
 ### Test hooks
 
 Debug builds honour a few `RAIL_TEST_*` environment variables so the binary tests can stand in for
 the browser (`RAIL_TEST_OPENER`), the token endpoint (`RAIL_TEST_TOKEN_URL`), the Gmail API root
 (`RAIL_TEST_GMAIL_URL`), shorten the daemon's idle timeout (`RAIL_TEST_IDLE_SECS`,
-`RAIL_TEST_IDLE_WITH_ACCOUNTS`) and `rail sync`'s stall watch (`RAIL_TEST_SYNC_STALL_SECS`), and
-record the `systemctl`/`launchctl` commands `rail daemon install` would run instead of running them
+`RAIL_TEST_IDLE_WITH_ACCOUNTS`) and `rail sync`'s stall watch (`RAIL_TEST_SYNC_STALL_SECS`), make
+the mail screen panic on its first key (`RAIL_TEST_MAIL_PANIC`, for the terminal-restore test),
+and record the `systemctl`/`launchctl` commands `rail daemon install` would run instead of running them
 (`RAIL_TEST_SERVICE_LOG`). Release builds ignore them all. Every binary test also sets
 `XDG_CONFIG_HOME` (and, on macOS, `HOME`) inside its temporary directory. One unit test checks the
 generated systemd unit with `systemd-analyze verify` and is skipped where that is missing; the

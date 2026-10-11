@@ -1,18 +1,22 @@
 //! The local SQLite store. One file, WAL mode, FTS5.
 
 pub mod accounts;
+pub mod filter;
 pub mod migrations;
 mod rollup;
 pub mod sync_read;
 mod sync_write;
 #[cfg(test)]
 mod sync_write_tests;
+pub mod view;
+#[cfg(test)]
+mod view_tests;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use accounts::AccountRow;
-pub use sync_read::{StoreCounts, StoredHit, SyncStateRow, fts_query};
+pub use sync_read::{StoreCounts, StoredBody, StoredHit, SyncStateRow, fts_query};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags};
 
@@ -168,7 +172,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::params;
+    use rusqlite::{OptionalExtension, params};
 
     fn table_names(store: &Store) -> Vec<String> {
         let mut stmt = store
@@ -495,7 +499,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!((version, migrations::LATEST_VERSION), (3, 3));
+        assert_eq!((version, migrations::LATEST_VERSION), (4, 4));
         let store = Store { conn };
         let state = store.sync_state(1).unwrap();
         assert_eq!(state.backfill_before, Some(1_700_000_000_000));
@@ -548,5 +552,50 @@ mod tests {
         assert!(matches!(err, StoreError::Sqlite(_)), "{err}");
         assert!(!path.exists(), "no file was created");
         assert!(!dir.path().join("rail.db-wal").exists());
+    }
+
+    #[test]
+    fn version_4_adds_links_and_the_date_index_and_keeps_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rail.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            for (version, sql) in [
+                (1, include_str!("migrations/0001_init.sql")),
+                (2, include_str!("migrations/0002_sync.sql")),
+                (3, include_str!("migrations/0003_backfill_token.sql")),
+            ] {
+                conn.execute_batch(sql).unwrap();
+                conn.pragma_update(None, "user_version", version).unwrap();
+            }
+            conn.execute(
+                "INSERT INTO accounts (name, kind, address) VALUES ('a', 'gmail', 'a@example.com')",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 4);
+        let n: i64 = store
+            .conn()
+            .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        let links: Option<String> = store
+            .conn()
+            .query_row("SELECT links FROM messages LIMIT 1", [], |r| r.get(0))
+            .optional()
+            .unwrap()
+            .flatten();
+        assert_eq!(links, None);
+        let index: i64 = store
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'threads_by_date'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
     }
 }

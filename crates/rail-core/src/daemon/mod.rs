@@ -14,6 +14,8 @@ mod version;
 pub mod wire;
 
 #[cfg(test)]
+mod body_tests;
+#[cfg(test)]
 mod connect_tests;
 #[cfg(test)]
 mod login_tests;

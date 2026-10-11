@@ -3,6 +3,7 @@
 //! these definitions. Operations execute only in the daemon.
 
 pub mod accounts;
+pub mod body;
 pub mod confirm;
 pub mod daemon;
 pub mod error;
@@ -22,6 +23,10 @@ pub use accounts::{
     AccountAddRequest, AccountRemoveRequest, AccountRemoveResponse, AgentAccountAdd,
     AgentAccountRemove, BeginResponse, ClientSecretInput, ConsentBeginRequest, LoginBeginRequest,
     NO_SECRETS_FROM_AGENTS, OP_REFERENCE_PREFIX, SavedAccount,
+};
+pub use body::{
+    BodyFetchRequest, BodyFetchResponse, BodyFetchResult, BodyOutcome, MAX_BODY_FETCH,
+    MAX_MESSAGE_ID_CHARS,
 };
 pub use confirm::{ConfirmPlan, MAX_NAME_CHARS, plan_digest, shown};
 pub use daemon::{

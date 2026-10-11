@@ -42,6 +42,10 @@ pub struct DoctorReport {
     /// False when the probe was skipped because the config did not load.
     pub secrets_checked: bool,
     pub accounts: Vec<AccountStatus>,
+    /// A configuration note that changes nothing's health (an accepted value this version
+    /// treats as another).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_note: Option<String>,
 }
 
 impl DoctorReport {

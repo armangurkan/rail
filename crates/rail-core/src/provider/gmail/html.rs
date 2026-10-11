@@ -5,6 +5,11 @@
 //! fetches nothing and runs nothing:
 //!
 //! - text is copied, white space collapsed to one space;
+//! - an `<a>` with an `href` Rail keeps (`provider::links::allowed`) becomes a `[n]` marker
+//!   after its text, numbered by first appearance; the addresses come back with the text
+//!   (`html_render`); a link closes only at the next `<a>`, at `</a>` or at the end of the
+//!   text, so its marker always follows everything inside it, blocks included. The
+//!   `<a>` tag is read once more, within its byte cap, to find `href`;
 //! - tags are read only for their first few name bytes (block tags make line breaks, cells a
 //!   space); attributes are skipped, quotes honoured only to find the tag's end, and a tag
 //!   longer than `MAX_TAG_BYTES` ends there;
@@ -14,7 +19,10 @@
 //! - character references are decoded: numeric ones (never to a control character other than
 //!   a line break or tab) and a small table of common names; anything else stays as written.
 //!
-//! The text is never longer than the HTML.
+//! The text is never longer than the HTML: the shortest anchor Rail numbers, `<a href=http:>`,
+//! is 14 bytes and its marker at most `[200]`, 5 bytes.
+
+use crate::provider::links::{MAX_LINK_BYTES, Numbering, Rendered};
 
 /// Bytes one tag (or `<!...>` declaration) may span before Rail treats it as closed.
 pub(crate) const MAX_TAG_BYTES: usize = 4096;
@@ -146,21 +154,34 @@ const ENTITIES: &[(&[u8], char)] = &[
     (b"Uuml", 'Ü'),
 ];
 
-/// `html` as plain text (see the module documentation).
-pub(crate) fn html_text(html: &str) -> String {
+/// `html` as plain text with link markers, and the addresses they stand for.
+pub(crate) fn html_render(html: &str) -> Rendered {
     let mut scanner = Scanner {
         bytes: html.as_bytes(),
         out: Vec::with_capacity(html.len().min(1 << 20)),
         space: false,
         newlines: 0,
+        links: Numbering::default(),
+        open: None,
     };
     scanner.run();
+    scanner.close_link();
     while scanner.out.last() == Some(&b'\n') {
         scanner.out.pop();
     }
     // Only whole UTF-8 sequences of the input and whole encoded characters are written.
-    String::from_utf8(scanner.out)
-        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+    let text = String::from_utf8(scanner.out)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+    Rendered {
+        text,
+        links: scanner.links.into_links(),
+    }
+}
+
+/// `html` as plain text (see the module documentation), for the scanner's own tests.
+#[cfg(test)]
+pub(crate) fn html_text(html: &str) -> String {
+    html_render(html).text
 }
 
 fn is_space(b: u8) -> bool {
@@ -196,6 +217,10 @@ struct Scanner<'a> {
     space: bool,
     /// Line breaks at the end of `out`.
     newlines: usize,
+    /// The message's links so far.
+    links: Numbering,
+    /// The number of the `<a>` still open, whose marker goes after its text.
+    open: Option<usize>,
 }
 
 impl Scanner<'_> {
@@ -257,6 +282,23 @@ impl Scanner<'_> {
         }
     }
 
+    /// An `<a>` whose attributes are `bytes[from..end]`: the marker of the one still open goes
+    /// out first, then this one's address is numbered.
+    fn open_link(&mut self, from: usize, end: usize) {
+        self.close_link();
+        let attributes = &self.bytes[from.min(end)..end];
+        self.open = href(attributes).and_then(|address| self.links.number(&address));
+    }
+
+    /// The marker of the open `<a>`, if it has one.
+    fn close_link(&mut self) {
+        if let Some(number) = self.open.take() {
+            self.flush_space();
+            self.out.extend_from_slice(format!("[{number}]").as_bytes());
+            self.newlines = 0;
+        }
+    }
+
     /// What starts with `<` at `at`: a comment, a declaration, a tag, or a plain `<`.
     fn markup(&mut self, at: usize) -> usize {
         let rest = &self.bytes[at..];
@@ -274,6 +316,14 @@ impl Scanner<'_> {
         }
         let (name, after_name) = self.name(name_at, at);
         let end = self.tag_end(after_name, at);
+        if name.get() == Some(b"a".as_slice()) {
+            if closing {
+                self.close_link();
+            } else {
+                self.open_link(after_name, end);
+            }
+            return end;
+        }
         if name.is_in(BLOCK) {
             self.newline();
         } else if name.is_in(CELL) {
@@ -424,6 +474,91 @@ impl Scanner<'_> {
             }
         }
     }
+}
+
+/// The `href` value among `attributes` (from the end of the tag name to the end of the tag),
+/// character references decoded and white space trimmed. Quotes of other attributes are
+/// honoured, so `title="href=x"` is not an `href`.
+fn href(attributes: &[u8]) -> Option<String> {
+    let mut at = 0;
+    while at < attributes.len() {
+        while attributes
+            .get(at)
+            .is_some_and(|&b| is_space(b) || b == b'/')
+        {
+            at += 1;
+        }
+        let start = at;
+        while attributes
+            .get(at)
+            .is_some_and(|&b| !is_space(b) && !matches!(b, b'=' | b'>' | b'/'))
+        {
+            at += 1;
+        }
+        let name = &attributes[start..at];
+        while attributes.get(at).is_some_and(|&b| is_space(b)) {
+            at += 1;
+        }
+        if attributes.get(at) != Some(&b'=') {
+            at += usize::from(name.is_empty());
+            continue;
+        }
+        at += 1;
+        while attributes.get(at).is_some_and(|&b| is_space(b)) {
+            at += 1;
+        }
+        let (value, next) = attribute_value(attributes, at);
+        if name.eq_ignore_ascii_case(b"href") {
+            return decode_value(value);
+        }
+        at = next;
+    }
+    None
+}
+
+/// The value starting at `at` (quoted or bare) and where scanning goes on.
+fn attribute_value(attributes: &[u8], at: usize) -> (&[u8], usize) {
+    match attributes.get(at) {
+        Some(&quote @ (b'"' | b'\'')) => {
+            let start = at + 1;
+            let end = attributes[start..]
+                .iter()
+                .position(|&b| b == quote)
+                .map_or(attributes.len(), |p| start + p);
+            (&attributes[start..end], end + 1)
+        }
+        _ => {
+            let start = at.min(attributes.len());
+            let end = attributes[start..]
+                .iter()
+                .position(|&b| is_space(b) || b == b'>')
+                .map_or(attributes.len(), |p| start + p);
+            (&attributes[start..end], end)
+        }
+    }
+}
+
+/// An attribute value with its character references decoded and white space trimmed. A value
+/// over twice `MAX_LINK_BYTES` is no address Rail keeps, so it is not decoded at all.
+fn decode_value(value: &[u8]) -> Option<String> {
+    if value.len() > 2 * MAX_LINK_BYTES {
+        return None;
+    }
+    let mut out = Vec::with_capacity(value.len());
+    let mut at = 0;
+    while at < value.len() {
+        if value[at] == b'&'
+            && let Some((c, end)) = decode_reference(value, at)
+        {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            at = end;
+            continue;
+        }
+        out.push(value[at]);
+        at += 1;
+    }
+    Some(String::from_utf8_lossy(&out).trim().to_string())
 }
 
 /// The character and the end of the reference starting with `&` at `at`.

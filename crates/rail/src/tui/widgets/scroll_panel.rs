@@ -1,6 +1,5 @@
 //! A scrollable, wrapped text panel with a scrollbar.
 
-use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
@@ -16,19 +15,29 @@ pub struct ScrollPanel {
     offset: u16,
 }
 
+/// A step a [`ScrollPanel`] takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scroll {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+}
+
 impl ScrollPanel {
-    /// Scroll for a navigation key. `lines` is the number of wrapped rows (see [`line_count`])
-    /// and `page` how far a page key moves, also in rows. Returns true when the offset changed.
-    pub fn handle_key(&mut self, key: KeyEvent, lines: u16, page: u16) -> bool {
+    /// Scroll one step. `lines` is the number of wrapped rows (see [`line_count`]) and `page`
+    /// how far a page moves, also in rows. Returns true when the offset changed.
+    pub fn scroll(&mut self, step: Scroll, lines: u16, page: u16) -> bool {
         let last = lines.saturating_sub(page);
-        let next = match key.code {
-            KeyCode::Up | KeyCode::Char('k') => self.offset.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => self.offset.saturating_add(1),
-            KeyCode::PageUp => self.offset.saturating_sub(page),
-            KeyCode::PageDown => self.offset.saturating_add(page),
-            KeyCode::Home => 0,
-            KeyCode::End => last,
-            _ => return false,
+        let next = match step {
+            Scroll::Up => self.offset.saturating_sub(1),
+            Scroll::Down => self.offset.saturating_add(1),
+            Scroll::PageUp => self.offset.saturating_sub(page),
+            Scroll::PageDown => self.offset.saturating_add(page),
+            Scroll::Top => 0,
+            Scroll::Bottom => last,
         }
         .min(last);
         let changed = next != self.offset;
@@ -120,7 +129,7 @@ impl Widget for ScrollView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::test_util::{SIZES, key, render_lines};
+    use crate::tui::test_util::{SIZES, render_lines};
 
     fn text() -> String {
         (1..=30).map(|n| format!("line {n}\n")).collect()
@@ -131,19 +140,12 @@ mod tests {
         let mut panel = ScrollPanel::default();
         let lines = line_count(&text(), 40);
         assert_eq!(lines, 30);
-        assert!(
-            !panel.handle_key(key(KeyCode::Up), lines, 10),
-            "already at the top"
-        );
-        assert!(panel.handle_key(key(KeyCode::Down), lines, 10));
-        assert!(panel.handle_key(key(KeyCode::PageDown), lines, 10));
-        assert!(panel.handle_key(key(KeyCode::End), lines, 10));
-        assert!(
-            !panel.handle_key(key(KeyCode::Down), lines, 10),
-            "already at the end"
-        );
-        assert!(panel.handle_key(key(KeyCode::Home), lines, 10));
-        assert!(!panel.handle_key(key(KeyCode::Char('x')), lines, 10));
+        assert!(!panel.scroll(Scroll::Up, lines, 10), "already at the top");
+        assert!(panel.scroll(Scroll::Down, lines, 10));
+        assert!(panel.scroll(Scroll::PageDown, lines, 10));
+        assert!(panel.scroll(Scroll::Bottom, lines, 10));
+        assert!(!panel.scroll(Scroll::Down, lines, 10), "already at the end");
+        assert!(panel.scroll(Scroll::Top, lines, 10));
     }
 
     #[test]
@@ -152,7 +154,7 @@ mod tests {
         let text = text();
         let mut panel = ScrollPanel::default();
         for _ in 0..3 {
-            panel.handle_key(key(KeyCode::Down), line_count(&text, 40), 10);
+            panel.scroll(Scroll::Down, line_count(&text, 40), 10);
         }
         for (width, height) in SIZES {
             let lines = render_lines(width, height, |frame| {
@@ -190,7 +192,7 @@ mod tests {
         let rows = line_count(&text, inner);
         assert!(rows > 10, "each source line should wrap to several rows");
         let mut panel = ScrollPanel::default();
-        assert!(panel.handle_key(key(KeyCode::End), rows, 10));
+        assert!(panel.scroll(Scroll::Bottom, rows, 10));
         let lines = render_lines(80, 10, |frame| {
             frame.render_widget(panel.widget(&text, &theme), frame.area());
         });

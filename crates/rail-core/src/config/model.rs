@@ -12,8 +12,10 @@ pub struct Config {
     pub general: General,
     #[serde(default)]
     pub accounts: Vec<AccountConfig>,
+    /// `[keys]`: action id to key name. The values keep their position in the file, so the
+    /// TUI's keymap can name the line of a bad one.
     #[serde(default)]
-    pub keys: BTreeMap<String, String>,
+    pub keys: BTreeMap<String, toml::Spanned<String>>,
     /// Free-form until the TUI phase defines the theme schema.
     #[serde(default)]
     pub theme: BTreeMap<String, toml::Value>,
@@ -47,6 +49,7 @@ pub struct General {
     pub history_days: u32,
     pub layout: Layout,
     pub split_threshold: u16,
+    pub icons: Icons,
     pub secrets: SecretsBackend,
 }
 
@@ -59,6 +62,7 @@ impl Default for General {
             history_days: 0,
             layout: Layout::Auto,
             split_threshold: 140,
+            icons: Icons::Unicode,
             secrets: SecretsBackend::Keyring,
         }
     }
@@ -70,6 +74,16 @@ pub enum Layout {
     Auto,
     Split,
     Stack,
+}
+
+/// `general.icons`: the glyphs of the mail screen (`ascii` for terminals or fonts without
+/// them).
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Icons {
+    #[default]
+    Unicode,
+    Ascii,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

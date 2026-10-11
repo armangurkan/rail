@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/wizard_view.rs
+expression: text
+---
+ Rail setup      │
+                 │  Register Rail with your provider
+ ✓ Start         │
+ ✓ Provider      │  1. In Google Cloud Console create a project and enable   ▲
+ ▸ Instructions  │  the Gmail API.                                           █
+   Details       │  2. OAuth consent screen: choose External, then set the   █
+ – Admin consent │  publishing status to "In production". An app left in     █
+   Login         │  Testing expires refresh tokens after 7 days.             █
+   Done          │  3. Credentials: create an OAuth client ID of type Desktop█
+                 │  app.                                                     █
+                 │  4. Copy the client ID and the client secret into the next█
+                 │  step.                                                    ║
+                 │                                                           ║
+                 │  Scope Rail asks for:                                     ║
+                 │  https://www.googleapis.com/auth/gmail.modify             ║
+                 │                                                           ║
+                 │  Redirect URI: Desktop app clients accept http://127.0.0.1║
+                 │  on any port; there is nothing to add.                    ║
+                 │                                                           ▼
+                 │  Portal: https://console.cloud.google.com/apis/credentials
+                 │
+                 │
+
+↑/↓ scroll · o open the portal · Enter continue · Esc back

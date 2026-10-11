@@ -705,6 +705,7 @@ fn only_reads_and_idempotent_operations_are_resent() {
         names::GUIDE_PROVIDER,
         names::PENDING_WAIT,
         names::PENDING_CANCEL,
+        names::BODY_FETCH,
     ] {
         assert!(super::connect::retry_safe(safe), "{safe}");
     }

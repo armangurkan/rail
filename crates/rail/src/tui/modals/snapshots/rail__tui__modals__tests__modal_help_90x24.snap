@@ -1,0 +1,27 @@
+---
+source: crates/rail/src/tui/modals/tests.rs
+expression: text
+---
+
+     ┌ Keys ────────────────────────────────────────────────────────────────────────┐
+     │Thread list                                                                   │
+     │  Enter                Open the thread                                        │
+     │  f *                  Filter the list as you type                            │
+     │  b                    Show or hide the sidebar                               │
+     │  1                    Go to account 1's inbox                                │
+     │  2                    Go to account 2's inbox                                │
+     │  3                    Go to account 3's inbox                                │
+     │  4                    Go to account 4's inbox                                │
+     │  5                    Go to account 5's inbox                                │
+     │  6                    Go to account 6's inbox                                │
+     │  7                    Go to account 7's inbox                                │
+     │  8                    Go to account 8's inbox                                │
+     │  9                    Go to account 9's inbox                                │
+     │  0                    Go to the unified inbox                                │
+     │  Ctrl-r               Sync now; reconnect to the daemon                      │
+     │  j, ↓                 Next thread                                            │
+     │  k, ↑                 Previous thread                                        │
+     │  PgDn, Ctrl-d         One page down                                          │
+     │  PgUp, Ctrl-u         One page up                                            │
+     │  Home, g g            Newest thread                                          │
+     └──────────────────────────────────────────────────────────────────────────────┘

@@ -177,6 +177,9 @@ pub struct Body {
     /// True when the body was over `MAX_BODY_BYTES` and `text` ends with the marker.
     pub truncated: bool,
     pub attachments: Vec<AttachmentMeta>,
+    /// The addresses the text's `[n]` markers stand for (link `n` is `links[n - 1]`), at most
+    /// `links::MAX_LINKS`. Outside text: validated again before use.
+    pub links: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

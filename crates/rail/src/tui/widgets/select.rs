@@ -1,6 +1,5 @@
 //! A single-choice list, and the checkbox the wizard uses for the administrator flag.
 
-use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -21,6 +20,14 @@ pub enum SelectOutcome {
     Moved,
     Chosen(usize),
     Ignored,
+}
+
+/// A step a [`Select`] takes. The screen turns keys into steps through the keymap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Nav {
+    Up,
+    Down,
+    Choose,
 }
 
 impl Select {
@@ -50,16 +57,15 @@ impl Select {
         self.items = items;
     }
 
-    /// Up/Down (or k/j) move, Enter chooses; anything else is ignored.
-    pub fn handle_key(&mut self, key: KeyEvent) -> SelectOutcome {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => self.step(false),
-            KeyCode::Down | KeyCode::Char('j') => self.step(true),
-            KeyCode::Enter => self
+    /// Up and Down move, Choose picks the highlighted item.
+    pub fn handle(&mut self, nav: Nav) -> SelectOutcome {
+        match nav {
+            Nav::Up => self.step(false),
+            Nav::Down => self.step(true),
+            Nav::Choose => self
                 .state
                 .selected()
                 .map_or(SelectOutcome::Ignored, SelectOutcome::Chosen),
-            _ => SelectOutcome::Ignored,
         }
     }
 
@@ -141,7 +147,7 @@ impl Widget for Checkbox<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::test_util::{SIZES, key, render_lines};
+    use crate::tui::test_util::{SIZES, render_lines};
 
     fn select() -> Select {
         Select::new(vec!["Gmail".into(), "Microsoft 365".into()])
@@ -150,49 +156,45 @@ mod tests {
     #[test]
     fn arrows_move_and_enter_chooses() {
         let mut s = select();
-        assert_eq!(s.handle_key(key(KeyCode::Enter)), SelectOutcome::Chosen(0));
-        assert_eq!(s.handle_key(key(KeyCode::Down)), SelectOutcome::Moved);
-        assert_eq!(s.handle_key(key(KeyCode::Enter)), SelectOutcome::Chosen(1));
-        assert_eq!(s.handle_key(key(KeyCode::Char('k'))), SelectOutcome::Moved);
-        assert_eq!(s.handle_key(key(KeyCode::Enter)), SelectOutcome::Chosen(0));
-        assert_eq!(
-            s.handle_key(key(KeyCode::Char('x'))),
-            SelectOutcome::Ignored
-        );
+        assert_eq!(s.handle(Nav::Choose), SelectOutcome::Chosen(0));
+        assert_eq!(s.handle(Nav::Down), SelectOutcome::Moved);
+        assert_eq!(s.handle(Nav::Choose), SelectOutcome::Chosen(1));
+        assert_eq!(s.handle(Nav::Up), SelectOutcome::Moved);
+        assert_eq!(s.handle(Nav::Choose), SelectOutcome::Chosen(0));
     }
 
     #[test]
     fn moving_stops_at_the_ends() {
         let mut s = select();
-        assert_eq!(s.handle_key(key(KeyCode::Up)), SelectOutcome::Ignored);
-        s.handle_key(key(KeyCode::Down));
-        assert_eq!(s.handle_key(key(KeyCode::Down)), SelectOutcome::Ignored);
-        assert_eq!(s.handle_key(key(KeyCode::Enter)), SelectOutcome::Chosen(1));
+        assert_eq!(s.handle(Nav::Up), SelectOutcome::Ignored);
+        s.handle(Nav::Down);
+        assert_eq!(s.handle(Nav::Down), SelectOutcome::Ignored);
+        assert_eq!(s.handle(Nav::Choose), SelectOutcome::Chosen(1));
     }
 
     #[test]
     fn an_empty_select_chooses_nothing() {
         let mut s = Select::new(Vec::new());
-        assert_eq!(s.handle_key(key(KeyCode::Enter)), SelectOutcome::Ignored);
-        assert_eq!(s.handle_key(key(KeyCode::Down)), SelectOutcome::Ignored);
+        assert_eq!(s.handle(Nav::Choose), SelectOutcome::Ignored);
+        assert_eq!(s.handle(Nav::Down), SelectOutcome::Ignored);
     }
 
     #[test]
     fn set_items_keeps_the_selection_in_range() {
         let mut s = select();
-        s.handle_key(key(KeyCode::Down));
+        s.handle(Nav::Down);
         s.set_items(vec!["only".into()]);
         assert_eq!(s.items(), ["only".to_string()]);
-        assert_eq!(s.handle_key(key(KeyCode::Enter)), SelectOutcome::Chosen(0));
+        assert_eq!(s.handle(Nav::Choose), SelectOutcome::Chosen(0));
         s.set_items(Vec::new());
-        assert_eq!(s.handle_key(key(KeyCode::Enter)), SelectOutcome::Ignored);
+        assert_eq!(s.handle(Nav::Choose), SelectOutcome::Ignored);
     }
 
     #[test]
     fn renders_the_marker_on_the_selected_item_at_both_sizes() {
         let theme = Theme::default();
         let mut s = select();
-        s.handle_key(key(KeyCode::Down));
+        s.handle(Nav::Down);
         for (width, height) in SIZES {
             let lines = render_lines(width, height, |frame| {
                 frame.render_widget(s.widget(&theme, true), frame.area());

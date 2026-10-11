@@ -2,6 +2,7 @@
 //! drive it, and the effects it asks the event loop to run.
 
 use std::io;
+use std::sync::Arc;
 
 use crossterm::clipboard::CopyToClipboard;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -10,6 +11,7 @@ use futures_util::future::BoxFuture;
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
+use super::keys::{Action, Chord, Keymap, Resolved, View};
 use super::screen::Screen;
 use super::theme::Theme;
 
@@ -32,6 +34,8 @@ pub enum TaskResult {
     JobPanicked(String),
     /// The outcome of an `Effect::Copy`: `Err` holds the reason it could not copy.
     Copied(Result<(), String>),
+    /// A mail-screen query or daemon call answered (see `tui::data`).
+    Mail(crate::tui::data::MailEvent),
 }
 
 /// A result tagged with the generation of the job that sent it (see `Tasks`).
@@ -109,6 +113,8 @@ pub struct App<S> {
     pub theme: Theme,
     pub quit: bool,
     pub clipboard: Box<dyn Clipboard>,
+    /// Every action's keys, built from `config.toml` at startup.
+    pub keymap: Arc<Keymap>,
 }
 
 impl<S: Screen> App<S> {
@@ -119,16 +125,24 @@ impl<S: Screen> App<S> {
             theme: Theme::default(),
             quit: false,
             clipboard,
+            keymap: Arc::new(Keymap::defaults()),
         }
+    }
+
+    /// The shell with `keymap` (built from `config.toml` at startup).
+    pub fn with_keymap(mut self, keymap: Arc<Keymap>) -> Self {
+        self.keymap = keymap;
+        self
     }
 }
 
-/// `Ctrl-C` always quits; `q` quits unless the screen is taking text. While the screen
-/// defers quitting, both go to the screen instead. Everything else goes to the screen.
+/// `Ctrl-C` always quits; the quit key (`global.quit`, `q` by default) quits unless the screen
+/// is taking text or binds that key itself. While the screen defers quitting, both go to the
+/// screen instead. Everything else goes to the screen.
 pub fn update<S: Screen>(app: &mut App<S>, msg: Msg) -> Vec<Effect> {
     if let Msg::Key(key) = &msg
         && !app.screen.defers_quit()
-        && quits(key, app.screen.captures_text())
+        && quits(&app.keymap, *key, &app.screen)
     {
         app.quit = true;
         return vec![Effect::Quit];
@@ -139,10 +153,16 @@ pub fn update<S: Screen>(app: &mut App<S>, msg: Msg) -> Vec<Effect> {
     app.screen.update(msg)
 }
 
-fn quits(key: &KeyEvent, typing: bool) -> bool {
+fn quits<S: Screen>(keymap: &Keymap, key: KeyEvent, screen: &S) -> bool {
     let ctrl_c = key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
-    let q = key.code == KeyCode::Char('q') && key.modifiers.is_empty() && !typing;
-    ctrl_c || q
+    if ctrl_c {
+        return true;
+    }
+    if screen.captures_text() || screen.claims_key(key) {
+        return false;
+    }
+    let mut chord = Chord::default();
+    keymap.resolve(&[View::Global], &mut chord, key) == Resolved::Action(Action::GlobalQuit)
 }
 
 /// Draw the active screen.
@@ -200,6 +220,35 @@ mod tests {
         assert!(update(&mut app, Msg::Resize(100, 30)).is_empty());
         assert_eq!(app.screen.keys.len(), 1);
         assert!(!app.quit);
+    }
+
+    #[test]
+    fn a_rebound_quit_key_quits_and_q_goes_to_the_screen() {
+        let text = "[keys]\n\"global.quit\" = \"x\"\n";
+        let path = std::path::Path::new("/c/config.toml");
+        let config = rail_core::config::parse(text, path).unwrap();
+        let keymap = Keymap::from_config(&config.keys, text, path).unwrap();
+        let mut app = app(false).with_keymap(Arc::new(keymap));
+        assert!(update(&mut app, Msg::Key(key(KeyCode::Char('q')))).is_empty());
+        assert!(!app.quit);
+        let effects = update(&mut app, Msg::Key(key(KeyCode::Char('x'))));
+        assert!(matches!(effects.as_slice(), [Effect::Quit]), "{effects:?}");
+    }
+
+    #[test]
+    fn a_screen_that_claims_a_key_keeps_it() {
+        let mut app = App::new(
+            Hello {
+                claims: true,
+                ..Hello::default()
+            },
+            Box::new(RecordingClipboard::default()),
+        );
+        update(&mut app, Msg::Key(key(KeyCode::Char('q'))));
+        assert!(!app.quit);
+        assert_eq!(app.screen.keys, vec![key(KeyCode::Char('q'))]);
+        update(&mut app, Msg::Key(ctrl('c')));
+        assert!(app.quit, "Ctrl-C still quits");
     }
 
     #[test]
