@@ -27,6 +27,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 async-trait = "0.1.92"
 fastrand = "2.5"
 url = "2.5"
+unicode-width = "0.2.2"
+unicode-segmentation = "1.13.3"
 icu_properties = "2.2"
 humantime-serde = "1.1"
 clap = { version = "4.6", features = ["derive"] }

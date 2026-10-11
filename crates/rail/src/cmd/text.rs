@@ -7,7 +7,7 @@ use crate::cmd::account::escape_chars;
 /// True for a character a mail field must not reach the terminal as: a control character, a
 /// Unicode format character (bidi overrides, zero-width characters, the byte-order mark) or
 /// the line and paragraph separators U+2028 and U+2029.
-fn hides_or_breaks(c: char) -> bool {
+pub(crate) fn hides_or_breaks(c: char) -> bool {
     c.is_control() || rail_core::config::is_format_char(c) || matches!(c, '\u{2028}' | '\u{2029}')
 }
 

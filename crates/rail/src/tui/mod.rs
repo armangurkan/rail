@@ -11,5 +11,8 @@ pub mod screens;
 pub mod terminal;
 #[cfg(test)]
 pub mod test_util;
+pub mod text;
+#[cfg(test)]
+mod text_tests;
 pub mod theme;
 pub mod widgets;
