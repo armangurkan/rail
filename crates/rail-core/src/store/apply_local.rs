@@ -311,7 +311,7 @@ pub(crate) fn reapply_live(
 }
 
 /// After a rollup: threads of `touched` that no longer exist leave every outbox row (live or
-/// failed), with their reversal entries, so a reused rowid is never acted on.
+/// failed; a row left with no thread is deleted), with their reversal entries, so a reused rowid is never acted on.
 pub(crate) fn forget_threads(tx: &Transaction, touched: &BTreeSet<i64>) -> Result<(), StoreError> {
     let mut gone = BTreeSet::new();
     for &thread in touched {
@@ -343,7 +343,12 @@ pub(crate) fn forget_threads(tx: &Transaction, touched: &BTreeSet<i64>) -> Resul
         by_row.insert(row.id, (threads, reversal));
     }
     for (id, (threads, reversal)) in by_row {
-        save_threads_and_reversal(tx, id, &threads, &reversal)?;
+        if threads.is_empty() {
+            // Nothing left to send or revert.
+            tx.execute("DELETE FROM outbox WHERE id = ?1", [id])?;
+        } else {
+            save_threads_and_reversal(tx, id, &threads, &reversal)?;
+        }
     }
     Ok(())
 }

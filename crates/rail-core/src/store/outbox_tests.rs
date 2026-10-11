@@ -30,8 +30,52 @@ fn claim_takes_the_oldest_due_row_and_honours_not_before() {
         (a, OutboxState::Inflight, vec![t1])
     );
     assert_eq!(first.action, Action::Star { on: true });
+    assert!(
+        claim(&mut store, NOW + 10).is_none(),
+        "b waits for a, which shares its thread"
+    );
+    store
+        .outbox_write(&OutboxWrite::Complete { id: a }, NOW + 10)
+        .unwrap();
     assert_eq!(claim(&mut store, NOW + 10).unwrap().id, b);
     assert!(claim(&mut store, NOW + 10).is_none());
+}
+
+#[test]
+fn a_backed_off_row_holds_back_a_later_due_row_on_its_thread() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    let a = enqueue(&mut store, Action::Star { on: true }, vec![t1], "a");
+    let b = enqueue(&mut store, Action::Star { on: false }, vec![t1], "b");
+    claim(&mut store, NOW + 10).unwrap();
+    let fail = OutboxWrite::Fail {
+        id: a,
+        failure: Failure::Transient {
+            error: "Gmail is busy".into(),
+            retry_at: NOW + 70,
+        },
+    };
+    store.outbox_write(&fail, NOW + 10).unwrap();
+    assert!(
+        claim(&mut store, NOW + 20).is_none(),
+        "b is due but a is older"
+    );
+    assert_eq!(claim(&mut store, NOW + 70).unwrap().id, a);
+    assert!(claim(&mut store, NOW + 70).is_none(), "a is inflight");
+    store
+        .outbox_write(&OutboxWrite::Complete { id: a }, NOW + 71)
+        .unwrap();
+    assert_eq!(claim(&mut store, NOW + 71).unwrap().id, b);
+}
+
+#[test]
+fn due_rows_on_different_threads_are_claimed_in_id_order() {
+    let mut store = seeded();
+    let (t1, t2) = (thread(&store, "t1"), thread(&store, "t2"));
+    let a = enqueue(&mut store, Action::Star { on: true }, vec![t1], "a");
+    let b = enqueue(&mut store, Action::Star { on: true }, vec![t2], "b");
+    assert_eq!(claim(&mut store, NOW + 10).unwrap().id, a);
+    assert_eq!(claim(&mut store, NOW + 10).unwrap().id, b);
 }
 
 #[test]

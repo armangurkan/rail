@@ -205,38 +205,30 @@ fn a_failed_apply_leaves_no_row() {
 }
 
 #[test]
-fn undo_of_the_first_of_two_overlapping_actions_keeps_the_second() {
+fn undo_of_an_archive_does_not_bring_back_the_inbox_a_later_move_removed() {
     let mut store = seeded();
     let t1 = thread(&store, "t1");
     let p = folder(&store, "Label_1");
-    let label = enqueue(
-        &mut store,
-        Action::Labels {
-            add: vec![p],
-            remove: vec![],
-        },
-        vec![t1],
-        "a",
-    );
-    let archive = enqueue(&mut store, Action::Archive {}, vec![t1], "b");
-    undo(&mut store, vec![label]);
-    let s = state(&store);
-    assert_eq!(s[0].3, Vec::<String>::new(), "archived, without the label");
-    assert_eq!(s[1].3, Vec::<String>::new());
+    let archive = enqueue(&mut store, Action::Archive {}, vec![t1], "a");
+    enqueue(&mut store, Action::Move { to: p }, vec![t1], "b");
     undo(&mut store, vec![archive]);
-    assert_eq!(state(&store), state(&seeded()), "both undone: as seeded");
+    let s = state(&store);
+    assert_eq!(s[0].3, ["Label_1"], "the move's label stays, no inbox");
+    assert_eq!(s[1].3, ["Label_1"]);
+    assert_eq!(s[2].3, ["INBOX"], "t2 untouched");
 }
 
 #[test]
-fn a_permanent_failure_of_the_first_row_keeps_the_second() {
+fn a_permanent_failure_of_star_on_keeps_the_later_star_off() {
     let mut store = seeded();
     let t1 = thread(&store, "t1");
-    let star = enqueue(&mut store, Action::Star { on: true }, vec![t1], "a");
-    enqueue(&mut store, Action::Read { on: true }, vec![t1], "b");
-    let claim = OutboxWrite::Claim { account_id: 1 };
-    store.outbox_write(&claim, NOW + 20).unwrap();
+    let on = enqueue(&mut store, Action::Star { on: true }, vec![t1], "a");
+    let off = enqueue(&mut store, Action::Star { on: false }, vec![t1], "b");
+    store
+        .outbox_write(&OutboxWrite::Claim { account_id: 1 }, NOW + 20)
+        .unwrap();
     let fail = OutboxWrite::Fail {
-        id: star,
+        id: on,
         failure: Failure::Permanent("Gmail refused the request (HTTP 400)".into()),
     };
     assert!(matches!(
@@ -244,15 +236,19 @@ fn a_permanent_failure_of_the_first_row_keeps_the_second() {
         OutboxOutcome::Failed { gave_up: true, .. }
     ));
     let s = state(&store);
-    assert!(!s[0].2 && !s[1].2, "the star is reverted");
-    assert!(s[0].1 && s[1].1, "the read stays");
-    // Retry brings the star back on top.
+    assert!(!s[0].2 && !s[1].2, "unstarred, as the second row set it");
+    let pending = store.pending_for(&[t1]).unwrap();
+    assert_eq!(pending.iter().map(|r| r.id).collect::<Vec<_>>(), [off]);
+    // Undoing the second row now must leave the message as it was seeded (unstarred), not
+    // restore the star the failed row once set.
+    undo(&mut store, vec![off]);
+    assert!(!state(&store)[0].2, "undo of off: unstarred as seeded");
+    // Retry brings the star back.
     let retried = store
-        .outbox_write(&OutboxWrite::Retry { id: star }, NOW + 30)
+        .outbox_write(&OutboxWrite::Retry { id: on }, NOW + 30)
         .unwrap();
     assert_eq!(retried, OutboxOutcome::Retried(true));
-    let s = state(&store);
-    assert!(s[0].2 && s[0].1);
+    assert!(state(&store)[0].2 && state(&store)[1].2);
 }
 
 #[test]
@@ -311,13 +307,13 @@ fn a_thread_the_delta_deletes_leaves_the_outbox_and_its_id_is_not_reused() {
         ..Batch::new(1)
     };
     store.apply(&gone, NOW + 1).unwrap();
-    let ids: String = store
+    let rows: i64 = store
         .conn()
-        .query_row("SELECT thread_ids FROM outbox WHERE id = ?1", [id], |r| {
+        .query_row("SELECT count(*) FROM outbox WHERE id = ?1", [id], |r| {
             r.get(0)
         })
         .unwrap();
-    assert_eq!(ids, "[]", "the deleted thread left the row");
+    assert_eq!(rows, 0, "a row left with no thread is deleted");
     // The next batch may reuse t2's rowid for a new thread: the row must not touch it.
     let fresh = Batch {
         upserts: vec![envelope("m4", "t4", 4_000)],
@@ -347,4 +343,51 @@ fn a_revert_skips_a_message_whose_id_now_belongs_to_another_thread() {
         .unwrap();
     undo(&mut store, vec![id]);
     assert!(state(&store)[2].1, "m3 kept is_read: it is no longer t2's");
+}
+
+#[test]
+fn a_row_left_with_no_thread_is_deleted_and_a_two_thread_row_keeps_the_other() {
+    let mut store = seeded();
+    let (t1, t2) = (thread(&store, "t1"), thread(&store, "t2"));
+    let pending = enqueue(&mut store, Action::Star { on: true }, vec![t2], "a");
+    let failed = enqueue(&mut store, Action::Read { on: true }, vec![t2], "b");
+    let both = enqueue(&mut store, Action::Archive {}, vec![t1, t2], "c");
+    // Row `failed` is claimed after `pending` completes its turn: fail it for good.
+    store
+        .outbox_write(&OutboxWrite::Claim { account_id: 1 }, NOW + 20)
+        .unwrap();
+    store
+        .outbox_write(&OutboxWrite::Complete { id: pending }, NOW + 20)
+        .unwrap();
+    let enqueued_pending = enqueue(&mut store, Action::Star { on: false }, vec![t2], "d");
+    store
+        .outbox_write(&OutboxWrite::Claim { account_id: 1 }, NOW + 20)
+        .unwrap();
+    let fail = OutboxWrite::Fail {
+        id: failed,
+        failure: Failure::Permanent("no".into()),
+    };
+    store.outbox_write(&fail, NOW + 20).unwrap();
+    let gone = Batch {
+        deletes: vec!["m3".into()],
+        ..Batch::new(1)
+    };
+    store.apply(&gone, NOW + 21).unwrap();
+    let ids: Vec<i64> = store
+        .conn()
+        .prepare("SELECT id FROM outbox ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(ids, [both], "{failed} {enqueued_pending} are gone");
+    let threads: String = store
+        .conn()
+        .query_row("SELECT thread_ids FROM outbox WHERE id = ?1", [both], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(threads, format!("[{t1}]"));
+    assert!(store.failed_rows(1).unwrap().is_empty());
 }

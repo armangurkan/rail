@@ -235,7 +235,9 @@ pub(crate) fn enqueue(tx: &Transaction, new: &NewAction) -> Result<(OutboxId, us
     Ok((id, applied))
 }
 
-/// The oldest due pending row of `account`, now inflight.
+/// The oldest due pending row of `account`, now inflight. Per-thread FIFO: a row waits (even
+/// when due) while an older live row shares a thread with it, so Gmail sees one thread's
+/// actions in the order the user made them. Done in SQL: one bounded statement, no row loop.
 pub(crate) fn claim_next(
     tx: &Transaction,
     account: i64,
@@ -244,8 +246,14 @@ pub(crate) fn claim_next(
     let id: Option<OutboxId> = tx
         .query_row(
             "UPDATE outbox SET state = 'inflight', inflight_at = ?2
-             WHERE id = (SELECT id FROM outbox WHERE account_id = ?1 AND state = 'pending'
-                         AND not_before <= ?2 ORDER BY not_before, id LIMIT 1)
+             WHERE id = (SELECT o.id FROM outbox o
+                         WHERE o.account_id = ?1 AND o.state = 'pending' AND o.not_before <= ?2
+                           AND NOT EXISTS (
+                             SELECT 1 FROM outbox p
+                             WHERE p.id < o.id AND p.state IN ('pending', 'inflight')
+                               AND EXISTS (SELECT 1 FROM json_each(p.thread_ids) pt
+                                           WHERE pt.value IN (SELECT value FROM json_each(o.thread_ids))))
+                         ORDER BY o.id LIMIT 1)
              RETURNING id",
             params![account, now],
             |r| r.get(0),
