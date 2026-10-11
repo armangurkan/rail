@@ -465,8 +465,9 @@ fn errors_with_a_retry_move_a_highlight_and_enter_retries_it() {
     );
 }
 
-/// "Rail default" and the first twenty schemes, Dracula ticked, swatches on.
-fn theme_picker() -> Picker {
+/// "Rail default" and the first twenty schemes, Dracula ticked, with swatches or without
+/// (as on a terminal without truecolor).
+fn theme_picker(swatches: bool) -> Picker {
     use crate::tui::theme::scheme::schemes;
     let mut items = vec![PickerItem {
         id: -1,
@@ -504,12 +505,15 @@ fn theme_picker() -> Picker {
             ]
         },
     });
+    if !swatches {
+        items.iter_mut().for_each(|i| i.swatch.clear());
+    }
     Picker::new(PickerKind::Theme, items)
 }
 
 #[test]
 fn the_theme_and_accent_pickers_at_90_and_150_columns() {
-    let theme = theme_picker();
+    let theme = theme_picker(true);
     for (width, height) in [(90, 24), (150, 40)] {
         let text = snapshot(width, height, |frame| {
             theme.render(frame, frame.area(), &Theme::default());
@@ -539,7 +543,7 @@ fn the_theme_and_accent_pickers_at_90_and_150_columns() {
 
 #[test]
 fn a_scheme_row_draws_its_swatch_in_the_scheme_colours() {
-    let picker = theme_picker();
+    let picker = theme_picker(true);
     let mut terminal = Terminal::new(TestBackend::new(90, 24)).unwrap();
     terminal
         .draw(|frame| picker.render(frame, frame.area(), &Theme::default()))
@@ -560,4 +564,14 @@ fn a_scheme_row_draws_its_swatch_in_the_scheme_colours() {
         buffer[(first, row)].fg,
         ratatui::style::Color::Rgb(0x28, 0x2a, 0x36)
     );
+}
+
+#[test]
+fn the_theme_picker_without_truecolor_at_90_columns() {
+    let picker = theme_picker(false).without_preview();
+    let text = snapshot(90, 24, |frame| {
+        picker.render(frame, frame.area(), &Theme::default());
+    });
+    assert!(text.contains("no preview without truecolor"), "{text}");
+    insta::assert_snapshot!("modal_theme_picker_no_preview_90x24", text);
 }

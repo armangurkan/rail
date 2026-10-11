@@ -15,7 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::{Command, ModalOutcome, boxed};
-use crate::tui::text::{escape, input_row, pad};
+use crate::tui::text::{escape, input_row, pad, width};
 use crate::tui::theme::Theme;
 use crate::tui::theme::choice::Accent;
 use crate::tui::widgets::text_input::TextInput;
@@ -26,6 +26,27 @@ const SHOWN: usize = 12;
 const PICKER_WIDTH: u16 = 60;
 /// One swatch colour's cells.
 const SWATCH: &str = "██";
+/// The theme and accent pickers' hint while the highlight is previewed.
+const PREVIEW_HINT: &str = "Enter keeps · Esc restores · ↑↓ move";
+/// The theme picker's hint on a terminal that cannot show a scheme.
+pub(crate) const NO_PREVIEW_HINT: &str =
+    "Enter keeps · Esc cancels · ↑↓ move · no preview without truecolor";
+
+/// `:accent`'s answer: the scheme's own accent or one of its sixteen slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccentAnswer {
+    SchemeDefault,
+    Slot(u8),
+}
+
+impl From<AccentAnswer> for Accent {
+    fn from(answer: AccentAnswer) -> Self {
+        match answer {
+            AccentAnswer::SchemeDefault => Accent::SchemeDefault,
+            AccentAnswer::Slot(n) => Accent::Slot(n),
+        }
+    }
+}
 
 /// What a picker chooses, and so what it does with its choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +104,8 @@ pub struct Picker {
     /// Indices of the matching items, best first.
     shown: Vec<usize>,
     selected: usize,
+    /// A `Theme` or `Accent` picker previews its highlight unless told not to.
+    preview: bool,
 }
 
 impl Picker {
@@ -97,8 +120,9 @@ impl Picker {
             matcher: Matcher::new(Config::DEFAULT),
             shown,
             selected: 0,
+            preview: true,
         };
-        if picker.previews() {
+        if matches!(kind, PickerKind::Theme | PickerKind::Accent) {
             // The active choice is highlighted.
             picker.selected = picker.items.iter().position(|i| i.checked).unwrap_or(0);
         }
@@ -111,8 +135,15 @@ impl Picker {
         self.selected
     }
 
+    /// Moving the highlight shows nothing, and the hint says why (a theme on a terminal
+    /// without truecolor).
+    pub fn without_preview(mut self) -> Self {
+        self.preview = false;
+        self
+    }
+
     fn previews(&self) -> bool {
-        matches!(self.kind, PickerKind::Theme | PickerKind::Accent)
+        self.preview && matches!(self.kind, PickerKind::Theme | PickerKind::Accent)
     }
 
     fn refilter(&mut self) {
@@ -148,7 +179,7 @@ impl Picker {
                 u8::try_from(item.id)
                     .ok()
                     .filter(|n| *n <= 15)
-                    .map_or(Accent::SchemeDefault, Accent::Slot),
+                    .map_or(AccentAnswer::SchemeDefault, AccentAnswer::Slot),
             )),
         }
     }
@@ -218,7 +249,12 @@ impl Picker {
     }
 
     /// The title, the hint row and the line shown when nothing matches.
-    fn words(&self) -> (&'static str, &'static str, &'static str) {
+    pub(crate) fn words(&self) -> (&'static str, &'static str, &'static str) {
+        let hint = if self.preview {
+            PREVIEW_HINT
+        } else {
+            NO_PREVIEW_HINT
+        };
         match self.kind {
             PickerKind::Labels => (
                 "Labels",
@@ -230,16 +266,8 @@ impl Picker {
                 "Enter moves · Esc cancels · ↑↓ move",
                 "No label matches.",
             ),
-            PickerKind::Theme => (
-                "Theme",
-                "Enter keeps · Esc restores · ↑↓ move",
-                "No theme matches.",
-            ),
-            PickerKind::Accent => (
-                "Accent",
-                "Enter keeps · Esc restores · ↑↓ move",
-                "No accent matches.",
-            ),
+            PickerKind::Theme => ("Theme", hint, "No theme matches."),
+            PickerKind::Accent => ("Accent", hint, "No accent matches."),
         }
     }
 
@@ -269,7 +297,16 @@ impl Picker {
     pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let (title, hint, empty) = self.words();
         let height = u16::try_from(SHOWN + 5).unwrap_or(u16::MAX);
-        let inner = boxed(frame, area, PICKER_WIDTH, height, title, theme);
+        // Wide enough for the hint and its border.
+        let hint_width = u16::try_from(width(hint) + 2).unwrap_or(u16::MAX);
+        let inner = boxed(
+            frame,
+            area,
+            PICKER_WIDTH.max(hint_width),
+            height,
+            title,
+            theme,
+        );
         let cols = usize::from(inner.width);
         let (typed, column) = input_row("> ", self.input.value(), self.input.cursor(), cols);
         let mut lines = vec![Line::styled(typed, theme.accent), Line::default()];
@@ -306,7 +343,6 @@ impl Picker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::theme::choice::Accent;
 
     fn press(p: &mut Picker, code: KeyCode) -> ModalOutcome {
         p.key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -463,11 +499,25 @@ mod tests {
         let mut p = Picker::new(PickerKind::Accent, items);
         assert_eq!(
             press(&mut p, KeyCode::Down),
-            ModalOutcome::Preview(Command::Accent(Accent::Slot(0)))
+            ModalOutcome::Preview(Command::Accent(AccentAnswer::Slot(0)))
         );
         assert_eq!(
             press(&mut p, KeyCode::Up),
-            ModalOutcome::Preview(Command::Accent(Accent::SchemeDefault))
+            ModalOutcome::Preview(Command::Accent(AccentAnswer::SchemeDefault))
+        );
+    }
+
+    #[test]
+    fn a_theme_picker_without_preview_only_moves_and_says_so() {
+        let mut p = Picker::new(PickerKind::Theme, themes()).without_preview();
+        assert_eq!(p.selected_index(), 1, "still opens on the checked item");
+        assert_eq!(press(&mut p, KeyCode::Down), ModalOutcome::Stay);
+        assert_eq!(press(&mut p, KeyCode::Char('d')), ModalOutcome::Stay);
+        assert_eq!(press(&mut p, KeyCode::Char('r')), ModalOutcome::Stay);
+        assert_eq!(p.words().1, NO_PREVIEW_HINT);
+        assert_eq!(
+            press(&mut p, KeyCode::Enter),
+            ModalOutcome::Run(Command::Theme(Some(0)))
         );
     }
 }

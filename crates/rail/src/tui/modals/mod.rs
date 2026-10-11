@@ -23,7 +23,7 @@ pub use errors::{ErrorList, ErrorRow};
 pub use filter::FilterLine;
 pub use help::Help;
 pub use palette::{Palette, PaletteEntry, Target};
-pub use picker::{Picker, PickerItem, PickerKind};
+pub use picker::{AccentAnswer, Picker, PickerItem, PickerKind};
 
 use crate::tui::theme::Theme;
 
@@ -56,7 +56,7 @@ pub enum Command {
     /// `:theme`'s answer: an index into `theme::scheme::schemes()`, or `None` for Rail's default.
     Theme(Option<usize>),
     /// `:accent`'s answer.
-    Accent(crate::tui::theme::choice::Accent),
+    Accent(AccentAnswer),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

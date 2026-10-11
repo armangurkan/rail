@@ -9,7 +9,7 @@ use ratatui::style::Color;
 use super::MailScreen;
 use crate::tui::app::Effect;
 use crate::tui::data::{MailEvent, job, send};
-use crate::tui::modals::{Modal, Picker, PickerItem, PickerKind};
+use crate::tui::modals::{AccentAnswer, Modal, Picker, PickerItem, PickerKind};
 use crate::tui::text::escape;
 use crate::tui::theme::Theme;
 use crate::tui::theme::choice::{Accent, ColorDepth, ThemeChoice};
@@ -55,13 +55,6 @@ impl ThemeState {
     }
 }
 
-/// Which `[general]` key a picker keeps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Kept {
-    Theme,
-    Accent,
-}
-
 impl MailScreen {
     /// The theme for `choice` at this terminal's depth.
     fn theme_for(&self, choice: ThemeChoice) -> Theme {
@@ -103,12 +96,16 @@ impl MailScreen {
         self.show_picker(PickerKind::Accent, items)
     }
 
+    /// Open `kind`. Without truecolor a scheme cannot be shown: the theme picker says so and
+    /// does not preview; slot accents still do.
     fn show_picker(&mut self, kind: PickerKind, items: Vec<PickerItem>) -> Vec<Effect> {
         self.themes.before = Some(self.themes.current);
-        self.modal = Some(Modal::Picker(Picker::new(kind, items)));
-        if self.ctx.depth == ColorDepth::Ansi {
+        let mut picker = Picker::new(kind, items);
+        if kind == PickerKind::Theme && self.ctx.depth == ColorDepth::Ansi {
+            picker = picker.without_preview();
             self.status.notify(NEEDS_TRUECOLOR, self.tick);
         }
+        self.modal = Some(Modal::Picker(picker));
         Vec::new()
     }
 
@@ -143,8 +140,8 @@ impl MailScreen {
     }
 
     /// The accent picker's highlight moved.
-    pub(super) fn preview_accent(&mut self, accent: Accent) -> Vec<Effect> {
-        let choice = self.choice_for_accent(accent);
+    pub(super) fn preview_accent(&mut self, answer: AccentAnswer) -> Vec<Effect> {
+        let choice = self.choice_for_accent(answer.into());
         vec![Effect::Theme(self.theme_for(choice))]
     }
 
@@ -156,37 +153,42 @@ impl MailScreen {
         }
     }
 
-    /// Enter: keep `choice`, say so, and write `key` to config.
-    pub(super) fn keep_theme(&mut self, choice: ThemeChoice, key: Kept) -> Vec<Effect> {
+    /// Enter in `:theme`: keep the scheme of item `index`, written as `theme`.
+    pub(super) fn keep_scheme(&mut self, index: Option<usize>) -> Vec<Effect> {
+        let choice = self.choice_for_theme(index);
+        let name = choice.scheme.map(|s| s.name);
+        let notice = format!("theme: {}", name.unwrap_or("Rail default"));
+        let value = Saved::Text(name.map(str::to_string));
+        self.keep(choice, &notice, "theme", value)
+    }
+
+    /// Enter in `:accent`: keep `answer`, written as `accent`.
+    pub(super) fn keep_accent(&mut self, answer: AccentAnswer) -> Vec<Effect> {
+        let (notice, value) = match answer {
+            AccentAnswer::SchemeDefault => ("accent: scheme default".to_string(), None),
+            AccentAnswer::Slot(n) => (format!("accent: {n} {}", slot_name(n)), Some(i64::from(n))),
+        };
+        let choice = self.choice_for_accent(answer.into());
+        self.keep(choice, &notice, "accent", Saved::Number(value))
+    }
+
+    /// Keep `choice`, say `notice`, and write `value` as `key` to config.
+    fn keep(
+        &mut self,
+        choice: ThemeChoice,
+        notice: &str,
+        key: &'static str,
+        value: Saved,
+    ) -> Vec<Effect> {
         self.modal = None;
         self.themes.before = None;
         self.themes.current = choice;
-        let (notice, value) = match key {
-            Kept::Theme => {
-                let name = choice.scheme.map(|s| s.name);
-                let notice = format!("theme: {}", name.unwrap_or("Rail default"));
-                (notice, Saved::Text(name.map(str::to_string)))
-            }
-            Kept::Accent => match choice.accent {
-                Accent::SchemeDefault => ("accent: scheme default".into(), Saved::Number(None)),
-                Accent::Slot(n) => (
-                    format!("accent: {n} {}", slot_name(n)),
-                    Saved::Number(Some(i64::from(n))),
-                ),
-                // The picker offers only slots and the default.
-                Accent::Color(_) => return vec![Effect::Theme(self.theme_for(choice))],
-            },
-        };
-        self.status.notify(escape(&notice), self.tick);
+        self.status.notify(escape(notice), self.tick);
         let path = self.ctx.paths.config_file();
-        let name = match key {
-            Kept::Theme => "theme",
-            Kept::Accent => "accent",
-        };
         vec![
             Effect::Theme(self.theme_for(choice)),
             job(move |sink| async move {
-                let result = tokio::task::spawn_blocking(move || write_general(&path, name, value))
+                let result = tokio::task::spawn_blocking(move || write_general(&path, key, value))
                     .await
                     .unwrap_or_else(|e| Err(e.to_string()));
                 send(&sink, MailEvent::ThemeSaved { result });
