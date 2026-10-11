@@ -9,7 +9,8 @@
 //!   space); attributes are skipped, quotes honoured only to find the tag's end, and a tag
 //!   longer than `MAX_TAG_BYTES` ends there;
 //! - comments are dropped, and so is the content of `script`, `style`, `head`, `title`,
-//!   `template` and `noscript`;
+//!   `template` and `noscript`; `head` ends, as in a browser, at the first text or start tag
+//!   that cannot stand in it, so a missing `</head>` never hides the body;
 //! - character references are decoded: numeric ones (never to a control character other than
 //!   a line break or tab) and a small table of common names; anything else stays as written.
 //!
@@ -64,6 +65,16 @@ const HIDDEN: &[&[u8]] = &[
 ];
 /// Hidden elements that can stand inside `head` and hold text that looks like tags.
 const HIDDEN_IN_HEAD: &[&[u8]] = &[b"script", b"style", b"title", b"template", b"noscript"];
+/// Empty elements that can stand inside `head` without ending it.
+const IN_HEAD: &[&[u8]] = &[b"meta", b"link", b"base"];
+
+/// What one piece of markup inside `head` does.
+enum HeadStep {
+    /// `head` goes on from here.
+    Inside(usize),
+    /// `head` has ended; normal text resumes here.
+    Leave(usize),
+}
 
 /// The character references Rail decodes by name.
 const ENTITIES: &[(&[u8], char)] = &[
@@ -269,6 +280,7 @@ impl Scanner<'_> {
             self.space = true;
         }
         match name.get() {
+            Some(b"head") if !closing => self.skip_head(end),
             Some(hidden) if !closing && HIDDEN.contains(&hidden) => self.skip_hidden(end, hidden),
             _ => end,
         }
@@ -316,29 +328,70 @@ impl Scanner<'_> {
         limit
     }
 
-    /// Just past the end tag of hidden element `name` whose content starts at `at`. `head`
-    /// also ends where `body` starts, and skips the hidden elements inside it whole.
-    fn skip_hidden(&self, mut at: usize, name: &[u8]) -> usize {
-        let head = name == b"head";
+    /// Just past the end tag of hidden element `name` whose content starts at `at`.
+    fn skip_hidden(&self, at: usize, name: &[u8]) -> usize {
+        let mut at = at;
         while let Some(offset) = self.bytes[at..].iter().position(|&b| b == b'<') {
             let open = at + offset;
             if self.is_end_tag(open, name) {
                 return self.tag_end(open + 2 + name.len(), open);
             }
-            if head && self.starts_tag(open + 1, b"body") {
-                return open;
-            }
             at = open + 1;
-            let inner = HIDDEN_IN_HEAD
-                .iter()
-                .filter(|_| head)
-                .find(|n| self.starts_tag(open + 1, n));
-            if let Some(inner) = inner {
-                let end = self.tag_end(open + 1 + inner.len(), open);
-                at = self.skip_hidden(end, inner);
-            }
         }
         self.bytes.len()
+    }
+
+    /// Where normal text resumes after a `head` whose content starts at `at`. As in a
+    /// browser, `head` ends at its end tag, at the first text that is not white space, and at
+    /// any start tag that cannot stand in it (`body`, `p`, ...); the elements that can are
+    /// skipped whole. Every step moves forward, so this stays linear.
+    fn skip_head(&self, mut at: usize) -> usize {
+        while at < self.bytes.len() {
+            let b = self.bytes[at];
+            if is_space(b) {
+                at += 1;
+                continue;
+            }
+            if b != b'<' {
+                return at;
+            }
+            match self.head_markup(at) {
+                HeadStep::Inside(next) => at = next,
+                HeadStep::Leave(resume) => return resume,
+            }
+        }
+        at
+    }
+
+    /// One piece of markup at `open` inside `head`.
+    fn head_markup(&self, open: usize) -> HeadStep {
+        let rest = &self.bytes[open..];
+        if rest.starts_with(b"<!--") {
+            return HeadStep::Inside(
+                find(self.bytes, open + 2, b"-->").map_or(self.bytes.len(), |e| e + 3),
+            );
+        }
+        if rest.starts_with(b"<!") || rest.starts_with(b"<?") {
+            return HeadStep::Inside(self.tag_end(open + 2, open));
+        }
+        if self.is_end_tag(open, b"head") {
+            return HeadStep::Leave(self.tag_end(open + 2 + b"head".len(), open));
+        }
+        if rest.get(1) == Some(&b'/') {
+            return HeadStep::Inside(self.tag_end(open + 2, open));
+        }
+        if !rest.get(1).is_some_and(u8::is_ascii_alphabetic) {
+            return HeadStep::Leave(open);
+        }
+        let (name, after_name) = self.name(open + 1, open);
+        let end = self.tag_end(after_name, open);
+        match name.get() {
+            Some(inner) if HIDDEN_IN_HEAD.contains(&inner) => {
+                HeadStep::Inside(self.skip_hidden(end, inner))
+            }
+            Some(other) if IN_HEAD.contains(&other) => HeadStep::Inside(end),
+            _ => HeadStep::Leave(open),
+        }
     }
 
     /// Whether `</name` followed by the end of a name starts at `at`.

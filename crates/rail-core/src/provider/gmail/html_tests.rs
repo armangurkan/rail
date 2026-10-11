@@ -197,3 +197,23 @@ fn white_space_collapses_and_lines_are_capped() {
     let html = "  a \t\r\n b  <br>\n\n<br><br><br>  c  ";
     assert_eq!(html_text(html), "a b\n\nc");
 }
+
+#[test]
+fn head_ends_where_body_content_starts() {
+    let unclosed = "<html><head><meta charset=\"utf-8\"><p>Hello <b>world</b></p></html>";
+    assert_eq!(html_text(unclosed), "Hello world");
+    let bare_text = "<head><style>p{color:red}</style>Your invoice is attached";
+    assert_eq!(html_text(bare_text), "Your invoice is attached");
+    let upper = "<HEAD><META>Text<BODY>more";
+    assert_eq!(html_text(upper), "Textmore");
+    let kept = "<head> <!-- c --> <link rel=x><base href=y><title>T</title>\
+                <script>s()</script><noscript>n</noscript><template>t</template></head>shown";
+    assert_eq!(html_text(kept), "shown");
+}
+
+#[test]
+fn head_floods_stay_linear() {
+    both_sizes("head metas", "<head>", "<meta a=b>", true);
+    both_sizes("head styles", "<head>", "<style></sty", false);
+    both_sizes("head comments", "<head>", "<!-- x --> ", true);
+}
