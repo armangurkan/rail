@@ -635,3 +635,6 @@ mod daemon;
 #[cfg(debug_assertions)]
 #[path = "cli/pty.rs"]
 mod pty;
+
+#[path = "cli/sync.rs"]
+mod sync;

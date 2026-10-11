@@ -197,12 +197,14 @@ It talks to the background daemon like every other command.
 | `rail account login <name-or-address>` | Logs in again to an account already in `config.toml` and replaces its tokens. Use it when tokens were revoked, expired or deleted from the keyring. |
 | `rail account list` | Lists configured accounts and whether their tokens are stored, in columns as wide as the longest name and address. It asks the store whether tokens exist without reading them, so a 1Password backend never reveals a token to list accounts. |
 | `rail account remove <name-or-address>` | Removes an account's entry in `config.toml` and its stored tokens; its mail stays in the store. Interactive only: it shows what goes (the daemon's text, with the name and address quoted) and asks `Remove? [y/N]`, and only `y` or `yes` removes; if the account changed while you answered, it says so, removes nothing, and asks you to run the command again. When stdin or stdout is not a terminal it removes nothing and exits with status 1; there is no flag to skip the question, so a script cannot answer it through a pipe. An agent that can run shell commands could still drive it as you; see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp). |
+| `rail sync [<account>] [--no-wait]` | Wakes the background sync for one account (name or address) or all, and shows its progress (labels, envelopes fetched of the mailbox's size, bodies, retries) until each account is caught up; it prints counts and phases only, never mail. Exits 0 when all are, 1 if any sync failed (with Rail's message and Gmail's words quoted on a line of their own), 2 if any account needs `rail account login` (2 wins when both apply). `--no-wait` only wakes it and exits 0. Ctrl-C stops the command (exit 130), not the sync; so does an hour of watching (exit 1, saying the sync carries on). Microsoft 365 accounts sync in a later version. |
+| `rail search <query> [--account <name>] [--limit N]` | Searches the local store and, through Gmail's own search, the whole mailbox, even mail older than `history_days`. Prints one line per thread, newest first (local hits first when two share a date): date (UTC), account, sender (cut to 30 characters) and subject (cut to 120), with control and invisible formatting characters shown escaped (`\n`, `\u{1b}`, `\u{202e}`, `\u{2028}`); never a snippet or body. Mail found only on Gmail is fetched into the store and kept for 14 days after it was last searched for. `--limit` defaults to 20 (at most 100). An account Gmail could not be asked for is named after the results, on standard error, with Rail's reason and Gmail's words quoted on a line of their own; its local hits are still shown. Exits 1 when nothing was found and a Gmail search failed, or for an unknown `--account`. |
 | `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves every account's tokens there (with `--no-migrate`, only the setting changes and each account then needs `rail account login`). `--vault` and `--account` are the 1Password vault and account; they must not contain control or format characters, and the daemon refuses them for every front end. Interactive only, like `rail account remove`: it shows the daemon's description of the change and asks `Change? [y/N]`; only `y` or `yes` changes anything. If the settings changed while you answered, it says so and changes nothing; if the setting is already in place it says nothing needed changing. When stdin or stdout is not a terminal it changes nothing and exits with status 1. |
 | `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
 | `rail mcp` | Serves Rail's tools to an AI agent over MCP on standard input and output (see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp)). |
-| `rail doctor` | Checks the config file, the store, the secrets backend, every account's tokens and `ai_send` policy, and the daemon. The checks run in the daemon, so if it cannot start, `rail doctor` fails outright with the reason (for example a socket path too long for a Unix socket; set `RAIL_RUNTIME_DIR` to a shorter directory). Exits non-zero for config, store, secrets-backend and token-read errors; accounts with no tokens show as `missing` without failing the check (see [Check everything](#check-everything)). |
+| `rail doctor` | Checks the config file, the store (with its size), the secrets backend, every account's tokens and `ai_send` policy, and the daemon, plus each account's sync: its phase, last success, counts and last error (an account that needs a login fails the check; a past error is a warning). The checks run in the daemon, so if it cannot start, `rail doctor` fails outright with the reason (for example a socket path too long for a Unix socket; set `RAIL_RUNTIME_DIR` to a shorter directory). Exits non-zero for config, store, secrets-backend and token-read errors and for a Gmail account that needs a login; a Microsoft 365 account with no tokens shows as `missing` without failing the check (see [Check everything](#check-everything)). |
 
 ## Setup
 
@@ -430,13 +432,17 @@ not touched.
     rail account list
 
 `rail doctor` reports the config file and how many accounts it holds, the store and its schema
-version, the secrets backend, and token presence for every account, then ends with an `ok   daemon`
-line naming the daemon that ran the checks. Text Rail did not write (a keyring's or SQLite's
+version, the secrets backend, and token presence and last sync time for every account, then one `sync`
+line per account (its phase, last success in UTC and what the store holds, or `needs a login`,
+or its last error with the provider's words quoted under it; Microsoft 365 accounts show `skip`),
+then ends with an `ok   daemon` line naming the daemon that ran the checks. An account that needs a
+login fails the check. Text Rail did not write (a keyring's or SQLite's
 message, the config parser's) is marked `from outside Rail` and shown in quotes with control
-characters escaped. It exits non-zero for config, store,
-secrets-backend and token-read errors. An account with no stored tokens is listed as `missing`, with
-the `rail account login` advice, but does not make the exit status non-zero, so scripts that care
-should grep for `missing`.
+characters escaped. It exits non-zero for config, store, secrets-backend and token-read errors, and
+for a Gmail account whose sync needs a login. An account with no stored tokens is listed as
+`missing`, with the `rail account login` advice; for a Gmail account its sync line then says
+`needs a login` and the exit status is non-zero. A Microsoft 365 account with no tokens does not
+change the exit status yet, so scripts that care should grep for `missing`.
 
 ## Configuration
 

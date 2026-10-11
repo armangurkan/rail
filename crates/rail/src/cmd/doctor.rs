@@ -5,12 +5,15 @@
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
-use rail_core::ops::op::Status;
-use rail_core::ops::{DoctorReport, OpError, StatusRequest};
+use rail_core::ops::op::{Status, SyncStatus};
+use rail_core::ops::{
+    AccountSyncStatus, DoctorReport, OpError, StatusRequest, SyncPhase, SyncStatusRequest,
+};
 use rail_core::paths::Paths;
 
-use crate::cmd::account::{outside, report};
+use crate::cmd::account::{error_text, escaped, outside, report};
 use crate::cmd::daemon::describe;
+use crate::cmd::text::{stored, utc_minute};
 use crate::daemon_link;
 
 fn mark(ok: bool) -> &'static str {
@@ -20,8 +23,9 @@ fn mark(ok: bool) -> &'static str {
 const WARN: &str = "warn";
 const SKIP: &str = "skip";
 
-/// `rail doctor` over the daemon's `status` operation: the report, then the daemon's line.
-/// Exits 1 when a check fails, as before.
+/// `rail doctor` over the daemon's `status` and `sync.status` operations: the report, each
+/// account's sync, then the daemon's line. Exits 1 when a check fails, as before; a failed
+/// `sync.status` is a failed sync check, not an abort.
 pub async fn run(paths: &Paths) -> color_eyre::Result<ExitCode> {
     let client = daemon_link::connector(paths)
         .client()
@@ -31,9 +35,17 @@ pub async fn run(paths: &Paths) -> color_eyre::Result<ExitCode> {
         .call::<Status>(&StatusRequest {})
         .await
         .map_err(report)?;
+    let (sync_text, sync_ok) = match client
+        .call::<SyncStatus>(&SyncStatusRequest::default())
+        .await
+    {
+        Ok(sync) => render_sync(&sync.accounts),
+        Err(error) => (sync_failed(&error), false),
+    };
     print!("{}", render(&status.doctor));
+    print!("{sync_text}");
     println!("{} daemon   {}", mark(true), describe(&status.daemon));
-    Ok(if status.doctor.is_healthy() {
+    Ok(if status.doctor.is_healthy() && sync_ok {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -141,9 +153,7 @@ fn render_accounts(out: &mut String, report: &DoctorReport) {
             (None, true) => "present".to_string(),
             (None, false) => format!("missing (run `rail account login {}`)", account.name),
         };
-        let last_sync = account
-            .last_sync_at
-            .map_or("never".to_string(), |t| format!("unix {t}"));
+        let last_sync = account.last_sync_at.map_or("never".to_string(), utc_minute);
         let _ = writeln!(
             out,
             "{} account  {} <{}> {} tokens: {}  last sync: {}  ai_send: {}",
@@ -156,6 +166,68 @@ fn render_accounts(out: &mut String, report: &DoctorReport) {
             account.ai_send.as_str()
         );
     }
+}
+
+/// The sync check when `sync.status` itself failed: its error, every line under the first
+/// indented to the check's text.
+fn sync_failed(error: &OpError) -> String {
+    let text = error_text(error).replace('\n', &format!("\n{TEXT_INDENT}"));
+    format!("{} sync     {text}\n", mark(false))
+}
+
+/// One line per account: its phase, last success and counts; a login it needs (a failure);
+/// its last error (a warning) with the outside text quoted under it. The text and whether
+/// the check passed.
+pub fn render_sync(statuses: &[AccountSyncStatus]) -> (String, bool) {
+    let mut out = String::new();
+    let mut healthy = true;
+    for status in statuses {
+        healthy &= sync_line(&mut out, status);
+    }
+    (out, healthy)
+}
+
+/// `status`'s lines; false when the account fails the check.
+fn sync_line(out: &mut String, s: &AccountSyncStatus) -> bool {
+    let name = &s.name;
+    if s.phase == SyncPhase::Unsupported {
+        let _ = writeln!(
+            out,
+            "{SKIP} sync     {name}: Microsoft 365 sync arrives in a later phase"
+        );
+        return true;
+    }
+    if s.needs_auth {
+        let _ = writeln!(
+            out,
+            "{} sync     {name}: needs a login; run `rail account login {name}`",
+            mark(false)
+        );
+        return false;
+    }
+    let phase = s.phase.as_str();
+    let success = s.last_success_at.map_or("never synced".to_string(), |t| {
+        format!("last success {}", utc_minute(t))
+    });
+    let Some(error) = &s.last_error else {
+        let _ = writeln!(
+            out,
+            "{} sync     {name}: {phase}, {success} ({})",
+            mark(true),
+            stored(s)
+        );
+        return true;
+    };
+    let _ = writeln!(
+        out,
+        "{WARN} sync     {name}: {phase}, {success}; last error {}: {}",
+        utc_minute(error.at),
+        escaped(&error.message)
+    );
+    if let Some(detail) = &error.detail {
+        let _ = writeln!(out, "{TEXT_INDENT}{}", outside(detail.get()));
+    }
+    true
 }
 
 #[cfg(test)]
@@ -171,6 +243,64 @@ mod tests {
     }
 
     const FILE_BACKEND_ONE_ACCOUNT: &str = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
+
+    #[test]
+    fn sync_lines_show_phase_last_success_and_last_error() {
+        use rail_core::config::AccountKind;
+        use rail_core::ops::{AccountSyncStatus, SyncErrorInfo, SyncPhase, Untrusted};
+        let mut ok = AccountSyncStatus::new("work", "me@example.com", AccountKind::Gmail);
+        ok.last_success_at = Some(1_700_000_000);
+        (ok.messages, ok.threads, ok.bodies) = (3, 2, 1);
+        let mut locked = AccountSyncStatus::new("home", "me@home.example", AccountKind::Gmail);
+        locked.needs_auth = true;
+        locked.phase = SyncPhase::NeedsAuth;
+        let mut flaky = AccountSyncStatus::new("side", "me@side.example", AccountKind::Gmail);
+        flaky.last_error = Some(SyncErrorInfo {
+            code: "transient".into(),
+            message: "could not reach Gmail".into(),
+            at: 1_700_000_000,
+            detail: Some(Untrusted::new("dns\nerror".into())),
+        });
+        let mut corp = AccountSyncStatus::new("corp", "me@corp.example", AccountKind::M365);
+        corp.phase = SyncPhase::Unsupported;
+        let (text, healthy) = render_sync(&[ok, locked, flaky, corp]);
+        assert!(!healthy, "an account that needs a login fails the check");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines[0],
+            "ok   sync     work: idle, last success 2023-11-14 22:13 UTC (3 messages, 2 threads, 1 body)"
+        );
+        assert_eq!(
+            lines[1],
+            "FAIL sync     home: needs a login; run `rail account login home`"
+        );
+        assert_eq!(
+            lines[2],
+            "warn sync     side: idle, never synced; last error 2023-11-14 22:13 UTC: could not reach Gmail"
+        );
+        assert!(
+            lines[3].starts_with("              from outside Rail"),
+            "{text}"
+        );
+        assert_eq!(
+            lines[4],
+            "skip sync     corp: Microsoft 365 sync arrives in a later phase"
+        );
+    }
+
+    #[test]
+    fn healthy_sync_lines_pass_the_check() {
+        use rail_core::config::AccountKind;
+        use rail_core::ops::AccountSyncStatus;
+        let ok = AccountSyncStatus::new("work", "me@example.com", AccountKind::Gmail);
+        let (text, healthy) = render_sync(&[ok]);
+        assert!(healthy, "{text}");
+        assert_eq!(
+            text,
+            "ok   sync     work: idle, never synced (0 messages, 0 threads, 0 bodies)\n"
+        );
+        assert_eq!(render_sync(&[]), (String::new(), true));
+    }
 
     #[test]
     fn one_account_is_singular() {

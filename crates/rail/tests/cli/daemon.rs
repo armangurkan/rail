@@ -143,6 +143,13 @@ fn relative_directory_settings_work_through_the_daemon() {
             .env("RAIL_TEST_IDLE_SECS", "2")
             .env("RAIL_TEST_OPENER", write_opener(&dir))
             .env("RAIL_TEST_URL_FILE", opened_url_file(&dir))
+            // As in `rail_env`: the account this daemon syncs can never reach Google.
+            .env(
+                "RAIL_TEST_GMAIL_URL",
+                "http://127.0.0.1:9/gmail/v1/users/me/",
+            )
+            .env("RAIL_TEST_TOKEN_URL", "http://127.0.0.1:9/token")
+            .env("RAIL_TEST_IDLE_WITH_ACCOUNTS", "1")
             .args(args)
             .output()
             .unwrap()
@@ -151,8 +158,17 @@ fn relative_directory_settings_work_through_the_daemon() {
     assert!(list.status.success(), "{list:?}");
     assert!(stdout_of(&list).contains("me@example.com"), "{list:?}");
     // The absolute spelling reaches the same daemon: same directories, no refusal.
+    // The account has no tokens, so its sync line fails the check; the daemon still answers.
     let doctor = rail_cmd(&dir).arg("doctor").output().unwrap();
-    assert!(doctor.status.success(), "{doctor:?}");
+    let text = stdout_of(&doctor);
+    assert!(
+        text.contains("ok   daemon   rail daemon running"),
+        "{doctor:?}"
+    );
+    assert!(
+        text.contains("FAIL sync     work: needs a login"),
+        "{doctor:?}"
+    );
     assert!(dir.path().join("data").join("rail.db").exists());
 }
 

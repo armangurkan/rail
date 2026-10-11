@@ -25,7 +25,28 @@ pub enum Command {
         #[command(subcommand)]
         command: SecretsCommand,
     },
-    /// Check config, store, secrets, accounts and the daemon.
+    /// Sync now: wake an account's (or every account's) sync and show progress until it is
+    /// caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs a login.
+    Sync {
+        /// Account name or email address; every account when absent.
+        account: Option<String>,
+        /// Wake the sync and return at once.
+        #[arg(long)]
+        no_wait: bool,
+    },
+    /// Search the local store and Gmail's whole mailbox: one line per thread.
+    Search {
+        /// What to look for (Gmail's search syntax works for the Gmail part).
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        query: Vec<String>,
+        /// Only this account (name or address).
+        #[arg(long)]
+        account: Option<String>,
+        /// At most this many threads (up to 100).
+        #[arg(long, default_value_t = rail_core::ops::DEFAULT_SEARCH_LIMIT)]
+        limit: usize,
+    },
+    /// Check config, store, secrets, accounts, each account's sync and the daemon.
     Doctor,
     /// Serve Rail's tools to an AI coding agent over MCP on stdin and stdout.
     Mcp,
