@@ -111,6 +111,7 @@ async fn a_long_address_cannot_hide_the_host_the_warning_or_the_hint() {
     for (cols, rows) in [(80, 24), (40, 12), (30, 10)] {
         let text = confirmation(&[&long, "https://x.example/"], '1', cols, rows).await;
         assert!(text.contains("Warning:"), "{cols}x{rows}\n{text}");
+        assert!(text.contains("evil.example"), "{cols}x{rows}\n{text}");
         assert!(text.contains("y yes"), "{cols}x{rows}\n{text}");
     }
     let text = confirmation(&[&long, "https://x.example/"], '1', 80, 24).await;

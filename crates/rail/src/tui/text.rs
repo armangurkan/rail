@@ -301,16 +301,6 @@ fn fit_end(text: &str, cols: usize) -> String {
     kept.concat()
 }
 
-/// The last two labels of `host`, or all of it for an address or a single label.
-fn registrable_end(host: &str) -> &str {
-    let labels: Vec<&str> = host.split('.').collect();
-    if host.parse::<std::net::IpAddr>().is_ok() || host.starts_with('[') || labels.len() < 3 {
-        return host;
-    }
-    let skip: usize = labels[..labels.len() - 2].iter().map(|l| l.len() + 1).sum();
-    &host[skip..]
-}
-
 fn host_lines(url: &Url) -> Vec<String> {
     let Some(host) = url.host_str() else {
         return Vec::new();
@@ -319,7 +309,7 @@ fn host_lines(url: &Url) -> Vec<String> {
     if !url.username().is_empty() || url.password().is_some() {
         lines.push(format!(
             "Warning: the part before \"@\" is not where this link goes. It goes to {}.",
-            fit_end(registrable_end(host), SHOWN_HOST_COLS / 2)
+            fit_end(host, SHOWN_HOST_COLS / 2)
         ));
     }
     lines.push(format!("Host: {}", fit_end(host, SHOWN_HOST_COLS)));

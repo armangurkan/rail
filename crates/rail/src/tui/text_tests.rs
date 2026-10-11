@@ -379,15 +379,23 @@ fn percent_decode_leaves_a_plus_or_short_escape_literal() {
 }
 
 #[test]
-fn a_long_host_is_shown_by_its_end_and_the_warning_names_only_the_last_two_labels() {
+fn a_long_host_is_shown_by_its_end_and_the_warning_names_the_whole_host() {
     let label = "a".repeat(63);
     let host = format!("bank.com.secure.{label}.{label}.{label}.evil.example");
     let lines = link_lines(&safe_link(&format!("https://bank.com@{host}/")).unwrap());
-    assert!(lines[0].starts_with("Warning:") && lines[0].ends_with("It goes to evil.example."));
+    assert!(lines[0].starts_with("Warning:") && lines[0].ends_with(".evil.example."));
+    assert!(lines[0].contains("goes to …"), "{}", lines[0]);
     assert!(lines[1].starts_with("Host: …") && lines[1].ends_with("evil.example"));
     assert!(width(&lines[1]) <= 106);
-    let ip = link_lines(&safe_link("https://u@192.0.2.7/").unwrap());
-    assert!(ip[0].ends_with("It goes to 192.0.2.7."));
+    let warning = |address: &str| link_lines(&safe_link(address).unwrap())[0].clone();
+    assert!(
+        warning("https://bank.com@login.evil.co.uk/").ends_with("It goes to login.evil.co.uk.")
+    );
+    assert!(
+        warning("https://u@bank-login.github.io/").ends_with("It goes to bank-login.github.io.")
+    );
+    assert!(warning("https://bank.com@evil.example./").ends_with("It goes to evil.example.."));
+    assert!(warning("https://u@192.0.2.7/").ends_with("It goes to 192.0.2.7."));
 }
 
 #[test]
