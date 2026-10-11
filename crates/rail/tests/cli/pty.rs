@@ -590,11 +590,25 @@ fn sigterm_with_a_file_open_removes_it_and_restores_the_terminal() {
 
 /// Best effort: kills the process whose pid is in the file, so a failing test never leaves
 /// Rail lingering behind its pty.
-struct KillsRail(std::path::PathBuf);
+struct KillsRail(Option<std::path::PathBuf>);
+
+impl KillsRail {
+    fn new(pid_file: std::path::PathBuf) -> Self {
+        Self(Some(pid_file))
+    }
+
+    /// Rail exited: leave its (possibly reused) pid alone.
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
 
 impl Drop for KillsRail {
     fn drop(&mut self) {
-        if let Ok(pid) = std::fs::read_to_string(&self.0) {
+        let Some(pid_file) = self.0.take() else {
+            return;
+        };
+        if let Ok(pid) = std::fs::read_to_string(pid_file) {
             let _ = Command::new("kill").args(["-KILL", pid.trim()]).status();
         }
     }
@@ -612,7 +626,7 @@ fn sigterm_after_the_mail_screen_closed_ends_rail() {
     let _daemon = StopsDaemon(&dir);
     write_config(&dir, WORK_FILE_BACKEND);
     let pid_file = dir.path().join("rail.pid");
-    let _kills_rail = KillsRail(pid_file.clone());
+    let mut kills_rail = KillsRail::new(pid_file.clone());
     // After `exec` the shell's pid is Rail's.
     let command = format!(
         "stty cols 100 rows 30; echo $$ > '{}'; exec '{}'",
@@ -647,6 +661,8 @@ fn sigterm_after_the_mail_screen_closed_ends_rail() {
         .unwrap();
     assert!(killed.success());
     let status = wait_for_exit(&mut child, &output);
+    // Rail has exited: its pid may be reused, so the guard must not kill it now.
+    kills_rail.disarm();
     drop(keys);
     assert!(
         !status.success(),
