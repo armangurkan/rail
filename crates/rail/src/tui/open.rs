@@ -34,11 +34,6 @@ impl OpenFiles {
         }
     }
 
-    #[allow(dead_code, reason = "the directory the files are in; used by tests")]
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// Write `html` (after the policy) to a fresh private file; its path.
     pub fn write(&mut self, html: &str) -> io::Result<PathBuf> {
         create_private_dir(&self.dir)?;
