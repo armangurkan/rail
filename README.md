@@ -148,10 +148,10 @@ a key it cannot read, `Ctrl-C` (which always quits), or a key another action of 
 already uses (a key that starts another action's sequence counts). A view's own key wins over a
 global one: `q` closes the reader but quits from the list.
 
-The wizard and the mail screen's thread list and sidebar read `[keys]` (the check runs when
-`rail setup` starts). The `global.*`, `list.*` and `sidebar.*` actions below take effect in the
-mail screen's list and sidebar; the `reader.*` actions take effect once the reader joins it in a
-later task, and `?` will list the keys of the view you are in there, marking the ones you changed.
+Today only the wizard reads `[keys]`, so the check runs when `rail setup` starts. The `global.*`,
+`list.*`, `sidebar.*` and `reader.*` actions below take effect in the mail screen, which a later
+task in this release adds; `?` will list the keys of the view you are in there, marking the ones
+you changed.
 
 | Action | Works in | Default keys | What it does |
 |---|---|---|---|
@@ -489,7 +489,7 @@ running syncs carry on unchanged.
 | `poll_interval` | `"60s"` | How often each account is checked for new mail. At least `5s`. |
 | `history_days` | `0` | How many days of mail the store keeps; `0` is the whole mailbox. |
 | `body_cache_days` | `30` | Bodies of threads with mail this recent are fetched ahead of time. |
-| `icons` | `"unicode"` | `"ascii"` replaces the mail screen's glyphs (`●`, `★`, `📎`, `✓`, `⟳`) with `*`, `+`, `@`, `ok` and `~`, for fonts without them. |
+| `icons` | `"unicode"` | `"unicode"` or `"ascii"`. Accepted now; takes effect in the mail screen when it ships (`"ascii"` swaps its glyphs for `*`, `+`, `@`, `ok` and `~`, for fonts without them). |
 | `editor` | unset | Reserved for composing; accepted but no effect yet. |
 
 ### `[[accounts]]`
