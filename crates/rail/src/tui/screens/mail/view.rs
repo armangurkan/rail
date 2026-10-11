@@ -5,7 +5,7 @@ use rail_core::config::Icons;
 use rail_core::provider::Mailbox;
 use rail_core::store::view::ThreadRow;
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
@@ -33,6 +33,10 @@ pub struct Glyphs {
     pub ok: &'static str,
     pub syncing: &'static str,
     pub problem: &'static str,
+    /// An expanded message's arrow.
+    pub open: &'static str,
+    /// A collapsed message's arrow.
+    pub closed: &'static str,
 }
 
 impl Glyphs {
@@ -46,6 +50,8 @@ impl Glyphs {
                 ok: "✓",
                 syncing: "⟳",
                 problem: "!",
+                open: "▾",
+                closed: "▸",
             },
             Icons::Ascii => Self {
                 bar: "|",
@@ -55,13 +61,15 @@ impl Glyphs {
                 ok: "ok",
                 syncing: "~",
                 problem: "!",
+                open: "v",
+                closed: ">",
             },
         }
     }
 }
 
 /// The first row on screen: the remembered offset, moved just enough to show `selected`.
-pub(super) fn visible_offset(offset: usize, selected: usize, height: usize) -> usize {
+pub(crate) fn visible_offset(offset: usize, selected: usize, height: usize) -> usize {
     let height = height.max(1);
     if selected < offset {
         selected
@@ -94,15 +102,43 @@ impl MailScreen {
         let pane = layout::is_split(area.width, self.ctx.split_threshold);
         let parts = areas(area, sidebar, pane);
         self.size.set((parts.list.height, area.width));
-        self.render_header(frame, parts.header, theme, &glyphs);
-        if let Some(side) = parts.sidebar {
-            self.render_sidebar(frame, side, theme, &glyphs);
-        }
-        self.render_list(frame, parts.list, theme, &glyphs);
-        if let Some(reader) = parts.reader {
-            self.render_pane(frame, reader, theme);
+        match (self.reader.as_ref(), parts.reader) {
+            (Some(reader), Some(pane)) => {
+                self.render_browse(frame, &parts, theme, &glyphs);
+                let focused = self.focus == Focus::Reader;
+                reader.render(frame, pane, theme, self.ctx.hyperlinks, focused);
+            }
+            (Some(reader), None) => {
+                let [body, _] =
+                    Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+                reader.render(frame, body, theme, self.ctx.hyperlinks, true);
+            }
+            (None, pane) => {
+                self.render_browse(frame, &parts, theme, &glyphs);
+                if let Some(pane) = pane {
+                    self.render_pane(frame, pane, theme);
+                }
+            }
         }
         self.render_status(frame, parts.status, theme);
+        if let Some(modal) = &self.modal {
+            modal.render(frame, area, theme);
+        }
+    }
+
+    /// The header, the sidebar and the list.
+    fn render_browse(
+        &self,
+        frame: &mut Frame,
+        parts: &layout::Areas,
+        theme: &Theme,
+        glyphs: &Glyphs,
+    ) {
+        self.render_header(frame, parts.header, theme, glyphs);
+        if let Some(side) = parts.sidebar {
+            self.render_sidebar(frame, side, theme, glyphs);
+        }
+        self.render_list(frame, parts.list, theme, glyphs);
     }
 
     fn scope_title(&self) -> String {

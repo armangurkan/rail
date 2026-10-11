@@ -7,6 +7,7 @@ pub mod clock;
 pub mod data;
 pub mod effects;
 pub mod keys;
+pub mod modals;
 pub mod run;
 pub mod screen;
 pub mod screens;

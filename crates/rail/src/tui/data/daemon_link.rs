@@ -178,6 +178,10 @@ pub struct FakeDaemon {
     pub unreachable: std::sync::atomic::AtomicBool,
     /// The answer to the next `body.fetch`; every id `fetched` when unset.
     pub answer: std::sync::Mutex<Option<Result<rail_core::ops::BodyFetchResponse, OpError>>>,
+    /// Runs with the ids of each `body.fetch` before the fake answers (a test writes the
+    /// bodies to the store here, as the daemon would).
+    #[allow(clippy::type_complexity, reason = "a test hook, named once")]
+    pub on_fetch: std::sync::Mutex<Option<Box<dyn FnMut(&[String]) + Send>>>,
 }
 
 #[cfg(test)]
@@ -216,6 +220,9 @@ impl FakeDaemon {
 
     fn fetch(&self, sink: &TaskSink, thread_id: i64, account: String, ids: Vec<String>) {
         use rail_core::ops::{BodyFetchResponse, BodyFetchResult, BodyOutcome};
+        if let Some(hook) = self.on_fetch.lock().unwrap().as_mut() {
+            hook(&ids);
+        }
         self.record(FakeCall::Fetch {
             account,
             ids: ids.clone(),

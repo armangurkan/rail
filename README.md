@@ -27,6 +27,7 @@ up without ever seeing your secrets.
 - [Status](#status)
 - [Install](#install)
 - [Quick start](#quick-start)
+- [Reading mail](#reading-mail)
 - [Account setup](#account-setup)
 - [Using Rail from an AI agent (MCP)](#using-rail-from-an-ai-agent-mcp)
 - [Security and privacy](#security-and-privacy)
@@ -211,6 +212,35 @@ you changed.
 | `wizard.toggle` | wizard | `space` | Tick or untick the checkbox. |
 | `wizard.retry` | wizard | `r` | Retry after an error. |
 | `wizard.copy_url` | wizard | `c` | Copy the URL shown. |
+
+## Reading mail
+
+This describes the mail screen as it will work when it ships. `rail` cannot open it yet (with an
+account configured it still prints that the TUI is not built yet), so none of this is reachable
+today.
+
+The thread list shows the unified inbox: the account's colour dot, the date, the people, the
+message count, `★` for starred and `📎` for attachments, and the subject; unread threads are bold.
+`1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
+and wider; `b` toggles it, `Tab` moves into it) lists every account and label with its unread
+count; `Enter` opens one.
+
+`Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
+beside the list; narrower, it covers the screen. `q` or `Esc` closes it. Messages are oldest
+first; unread ones and the latest are expanded. `j`/`k` move the cursor, `n`/`p` jump between
+messages, `Tab` expands or collapses one, and `Enter` on `[n quoted lines]` shows the quoted text.
+
+HTML mail is shown as Rail's plain-text rendering, with each link as a numbered marker such as
+`[1]`; in terminals that support hyperlinks (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows
+Terminal, foot, Alacritty, GNOME Terminal and other VTE terminals; not inside tmux or screen) the
+marker is clickable. `g x` opens a link: the marker on the cursor line, or the number you type when
+the line has none or several. Rail shows the address first and opens only `http`, `https` and
+`mailto` links. `a` lists the thread's attachments (name, type, size); opening and saving them
+comes in a later version.
+
+Bodies of recent mail (`body_cache_days`) are already in the store. An older message shows
+**fetching…** while the daemon fetches its body from Gmail; the rest of the thread stays readable,
+and the text appears when it lands. If the fetch fails the message says why.
 
 ## Account setup
 
@@ -490,6 +520,8 @@ running syncs carry on unchanged.
 | `history_days` | `0` | How many days of mail the store keeps; `0` is the whole mailbox. |
 | `body_cache_days` | `30` | Bodies of threads with mail this recent are fetched ahead of time. |
 | `icons` | `"unicode"` | `"unicode"` or `"ascii"`. Accepted now; takes effect in the mail screen when it ships (`"ascii"` swaps its glyphs for `*`, `+`, `@`, `ok` and `~`, for fonts without them). |
+| `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen, when it ships). |
+| `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | Reserved for composing; accepted but no effect yet. |
 
 ### `[[accounts]]`

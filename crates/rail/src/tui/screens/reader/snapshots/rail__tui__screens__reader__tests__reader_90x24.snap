@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/reader/tests.rs
+expression: "draw(&f, width, height)"
+---
+Q4 plan  (3 messages)
+▾ Tom  Thu 09 Oct 2025 08:53
+From: Tom <tom@example.com>
+To: Dana Reyes <dana@example.com>
+Date: Thu 09 Oct 2025 08:53
+
+Hi Dana,
+
+The plan is in the doc[1]; notes are on the wiki[2].
+
+[5 quoted lines]
+
+Thanks,
+Tom
+📎  plan.pdf
+
+▸ Sender  Thu 09 Oct 2025 08:54  snippet m2
+▾ Sender  Thu 09 Oct 2025 08:55
+From: Sender <sender@example.com>
+Date: Thu 09 Oct 2025 08:55
+
+body of m3
+
+work ✓

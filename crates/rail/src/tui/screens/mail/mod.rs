@@ -10,6 +10,7 @@
 
 mod layout;
 mod list;
+mod reading;
 mod sidebar;
 mod status;
 #[cfg(test)]
@@ -35,6 +36,7 @@ pub use list::{ListWindow, MAX_WINDOW, Place};
 pub use sidebar::{Sidebar, SidebarItem};
 pub use status::{DaemonState, ErrorEntry, StatusBar, error_line};
 pub use view::Glyphs;
+pub(crate) use view::visible_offset;
 
 use crate::tui::app::{Effect, Msg, TaskResult};
 use crate::tui::clock::Clock;
@@ -44,7 +46,9 @@ use crate::tui::data::{
 };
 use crate::tui::effects::Opener;
 use crate::tui::keys::{Action, Chord, Keymap, Resolved, View};
+use crate::tui::modals::Modal;
 use crate::tui::screen::Screen;
+use crate::tui::screens::reader::Reader;
 use crate::tui::theme::Theme;
 
 /// Rows the list is assumed to show before the first frame says.
@@ -133,7 +137,7 @@ pub struct MailScreen {
     place: Place,
     sidebar: Sidebar,
     status: StatusBar,
-    focus: Focus,
+    pub(crate) focus: Focus,
     /// Set by `b` and `Tab`; by the width until then.
     sidebar_shown: Option<bool>,
     store_state: StoreState,
@@ -142,8 +146,13 @@ pub struct MailScreen {
     /// The newest list read that replaces the window (a scope change, `Home`, `End`) while it
     /// is in flight: a re-query reuses it instead of overriding it.
     navigating: Option<(PageAt, Place)>,
+    /// The open thread, drawn in the pane or full screen.
+    reader: Option<Reader>,
+    modal: Option<Modal>,
     seq: u64,
     latest_list: u64,
+    /// The newest thread read: an older answer is dropped.
+    latest_thread: u64,
     latest_sidebar: u64,
     requery_token: u64,
     requery_pending: bool,
@@ -169,8 +178,11 @@ impl MailScreen {
             store_state: StoreState::Loading,
             size: Cell::new((0, 0)),
             navigating: None,
+            reader: None,
+            modal: None,
             seq: 0,
             latest_list: 0,
+            latest_thread: 0,
             latest_sidebar: 0,
             requery_token: 0,
             requery_pending: false,
@@ -252,7 +264,11 @@ impl MailScreen {
         let list = self.list_request(at, place);
         let sidebar_seq = self.next_seq();
         self.latest_sidebar = sidebar_seq;
-        vec![self.ctx.store.refresh(list, sidebar_seq)]
+        let mut effects = vec![self.ctx.store.refresh(list, sidebar_seq)];
+        if let Some(id) = self.reader.as_ref().map(Reader::thread_id) {
+            effects.push(self.read_thread(id));
+        }
+        effects
     }
 
     /// Show `scope`. The old rows stay drawn until the new ones arrive (spec §3); a page
@@ -278,6 +294,10 @@ impl MailScreen {
         if self.panic_on_key {
             panic!("rail test panic in the mail screen");
         }
+        if let Some(modal) = self.modal.as_mut() {
+            let outcome = modal.key(key);
+            return self.modal_outcome(outcome);
+        }
         let views = self.views();
         match self.ctx.keymap.resolve(&views, &mut self.chord, key) {
             Resolved::Action(action) => self.act(action),
@@ -292,7 +312,7 @@ impl MailScreen {
         match self.focus {
             Focus::List => self.list_action(action),
             Focus::Sidebar => self.sidebar_action(action),
-            Focus::Reader => Vec::new(),
+            Focus::Reader => self.reader_action(action),
         }
     }
 
@@ -338,6 +358,7 @@ impl MailScreen {
         let height = self.height();
         let page = isize::try_from(height).unwrap_or(isize::MAX);
         let wanted = match action {
+            Action::ListOpen => return self.open_selected(),
             Action::ListDown => self.list.move_by(1, height),
             Action::ListUp => self.list.move_by(-1, height),
             Action::ListPageDown => self.list.move_by(page, height),
@@ -396,6 +417,12 @@ impl MailScreen {
         match event {
             MailEvent::Listed { seq, result } => self.listed(seq, result),
             MailEvent::Sidebar { seq, result } => self.sidebar_counted(seq, result),
+            MailEvent::Thread {
+                seq,
+                thread_id,
+                result,
+            } if seq == self.latest_thread => self.thread_read(thread_id, result),
+            MailEvent::Bodies { thread_id, result } => self.bodies_answered(thread_id, result),
             MailEvent::Daemon(event) => self.on_daemon(event),
             MailEvent::Timer {
                 token,
@@ -543,10 +570,14 @@ impl Screen for MailScreen {
         self.render(frame, theme);
     }
 
+    fn captures_text(&self) -> bool {
+        self.modal.as_ref().is_some_and(Modal::captures_text)
+    }
+
     /// The active view's own keys and a waiting chord are the screen's; the global quit key
     /// is the shell's unless the view binds it (`q` closes the reader).
     fn claims_key(&self, key: KeyEvent) -> bool {
-        if self.chord.is_pending() {
+        if self.modal.is_some() || self.chord.is_pending() {
             return true;
         }
         let mut chord = self.chord;
