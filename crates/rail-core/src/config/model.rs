@@ -202,14 +202,20 @@ impl SyncSettings {
     }
 
     /// The oldest `internalDate` (milliseconds) inside the window at `now` (Unix seconds),
-    /// or `None` when the window is the whole mailbox.
+    /// or `None` when the window is the whole mailbox: `history_days = 0`, or a window that
+    /// reaches back before 1970 (Gmail's `after:` takes no negative time).
     pub fn window_start_ms(&self, now: i64) -> Option<i64> {
-        (self.history_days != 0).then(|| (now - i64::from(self.history_days) * DAY_SECS) * 1000)
+        if self.history_days == 0 {
+            return None;
+        }
+        let start = now.saturating_sub(i64::from(self.history_days).saturating_mul(DAY_SECS));
+        (start >= 0).then(|| start.saturating_mul(1000))
     }
 
     /// The oldest `internalDate` (milliseconds) whose thread gets bodies prefetched.
     pub fn body_since_ms(&self, now: i64) -> i64 {
-        (now - i64::from(self.body_cache_days) * DAY_SECS) * 1000
+        now.saturating_sub(i64::from(self.body_cache_days).saturating_mul(DAY_SECS))
+            .saturating_mul(1000)
     }
 }
 
@@ -327,6 +333,26 @@ mod tests {
         let whole = with_account("", "");
         let whole = SyncSettings::for_account(&whole.general, &whole.accounts[0]);
         assert_eq!(whole.window_start_ms(now), None);
+    }
+
+    /// Review minor 7: a window reaching before 1970 is the whole mailbox, never a negative
+    /// `after:`.
+    #[test]
+    fn a_window_before_1970_is_the_whole_mailbox() {
+        let config = with_account(&format!("history_days = {}", u32::MAX), "");
+        let settings = SyncSettings::for_account(&config.general, &config.accounts[0]);
+        let now = 20_000 * DAY_SECS;
+        assert_eq!(settings.window_start_ms(now), None);
+        let config = with_account("history_days = 20000", "");
+        let settings = SyncSettings::for_account(&config.general, &config.accounts[0]);
+        assert_eq!(
+            settings.window_start_ms(now),
+            Some(0),
+            "exactly 1970 is kept"
+        );
+        let config = with_account("history_days = 20001", "");
+        let settings = SyncSettings::for_account(&config.general, &config.accounts[0]);
+        assert_eq!(settings.window_start_ms(now), None);
     }
 
     #[test]

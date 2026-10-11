@@ -503,7 +503,8 @@ history_days = 90       # optional: this account's own window
 body_cache_days = 7     # optional: this account's own body cache
 ```
 
-A `body_cache_days` larger than a non-zero `history_days` is treated as `history_days`.
+A `body_cache_days` larger than a non-zero `history_days` is treated as `history_days`, and a
+`history_days` reaching back before 1970 means the whole mailbox.
 Shrinking `history_days` removes the local copies of older mail on the next pass (the mail on
 Gmail is never touched); growing it fetches further back from the next pass on, at most 2,000
 messages a pass, each pass first fetching new mail, so new mail still arrives within one
