@@ -10,6 +10,63 @@ use serde::{Deserialize, Serialize};
 pub struct HelloRequest {
     pub protocol: u32,
     pub version: String,
+    /// The client's display and browser, for browser launches this connection begins.
+    #[serde(default)]
+    pub browser: BrowserEnv,
+}
+
+/// The longest display or browser value the daemon takes from a client.
+pub const MAX_BROWSER_ENV_CHARS: usize = 4096;
+
+/// Where a client's user sees a browser: its `DISPLAY`, `WAYLAND_DISPLAY` and `BROWSER`.
+/// Used only to launch the browser for a login that client began; never the daemon's own
+/// environment, and never from an MCP tool argument.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BrowserEnv {
+    #[serde(default)]
+    pub display: Option<String>,
+    #[serde(default)]
+    pub wayland_display: Option<String>,
+    #[serde(default)]
+    pub browser: Option<String>,
+}
+
+impl BrowserEnv {
+    /// This process's values; empty ones count as unset.
+    pub fn from_process() -> Self {
+        let var = |key: &str| std::env::var(key).ok().filter(|v| !v.is_empty());
+        Self {
+            display: var("DISPLAY"),
+            wayland_display: var("WAYLAND_DISPLAY"),
+            browser: var("BROWSER"),
+        }
+    }
+
+    /// Drop any value that is too long or holds a control character.
+    pub fn checked(self) -> Self {
+        let fine = |value: Option<String>| {
+            value.filter(|v| {
+                v.chars().count() <= MAX_BROWSER_ENV_CHARS && !v.chars().any(char::is_control)
+            })
+        };
+        Self {
+            display: fine(self.display),
+            wayland_display: fine(self.wayland_display),
+            browser: fine(self.browser),
+        }
+    }
+
+    /// The variables to set for the launch.
+    pub fn vars(&self) -> Vec<(&'static str, &str)> {
+        [
+            ("DISPLAY", &self.display),
+            ("WAYLAND_DISPLAY", &self.wayland_display),
+            ("BROWSER", &self.browser),
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| value.as_deref().map(|v| (key, v)))
+        .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

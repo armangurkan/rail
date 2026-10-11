@@ -15,8 +15,8 @@ use rail_core::error::ErrorClass;
 use rail_core::onboarding::{Action, DoneReport, Event, Failure, Preset, PresetEntry};
 use rail_core::ops::op::{AccountAddBegin, ConsentBegin, PendingWait, PresetFetch, PresetsList};
 use rail_core::ops::{
-    AccountAddRequest, ClientSecretInput, ConsentBeginRequest, ErrorCode, OpError, PendingId,
-    PendingOutcome, PendingState, PresetFetchRequest, PresetSummary, PresetsListRequest,
+    AccountAddRequest, BrowserEnv, ClientSecretInput, ConsentBeginRequest, ErrorCode, OpError,
+    PendingId, PendingOutcome, PendingState, PresetFetchRequest, PresetSummary, PresetsListRequest,
     SavedAccount, WaitRequest, WaitResponse,
 };
 use rail_core::paths::Paths;
@@ -59,7 +59,10 @@ pub struct EffectContext {
 impl EffectContext {
     /// The real context: the platform browser and the user's daemon.
     pub fn new(paths: Paths) -> Self {
-        Self::with(Arc::new(browser::launch), daemon_link::connector(&paths))
+        // The TUI opens a URL itself only when the user asks; it runs where the user is, so
+        // the browser inherits this process's own display.
+        let opener: Opener = Arc::new(|url: &Url| browser::launch(url, &BrowserEnv::default()));
+        Self::with(opener, daemon_link::connector(&paths))
     }
 
     pub fn with(opener: Opener, daemon: Connector) -> Self {

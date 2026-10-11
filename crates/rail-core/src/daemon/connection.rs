@@ -19,7 +19,7 @@ use super::wire::{
     INVALID_PARAMS, INVALID_REQUEST, Message, PARSE_ERROR, Response, RpcError, WireError,
     encode_frame, parse_message, read_frame,
 };
-use crate::ops::{HelloRequest, OpError, names};
+use crate::ops::{BrowserEnv, HelloRequest, OpError, names};
 
 /// How long a closing connection lets its running requests answer.
 const REQUEST_DRAIN: Duration = Duration::from_secs(1);
@@ -91,10 +91,10 @@ impl Connection {
         tasks: &mut JoinSet<()>,
     ) {
         let mut reader = BufReader::new(read);
-        let mut greeted = false;
+        let mut hello: Option<BrowserEnv> = None;
         loop {
             let next = tokio::select! {
-                next = self.next_frame(&mut reader, greeted) => next,
+                next = self.next_frame(&mut reader, hello.is_some()) => next,
                 () = self.server.closed() => return,
             };
             let frame = match next {
@@ -107,7 +107,7 @@ impl Connection {
                 }
                 Err(_) => return,
             };
-            if self.handle(&frame, &mut greeted, frames, tasks).is_break() {
+            if self.handle(&frame, &mut hello, frames, tasks).is_break() {
                 return;
             }
         }
@@ -131,7 +131,7 @@ impl Connection {
     fn handle(
         &self,
         frame: &[u8],
-        greeted: &mut bool,
+        hello: &mut Option<BrowserEnv>,
         frames: &mpsc::UnboundedSender<Vec<u8>>,
         tasks: &mut JoinSet<()>,
     ) -> ControlFlow<()> {
@@ -146,29 +146,23 @@ impl Connection {
                 return ControlFlow::Continue(());
             }
         };
-        if !*greeted {
-            if let Some(error) = hello_problem(&request) {
-                reply(frames, Response::err(Some(request.id), error));
-                return ControlFlow::Break(());
+        if hello.is_none() {
+            match read_hello(&request) {
+                Ok(first) => *hello = Some(first.browser.checked()),
+                Err(error) => {
+                    reply(frames, Response::err(Some(request.id), error));
+                    return ControlFlow::Break(());
+                }
             }
-            *greeted = true;
         }
         self.server.touch();
         let call = Call {
             ctx: self.ctx.clone(),
             server: self.server.clone(),
-            caller: Caller::new(frames.clone()),
+            caller: Caller::new(frames.clone(), hello.clone().unwrap_or_default()),
         };
         let (registry, frames) = (self.registry.clone(), frames.clone());
-        // A finished task is freed only when joined: drain them, or a long-lived connection
-        // grows with every request it ever made.
-        while let Some(joined) = tasks.try_join_next() {
-            if let Err(e) = joined
-                && e.is_panic()
-            {
-                tracing::warn!("a request handler panicked");
-            }
-        }
+        reap_finished(tasks);
         tasks.spawn(async move {
             let response = registry.dispatch(call, request).await;
             reply(&frames, response);
@@ -179,11 +173,22 @@ impl Connection {
     }
 }
 
-/// Why `request` cannot be the first one on a connection: not a hello, or a hello whose
-/// parameters do not parse.
-fn hello_problem(request: &super::wire::Request) -> Option<RpcError> {
+/// A finished task is freed only when joined: drain them, or a long-lived connection grows
+/// with every request it ever made.
+fn reap_finished(tasks: &mut JoinSet<()>) {
+    while let Some(joined) = tasks.try_join_next() {
+        if let Err(e) = joined
+            && e.is_panic()
+        {
+            tracing::warn!("a request handler panicked");
+        }
+    }
+}
+
+/// The first request on a connection, which must be a hello whose parameters parse.
+fn read_hello(request: &super::wire::Request) -> Result<HelloRequest, RpcError> {
     if request.method != names::HELLO {
-        return Some(RpcError::new(
+        return Err(RpcError::new(
             INVALID_REQUEST,
             "the first request must be hello",
         ));
@@ -192,14 +197,11 @@ fn hello_problem(request: &super::wire::Request) -> Option<RpcError> {
         serde_json::Value::Null => serde_json::json!({}),
         params => params.clone(),
     };
-    match serde_json::from_value::<HelloRequest>(params) {
-        Ok(_) => None,
-        Err(e) => {
-            let mut rpc = RpcError::from_op(&OpError::invalid_params(&e));
-            rpc.code = INVALID_PARAMS;
-            Some(rpc)
-        }
-    }
+    serde_json::from_value::<HelloRequest>(params).map_err(|e| {
+        let mut rpc = RpcError::from_op(&OpError::invalid_params(&e));
+        rpc.code = INVALID_PARAMS;
+        rpc
+    })
 }
 
 /// Queue `response`. One that cannot be sent (over the frame limit, or not encodable) is

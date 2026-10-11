@@ -123,6 +123,14 @@ fn rail_env<'a>(
         .env("RAIL_TEST_IDLE_SECS", "2")
         .env("RAIL_TEST_OPENER", write_opener(dir))
         .env("RAIL_TEST_URL_FILE", dir.path().join("url.txt"))
+        // A configured account in a test must never reach Google, and its daemon must still
+        // idle out. `start` sets RAIL_TEST_TOKEN_URL again when a test serves one.
+        .env(
+            "RAIL_TEST_GMAIL_URL",
+            "http://127.0.0.1:9/gmail/v1/users/me/",
+        )
+        .env("RAIL_TEST_TOKEN_URL", "http://127.0.0.1:9/token")
+        .env("RAIL_TEST_IDLE_WITH_ACCOUNTS", "1")
 }
 
 /// Runs `rail daemon stop` for its directory when dropped, so the daemon `rail mcp` started

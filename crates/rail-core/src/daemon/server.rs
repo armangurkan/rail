@@ -24,6 +24,7 @@ use crate::auth::unix_now;
 use crate::error::ErrorClass;
 use crate::ops::{DaemonInfo, ErrorCode, OpError};
 use crate::paths::{Paths, create_private_dir};
+use crate::sync::{CONFIG_CHECK, SyncManager};
 
 /// The longest `daemon.stop` (or an idle exit) waits for running saves.
 pub const SAVE_GRACE: Duration = Duration::from_secs(30);
@@ -38,6 +39,8 @@ pub struct ServeConfig {
     pub hello_timeout: Duration,
     /// The Rail version the daemon announces in the hello.
     pub version: String,
+    /// Let the daemon idle out even with accounts configured; a debug-build test hook.
+    pub idle_with_accounts: bool,
 }
 
 impl Default for ServeConfig {
@@ -46,6 +49,7 @@ impl Default for ServeConfig {
             idle: IDLE_TIMEOUT,
             hello_timeout: START_TIMEOUT,
             version: VERSION.to_string(),
+            idle_with_accounts: false,
         }
     }
 }
@@ -147,6 +151,7 @@ impl ServerState {
         self.clients.load(Ordering::SeqCst) == 0
             && ctx.pending_count() == 0
             && quiet >= self.config.idle
+            && (self.config.idle_with_accounts || !ctx.sync.has_accounts())
     }
 }
 
@@ -235,6 +240,10 @@ impl Server {
         tracing::info!(socket = %self.state.socket.display(), "daemon listening");
         let tick = check_interval(self.state.config.idle);
         let mut stop = std::pin::pin!(stop);
+        self.ctx.sync.count_accounts(&self.ctx.paths);
+        SyncManager::reconcile_in_background(self.ctx.clone());
+        let mut config_tick = tokio::time::interval(CONFIG_CHECK);
+        config_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 () = &mut stop => {
@@ -249,6 +258,7 @@ impl Server {
                     }
                 },
                 () = self.state.shutdown.notified() => break,
+                _ = config_tick.tick() => SyncManager::tick(&self.ctx),
                 () = tokio::time::sleep(tick) => {
                     if self.state.idle_expired(&self.ctx) {
                         tracing::info!("no clients and nothing pending; exiting");
@@ -284,12 +294,13 @@ impl Server {
         self.connections.spawn(connection.serve(stream));
     }
 
-    /// The single shutdown point, in the one order that matters: stop listening; end the
-    /// logins still waiting for a browser; give running saves their time to finish; end every
-    /// connection so none serves a request after this; remove the socket; and only then
-    /// release `daemon.lock`.
+    /// The single shutdown point, in the one order that matters: stop listening; stop the sync
+    /// engines and let the writer commit its batch; end the logins still waiting for a
+    /// browser; give running saves their time to finish; end every connection so none serves
+    /// a request after this; remove the socket; and only then release `daemon.lock`.
     async fn finish(mut self) -> Result<(), OpError> {
         drop(self.listener);
+        self.ctx.sync.shutdown(SAVE_GRACE).await;
         self.ctx.pending.stop_new();
         self.ctx.pending.cancel_waiting();
         self.ctx.pending.wait_for_saves(SAVE_GRACE).await;

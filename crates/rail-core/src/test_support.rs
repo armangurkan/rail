@@ -94,6 +94,8 @@ pub(crate) fn tokens() -> TokenSet {
 }
 
 /// A daemon context over `paths` whose opener records every URL instead of starting a browser.
+/// Its token and Gmail URLs are unreachable and its providers offline, so nothing reaches
+/// Google.
 pub(crate) fn daemon_context(
     paths: &crate::paths::Paths,
 ) -> (
@@ -101,12 +103,60 @@ pub(crate) fn daemon_context(
     tokio::sync::mpsc::UnboundedReceiver<url::Url>,
 ) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let opener: crate::daemon::Opener = std::sync::Arc::new(move |url: &url::Url| {
-        let _ = tx.send(url.clone());
-        Ok(())
-    });
-    let ctx = crate::daemon::DaemonContext::new(paths.clone(), opener).expect("http client");
-    (ctx, rx)
+    let opener: crate::daemon::Opener =
+        std::sync::Arc::new(move |url: &url::Url, _: &crate::ops::BrowserEnv| {
+            let _ = tx.send(url.clone());
+            Ok(())
+        });
+    (offline_context(paths, opener), rx)
+}
+
+/// A provider factory for tests that never touches the network: an empty mock mailbox.
+pub(crate) fn offline_factory() -> crate::sync::ProviderFactory {
+    std::sync::Arc::new(|_| {
+        Ok(
+            std::sync::Arc::new(crate::provider::mock::MockProvider::new())
+                as std::sync::Arc<dyn crate::provider::Provider>,
+        )
+    })
+}
+
+/// A factory handing every account `mock`.
+pub(crate) fn mock_factory(
+    mock: &crate::provider::mock::MockProvider,
+) -> crate::sync::ProviderFactory {
+    let mock = mock.clone();
+    std::sync::Arc::new(move |_| {
+        Ok(std::sync::Arc::new(mock.clone()) as std::sync::Arc<dyn crate::provider::Provider>)
+    })
+}
+
+/// `daemon_context`, recording each launch's browser environment with its URL.
+pub(crate) fn daemon_context_with_browsers(
+    paths: &crate::paths::Paths,
+) -> (
+    crate::daemon::DaemonContext,
+    tokio::sync::mpsc::UnboundedReceiver<(url::Url, crate::ops::BrowserEnv)>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let opener: crate::daemon::Opener =
+        std::sync::Arc::new(move |url: &url::Url, env: &crate::ops::BrowserEnv| {
+            let _ = tx.send((url.clone(), env.clone()));
+            Ok(())
+        });
+    (offline_context(paths, opener), rx)
+}
+
+/// A context whose endpoints are unreachable and whose providers are offline.
+fn offline_context(
+    paths: &crate::paths::Paths,
+    opener: crate::daemon::Opener,
+) -> crate::daemon::DaemonContext {
+    crate::daemon::DaemonContext::new(paths.clone(), opener)
+        .expect("http client")
+        .with_token_url(Some("http://127.0.0.1:9/token".into()))
+        .with_gmail_url(Some("http://127.0.0.1:9/gmail/v1/users/me/".into()))
+        .with_provider_factory(offline_factory())
 }
 
 /// Bind a real daemon on `paths` and run it on a task.

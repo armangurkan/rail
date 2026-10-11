@@ -39,8 +39,11 @@ fn the_registry_serves_exactly_the_implemented_operations() {
         names::PENDING_WAIT,
         names::PRESET_FETCH,
         names::PRESETS_LIST,
+        names::SEARCH,
         names::SECRETS_CONFIGURE,
         names::STATUS,
+        names::SYNC_NOW,
+        names::SYNC_STATUS,
     ];
     assert_eq!(names, expected);
 }

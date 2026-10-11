@@ -39,6 +39,11 @@ fn stopped() -> OpError {
 }
 
 impl WriterHandle {
+    /// True once the writer thread is gone (it panicked, or it ended): every write fails.
+    pub fn is_closed(&self) -> bool {
+        self.jobs.is_closed()
+    }
+
     /// Queue `batch` (waiting while the queue is full) and wait for its commit.
     pub async fn write(&self, batch: Batch) -> Result<BatchOutcome, OpError> {
         let (reply, answer) = oneshot::channel();

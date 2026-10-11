@@ -483,6 +483,17 @@ A `body_cache_days` larger than a non-zero `history_days` is treated as `history
 Shrinking `history_days` removes the local copies of older mail on the next pass (the mail on
 Gmail is never touched); growing it fetches further back on the next pass.
 
+**What the store keeps.** For each Gmail account: every label, the envelope (sender,
+recipients, subject, date, flags, labels, snippet) of every message inside `history_days` (the
+whole mailbox by default), and the rendered text of bodies for threads with mail newer than
+`body_cache_days`. HTML bodies are turned into text without running scripts or loading remote
+images, so a tracking pixel is never requested by a sync; a body over 10 MiB is cut and says so.
+Attachments are recorded by name, type and size only. Mail a search finds on Gmail outside the
+window is kept for 14 days after it was last searched for; starred mail and threads with recent
+mail are never pruned. A first sync of a large mailbox takes a while (Gmail allows each account
+about 250 messages a minute); a smaller `history_days` makes it quick. Microsoft 365 accounts do
+not sync yet.
+
 ### What an AI agent may do with your mail: `ai_send`
 
 Each account may set what a coding agent connected over MCP may do with its mail:
@@ -544,8 +555,19 @@ fresh daemon, starting one if needed. A request that only reads is sent again on
 one that changes something (beginning a login or a consent) is not, and the wizard asks you to try
 again. A login that was waiting in the stopped daemon is gone: retry it.
 You never start it yourself: the first command that needs it starts `rail daemon run` in the
-background, and it exits after ten minutes with no client connected and no login waiting. Its
-logs go to `rail.log`; it never writes to the terminal.
+background. While any account is configured it keeps running and syncs every Gmail account in
+the background: labels, envelopes for the configured window, and bodies for recent threads,
+then it checks each account for new mail every `poll_interval`. With no account configured it
+exits after ten minutes with no client connected and no login waiting. It follows
+`config.toml`: an account you add, log in to again or remove (and any edit to the file) is
+picked up within seconds; removing an account stops its sync but keeps its mail in the store,
+and adding it back resumes where it stopped. An edit that leaves `config.toml` invalid is logged
+once and the running syncs carry on unchanged. A login you begin opens the browser on the display
+of the command that began it (its `DISPLAY`, `WAYLAND_DISPLAY` and `BROWSER`), even when the
+daemon itself started without one. Its logs go to `rail.log`; it never writes to the terminal.
+If the store's writer fails, the daemon starts it (and every account's sync) again, up to three
+times; after that sync pauses until the daemon restarts, and `rail doctor` reports it as a store
+error.
 
 The daemon listens on a Unix socket (see [Where things live](#where-things-live)) in a directory
 only you can open (mode 0700); the socket itself is 0600, and the daemon drops any connection
@@ -555,9 +577,8 @@ cancel it with Ctrl-C, or it times out after 15 minutes; once the account is bei
 save finishes even if the command that started it is gone. `rail daemon run` in the foreground
 stops the same way on Ctrl-C or SIGTERM: saves in flight finish first, then it exits 0.
 
-The daemon starts with the environment of the command that started it: `DISPLAY` and
-`WAYLAND_DISPLAY` (where the browser opens), `BROWSER`, `OP_SESSION_*` (a signed-in 1Password
-CLI) and `PATH`. It keeps that environment until it exits, ten idle minutes later; run
+The daemon starts with the environment of the command that started it: `OP_SESSION_*` (a
+signed-in 1Password CLI) and `PATH`. It keeps that environment until it exits; run
 `rail daemon stop` to have the next command start one with your current environment. That
 includes where `op` is found: without `op_path`, the daemon runs the first `op` on the `PATH` it
 inherited. Set `op_path` under `[onepassword]` to pin it to one program.

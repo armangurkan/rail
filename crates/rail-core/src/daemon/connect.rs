@@ -22,8 +22,9 @@ use crate::ops::{DaemonStopRequest, ErrorCode, HelloResponse, OpError};
 use crate::paths::{Paths, canonical_dir, create_private_dir};
 
 /// The operations a client may send again after the connection closed under them: they only
-/// read, or (`pending.cancel`) have the same effect however often they run.
-const RETRY_SAFE: [&str; 8] = [
+/// read, or (`pending.cancel`, `sync.now`, `search`) have the same effect however often they
+/// run.
+const RETRY_SAFE: [&str; 11] = [
     names::STATUS,
     names::ACCOUNTS_LIST,
     names::PRESETS_LIST,
@@ -32,6 +33,9 @@ const RETRY_SAFE: [&str; 8] = [
     names::PENDING_WAIT,
     names::PENDING_CANCEL,
     names::DAEMON_INFO,
+    names::SYNC_STATUS,
+    names::SYNC_NOW,
+    names::SEARCH,
 ];
 
 /// True when `operation` may be sent again on a fresh connection.

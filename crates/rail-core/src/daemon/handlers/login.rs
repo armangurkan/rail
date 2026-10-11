@@ -21,8 +21,8 @@ use crate::daemon::pending::{Refused, Slot};
 use crate::daemon::registry::{Call, Caller};
 use crate::error::ErrorClass;
 use crate::ops::{
-    AccountAddRequest, BeginResponse, ConsentBeginRequest, ErrorCode, LoginBeginRequest, OpError,
-    PendingId, PendingKind, PendingOutcome, PendingState, names,
+    AccountAddRequest, BeginResponse, BrowserEnv, ConsentBeginRequest, ErrorCode,
+    LoginBeginRequest, OpError, PendingId, PendingKind, PendingOutcome, PendingState, names,
 };
 
 /// How long a begun login may wait for its redirect before it fails.
@@ -45,9 +45,11 @@ pub(super) async fn add_begin(
         .begin(slot, PendingKind::AddAccount)
         .map_err(refusal)?;
     let task = finish_add(ctx.clone(), id.clone(), session, prepared, cancel);
+    let browser = call.caller.browser().clone();
     spawn_pending(&ctx, call.caller, id.clone(), task);
     Ok(begun(
         &ctx,
+        &browser,
         id,
         PendingKind::AddAccount,
         &url,
@@ -89,9 +91,11 @@ pub(super) async fn login_begin(
         .begin(slot, PendingKind::Login)
         .map_err(refusal)?;
     let task = finish_login(ctx.clone(), id.clone(), session, account, cancel);
+    let browser = call.caller.browser().clone();
     spawn_pending(&ctx, call.caller, id.clone(), task);
     Ok(begun(
         &ctx,
+        &browser,
         id,
         PendingKind::Login,
         &url,
@@ -124,9 +128,11 @@ pub(super) async fn consent_begin(
             Err(_) => failed(timed_out()),
         })
     };
+    let browser = call.caller.browser().clone();
     spawn_pending(&ctx, call.caller, id.clone(), task);
     Ok(begun(
         &ctx,
+        &browser,
         id,
         PendingKind::AdminConsent,
         &url,
@@ -138,13 +144,14 @@ pub(super) async fn consent_begin(
 /// returned either way.
 fn begun(
     ctx: &DaemonContext,
+    browser: &BrowserEnv,
     id: PendingId,
     kind: PendingKind,
     url: &Url,
     open_browser: bool,
 ) -> BeginResponse {
     let opened = open_browser
-        && (ctx.opener)(url)
+        && (ctx.opener)(url, browser)
             .inspect_err(|e| tracing::warn!(error = %e, "could not start the browser"))
             .is_ok();
     BeginResponse {
@@ -253,6 +260,9 @@ async fn finish_add(
     let saved = ctx
         .write_locked(move |ctx| persist_new(&ctx.paths, &ctx.op_ids, &prepared, &tokens))
         .await;
+    if saved.is_ok() {
+        ctx.sync.reconcile(&ctx).await;
+    }
     Some(match saved {
         Ok(account) => done(PendingOutcome::Added { account }),
         Err(error) => failed(error),
@@ -283,6 +293,9 @@ async fn finish_login(
             persist_login(&ctx.paths, &ctx.op_ids, &config, &current, &tokens)
         })
         .await;
+    if let Ok(account) = &saved {
+        ctx.sync.logged_in(&ctx, &account.address).await;
+    }
     Some(match saved {
         Ok(account) => done(PendingOutcome::LoggedIn { account }),
         Err(error) => failed(error),
@@ -309,6 +322,7 @@ fn timed_out() -> OpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ops::BrowserEnv;
     use crate::test_support::daemon_context;
 
     /// A task that panics must still end its entry, or the daemon could never idle out.
@@ -320,9 +334,14 @@ mod tests {
         let (frames, _outgoing) = tokio::sync::mpsc::unbounded_channel();
         let slot = ctx.pending.try_reserve().unwrap();
         let (id, _cancel) = ctx.pending.begin(slot, PendingKind::Login).unwrap();
-        spawn_pending(&ctx, Caller::new(frames), id.clone(), async {
-            panic!("boom");
-        });
+        spawn_pending(
+            &ctx,
+            Caller::new(frames, BrowserEnv::default()),
+            id.clone(),
+            async {
+                panic!("boom");
+            },
+        );
         let answer = ctx.pending.wait(&id, Duration::from_secs(5)).await.unwrap();
         assert!(
             matches!(answer.state, PendingState::Failed { .. }),

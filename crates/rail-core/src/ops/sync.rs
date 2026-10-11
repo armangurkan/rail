@@ -5,6 +5,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::error::OpError;
 use super::untrusted::Untrusted;
 use crate::config::AccountKind;
 
@@ -106,4 +107,101 @@ impl AccountSyncStatus {
             last_pass_failed: false,
         }
     }
+}
+
+/// The most hits one `search` returns.
+pub const MAX_SEARCH_LIMIT: usize = 100;
+/// The hits a `search` without a limit returns.
+pub const DEFAULT_SEARCH_LIMIT: usize = 20;
+/// The longest query Rail sends to Gmail.
+pub const MAX_QUERY_CHARS: usize = 1024;
+
+fn default_limit() -> usize {
+    DEFAULT_SEARCH_LIMIT
+}
+
+/// `sync.status`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SyncStatusRequest {
+    /// An account's name or address; every account when absent.
+    #[serde(default)]
+    pub account: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SyncStatusResponse {
+    pub accounts: Vec<AccountSyncStatus>,
+}
+
+/// `sync.now`: wake one account, or all.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SyncNowRequest {
+    #[serde(default)]
+    pub account: Option<String>,
+    /// Send `sync.progress` notifications on this connection from now on.
+    #[serde(default)]
+    pub watch: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SyncTarget {
+    pub name: String,
+    pub address: String,
+    /// The pass this request asked for has ended once the account's `passes_completed`
+    /// reaches this.
+    pub pass: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SyncNowResponse {
+    pub targets: Vec<SyncTarget>,
+}
+
+/// `search`: the store's full-text index and Gmail's own search, merged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SearchRequest {
+    pub query: String,
+    /// An account's name or address; every account when absent.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// At most 100.
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HitSource {
+    /// Found in the store.
+    Local,
+    /// Found by the provider's search and fetched into the store.
+    Server,
+}
+
+/// One thread a search found. `sender` and `subject` are mail content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SearchHit {
+    pub account: String,
+    pub thread_id: String,
+    /// The newest matching message's receive time, Unix seconds.
+    pub date: i64,
+    pub sender: Untrusted<String>,
+    pub subject: Untrusted<String>,
+    pub source: HitSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SearchFailure {
+    pub account: String,
+    pub error: OpError,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SearchResponse {
+    pub hits: Vec<SearchHit>,
+    /// Accounts whose server search failed; their local hits are still in `hits`.
+    pub failures: Vec<SearchFailure>,
 }

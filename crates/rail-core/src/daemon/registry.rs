@@ -15,8 +15,8 @@ use super::server::ServerState;
 use super::wire::{
     INVALID_PARAMS, METHOD_NOT_FOUND, Notification, Request, Response, RpcError, encode_frame,
 };
-use crate::ops::OpError;
 use crate::ops::op::Operation;
+use crate::ops::{BrowserEnv, OpError};
 
 type Reply = Pin<Box<dyn Future<Output = Result<Value, OpError>> + Send>>;
 type Handler = Box<dyn Fn(Call, Value) -> Result<Reply, OpError> + Send + Sync>;
@@ -36,13 +36,25 @@ pub(crate) struct Caller {
     /// Weak, so a detached pending task never keeps a closed connection's writer (and socket)
     /// alive.
     frames: mpsc::WeakUnboundedSender<Vec<u8>>,
+    /// The display and browser the connection's hello named (checked).
+    browser: BrowserEnv,
 }
 
 impl Caller {
-    pub(crate) fn new(frames: mpsc::UnboundedSender<Vec<u8>>) -> Self {
+    pub(crate) fn new(frames: mpsc::UnboundedSender<Vec<u8>>, browser: BrowserEnv) -> Self {
         Self {
             frames: frames.downgrade(),
+            browser,
         }
+    }
+
+    pub(crate) fn browser(&self) -> &BrowserEnv {
+        &self.browser
+    }
+
+    /// False once the connection has gone.
+    pub(crate) fn is_open(&self) -> bool {
+        self.frames.upgrade().is_some()
     }
 
     /// Send a notification. A connection that has gone, or a frame that cannot be encoded, is

@@ -20,6 +20,8 @@ mod login_tests;
 #[cfg(test)]
 mod manage_tests;
 #[cfg(test)]
+mod sync_tests;
+#[cfg(test)]
 mod tests;
 
 pub use client::DaemonClient;

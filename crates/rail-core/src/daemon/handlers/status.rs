@@ -43,10 +43,11 @@ pub(super) async fn daemon_stop(
 
 pub(super) async fn status(call: Call, _: StatusRequest) -> Result<StatusResponse, OpError> {
     let (paths, ids) = (call.ctx.paths.clone(), call.ctx.op_ids.clone());
-    let doctor = call
+    let mut doctor = call
         .ctx
         .blocking(move || Ok(doctor::gather(&paths, &ids)))
         .await?;
+    call.ctx.sync.add_to_report(&mut doctor);
     Ok(StatusResponse {
         doctor,
         daemon: call.server.info(&call.ctx),

@@ -19,6 +19,16 @@ pub fn idle() -> Option<std::time::Duration> {
         .map(std::time::Duration::from_secs)
 }
 
+/// The Gmail API root, so a binary test can serve it with wiremock (or make it unreachable).
+pub fn gmail_url() -> Option<String> {
+    var("RAIL_TEST_GMAIL_URL")
+}
+
+/// Let a test daemon idle out even with accounts configured.
+pub fn idle_with_accounts() -> bool {
+    var("RAIL_TEST_IDLE_WITH_ACCOUNTS").is_some()
+}
+
 fn var(name: &str) -> Option<String> {
     if !cfg!(debug_assertions) {
         return None;

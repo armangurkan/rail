@@ -18,7 +18,7 @@ use super::wire::{
 };
 use crate::error::ErrorClass;
 use crate::ops::op::{Hello, Operation};
-use crate::ops::{ErrorCode, HelloRequest, HelloResponse, OpError};
+use crate::ops::{BrowserEnv, ErrorCode, HelloRequest, HelloResponse, OpError};
 
 /// How many notifications a slow subscriber may fall behind before it misses some.
 const NOTIFICATION_BUFFER: usize = 64;
@@ -66,12 +66,23 @@ fn unparsable(what: &str, error: &serde_json::Error) -> OpError {
 }
 
 impl DaemonClient {
-    /// Start reading and writing on `stream` and say hello with `version`.
+    /// Start reading and writing on `stream` and say hello with `version` and this process's
+    /// display and browser.
     pub async fn handshake(stream: UnixStream, version: &str) -> Result<Self, OpError> {
+        Self::handshake_with(stream, version, BrowserEnv::from_process()).await
+    }
+
+    /// `handshake`, naming the display and browser explicitly (tests).
+    pub async fn handshake_with(
+        stream: UnixStream,
+        version: &str,
+        browser: BrowserEnv,
+    ) -> Result<Self, OpError> {
         let inner = Arc::new(start(stream));
         let hello = HelloRequest {
             protocol: PROTOCOL_VERSION,
             version: version.to_string(),
+            browser,
         };
         let params = serde_json::to_value(&hello).map_err(|e| OpError::internal(e.to_string()))?;
         let answer = call_raw(&inner, Hello::NAME, params).await?;

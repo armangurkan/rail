@@ -18,8 +18,8 @@ use crate::{browser, daemon_link, test_hooks};
 
 /// Serve until stopped, idle, or SIGINT or SIGTERM (which shut down like `daemon.stop`: saves
 /// in flight get their grace, then the socket goes and the lock is released; exit 0). The
-/// debug-only test hooks for the browser opener, the token endpoint and the idle timeout reach
-/// the daemon here. Nothing is printed: the daemon logs to `rail.log`, including why it could
+/// debug-only test hooks for the browser opener, the token endpoint, the Gmail API root and
+/// the idle timeout (and its rule for configured accounts) reach the daemon here. Nothing is printed: the daemon logs to `rail.log`, including why it could
 /// not start, since its stderr goes nowhere.
 pub async fn run(paths: &Paths) -> color_eyre::Result<ExitCode> {
     serve(paths).await.map_err(|error| {
@@ -40,9 +40,12 @@ async fn serve(paths: &Paths) -> Result<(), OpError> {
         }
     };
     let opener: Opener = Arc::new(browser::launch);
-    let ctx = DaemonContext::new(paths.clone(), opener)?.with_token_url(test_hooks::token_url());
+    let ctx = DaemonContext::new(paths.clone(), opener)?
+        .with_token_url(test_hooks::token_url())
+        .with_gmail_url(test_hooks::gmail_url());
     let config = ServeConfig {
         idle: test_hooks::idle().unwrap_or(IDLE_TIMEOUT),
+        idle_with_accounts: test_hooks::idle_with_accounts(),
         ..ServeConfig::default()
     };
     Server::bind(ctx, config).await?.run_until(signalled).await

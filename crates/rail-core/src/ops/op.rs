@@ -19,6 +19,10 @@ use super::presets::{
 };
 use super::secrets::{SecretsConfigureRequest, SecretsConfigureResponse};
 use super::status::{AccountsListRequest, AccountsListResponse, StatusRequest, StatusResponse};
+use super::sync::{
+    SearchRequest, SearchResponse, SyncNowRequest, SyncNowResponse, SyncStatusRequest,
+    SyncStatusResponse,
+};
 
 /// The wire names. They never change once released.
 pub mod names {
@@ -34,9 +38,12 @@ pub mod names {
     pub const GUIDE_PROVIDER: &str = "guide.provider";
     pub const PENDING_WAIT: &str = "pending.wait";
     pub const PENDING_CANCEL: &str = "pending.cancel";
+    pub const SYNC_STATUS: &str = "sync.status";
+    pub const SYNC_NOW: &str = "sync.now";
+    pub const SEARCH: &str = "search";
 
-    /// Every user operation, in the order of the spec's table.
-    pub const ALL: [&str; 12] = [
+    /// Every user operation, in the order of the specs' tables.
+    pub const ALL: [&str; 15] = [
         STATUS,
         ACCOUNTS_LIST,
         PRESETS_LIST,
@@ -49,6 +56,9 @@ pub mod names {
         GUIDE_PROVIDER,
         PENDING_WAIT,
         PENDING_CANCEL,
+        SYNC_STATUS,
+        SYNC_NOW,
+        SEARCH,
     ];
 
     /// The daemon's own methods: the handshake and its lifecycle. Not user operations.
@@ -58,6 +68,9 @@ pub mod names {
 
     /// The notification the daemon sends to the connection that began a pending operation.
     pub const PENDING_FINISHED: &str = "pending.finished";
+
+    /// Sent, to connections that asked with `sync.now { watch: true }`, on every status change.
+    pub const SYNC_PROGRESS: &str = "sync.progress";
 }
 
 /// One operation: its wire name and the types it takes and returns.
@@ -127,6 +140,18 @@ operation!(
 operation!(
     /// Cancel a begun login or consent. A save in progress is never cancelled.
     PendingCancel, names::PENDING_CANCEL, CancelRequest, WaitResponse
+);
+operation!(
+    /// Every account's sync status, or one account's.
+    SyncStatus, names::SYNC_STATUS, SyncStatusRequest, SyncStatusResponse
+);
+operation!(
+    /// Wake one account's sync, or every account's.
+    SyncNow, names::SYNC_NOW, SyncNowRequest, SyncNowResponse
+);
+operation!(
+    /// Search the store and the provider's whole mailbox.
+    Search, names::SEARCH, SearchRequest, SearchResponse
 );
 operation!(
     /// The handshake: protocol and Rail versions.

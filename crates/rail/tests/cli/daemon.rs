@@ -280,3 +280,48 @@ fn a_config_dir_reached_through_a_symlink_shares_the_daemon() {
     let log = std::fs::read_to_string(dir.path().join("state").join("rail.log")).unwrap();
     assert_eq!(log.matches("daemon listening").count(), 1, "{log}");
 }
+
+/// Spec §3: a daemon started without a display still opens the browser where the user is.
+#[test]
+fn a_login_opens_the_browser_on_the_display_of_the_client_that_began_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    let seen = dir.path().join("display.txt");
+    let opener = dir.path().join("display-opener.sh");
+    std::fs::write(
+        &opener,
+        format!(
+            "#!/bin/sh\nprintf '%s' \"$DISPLAY\" > '{0}.tmp'\nmv '{0}.tmp' '{0}'\n",
+            seen.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let started = rail_cmd(&dir)
+        .env_remove("DISPLAY")
+        .env("RAIL_TEST_OPENER", &opener)
+        .args(["account", "list"])
+        .output()
+        .unwrap();
+    assert!(started.status.success(), "{started:?}");
+    let login = rail_cmd(&dir)
+        .env("DISPLAY", ":42")
+        .env("RAIL_TEST_OPENER", &opener)
+        .args(["account", "login", "work"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let _login = KillsChild(Some(login));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !seen.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the browser was never opened"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(std::fs::read_to_string(&seen).unwrap(), ":42");
+}
