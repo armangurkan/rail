@@ -1,30 +1,36 @@
-//! Ruling P4-LIVE: Gmail lists only roughly newest first. A backfill goes on with Gmail's page
-//! token, falls back to its date marker with an overlap when it cannot, never fetches metadata
-//! it already stored, and never stalls on pages that store nothing.
+//! Rulings P4-LIVE and P4-LIVE-2: Gmail lists only roughly newest first and silently answers a
+//! page token it does not know. A backfill goes on with Gmail's page token, lists the window
+//! from the top when it cannot, never fetches metadata it already stored, never bounds a
+//! listing by its date marker, and never stalls on pages that store nothing.
 
 use super::*;
 use crate::sync::{
-    BACKFILL_MAX_PAGES_PER_PASS, BACKFILL_OVERLAP_MS, BACKFILL_PAGES_PER_PASS,
-    BACKFILL_TOKEN_MAX_AGE_SECS,
+    BACKFILL_MAX_PAGES_PER_PASS, BACKFILL_PAGES_PER_PASS, BACKFILL_TOKEN_MAX_AGE_SECS,
 };
 
 const HOUR_MS: i64 = 3_600_000;
 
 /// A mailbox listed out of order by up to 3 hours (far more than one second), one message a
-/// page: "recent" plus `old` messages an hour apart from 20 days back, so a grown window needs
-/// more than one capped pass.
+/// page: "recent", `old` messages an hour apart from 20 days back, and "imported", years old
+/// but listed first (as Gmail lists imported mail), which drags the oldest-seen date back
+/// years on the very first page. `messages(old)` messages in all.
 fn shuffled(old: usize) -> MockProvider {
     let mock = MockProvider::new();
     mock.with(|m| {
         m.page_size = 1;
         m.shuffle_within_ms = 3 * HOUR_MS;
+        m.list_first = vec!["imported".into()];
     });
-    seed_days(&mock, &[("recent", 1)]);
+    seed_days(&mock, &[("recent", 1), ("imported", 3_000)]);
     for n in 0..old {
         let hours = i64::try_from(n).unwrap() * HOUR_MS;
         mock.seed(envelope(&format!("old{n:03}"), "t-old", ago(20, 0) - hours));
     }
     mock
+}
+
+fn messages(old: usize) -> usize {
+    old + 2
 }
 
 /// Passes until the backfill is done (at most `limit`); how many it took.
@@ -39,8 +45,9 @@ async fn until_backfilled(h: &Harness, engine: &Engine, limit: usize) -> usize {
     panic!("the backfill did not finish in {limit} passes");
 }
 
-/// The listing is out of order by hours; a grown window capped per pass still stores every
-/// message once it completes, and fetches no metadata twice. (Failed before P4-LIVE: 59 of 61.)
+/// The listing is out of order by hours and an imported message years old comes first; a
+/// grown window capped per pass still stores every message once it completes, and fetches no
+/// metadata twice. (Failed before P4-LIVE: 59 of 61.)
 #[tokio::test]
 async fn an_out_of_order_listing_loses_nothing_across_capped_passes() {
     let h = harness(&["a@example.com"]);
@@ -50,28 +57,30 @@ async fn an_out_of_order_listing_loses_nothing_across_capped_passes() {
     let grown = engine(&h, &mock, 0);
     let passes = until_backfilled(&h, &grown, 10).await;
     assert!(passes > 1, "the cap applied ({passes} passes)");
-    assert_eq!(stored(&h).len(), old + 1, "every message is stored");
+    assert_eq!(stored(&h).len(), messages(old), "every message is stored");
     assert!(mock.metadata_refetches().is_empty());
 }
 
-/// Gmail refuses the stored token (stale): the backfill lists again below its marker with
-/// `BACKFILL_OVERLAP_MS` above it, stores everything, and asks no stored id's metadata again.
+/// P4-LIVE-2: the stored token is refused after the imported message dragged the oldest-seen
+/// date back years. The backfill lists the window again from the top, with no date bound
+/// (P4-LIVE's `before: marker + 3 days` skipped everything between), stores everything, and
+/// asks no stored id's metadata again.
 #[tokio::test]
-async fn a_refused_token_falls_back_to_the_marker_with_an_overlap() {
+async fn a_refused_token_relists_the_window_from_the_top() {
     let h = harness(&["a@example.com"]);
     let old = 3 * BACKFILL_PAGES_PER_PASS;
     let mock = shuffled(old);
     engine(&h, &mock, 10).pass().await.unwrap();
     let grown = engine(&h, &mock, 0);
     grown.pass().await.unwrap();
-    let marker = state(&h)
-        .backfill_before
-        .expect("a marker after one capped pass");
-    assert!(state(&h).backfill_resume.is_some());
+    assert_eq!(
+        state(&h).backfill_before,
+        Some(ago(3_000, 0)),
+        "dragged back"
+    );
     mock.expire_page_tokens();
     let listed_before = mock.backfill_windows().len();
     until_backfilled(&h, &grown, 10).await;
-    let windows = mock.backfill_windows();
     let tokens = mock.with(|m| m.list_tokens.clone());
     assert!(
         tokens[listed_before].is_some(),
@@ -80,44 +89,172 @@ async fn a_refused_token_falls_back_to_the_marker_with_an_overlap() {
     assert_eq!(
         tokens[listed_before + 1],
         None,
-        "then a listing without one"
+        "then the top of the window"
     );
     assert_eq!(
-        windows[listed_before + 1].before_ms,
-        Some(marker + BACKFILL_OVERLAP_MS),
-        "below the marker, with the overlap above it"
+        mock.backfill_windows()[listed_before + 1],
+        Window {
+            after_ms: None,
+            before_ms: Some(ago(10, 1000)),
+        },
+        "the grown window's own query, no bound from the marker"
     );
-    assert_eq!(stored(&h).len(), old + 1, "every message is stored");
+    assert_eq!(stored(&h).len(), messages(old), "every message is stored");
     assert!(
         mock.metadata_refetches().is_empty(),
         "no stored id's metadata is fetched again: {:?}",
         mock.metadata_refetches()
     );
-    assert_eq!(mock.with(|m| m.metadata_gets.len()), old + 1);
+    assert_eq!(mock.with(|m| m.metadata_gets.len()), messages(old));
 }
 
-/// A token older than `BACKFILL_TOKEN_MAX_AGE_SECS` (the daemon was off) is not sent: the
-/// backfill lists from its marker with the overlap, and still stores everything exactly once.
+/// P4-LIVE-2: as Gmail does, the mock answers a stale token with the first page. Nothing can
+/// tell, and nothing needs to: everything ends up stored, each message fetched once.
+#[tokio::test]
+async fn a_silently_ignored_token_still_ends_with_everything_stored() {
+    let h = harness(&["a@example.com"]);
+    let old = 3 * BACKFILL_PAGES_PER_PASS;
+    let mock = shuffled(old);
+    mock.with(|m| m.ignore_unknown_tokens = true);
+    engine(&h, &mock, 10).pass().await.unwrap();
+    let grown = engine(&h, &mock, 0);
+    grown.pass().await.unwrap();
+    mock.expire_page_tokens();
+    until_backfilled(&h, &grown, 10).await;
+    assert_eq!(stored(&h).len(), messages(old));
+    assert!(mock.metadata_refetches().is_empty());
+}
+
+/// P4-LIVE-2: a capped re-list from the top keeps its place across passes: the token is stored
+/// after every listed page, pages of stored mail included, so the next pass does not start
+/// from the top again.
+#[tokio::test]
+async fn a_capped_relist_makes_progress_across_passes() {
+    let h = harness(&["a@example.com"]);
+    let old = 4 * BACKFILL_PAGES_PER_PASS;
+    let mock = shuffled(old);
+    engine(&h, &mock, 10).pass().await.unwrap();
+    let grown = engine(&h, &mock, 0);
+    grown.pass().await.unwrap();
+    mock.expire_page_tokens();
+    grown.pass().await.unwrap();
+    let after_relist = state(&h)
+        .backfill_resume
+        .expect("a token after the re-list");
+    let listed_before = mock.backfill_windows().len();
+    grown.pass().await.unwrap();
+    let tokens = mock.with(|m| m.list_tokens.clone());
+    assert_eq!(
+        tokens[listed_before].as_ref(),
+        Some(&after_relist.token.0),
+        "the next pass goes on where the re-list stopped"
+    );
+    assert!(
+        mock.backfill_windows().len() - listed_before <= BACKFILL_PAGES_PER_PASS + 1,
+        "no page of stored mail is listed again"
+    );
+    until_backfilled(&h, &grown, 10).await;
+    assert_eq!(stored(&h).len(), messages(old));
+}
+
+/// P4-LIVE-2: Gmail is not known to refuse a stale token, so any permanent failure of a
+/// listing that carried one lists from the top once, rather than failing every pass.
+#[tokio::test]
+async fn a_failure_with_a_stored_token_relists_once_instead_of_failing_every_pass() {
+    let h = harness(&["a@example.com"]);
+    let mock = shuffled(10);
+    mock.fail_after(
+        Call::Backfill,
+        4,
+        ProviderError::transient("the network went away"),
+    );
+    assert!(engine(&h, &mock, 0).pass().await.is_err());
+    assert!(state(&h).backfill_resume.is_some());
+    mock.fail_next(Call::Backfill, ProviderError::permanent("bad request"));
+    engine(&h, &mock, 0).pass().await.unwrap();
+    let tokens = mock.with(|m| m.list_tokens.clone());
+    assert!(tokens[5].is_some() && tokens[6].is_none(), "{tokens:?}");
+    assert_eq!(stored(&h).len(), messages(10));
+    assert!(mock.metadata_refetches().is_empty());
+    mock.fail_next(Call::Backfill, ProviderError::permanent("down"));
+    mock.with(|m| m.expired_below = u64::MAX);
+    assert!(
+        engine(&h, &mock, 0).pass().await.is_err(),
+        "without a token, a failure still ends the pass"
+    );
+}
+
+/// A token older than `BACKFILL_TOKEN_MAX_AGE_SECS` (the daemon was off for a week) is not
+/// sent: the backfill lists the window from the top, and still stores everything exactly once.
 #[tokio::test]
 async fn an_old_token_is_not_used_after_a_long_stop() {
     let h = harness(&["a@example.com"]);
     let mock = shuffled(30);
-    mock.fail_after(Call::Backfill, 10, ProviderError::permanent("boom"));
+    mock.fail_after(
+        Call::Backfill,
+        10,
+        ProviderError::transient("the network went away"),
+    );
     assert!(engine(&h, &mock, 0).pass().await.is_err());
-    let marker = state(&h).backfill_before.unwrap();
     assert!(state(&h).backfill_resume.is_some());
     let later = NOW + BACKFILL_TOKEN_MAX_AGE_SECS + 1;
     let restarted = engine_at(&h, &mock, "a@example.com", settings(0), later);
     restarted.pass().await.unwrap();
     let tokens = mock.with(|m| m.list_tokens.clone());
     assert_eq!(tokens[11], None, "the old token is not sent");
-    assert_eq!(
-        mock.backfill_windows()[11].before_ms,
-        Some(marker + BACKFILL_OVERLAP_MS)
-    );
-    assert_eq!(stored(&h).len(), 31);
+    assert_eq!(mock.backfill_windows()[11], Window::default(), "the top");
+    assert_eq!(stored(&h).len(), messages(30));
     assert!(mock.metadata_refetches().is_empty());
     assert!(state(&h).cursor.is_some());
+}
+
+/// A window grown while a backfill was under way: the stored token's query no longer reaches
+/// back far enough, so it is dropped and the grown window is listed from the top.
+#[tokio::test]
+async fn a_window_grown_mid_backfill_drops_the_token() {
+    let h = harness(&["a@example.com"]);
+    let mock = MockProvider::new();
+    mock.with(|m| m.page_size = 1);
+    seed_days(&mock, &[("d1", 1), ("d2", 2), ("d3", 3), ("d20", 20)]);
+    mock.fail_after(
+        Call::Backfill,
+        1,
+        ProviderError::transient("the network went away"),
+    );
+    assert!(engine(&h, &mock, 10).pass().await.is_err());
+    let resume = state(&h).backfill_resume.expect("a token");
+    assert_eq!(resume.listing.after_ms, Some(ago(10, 0)));
+    engine(&h, &mock, 30).pass().await.unwrap();
+    let tokens = mock.with(|m| m.list_tokens.clone());
+    assert_eq!(tokens[2], None, "the token is dropped");
+    assert_eq!(mock.backfill_windows()[2].after_ms, Some(ago(30, 0)));
+    assert_eq!(stored(&h), ["d1", "d2", "d20", "d3"]);
+    assert!(mock.metadata_refetches().is_empty());
+}
+
+/// An expired cursor mid grown-window backfill: the resync clears the page token (and the
+/// marker) and backfills in full from the top.
+#[tokio::test]
+async fn a_resync_clears_the_page_token() {
+    let h = harness(&["a@example.com"]);
+    let old = 2 * BACKFILL_PAGES_PER_PASS;
+    let mock = shuffled(old);
+    engine(&h, &mock, 10).pass().await.unwrap();
+    let grown = engine(&h, &mock, 0);
+    grown.pass().await.unwrap();
+    assert!(state(&h).backfill_resume.is_some());
+    mock.with(|m| m.expired_below = u64::MAX);
+    let listed_before = mock.backfill_windows().len();
+    let later = engine_at(&h, &mock, "a@example.com", settings(0), NOW + 60);
+    mock.with(|m| m.expired_below = 0);
+    mock.fail_next(Call::Changes, ProviderError::CursorExpired);
+    later.pass().await.unwrap();
+    let tokens = mock.with(|m| m.list_tokens.clone());
+    assert_eq!(tokens[listed_before], None, "the resync lists from the top");
+    assert_eq!(mock.backfill_windows()[listed_before], Window::default());
+    let after = state(&h);
+    assert_eq!((after.backfill_resume, after.backfill_before), (None, None));
+    assert_eq!(stored(&h).len(), messages(old));
 }
 
 /// Review focus 1 again, through the fallback: messages sharing the oldest second survive a
@@ -130,7 +267,11 @@ async fn messages_sharing_the_oldest_second_survive_a_refused_token() {
     for (id, extra) in [("m1", 0), ("m2", 100), ("m3", 200), ("m4", 300)] {
         mock.seed(envelope(id, "t", ago(3, extra)));
     }
-    mock.fail_after(Call::Backfill, 1, ProviderError::permanent("boom"));
+    mock.fail_after(
+        Call::Backfill,
+        1,
+        ProviderError::transient("the network went away"),
+    );
     let engine = engine(&h, &mock, 0);
     assert!(engine.pass().await.is_err());
     mock.expire_page_tokens();

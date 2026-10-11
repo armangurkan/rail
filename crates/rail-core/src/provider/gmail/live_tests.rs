@@ -12,7 +12,8 @@
 //!   it saw (in hours, a number only) instead of asserting an order, since Rail no longer
 //!   relies on one (a backfill resumes from Gmail's page token);
 //! - a page token round-trips: the second page answers and repeats no id of the first; and a
-//!   made-up token is reported as Gmail answers it (Rail expects `PageTokenRejected`);
+//!   made-up token is reported as Gmail answers it (it was silently accepted when last run;
+//!   Rail re-lists rather than relying on a rejection);
 //! - a listing with no match answers without a `messages` key and Rail reads it as empty;
 //! - subjects hold no raw encoded words and snippets no `&#39;`-style references;
 //! - bodies decode into text (base64url with or without padding is covered by the unit tests
@@ -160,11 +161,12 @@ async fn check_page_tokens(gmail: &dyn Provider) {
         None => eprintln!("NOT CONFIRMED: the mailbox has one page only; page tokens not tried"),
     }
     let made_up = PageToken("13371337133713371337".into());
-    let seen = match gmail.list(&whole, Some(&made_up)).await {
-        Ok(_) => "a page",
-        Err(e) => e.code(),
-    };
-    eprintln!("a made-up page token gives: {seen} (expected page_token_rejected)");
+    match gmail.list(&whole, Some(&made_up)).await {
+        Ok(_) => eprintln!(
+            "a made-up page token: silently accepted (Rail re-lists rather than relying on rejection)"
+        ),
+        Err(e) => eprintln!("a made-up page token: refused ({})", e.code()),
+    }
 }
 
 /// A window in the future lists nothing: the answer has no `messages` key.

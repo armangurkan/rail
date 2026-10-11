@@ -532,11 +532,12 @@ within seconds while the rest fills in; set `history_days` (for example 90) to f
 mail and finish in minutes. Mail that arrives during that first sync appears once it finishes
 (Rail notes where the mailbox stood when it began, so none is missed). A sync stopped part way
 (the daemon stopped, the network lost) resumes where Gmail's listing stood, from the page token
-Rail stores with each page it commits. Gmail lists mail only roughly newest first (hours out of
-order), so when that token cannot be used (Gmail refuses it, or it is over an hour old because
-the daemon was off) Rail lists again from the oldest message it stored with three days of
-overlap above it, skipping the messages it already has, so nothing is missed and nothing is
-fetched twice. Microsoft 365 accounts do not sync yet.
+Rail stores after each page it lists. When there is no token to use (none stored, it is over a
+week old, the window grew, or a listing with it failed), Rail lists the whole window again from
+the top, skipping the messages it already stored (listing ids is cheap; reading a message is
+what costs quota). Rail never relies on Gmail's order, which is only roughly newest first, or on
+Gmail rejecting a stale token, which it does not do. A full resync, when Gmail's history for the
+account expires, reads every message again by design. Microsoft 365 accounts do not sync yet.
 
 ### What an AI agent may do with your mail: `ai_send`
 

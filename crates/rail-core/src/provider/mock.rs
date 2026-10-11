@@ -64,6 +64,12 @@ pub(crate) struct Mailbox {
     /// Page tokens carry the generation they were issued in; older ones are refused, as
     /// Gmail refuses a stale token (`expire_page_tokens`).
     pub token_generation: u64,
+    /// Answer a stale or foreign token with the listing's first page instead of refusing it,
+    /// as Gmail answered a made-up token in the live test.
+    pub ignore_unknown_tokens: bool,
+    /// Ids listed before every other one, in this order, whatever their date (Gmail lists
+    /// imported mail by when it arrived, not by its `internalDate`).
+    pub list_first: Vec<String>,
     /// The page token each listing call was given, in order (failed calls too).
     pub list_tokens: Vec<Option<String>>,
     /// Every id whose metadata was asked for (`envelopes`), in order: Gmail's `messages.get`.
@@ -98,6 +104,8 @@ impl Default for Mailbox {
             always_more: false,
             shuffle_within_ms: 0,
             token_generation: 0,
+            ignore_unknown_tokens: false,
+            list_first: Vec::new(),
             list_tokens: Vec::new(),
             metadata_gets: Vec::new(),
         }
@@ -241,11 +249,13 @@ fn issue_token(generation: u64, window: &Window, offset: usize) -> PageToken {
     ))
 }
 
-/// Where `token` says the next page starts; refused when it is stale or from another listing.
+/// Where `token` says the next page starts; refused when it is stale or from another listing
+/// (or, with `ignore_unknown_tokens`, read as the start).
 fn token_offset(m: &Mailbox, window: &Window, token: &PageToken) -> Result<usize, ProviderError> {
     let offset = token.0.rsplit('.').next().and_then(|o| o.parse().ok());
     match offset {
         Some(offset) if issue_token(m.token_generation, window, offset) == *token => Ok(offset),
+        _ if m.ignore_unknown_tokens => Ok(0),
         _ => Err(ProviderError::PageTokenRejected),
     }
 }
@@ -313,7 +323,13 @@ impl Provider for MockProvider {
             .filter(|e| window.contains(e.internal_date))
             .collect();
         let spread = m.shuffle_within_ms;
-        listed.sort_by_key(|e| std::cmp::Reverse(listing_key(e, spread)));
+        listed.sort_by_key(|e| {
+            let first = m.list_first.iter().position(|id| *id == e.remote_id);
+            (
+                first.unwrap_or(usize::MAX),
+                std::cmp::Reverse(listing_key(e, spread)),
+            )
+        });
         let size = m.page_size.max(1);
         let ids: Vec<RemoteId> = listed
             .iter()

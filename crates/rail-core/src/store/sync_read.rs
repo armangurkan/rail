@@ -20,7 +20,7 @@ pub struct SyncStateRow {
     pub backfill_window: Option<i64>,
     pub backfill_started_at: Option<i64>,
     /// Where the running backfill's listing goes on. A stored token Rail would not send is
-    /// read as none (the backfill then lists from its marker).
+    /// read as none (the backfill then lists the window from the top).
     pub backfill_resume: Option<ResumeToken>,
     pub needs_auth: bool,
     pub phase: String,

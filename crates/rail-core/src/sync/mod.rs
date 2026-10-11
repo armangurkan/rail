@@ -43,14 +43,8 @@ pub const BACKFILL_PAGES_PER_PASS: usize = 20;
 /// all for a capped backfill (a grown window), and pages without progress for the first full
 /// backfill (its pages with progress each store new mail, so the mailbox bounds them).
 pub const BACKFILL_MAX_PAGES_PER_PASS: usize = 200;
-/// How far above the oldest message stored a backfill lists again when it cannot go on with
-/// Gmail's page token: three days. Gmail lists only roughly newest first (the live test saw
-/// a message listed up to ~9.5 hours out of order), so mail newer than the marker can still be
-/// unlisted; three days is about 7 times the spread seen, and costs only list calls, since ids
-/// already stored are not fetched again.
-pub const BACKFILL_OVERLAP_MS: i64 = 3 * 86_400_000;
-/// A stored page token older than this (seconds) is not used: the backfill lists from its
-/// marker with the overlap instead. A resume normally comes one poll interval later; an older
-/// token means the daemon was off or the machine asleep, Gmail does not document how long a
-/// token lives, and the mailbox may have changed under the listing it belongs to.
-pub const BACKFILL_TOKEN_MAX_AGE_SECS: i64 = 3_600;
+/// A stored page token older than this (seconds, 7 days) is not used: the backfill lists the
+/// window from the top instead, skipping what it stored. Correctness no longer depends on a
+/// token (Gmail silently answers a made-up one), so the limit is generous; it only bounds how
+/// much the mailbox may have changed under a token a daemon kept while it was off for days.
+pub const BACKFILL_TOKEN_MAX_AGE_SECS: i64 = 7 * 86_400;

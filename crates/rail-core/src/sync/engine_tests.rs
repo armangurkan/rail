@@ -182,7 +182,11 @@ async fn a_crash_mid_backfill_resumes_from_the_page_token_with_the_first_cursor(
         &mock,
         &[("m1", 5), ("m2", 4), ("m3", 3), ("m4", 2), ("m5", 1)],
     );
-    mock.fail_after(Call::Backfill, 2, ProviderError::permanent("boom"));
+    mock.fail_after(
+        Call::Backfill,
+        2,
+        ProviderError::transient("the network went away"),
+    );
     assert!(engine(&h, &mock, 0).pass().await.is_err());
     assert_eq!(stored(&h), ["m2", "m3", "m4", "m5"]);
     let crashed = state(&h);
@@ -233,7 +237,11 @@ async fn resume_keeps_messages_that_share_the_oldest_second() {
     ] {
         mock.seed(envelope(id, "t", ago(3, extra)));
     }
-    mock.fail_after(Call::Backfill, 2, ProviderError::permanent("boom"));
+    mock.fail_after(
+        Call::Backfill,
+        2,
+        ProviderError::transient("the network went away"),
+    );
     let engine = engine(&h, &mock, 0);
     assert!(engine.pass().await.is_err());
     assert_eq!(state(&h).backfill_before, Some(ago(3, 100)));

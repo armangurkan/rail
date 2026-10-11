@@ -28,7 +28,8 @@ pub enum ProviderError {
     #[error("the sync cursor expired; a full resync is needed")]
     CursorExpired,
     /// A listing's page token was refused (Gmail: HTTP 400 to a request carrying one); the
-    /// backfill lists again from its date marker. An expected path.
+    /// backfill lists the window again from the top. Defensive: Gmail answered a made-up
+    /// token with a page in the live test.
     #[error("the mail provider refused the listing's page token")]
     PageTokenRejected,
     /// The refresh token was refused or the API keeps refusing the access token.

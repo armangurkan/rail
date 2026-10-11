@@ -114,7 +114,7 @@ async fn the_whole_mailbox_is_listed_without_a_query() {
 }
 
 /// P4-LIVE: a 400 to a listing that carried a page token is `PageTokenRejected`, so the engine
-/// can fall back to its date marker; without a token a 400 stays a plain refusal.
+/// can list from the top; without a token a 400 stays a plain refusal.
 #[tokio::test]
 async fn a_refused_page_token_is_recognised() {
     let gmail = Gmail::start().await;

@@ -1,19 +1,19 @@
 //! The backfill step of a pass (spec §4): list the window page by page, fetch metadata for the
 //! ids this backfill has not stored yet, and commit each page with where the listing goes on.
 //!
-//! Gmail lists only roughly newest first (the live test saw spreads of hours), so the oldest
-//! message stored says nothing certain about what a listing has yet to return. A backfill
-//! therefore goes on with Gmail's page token, stored with the page it follows. Without a
-//! usable token (none stored, too old, or refused) it lists again below its date marker with
-//! `BACKFILL_OVERLAP_MS` above it, and skips the metadata of ids it already stored.
+//! Gmail lists only roughly newest first (the live test saw spreads of hours, and imported
+//! mail can be listed years out of place), and it silently accepts a page token it does not
+//! know (the live test got a page for a made-up one), so neither a date nor a token's validity
+//! can be relied on. A backfill goes on with Gmail's page token, stored after every listed
+//! page; without a usable one it lists the window again from the top. Either way it skips the
+//! metadata of ids it already stored, so its correctness depends on neither listing order nor
+//! token behaviour: at worst a lost or stale token costs listing ids again (5 quota units per
+//! 100). `backfill_before` is only a statistic and never bounds a listing.
 
 use super::batch::{Batch, ResumeToken, StateUpdate, Sweep};
 use super::engine::{Engine, SyncError};
 use super::pass::log_skipped;
-use super::{
-    BACKFILL_MAX_PAGES_PER_PASS, BACKFILL_OVERLAP_MS, BACKFILL_PAGES_PER_PASS,
-    BACKFILL_TOKEN_MAX_AGE_SECS,
-};
+use super::{BACKFILL_MAX_PAGES_PER_PASS, BACKFILL_PAGES_PER_PASS, BACKFILL_TOKEN_MAX_AGE_SECS};
 use crate::ops::SyncPhase;
 use crate::provider::{EnvelopePage, IdPage, PageToken, ProviderError, RemoteId, Window};
 use crate::store::SyncStateRow;
@@ -50,6 +50,8 @@ struct Run {
     window: Option<i64>,
     /// A grown window: the start the store already covers.
     covered: Option<i64>,
+    /// This pass already gave up on a page token once and listed from the top.
+    relisted: bool,
 }
 
 impl Run {
@@ -60,27 +62,24 @@ impl Run {
         self.full.then_some(self.started)
     }
 
-    /// The listing without a token: below the marker with the overlap above it, never above
-    /// a grown window's old start (the whole oldest second again), or from the top.
-    fn fallback(&self) -> Listing {
-        let below_marker = self.marker.map(|m| m.saturating_add(BACKFILL_OVERLAP_MS));
-        let below_covered = self.covered.map(|c| c + SECOND_MS);
-        let before = match (below_marker, below_covered) {
-            (Some(marker), Some(covered)) => Some(marker.min(covered)),
-            (marker, covered) => marker.or(covered),
-        };
+    /// The window's listing from the top, as a fresh backfill would ask for it: the window's
+    /// start, and for a grown window its old start (the whole oldest second again). Never a
+    /// bound from `backfill_before`.
+    fn top_listing(&self) -> Listing {
         Listing {
             window: Window {
                 after_ms: self.window,
-                before_ms: before,
+                before_ms: self.covered.map(|c| c + SECOND_MS),
             },
             page: None,
         }
     }
 
-    /// Whether this pass has listed enough: a capped (grown-window) backfill stops after
-    /// `BACKFILL_PAGES_PER_PASS` pages with progress or `BACKFILL_MAX_PAGES_PER_PASS` in all;
-    /// the first full backfill after `BACKFILL_MAX_PAGES_PER_PASS` pages without progress.
+    /// Whether this pass has done enough work; the next pass goes on from the token stored
+    /// with the last page, so this bounds work and never loses the place. A capped
+    /// (grown-window) backfill stops after `BACKFILL_PAGES_PER_PASS` pages with progress or
+    /// `BACKFILL_MAX_PAGES_PER_PASS` in all; the first full backfill after
+    /// `BACKFILL_MAX_PAGES_PER_PASS` pages without progress.
     fn pass_is_over(&self, progressed: usize, listed: usize) -> bool {
         if self.full {
             listed.saturating_sub(progressed) >= BACKFILL_MAX_PAGES_PER_PASS
@@ -92,7 +91,10 @@ impl Run {
 
 /// The stored listing, when the backfill can go on with its token: issued within
 /// `BACKFILL_TOKEN_MAX_AGE_SECS`, for a listing reaching back at least as far as the window
-/// wants now (its query is used unchanged: a token is only valid for its own query).
+/// wants now (its query is used unchanged: a token is only valid for its own query). A window
+/// grown past it drops the token. The window's start moves with the clock when `history_days`
+/// is set, so "reaches back as far" rather than "the same": an older start only lists mail the
+/// prune step then drops.
 fn resumable(state: &SyncStateRow, window: Option<i64>, now: i64) -> Option<Listing> {
     let resume = state.backfill_resume.as_ref()?;
     let fresh = now.saturating_sub(resume.issued_at) <= BACKFILL_TOKEN_MAX_AGE_SECS;
@@ -105,6 +107,17 @@ fn resumable(state: &SyncStateRow, window: Option<i64>, now: i64) -> Option<List
         window: resume.listing,
         page: Some(resume.token.clone()),
     })
+}
+
+/// Failures a stale or unknown page token could cause: a refusal, a 404, any other permanent
+/// refusal. Transient trouble and a login failure are not about the token.
+fn token_trouble(error: &ProviderError) -> bool {
+    matches!(
+        error,
+        ProviderError::PageTokenRejected
+            | ProviderError::NotFound
+            | ProviderError::Permanent { .. }
+    )
 }
 
 impl Engine {
@@ -127,14 +140,15 @@ impl Engine {
             marker: state.backfill_before,
             window,
             covered: state.backfill_window.filter(|_| !full),
+            relisted: false,
         };
         let mut listing =
-            resumable(state, window, (self.clock)()).unwrap_or_else(|| run.fallback());
+            resumable(state, window, (self.clock)()).unwrap_or_else(|| run.top_listing());
         let (mut progressed, mut listed) = (0, 0);
         loop {
             listed += 1;
-            let Some(page) = self.list(&listing).await? else {
-                listing = run.fallback();
+            let Some(page) = self.list(&mut run, &listing).await? else {
+                listing = run.top_listing();
                 continue;
             };
             let next = page.next.clone();
@@ -149,13 +163,16 @@ impl Engine {
         self.end_backfill(run).await
     }
 
-    /// One page of `listing`; `None` when the provider refused its page token (the caller
-    /// lists again without one).
-    async fn list(&self, listing: &Listing) -> Result<Option<IdPage>, SyncError> {
+    /// One page of `listing`; `None` when a request carrying a page token failed in a way a
+    /// stale token could explain (the caller lists from the top without one), once a pass.
+    /// Gmail is not known to refuse a bad token (it answered a made-up one), so this is a
+    /// defensive branch; a second such failure, or any failure without a token, ends the pass.
+    async fn list(&self, run: &mut Run, listing: &Listing) -> Result<Option<IdPage>, SyncError> {
         let asked = self.provider.list(&listing.window, listing.page.as_ref());
         match self.call(SyncPhase::Backfill, asked).await {
-            Err(ProviderError::PageTokenRejected) if listing.page.is_some() => {
-                tracing::info!(account = %self.account.name, "Gmail refused the stored page token; listing again from the oldest message stored, with an overlap");
+            Err(error) if listing.page.is_some() && !run.relisted && token_trouble(&error) => {
+                tracing::info!(account = %self.account.name, code = error.code(), "a listing with a page token failed; listing the window again from the top, skipping what is stored");
+                run.relisted = true;
                 Ok(None)
             }
             other => Ok(Some(other?)),
