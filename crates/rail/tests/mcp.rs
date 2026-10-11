@@ -121,6 +121,8 @@ fn rail_env<'a>(
         .env("RAIL_STATE_DIR", dir.path().join("state"))
         .env("RAIL_RUNTIME_DIR", dir.path().join("run"))
         .env("XDG_CONFIG_HOME", dir.path().join("xdg"))
+        // On macOS the launchd agent lives under HOME, so there HOME is the test's too.
+        .envs(cfg!(target_os = "macos").then(|| ("HOME", dir.path().join("home"))))
         .env("RAIL_TEST_IDLE_SECS", "2")
         .env("RAIL_TEST_OPENER", write_opener(dir))
         .env("RAIL_TEST_URL_FILE", dir.path().join("url.txt"))

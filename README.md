@@ -203,8 +203,8 @@ It talks to the background daemon like every other command.
 | `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
-| `rail daemon install` | Starts Rail's daemon at login, so mail keeps syncing without a command running: on Linux it writes `~/.config/systemd/user/rail.service` (under `$XDG_CONFIG_HOME` when set) and runs `systemctl --user daemon-reload` and `systemctl --user enable --now rail.service`; on macOS it writes `~/Library/LaunchAgents/io.github.vitosans.rail.plist` and loads it with `launchctl bootstrap`. A daemon already running is stopped first, so only one runs. Running it again rewrites the unit only if it changed (it says `already up to date` otherwise) and enables and starts it again. On Linux it first checks that a user service manager answers (`systemctl --user show --property=Version`); where none does (some containers), it says so, changes nothing and exits 1. If enabling fails, the unit is disabled and removed again, so nothing is left half-installed. See [Start at login](#start-at-login). |
-| `rail daemon uninstall` | Stops and disables the login unit and removes its file. Says `not installed; nothing to remove` and exits 0 when none is installed. Where no user service manager answers, it still removes the file (and its enable link) and says there was nothing to stop. |
+| `rail daemon install` | Starts Rail's daemon at login, so mail keeps syncing without a command running: on Linux it writes `~/.config/systemd/user/rail.service` (under `$XDG_CONFIG_HOME` when set) and runs `systemctl --user daemon-reload` and `systemctl --user enable --now rail.service`; on macOS it writes `~/Library/LaunchAgents/io.github.vitosans.rail.plist` and loads it with `launchctl bootstrap`. A daemon already running is stopped first, so only one runs. Running it again rewrites the unit only if it changed (it says `already up to date` otherwise) and enables and starts it again. On Linux it first checks that a user service manager answers (`systemctl --user show --property=Version`); where none does (some containers), or `systemctl` cannot be run at all, it says which, changes nothing and exits 1. If enabling fails, the previous unit is put back (or, on a first install, the new one is disabled and removed), so nothing is left half-installed. It then waits up to 10 seconds for the unit's daemon to answer and exits 1, with the unit's state, if it does not. See [Start at login](#start-at-login). |
+| `rail daemon uninstall` | Stops and disables the login unit and removes its file. Says `not installed; nothing to remove` and exits 0 when none is installed. A `disable` that fails is reported with systemctl's words and the file is still removed. Where no user service manager answers, it still removes the file (and its enable link) and says why there was nothing to stop. |
 | `rail mcp` | Serves Rail's tools to an AI agent over MCP on standard input and output (see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp)). |
 | `rail doctor` | Checks the config file, the store (with its size), the secrets backend, every account's tokens and `ai_send` policy, and the daemon, plus each account's sync: its phase, last success, counts and last error (an account that needs a login, or whose last sync failed with a permanent error and is not being retried, fails the check; any other past error is a warning). The checks run in the daemon, so if it cannot start, `rail doctor` fails outright with the reason (for example a socket path too long for a Unix socket; set `RAIL_RUNTIME_DIR` to a shorter directory). Also says whether the login unit (`rail daemon install`) is installed, enabled and still runs this binary; that line never changes the exit status. Exits non-zero for config, store, secrets-backend and token-read errors and for a Gmail account that needs a login or whose sync failed for good; a Microsoft 365 account with no tokens shows as `missing` without failing the check (see [Check everything](#check-everything)). |
 
@@ -629,12 +629,28 @@ The unit sets `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR`, `RAIL_CACHE_DIR`, `RAIL_STATE_
 `RAIL_RUNTIME_DIR` to the directories your shell resolved at install time, and `PATH` to
 `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` plus the directory of `op_path` if you set one, so
 the daemon finds the same files and the same `op` wherever it starts. Rail writes only values it
-resolved itself: paths are quoted for systemd (`%` doubled, `"` and `\` escaped) or XML-escaped
-for launchd, and a path with a newline or another control character (or, for `op_path`'s
-directory, a `:`) is refused with an error instead of being written. The unit restarts the
-daemon if it fails (at most five times in five minutes) and not when it stops cleanly
-(`rail daemon stop`). `rail doctor` shows whether it is installed and enabled, and warns when
-it no longer matches this binary.
+resolved itself: paths are quoted for systemd (`%` doubled, `"` and `\` escaped; `$` is left as
+it is, since systemd expands no variable there) or XML-escaped for launchd, and a path with a
+newline or another control character (or, for `op_path`'s directory, a `:`) is refused with an
+error instead of being written. systemd refuses to run a program whose path contains `"`, `'`,
+`\`, `*`, `?` or `[`, so on Linux `rail daemon install` refuses such a binary location up front
+and asks you to move it. The unit file is written atomically with mode 0644; a missing
+`~/.config/systemd/user` or `~/Library/LaunchAgents` is created with your default permissions,
+and an existing one keeps its mode. The unit restarts the daemon if it fails (at most five times
+in five minutes) and not when it stops cleanly (`rail daemon stop`). `rail doctor` shows whether
+it is installed and enabled (on Linux, "enabled" means the
+`~/.config/systemd/user/default.target.wants/rail.service` link that `systemctl --user enable`
+makes exists; on macOS an installed agent counts as enabled), and warns when it no longer
+matches this binary.
+
+After starting the unit, `rail daemon install` waits up to 10 seconds for its daemon to answer.
+If none does, it says the unit is installed but its daemon did not start, shows what
+`systemctl --user status rail.service` (or `launchctl print`) reports, quoted as text from
+outside Rail, with a hint (`journalctl --user -u rail.service`, `rail doctor`), and exits 1; the
+unit stays installed. On Linux it also checks that the daemon answering is the one systemd runs:
+if another command started a daemon in between, it says so, asks you to run `rail daemon stop`,
+and exits 1. Any `systemctl` or `launchctl` command that fails is reported with Rail's own
+sentence and the tool's words (at most 4 KiB) quoted on a line of their own.
 
 On macOS the agent gets only those variables (launchd adds little more than `HOME`, `USER` and
 `TMPDIR`). On Linux, a systemd user service also inherits the user service manager's own
@@ -757,13 +773,18 @@ Line coverage (needs `cargo-llvm-cov`):
 
 Tests never touch the real XDG directories, the real OS keyring, the network, a real browser or a
 real 1Password account (a fake `op` script stands in).
-Debug builds honour three test hooks, `RAIL_TEST_OPENER` (a program run instead of the browser),
-`RAIL_TEST_TOKEN_URL` (a token endpoint served by the test) and `RAIL_TEST_IDLE_SECS` (the daemon's
-idle timeout, so the daemons the binary tests start exit seconds after their last client); release
-builds ignore all three. `RAIL_TEST_SERVICE_LOG` makes `rail daemon install` and `uninstall` append
-the `systemctl` or `launchctl` commands they would run to a file instead of running them, and every
-binary test sets `XDG_CONFIG_HOME` (and the install tests `HOME`) inside its temporary directory,
-so no test reaches the real systemd or launchd. Every binary test runs with the stand-in browser set, so neither it nor a
+Debug builds honour seven test hooks: `RAIL_TEST_OPENER` (a program run instead of the browser),
+`RAIL_TEST_TOKEN_URL` (a token endpoint served by the test), `RAIL_TEST_GMAIL_URL` (the Gmail API
+root, so a test can serve it or make it unreachable), `RAIL_TEST_IDLE_SECS` (the daemon's idle
+timeout, so the daemons the binary tests start exit seconds after their last client),
+`RAIL_TEST_IDLE_WITH_ACCOUNTS` (let such a daemon idle out even with accounts configured),
+`RAIL_TEST_SYNC_STALL_SECS` (how long `rail sync` watches an unchanging status) and
+`RAIL_TEST_SERVICE_LOG` (`rail daemon install` and `uninstall` append the `systemctl` or
+`launchctl` commands they would run to that file instead of running them, and do not wait for a
+daemon). Release builds ignore all seven. Every binary test also sets `XDG_CONFIG_HOME` (and, on
+macOS, `HOME`) inside its temporary directory, so no test reads or writes the real systemd or
+launchd units; the unit tests drive install and uninstall through a fake service manager, and one
+checks the generated unit with `systemd-analyze verify` (offline; skipped where it is missing). Every binary test runs with the stand-in browser set, so neither it nor a
 daemon it starts can open a real one. On Linux, the tests that drive the wizard and `rail account remove` in a
 pseudo-terminal use util-linux `script` and are skipped where `script` is missing. The tests that
 exercise the real keyring and a real 1Password vault are ignored by default:

@@ -25,34 +25,39 @@ pub const UNSET: [&str; 11] = [
     "OP_BIOMETRIC_UNLOCK_ENABLED",
 ];
 
-fn refuse_control(value: &str) -> color_eyre::Result<()> {
+/// Characters systemd refuses in a program path ("Executable path contains special
+/// characters"), even quoted: quotes, backslash and glob characters.
+pub const EXEC_REFUSED: [char; 6] = ['"', '\'', '\\', '*', '?', '['];
+
+/// `value` in double quotes for a unit file: `\` and `"` escaped, `%` doubled so systemd
+/// expands no specifier. `$` is left alone: `Environment=` never expands variables, and
+/// `ExecStart=` does not expand them in the program path (the only place Rail puts a path).
+/// Control characters are refused.
+pub fn quote(value: &str) -> color_eyre::Result<String> {
     if value.chars().any(char::is_control) {
         bail!("a value for the login unit contains a control character");
     }
-    Ok(())
-}
-
-/// `\`, `"` escaped and `%` doubled (no specifier expansion), in double quotes.
-fn quoted(value: &str) -> String {
     let escaped = value
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('%', "%%");
-    format!("\"{escaped}\"")
+    Ok(format!("\"{escaped}\""))
 }
 
-/// `value` in double quotes for `ExecStart=`: `\` and `"` escaped, `%` and `$` doubled so
-/// systemd expands neither. Control characters are refused.
-pub fn quote(value: &str) -> color_eyre::Result<String> {
-    refuse_control(value)?;
-    Ok(quoted(&value.replace('$', "$$")))
-}
-
-/// `value` in double quotes for `Environment=`, which expands specifiers but not variables:
-/// as `quote`, with `$` left alone.
-pub fn quote_env(value: &str) -> color_eyre::Result<String> {
-    refuse_control(value)?;
-    Ok(quoted(value))
+/// The program path for `ExecStart=`, refused when systemd would refuse it.
+fn exec_path(setup: &Setup) -> color_eyre::Result<String> {
+    let exe = text_of(&setup.exe)?;
+    if exe.contains(EXEC_REFUSED) {
+        bail!(
+            "systemd cannot run a program whose path contains any of {}: {exe}\nhint: move the rail binary to a directory without them and run `rail daemon install` again",
+            EXEC_REFUSED
+                .iter()
+                .map(|c| format!("`{c}`"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
+    quote(&exe)
 }
 
 pub fn unit(setup: &Setup) -> color_eyre::Result<Unit> {
@@ -62,15 +67,12 @@ pub fn unit(setup: &Setup) -> color_eyre::Result<Unit> {
          [Unit]\nDescription=Rail mail daemon: keeps the local mail store in sync\n\
          StartLimitIntervalSec=300\nStartLimitBurst=5\n\n[Service]\nType=simple\n",
     );
-    text.push_str(&format!(
-        "ExecStart={} daemon run\n",
-        quote(&text_of(&setup.exe)?)?
-    ));
+    text.push_str(&format!("ExecStart={} daemon run\n", exec_path(setup)?));
     text.push_str("Restart=on-failure\nRestartSec=5\n");
     for (key, value) in environment(setup)? {
         text.push_str(&format!(
             "Environment={}\n",
-            quote_env(&format!("{key}={value}"))?
+            quote(&format!("{key}={value}"))?
         ));
     }
     text.push_str(&format!("UnsetEnvironment={}\n", UNSET.join(" ")));
@@ -88,6 +90,24 @@ pub fn unit(setup: &Setup) -> color_eyre::Result<Unit> {
         ],
         before_remove: vec![cmd(&["systemctl", "--user", "disable", "--now", UNIT_NAME])],
         after_remove: vec![cmd(&["systemctl", "--user", "daemon-reload"])],
+        status: Some(cmd(&[
+            "systemctl",
+            "--user",
+            "--no-pager",
+            "status",
+            UNIT_NAME,
+        ])),
+        main_pid: Some(cmd(&[
+            "systemctl",
+            "--user",
+            "show",
+            "--property=MainPID",
+            "--value",
+            UNIT_NAME,
+        ])),
+        start_hint: format!(
+            "`journalctl --user -u {UNIT_NAME}` and `rail doctor` say why; `systemctl --user restart {UNIT_NAME}` tries again"
+        ),
     })
 }
 
@@ -165,7 +185,7 @@ mod tests {
     fn values_are_quoted_for_systemd_and_control_characters_refused() {
         assert_eq!(
             quote("/a b/100%/$HOME/\"x\"\\").unwrap(),
-            "\"/a b/100%%/$$HOME/\\\"x\\\"\\\\\""
+            "\"/a b/100%%/$HOME/\\\"x\\\"\\\\\""
         );
         assert!(quote("/bad\npath").is_err());
         assert!(unit(&setup("/opt/ra\nil", None)).is_err());
@@ -173,15 +193,15 @@ mod tests {
         assert!(unit(&setup_in("/home/me/a\tb", "/opt/rail", None)).is_err());
     }
 
-    /// `Environment=` expands specifiers but not variables, so `$` stays single there while
-    /// `ExecStart=` (which expands both) doubles it.
+    /// Both settings expand specifiers (`%`) but neither expands variables where Rail puts a
+    /// path, so `$` stays single.
     #[test]
     fn a_directory_with_a_space_a_percent_a_quote_and_a_dollar_is_escaped_for_each_setting() {
         let root = "/home/me/my \"mail\" 100% $HOME";
         let unit = unit(&setup_in(root, "/opt/my rail/100%/$x/rail", None)).unwrap();
         let text = &unit.text;
         assert!(
-            text.contains("ExecStart=\"/opt/my rail/100%%/$$x/rail\" daemon run\n"),
+            text.contains("ExecStart=\"/opt/my rail/100%%/$x/rail\" daemon run\n"),
             "{text}"
         );
         assert!(
@@ -190,8 +210,7 @@ mod tests {
             ),
             "{text}"
         );
-        assert_eq!(quote_env("a\\b").unwrap(), "\"a\\\\b\"");
-        assert!(quote_env("a\nb").is_err());
+        assert_eq!(quote("a\\b").unwrap(), "\"a\\\\b\"");
     }
 
     #[test]
@@ -224,5 +243,55 @@ mod tests {
     fn an_op_directory_with_a_colon_cannot_go_on_path() {
         let error = unit(&setup("/opt/rail", Some("/opt/a:b"))).err().unwrap();
         assert!(error.to_string().contains("':'"), "{error}");
+    }
+
+    #[test]
+    fn a_program_path_systemd_would_refuse_is_refused_with_a_hint() {
+        for exe in [
+            "/opt/a\"b/rail",
+            "/opt/a'b/rail",
+            "/opt/a\\b/rail",
+            "/opt/a*/rail",
+            "/opt/a?/rail",
+            "/opt/a[1/rail",
+        ] {
+            let error = unit(&setup(exe, None)).err().unwrap().to_string();
+            assert!(error.contains("systemd cannot run"), "{exe}: {error}");
+            assert!(error.contains("hint: "), "{error}");
+        }
+    }
+
+    /// systemd's own parser, offline (`systemd-analyze verify` loads the file and checks the
+    /// program exists; it starts nothing). Skipped where `systemd-analyze` is missing.
+    #[test]
+    fn systemd_accepts_the_unit_for_a_binary_under_a_dollar_a_space_and_a_percent() {
+        if std::process::Command::new("systemd-analyze")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("a$b 100% x");
+        std::fs::create_dir_all(&bin).unwrap();
+        let exe = bin.join("rail");
+        std::fs::write(&exe, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&exe, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let root = dir.path().join("my \"mail\" 50% $HOME");
+        let mut setup = setup_in(root.to_str().unwrap(), exe.to_str().unwrap(), None);
+        setup.config_home = dir.path().join("xdg");
+        let unit = unit(&setup).unwrap();
+        assert!(unit.text.contains("a$b 100%% x/rail"), "{}", unit.text);
+        crate::cmd::service::flow::write_unit_file(&unit.path, &unit.text).unwrap();
+        let out = std::process::Command::new("systemd-analyze")
+            .args(["verify", "--man=no"])
+            .arg(&unit.path)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{stderr}\n{}", unit.text);
+        assert!(!stderr.contains("rail.service:"), "{stderr}");
     }
 }

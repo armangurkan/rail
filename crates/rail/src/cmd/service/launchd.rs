@@ -50,6 +50,11 @@ pub fn unit(setup: &Setup) -> color_eyre::Result<Unit> {
         after_install: vec![cmd(&["launchctl", "bootstrap", &domain, &shown])],
         before_remove: vec![cmd(&["launchctl", "bootout", &format!("{domain}/{LABEL}")])],
         after_remove: Vec::new(),
+        status: Some(cmd(&["launchctl", "print", &format!("{domain}/{LABEL}")])),
+        main_pid: None,
+        start_hint: format!(
+            "`rail doctor` and Rail's log (rail.log) say why; `launchctl kickstart -k {domain}/{LABEL}` tries again"
+        ),
         path,
         text,
     })

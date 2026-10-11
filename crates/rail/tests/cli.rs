@@ -15,6 +15,8 @@ fn rail_env<'a>(cmd: &'a mut Command, dir: &tempfile::TempDir) -> &'a mut Comman
         .env("RAIL_RUNTIME_DIR", dir.path().join("run"))
         // `rail doctor` looks for the login unit here, never in the real one.
         .env("XDG_CONFIG_HOME", dir.path().join("xdg"))
+        // On macOS the launchd agent lives under HOME, so there HOME is the test's too.
+        .envs(cfg!(target_os = "macos").then(|| ("HOME", dir.path().join("home"))))
         .env("RAIL_TEST_IDLE_SECS", "2")
         // A configured account in a test must never reach Google, and its daemon must still
         // idle out. Tests that serve a token endpoint set RAIL_TEST_TOKEN_URL again later.
