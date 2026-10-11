@@ -26,16 +26,31 @@ pub fn init(paths: &Paths, mcp: bool) -> Option<WorkerGuard> {
     }
 }
 
-/// `RUST_LOG`, or `info`; for `rail mcp` always with `rmcp=error` on top.
+/// HTTP and TLS libraries kept at `warn` whatever `RUST_LOG` says: at debug and trace they
+/// log request lines with query strings (Gmail's `q` is the user's search text), headers
+/// (the bearer token) and bodies (mail). Rail logs its own requests without those.
+const PINNED: &[&str] = &[
+    "hyper=warn",
+    "hyper_util=warn",
+    "h2=warn",
+    "reqwest=warn",
+    "rustls=warn",
+];
+
+/// `RUST_LOG`, or `info`, with `PINNED` on top; for `rail mcp` also `rmcp=error`.
 fn filter(mcp: bool) -> EnvFilter {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    if !mcp {
-        return filter;
-    }
-    match "rmcp=error".parse() {
-        Ok(directive) => filter.add_directive(directive),
-        Err(_) => filter,
-    }
+    let base = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    pinned(base, mcp)
+}
+
+fn pinned(base: EnvFilter, mcp: bool) -> EnvFilter {
+    let rmcp = mcp.then_some("rmcp=error");
+    PINNED
+        .iter()
+        .copied()
+        .chain(rmcp)
+        .filter_map(|directive| directive.parse().ok())
+        .fold(base, EnvFilter::add_directive)
 }
 
 fn try_init(dir: &std::path::Path, filter: EnvFilter) -> Result<WorkerGuard, String> {
@@ -65,6 +80,17 @@ mod tests {
         let paths = Paths::all_in(dir.path());
         std::fs::create_dir_all(paths.log_dir().join(LOG_FILE)).unwrap();
         assert!(init(&paths, false).is_none());
+    }
+
+    /// Review minor 11: the HTTP and TLS libraries stay at `warn` even when `RUST_LOG` asks
+    /// for more of them.
+    #[test]
+    fn http_and_tls_libraries_stay_at_warn() {
+        let filter = pinned(EnvFilter::new("trace,hyper=trace,reqwest=debug"), false).to_string();
+        for pin in PINNED {
+            assert!(filter.contains(pin), "{filter}");
+        }
+        assert!(!filter.contains("hyper=trace") && !filter.contains("reqwest=debug"));
     }
 
     #[test]

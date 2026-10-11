@@ -196,6 +196,10 @@ MCP library's own messages only at error level, since its warnings about malform
 can quote what the agent sent. A more specific `RUST_LOG` target overrides that: with
 `RUST_LOG=rmcp::handler=warn`, those warnings come back and may quote tool arguments, so do not
 set one while an agent might be sending a pasted secret, and treat `rail.log` as sensitive then.
+Every Rail command (the daemon too) keeps the HTTP and TLS libraries (`hyper`, `hyper_util`, `h2`,
+`reqwest`, `rustls`) at `warn` whatever `RUST_LOG` says, since at debug they would log request
+lines with Gmail search text, the access token and mail; only a more specific target (such as
+`RUST_LOG=hyper::proto=debug`) overrides that, and then `rail.log` holds all of those.
 It talks to the background daemon like every other command.
 
 ## Commands
