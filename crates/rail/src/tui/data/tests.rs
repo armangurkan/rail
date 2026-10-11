@@ -427,3 +427,59 @@ async fn an_unreachable_daemon_is_reported_as_lost() {
         "{got:?}"
     );
 }
+
+#[test]
+fn a_folder_choice_is_its_account_and_id_not_its_name() {
+    let folder = |account, folder_id, name: &str| ScopeChoice::Folder {
+        account,
+        folder_id,
+        name: name.into(),
+    };
+    assert_eq!(folder(0, 7, "Projects"), folder(0, 7, "Clients"));
+    assert_ne!(folder(0, 7, "Projects"), folder(1, 7, "Projects"));
+    assert_ne!(folder(0, 7, "Projects"), folder(0, 8, "Projects"));
+    assert_ne!(ScopeChoice::Account(0), folder(0, 7, "Projects"));
+}
+
+#[tokio::test]
+async fn a_refresh_job_reports_its_end_after_its_answers_and_after_a_panic() {
+    let finished = refresh_job(3, |sink| async move {
+        send(
+            &sink,
+            MailEvent::Timer {
+                token: 1,
+                kind: Timer::Requery,
+            },
+        );
+    });
+    let got = events(finished, 2, Duration::from_secs(10)).await;
+    assert!(
+        matches!(
+            got.as_slice(),
+            [MailEvent::Timer { .. }, MailEvent::RefreshEnded { seq: 3 }]
+        ),
+        "{got:?}"
+    );
+
+    let Effect::Spawn(job) = refresh_job(4, |_sink| async { panic!("boom") }) else {
+        panic!("expected a job");
+    };
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let joined = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::spawn(job(TaskSink::new(tx, 0))),
+    )
+    .await
+    .expect("the job ended in time");
+    assert!(
+        joined.is_err_and(|e| e.is_panic()),
+        "the panic goes on to the supervisor"
+    );
+    assert!(
+        matches!(
+            rx.try_recv(),
+            Ok((_, TaskResult::Mail(MailEvent::RefreshEnded { seq: 4 })))
+        ),
+        "the refresh ended anyway"
+    );
+}

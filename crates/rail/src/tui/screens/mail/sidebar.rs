@@ -1,9 +1,9 @@
 //! The sidebar: the unified inbox, each account's inbox, and each account's other folders,
 //! with unread counts, and a cursor that stays on its mailbox across re-reads.
 
-use crate::tui::data::{ScopeChoice, SidebarOutcome};
-
-use super::AccountEntry;
+use super::{AccountEntry, MailScreen};
+use crate::tui::app::Effect;
+use crate::tui::data::{ReadError, ScopeChoice, SidebarOutcome};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarItem {
@@ -20,6 +20,8 @@ pub struct SidebarItem {
 pub struct Sidebar {
     items: Vec<SidebarItem>,
     cursor: usize,
+    /// The last read failed: the old items stay, under a note.
+    failed: bool,
 }
 
 impl Sidebar {
@@ -77,6 +79,16 @@ impl Sidebar {
             .and_then(|scope| items.iter().position(|i| i.scope == scope))
             .unwrap_or(0);
         self.items = items;
+        self.failed = false;
+    }
+
+    /// The last read failed: keep the items and say so.
+    pub fn fail(&mut self) {
+        self.failed = true;
+    }
+
+    pub fn failed(&self) -> bool {
+        self.failed
     }
 
     pub fn down(&mut self) {
@@ -104,5 +116,46 @@ impl Sidebar {
             .iter()
             .find(|i| i.scope == *scope)
             .map_or(0, |i| i.unread)
+    }
+}
+
+impl MailScreen {
+    pub(super) fn sidebar_counted(
+        &mut self,
+        seq: u64,
+        result: Result<SidebarOutcome, ReadError>,
+    ) -> Vec<Effect> {
+        if seq != self.latest_sidebar {
+            return Vec::new();
+        }
+        match result {
+            Ok(outcome) => {
+                self.sidebar.rebuild(&self.accounts, &outcome);
+                self.follow_scope()
+            }
+            Err(error) => {
+                if self.side_read_failed(error, "sidebar").is_some() {
+                    self.sidebar.fail();
+                }
+                Vec::new()
+            }
+        }
+    }
+
+    /// After a rebuild: a label's scope takes the label's current name (renamed in Gmail),
+    /// or, when the label is gone, gives way to its account's inbox.
+    fn follow_scope(&mut self) -> Vec<Effect> {
+        let ScopeChoice::Folder { account, .. } = self.scope else {
+            return Vec::new();
+        };
+        if let Some(item) = self.sidebar.items().iter().find(|i| i.scope == self.scope) {
+            self.scope = item.scope.clone();
+            return Vec::new();
+        }
+        self.status.notify(
+            "The label you had open is gone; showing the inbox.",
+            self.tick,
+        );
+        self.set_scope(ScopeChoice::Account(account))
     }
 }

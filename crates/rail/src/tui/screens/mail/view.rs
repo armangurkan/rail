@@ -188,7 +188,7 @@ impl MailScreen {
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let cols = usize::from(inner.width);
-        let lines: Vec<Line> = self
+        let items: Vec<Line> = self
             .sidebar
             .items()
             .iter()
@@ -222,6 +222,11 @@ impl MailScreen {
                 ])
             })
             .collect();
+        let note = self
+            .sidebar
+            .failed()
+            .then(|| Line::styled(fit("Could not read folders", cols), theme.error));
+        let lines: Vec<Line> = note.into_iter().chain(items).collect();
         frame.render_widget(Paragraph::new(lines), inner);
     }
 

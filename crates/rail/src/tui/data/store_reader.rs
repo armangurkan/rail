@@ -12,7 +12,7 @@ use rail_core::store::filter::Filter;
 use rail_core::store::view::{AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadPage};
 use rail_core::store::{Store, StoreError};
 
-use super::{MailEvent, job, send};
+use super::{MailEvent, job, refresh_job, send};
 use crate::tui::app::Effect;
 
 /// Why a read gave no answer.
@@ -25,8 +25,10 @@ pub enum ReadError {
     Stale,
 }
 
-/// Which threads the list shows, by account position in `config.toml`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Which threads the list shows, by account position in `config.toml`. Two folder choices
+/// are the same folder when their account and `folder_id` match: `name` only labels the
+/// header (a label renamed in Gmail keeps its id).
+#[derive(Debug, Clone, Eq)]
 pub enum ScopeChoice {
     Unified,
     Account(usize),
@@ -36,6 +38,28 @@ pub enum ScopeChoice {
         folder_id: i64,
         name: String,
     },
+}
+
+impl PartialEq for ScopeChoice {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Unified, Self::Unified) => true,
+            (Self::Account(a), Self::Account(b)) => a == b,
+            (
+                Self::Folder {
+                    account: a,
+                    folder_id: x,
+                    ..
+                },
+                Self::Folder {
+                    account: b,
+                    folder_id: y,
+                    ..
+                },
+            ) => a == b && x == y,
+            _ => false,
+        }
+    }
 }
 
 /// One list read: the scope and filter, the configured accounts (addresses and names, in
@@ -167,16 +191,18 @@ impl StoreReader {
     }
 
     /// After a store change: the list read, the sidebar counts and, with `thread` (its
-    /// sequence number and id), the open thread, in one job and in that order.
+    /// sequence number and id), the open thread, in one job and in that order; then
+    /// `RefreshEnded { seq: end }`, also when the job panics.
     pub fn refresh(
         &self,
         list: ListRequest,
         sidebar_seq: u64,
         thread: Option<(u64, i64)>,
+        end: u64,
     ) -> Effect {
         self.newest_list(list.seq);
         let reader = self.clone();
-        job(move |sink| async move {
+        refresh_job(end, move |sink| async move {
             let addresses = list.addresses.clone();
             send(&sink, reader.read_list(list).await);
             let result = reader.read(move |store| sidebar(store, &addresses)).await;

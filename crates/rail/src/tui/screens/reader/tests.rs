@@ -27,6 +27,7 @@ use crate::tui::theme::Theme;
 
 mod links;
 mod open;
+mod state;
 
 const BODY: &str = "Hi Dana,\n\nThe plan is in the doc[1]; notes are on the wiki[2].\n\n> On Tue, Tom wrote:\n> one\n> two\n> three\n> four\n\nThanks,\nTom";
 

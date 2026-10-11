@@ -283,8 +283,11 @@ set in `config.toml`.
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`
 for Microsoft 365 accounts), whether the daemon can be reached (`connecting to the daemon…`,
-`daemon unreachable`), and notices. When the daemon cannot be reached the list still reads from
-the store; `Ctrl-r` reconnects (and starts a sync).
+`daemon unreachable`, or `daemon reachable again` once a message fetch gets through after the
+connection was lost), and notices. When the daemon cannot be reached the list still reads from
+the store; `Ctrl-r` reconnects (and starts a sync) and resumes live updates. A store read that
+fails says so where it was shown (the list, the top of the sidebar, or the reader's title) and in
+the status bar; `:errors` keeps it.
 
 ## Account setup
 

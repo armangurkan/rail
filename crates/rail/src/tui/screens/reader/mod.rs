@@ -51,6 +51,8 @@ pub struct Reader {
     asked: HashSet<i64>,
     /// Escaped error text per message id.
     errors: HashMap<i64, String>,
+    /// The last re-read failed: the title row shows this (escaped) until a read succeeds.
+    read_error: Option<String>,
     cursor: usize,
     scroll: usize,
     /// Bumped by every change of what the lines show.
@@ -82,6 +84,7 @@ impl Reader {
             fetching: HashSet::new(),
             asked: HashSet::new(),
             errors: HashMap::new(),
+            read_error: None,
             cursor: 0,
             scroll: 0,
             generation: Cell::new(0),
@@ -111,6 +114,7 @@ impl Reader {
     /// An unchanged thread leaves everything as it is, unless a body it waited for did not
     /// arrive (that message gets its note).
     pub fn refresh(&mut self, detail: ThreadDetail) {
+        self.read_error = None;
         if detail == self.detail && !self.missed_a_body() {
             return;
         }
@@ -149,6 +153,14 @@ impl Reader {
         }
         self.detail = detail;
         self.changed();
+        // The cursor stays on its line, or on the last one when the thread got shorter.
+        let last = self.current().len().saturating_sub(1);
+        self.cursor = self.cursor.min(last);
+    }
+
+    /// A re-read of this thread failed with `text` (escaped).
+    pub fn read_failed(&mut self, text: String) {
+        self.read_error = Some(text);
     }
 
     /// A body asked for and answered is still missing, with no note yet.
