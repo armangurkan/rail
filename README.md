@@ -811,8 +811,8 @@ exercise the real keyring and a real 1Password vault are ignored by default:
     RAIL_OP_LIVE_VAULT=<vault> cargo test -p rail-core -- --ignored onepassword_live
     RAIL_GMAIL_LIVE_ACCOUNT=<account name> cargo test -p rail-core -- --ignored gmail_live
 
-The last one uses your real config and token store, sends only GET requests (it never changes the
-mailbox) and confirms the Gmail API shapes the sync relies on.
+The last one uses your real config and token store, sends only GET requests to the Gmail API (it never changes the
+mailbox; a token refresh may POST to Google's token endpoint), prints counts and never mail, and confirms the Gmail API shapes the sync relies on.
 
 Changes a user can see or type update this README in the same change; see
 [CONTRIBUTING.md](CONTRIBUTING.md).

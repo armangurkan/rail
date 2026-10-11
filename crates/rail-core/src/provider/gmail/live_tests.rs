@@ -1,13 +1,17 @@
 //! The one live test: read-only calls against a real Gmail account, run by hand with
 //! `RAIL_GMAIL_LIVE_ACCOUNT=<name> cargo test -p rail-core -- --ignored gmail_live`.
-//! It uses your real config and token store (the `RAIL_*_DIR` variables apply) and only
-//! ever sends GET requests, so it never changes the mailbox. It confirms the Gmail shapes
+//! It uses your real config and token store (the `RAIL_*_DIR` variables apply), sends only
+//! GET requests to the Gmail API (so it never changes the mailbox) and may refresh your stored
+//! tokens, which is a POST to Google's token endpoint. Without `RAIL_GMAIL_LIVE_ACCOUNT` it
+//! prints a note and passes. Failure messages carry counts and Rail's own words, never mail
+//! content or Gmail's error text, so they are safe to paste. It confirms the Gmail shapes
 //! this phase assumed:
 //!
 //! - `after:` and `before:` take epoch seconds, and listings come newest first;
 //! - a listing with no match answers without a `messages` key and Rail reads it as empty;
 //! - subjects hold no raw encoded words and snippets no `&#39;`-style references;
-//! - bodies (base64url, with or without padding) decode into text;
+//! - bodies decode into text (base64url with or without padding is covered by the unit tests
+//!   only: this test cannot see the raw `data`);
 //! - a very old `startHistoryId` is refused with HTTP 404, which Rail reports as
 //!   `CursorExpired`.
 //!
@@ -29,15 +33,23 @@ use crate::sync::providers::gmail_for;
 /// How many of the listed messages have their bodies fetched.
 const BODIES_CHECKED: usize = 5;
 
-fn live_provider() -> Arc<dyn Provider> {
-    let who = std::env::var("RAIL_GMAIL_LIVE_ACCOUNT")
-        .expect("set RAIL_GMAIL_LIVE_ACCOUNT to an account name");
-    let paths = Paths::from_env().unwrap();
-    let config = config::load(&paths.config_file()).unwrap();
-    let account = crate::accounts::find_account(&config, &who)
-        .unwrap()
-        .clone();
-    gmail_for(ProviderRequest {
+/// Rail's own words for a failed call: the error's message, never Gmail's detail.
+fn ok<T>(result: Result<T, ProviderError>, what: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(e) => panic!("{what} failed: {e}"),
+    }
+}
+
+fn live_provider() -> Option<Arc<dyn Provider>> {
+    let Ok(who) = std::env::var("RAIL_GMAIL_LIVE_ACCOUNT") else {
+        eprintln!("SKIPPED: set RAIL_GMAIL_LIVE_ACCOUNT to an account name to run this test");
+        return None;
+    };
+    let paths = Paths::from_env().expect("a home directory");
+    let config = config::load(&paths.config_file()).expect("config.toml loads");
+    let account = ok_op(crate::accounts::find_account(&config, &who)).clone();
+    Some(ok_op(gmail_for(ProviderRequest {
         paths,
         config,
         account,
@@ -45,12 +57,18 @@ fn live_provider() -> Arc<dyn Provider> {
         token_url: None,
         gmail_url: None,
         observer: Arc::new(|wait| eprintln!("retrying in {wait:?}")),
-    })
-    .unwrap()
+    })))
+}
+
+fn ok_op<T>(result: Result<T, crate::ops::OpError>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(e) => panic!("building the provider failed: {}", e.message),
+    }
 }
 
 async fn check_labels_and_profile(gmail: &dyn Provider) -> SyncCursor {
-    let folders = gmail.folders().await.unwrap();
+    let folders = ok(gmail.folders().await, "labels");
     assert!(
         folders.iter().any(|f| f.kind == FolderKind::Inbox),
         "INBOX maps to the inbox"
@@ -61,11 +79,10 @@ async fn check_labels_and_profile(gmail: &dyn Provider) -> SyncCursor {
             .all(|f| f.remote_id != "UNREAD" && f.remote_id != "STARRED"),
         "flag labels are not folders"
     );
-    let profile = gmail.profile().await.unwrap();
+    let profile = ok(gmail.profile().await, "profile");
     assert!(
         !profile.cursor.0.is_empty() && profile.cursor.0.bytes().all(|b| b.is_ascii_digit()),
-        "historyId is numeric: {:?}",
-        profile.cursor
+        "historyId is numeric"
     );
     profile.cursor
 }
@@ -78,7 +95,7 @@ async fn check_window_and_order(gmail: &dyn Provider) -> Vec<Envelope> {
         after_ms: Some((now - 30 * DAY_SECS) * 1000),
         before_ms: Some((now - DAY_SECS) * 1000),
     };
-    let page = gmail.backfill(&window, None).await.unwrap();
+    let page = ok(gmail.backfill(&window, None).await, "listing");
     let dates: Vec<i64> = page.envelopes.iter().map(|e| e.internal_date).collect();
     assert!(
         dates.windows(2).all(|w| w[0] >= w[1]),
@@ -100,18 +117,21 @@ async fn check_empty_listing(gmail: &dyn Provider) {
         after_ms: Some((unix_now() + DAY_SECS) * 1000),
         before_ms: None,
     };
-    let page = gmail.backfill(&future, None).await.unwrap();
+    let page = ok(gmail.backfill(&future, None).await, "empty listing");
     assert!(
         page.envelopes.is_empty() && page.next.is_none(),
         "empty list reads as empty"
     );
-    let none = gmail
-        .search("rail-live-test-no-such-word-0f3a9c71", 5)
-        .await
-        .unwrap();
+    let none = ok(
+        gmail
+            .search("rail-live-test-no-such-word-0f3a9c71", 5)
+            .await,
+        "empty search",
+    );
     assert!(
         none.is_empty(),
-        "a search with no match reads as empty: {none:?}"
+        "a search with no match reads as empty ({} ids)",
+        none.len()
     );
 }
 
@@ -119,22 +139,22 @@ async fn check_text(gmail: &dyn Provider, envelopes: &[Envelope]) {
     let mut encoded_seen = 0;
     let mut entity_seen = 0;
     let mut bodies = 0;
-    for envelope in envelopes {
+    for (i, envelope) in envelopes.iter().enumerate() {
         assert!(
             !envelope.subject.contains("=?"),
-            "encoded words decoded: {:?}",
-            envelope.subject
+            "subject {i} still holds an encoded word ({} bytes)",
+            envelope.subject.len()
         );
         assert!(
             !envelope.snippet.contains("&#39;"),
-            "snippet references decoded: {:?}",
-            envelope.snippet
+            "snippet {i} still holds a character reference ({} bytes)",
+            envelope.snippet.len()
         );
         encoded_seen += usize::from(!envelope.subject.is_ascii());
         entity_seen += usize::from(envelope.snippet.contains('\''));
     }
     for envelope in envelopes.iter().take(BODIES_CHECKED) {
-        let body = gmail.body(&envelope.remote_id).await.unwrap();
+        let body = ok(gmail.body(&envelope.remote_id).await, "body");
         assert!(
             !body.text.is_empty() || !body.attachments.is_empty() || body.html.is_some(),
             "a body decodes to text, attachments or HTML"
@@ -155,24 +175,37 @@ async fn check_text(gmail: &dyn Provider, envelopes: &[Envelope]) {
 /// If the second assertion fails, Google answers old history ids differently from what the
 /// plan assumed: revisit the assumption; Rail is not necessarily broken.
 async fn check_history(gmail: &dyn Provider, current: &SyncCursor) {
-    let changes = gmail.changes(current).await.unwrap();
+    let changes = ok(gmail.changes(current).await, "history");
     assert!(!changes.cursor.0.is_empty());
     let expired = gmail.changes(&SyncCursor("1".into())).await;
-    eprintln!("a very old historyId gives: {expired:?} (expected CursorExpired)");
-    assert!(matches!(expired, Err(ProviderError::CursorExpired)));
+    let seen = match &expired {
+        Ok(_) => "a change set",
+        Err(ProviderError::CursorExpired) => "CursorExpired",
+        Err(ProviderError::NotFound) => "NotFound",
+        Err(ProviderError::NeedsAuth { .. }) => "NeedsAuth",
+        Err(ProviderError::Transient { .. }) => "a transient error",
+        Err(ProviderError::Permanent { .. }) => "a permanent error",
+    };
+    eprintln!("a very old historyId gives: {seen} (expected CursorExpired)");
+    assert!(
+        matches!(expired, Err(ProviderError::CursorExpired)),
+        "a very old historyId gave {seen}: revisit the 404 assumption"
+    );
 }
 
 #[tokio::test]
 #[ignore = "talks to a real Gmail account; run by hand"]
 async fn gmail_live_read_only() {
-    let gmail = live_provider();
+    let Some(gmail) = live_provider() else {
+        return;
+    };
     let cursor = check_labels_and_profile(gmail.as_ref()).await;
     let envelopes = check_window_and_order(gmail.as_ref()).await;
     check_empty_listing(gmail.as_ref()).await;
     check_text(gmail.as_ref(), &envelopes).await;
     check_history(gmail.as_ref(), &cursor).await;
-    let hits = gmail.search("in:inbox", 5).await.unwrap();
+    let hits = ok(gmail.search("in:inbox", 5).await, "search");
     assert!(hits.len() <= 5);
-    let found = gmail.envelopes(&hits).await.unwrap();
+    let found = ok(gmail.envelopes(&hits).await, "envelopes");
     assert!(found.envelopes.len() <= hits.len());
 }

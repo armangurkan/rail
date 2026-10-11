@@ -28,7 +28,7 @@ real keyring and a real 1Password vault are `#[ignore]`d and run by hand:
     RAIL_OP_LIVE_VAULT=<vault> cargo test -p rail-core -- --ignored onepassword_live
     RAIL_GMAIL_LIVE_ACCOUNT=<account name> cargo test -p rail-core -- --ignored gmail_live
 
-The Gmail test uses your real config and token store, sends only GET requests, and confirms the
+The Gmail test uses your real config and token store, sends only GET requests to the Gmail API (a token refresh may POST to Google's token endpoint), and confirms the
 Gmail API shapes the sync relies on. It prints a line for any check your mailbox cannot exercise
 (for example no mail in the last 30 days); and if its last assertion (a very old history id gives
 `CursorExpired`) fails, Google's behaviour differs from the assumption, which needs revisiting;
