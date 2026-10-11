@@ -16,7 +16,7 @@ use crate::tui::app::TaskSink;
 use crate::tui::app::{App, update};
 use crate::tui::run::run_loop;
 use crate::tui::test_util::{
-    RecordingClipboard, ctrl, daemon_ctx, feed, gmail_own_app_keys, key, press,
+    RecordingClipboard, ctrl, daemon_ctx, feed, gmail_own_app_keys, key, logged, press,
     redirect_when_asked, token_server, type_text, wizard_screen,
 };
 
@@ -188,6 +188,21 @@ fn a_panicked_job_fails_the_action_in_flight() {
         matches!(effects.as_slice(), [Effect::Spawn(_)]),
         "{effects:?}"
     );
+}
+
+/// A panic message can quote a token or mail: the log gets its length, never its text.
+#[test]
+fn a_panicked_job_logs_its_length_not_its_text() {
+    let mut screen = wizard_screen();
+    drive(&mut screen, gmail_own_app_keys("me@gmail.com"));
+    let message = "secret-panic-text";
+    let (_, log) = logged(|| screen.update(Msg::Task(TaskResult::JobPanicked(message.into()))));
+    assert!(log.contains("a wizard job panicked"), "{log:?}");
+    assert!(
+        log.contains(&format!("message_bytes={}", message.len())),
+        "{log:?}"
+    );
+    assert!(!log.contains(message), "{log:?}");
 }
 
 /// A panic while saving may come from a sibling job: the save keeps running, the screen

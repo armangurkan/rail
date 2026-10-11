@@ -166,8 +166,8 @@ type Hook = Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync>;
 
 /// Restore the terminal and defer to `previous` (which prints) for a panic on the TUI thread;
 /// with no TUI active, only defer. A panic on any other thread while the TUI is up is a
-/// background job: leave the terminal alone and log one line, because the task supervisor
-/// reports it to the screen.
+/// background job: leave the terminal alone and log one line with the message's length,
+/// because the task supervisor reports the message to the screen.
 fn panic_hook(state: Arc<HookState>, previous: Hook) -> Hook {
     Box::new(move |info| match state.site() {
         PanicSite::TuiThread => {
@@ -177,19 +177,24 @@ fn panic_hook(state: Arc<HookState>, previous: Hook) -> Hook {
         PanicSite::NoTui => previous(info),
         PanicSite::OtherThread => {
             let location = info.location().map(ToString::to_string).unwrap_or_default();
-            tracing::error!(location, "background task panicked: {}", payload_text(info));
+            tracing::error!(
+                location,
+                message_bytes = payload_bytes(info),
+                "background task panicked"
+            );
         }
     })
 }
 
-/// The panic message when the payload is a string; never the Debug of arbitrary data.
-fn payload_text(info: &PanicHookInfo<'_>) -> String {
+/// The panic message's length when the payload is a string (0 otherwise). The text itself can
+/// quote mail or a token, so it never reaches the log; the screen that ran the job shows it.
+fn payload_bytes(info: &PanicHookInfo<'_>) -> usize {
     let payload = info.payload();
     payload
         .downcast_ref::<&str>()
-        .map(|s| (*s).to_string())
-        .or_else(|| payload.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "non-string panic payload".to_string())
+        .map(|s| s.len())
+        .or_else(|| payload.downcast_ref::<String>().map(String::len))
+        .unwrap_or(0)
 }
 
 fn hook_state() -> &'static Arc<HookState> {
@@ -383,5 +388,34 @@ mod tests {
         drop(TerminalGuard::new(buf.clone(), Restored::default()));
         drop(TerminalGuard::new(buf.clone(), Restored::default()));
         assert_eq!(written(&buf).matches("\x1b[?1049l").count(), 2);
+    }
+
+    #[test]
+    fn a_background_panic_logs_its_length_not_its_text() {
+        let _serial = HOOK_TESTS.lock().unwrap();
+        let state = Arc::new(HookState {
+            active: Mutex::new(Some(Active {
+                thread: thread::current().id(),
+                restored: Restored::default(),
+            })),
+            restore: Box::new(|| {}),
+        });
+        let original = std::panic::take_hook();
+        std::panic::set_hook(panic_hook(state, Box::new(|_: &PanicHookInfo<'_>| {})));
+        let worker = thread::spawn(|| {
+            crate::tui::test_util::logged(|| {
+                std::panic::catch_unwind(|| panic!("job secret text")).is_err()
+            })
+        });
+        let joined = worker.join();
+        std::panic::set_hook(original);
+        let (panicked, log) = joined.unwrap();
+        assert!(panicked);
+        assert!(log.contains("background task panicked"), "{log:?}");
+        assert!(
+            log.contains(&format!("message_bytes={}", "job secret text".len())),
+            "{log:?}"
+        );
+        assert!(!log.contains("job secret text"), "{log:?}");
     }
 }

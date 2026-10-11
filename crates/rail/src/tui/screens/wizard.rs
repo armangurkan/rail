@@ -138,9 +138,10 @@ impl WizardScreen {
 
     /// A panicked job is the failure of whatever action is in flight, and that job is
     /// cancelled so it cannot deliver later. While saving, the panic is only logged: it may
-    /// come from a sibling job, and the save is never abandoned.
+    /// come from a sibling job, and the save is never abandoned. The log gets only the
+    /// message's length, since a panic message can quote a token or mail text.
     fn job_panicked(&mut self, message: &str) -> Vec<Effect> {
-        tracing::error!(panic = %message, "a wizard job panicked");
+        tracing::error!(message_bytes = message.len(), "a wizard job panicked");
         if self.saving() {
             return Vec::new();
         }
