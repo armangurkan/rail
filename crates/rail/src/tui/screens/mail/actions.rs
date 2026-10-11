@@ -70,8 +70,7 @@ pub(crate) struct ActionState {
     pub(crate) failures: BTreeMap<i64, (OutboxId, String)>,
     /// What `y` on the trash confirmation applies to.
     trashing: Vec<(i64, Picked)>,
-    /// The picker waiting for its labels (filled in by the label pickers).
-    #[allow(dead_code, reason = "the label pickers read it")]
+    /// The picker waiting for its labels, then open: what its answer applies to.
     pub(super) picking: Option<super::actions_pick::Picking>,
 }
 

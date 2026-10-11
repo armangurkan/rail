@@ -52,14 +52,13 @@ up without ever seeing your secrets.
   filter as you type, a command palette, keys you can change in `config.toml`, and `o` to open a
   message's HTML in the browser. See [Reading mail](#reading-mail).
 - Archive, trash, star and mark read or unread, alone or as a selection, with undo. See
-  [Doing things to mail](#doing-things-to-mail). Labelling and moving (`l`, `m`) are next: the
-  keys exist, but the pickers come in the next change.
+  [Doing things to mail](#doing-things-to-mail), including labelling (`l`) and moving (`m`).
 - `rail doctor`, a single health check for config, store, tokens, sync and the daemon.
 - An MCP server (`rail mcp`) for setting up and inspecting Rail from an AI agent.
 
 **Coming**
 
-- Next: the label and move pickers, then composing, replying and sending, with agent sends
+- Next: composing, replying and sending, with agent sends
   governed by the per-account `ai_send` policy.
 - Then: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
   sync and are searched locally only.
@@ -321,8 +320,15 @@ From the thread list or the reader: `e` archives, `d` moves to Gmail's Trash (Ra
 Gmail keeps trashed mail there for 30 days, and Rail never deletes mail for good), `s` stars or
 unstars, `u` marks read or unread. An action applies to the whole thread, as in Gmail. The list
 changes at once; the daemon sends the change to Gmail in the background, so it also goes through
-if you quit Rail. `l` and `m` (labels and moving) are bound already, but their pickers come in
-the next change; for now they only say so.
+if you quit Rail.
+
+`l` opens the account's labels: type to filter, `Space` ticks or unticks, `Enter` applies (labels
+you ticked are added, labels you unticked are removed; for a selection, the ticks start from every
+label any selected thread carries), `Esc` cancels. `Down`/`Up` (or `Ctrl-n`/`Ctrl-p`) move,
+because letters filter. `m` opens the same list to move: `Enter` adds the label and archives the
+thread. Gmail's system folders (Inbox, Sent, Trash and the like) are not in the list, and Rail
+does not create labels. A selection from two accounts cannot be labelled at once (Rail asks you to
+select threads from one account).
 
 `Space` selects the thread under the cursor (a `▸` replaces its dot, `>` with `icons = "ascii"`)
 and moves down; the status bar counts the selection. With a selection, an action applies to every

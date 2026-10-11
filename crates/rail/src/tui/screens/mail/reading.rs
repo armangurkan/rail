@@ -430,7 +430,10 @@ impl MailScreen {
     pub(super) fn modal_outcome(&mut self, outcome: ModalOutcome) -> Vec<Effect> {
         match outcome {
             ModalOutcome::Stay => {}
-            ModalOutcome::Close => self.modal = None,
+            ModalOutcome::Close => {
+                self.modal = None;
+                self.actions.picking = None;
+            }
             ModalOutcome::Typed(text) => {
                 self.filter_text = text;
                 self.filter_token += 1;

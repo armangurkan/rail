@@ -22,6 +22,7 @@ use crate::tui::test_util::{
 };
 
 mod actions;
+mod pickers;
 mod state;
 
 struct Fixture {

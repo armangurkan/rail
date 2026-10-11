@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/pickers.rs
+expression: shot
+---
+▍All inboxes  2 accounts · 5 unread                                                                                                             ? help
+  All inboxes           5│●  Yesterday  Sender                  subject wm2       │Open a thread with Enter; it shows here.
+● work                  3│●  Yesterday  Sender                  subject hm1       │
+    Sent                 │●  Yesterday  Sender                  subject wm1       │
+    Projects             │●  Yesterday  Sende┌ Move to ─────────────────────────────────────────────────┐
+● home                  2│●  Yesterday  Sende│>                                                         │
+    Sent                 │                   │                                                          │
+    Projects             │                   │Projects                                                  │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │                                                          │
+                         │                   │Enter moves · Esc cancels                                 │
+                         │                   └──────────────────────────────────────────────────────────┘
+                         │                                                        │
+                         │                                                        │
+work ✓  ·  home ✓
