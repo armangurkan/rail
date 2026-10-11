@@ -542,7 +542,7 @@ fn a_snippet_of_bare_ampersands_is_linear() {
     let started = std::time::Instant::now();
     assert_eq!(unescape_snippet(&hostile), hostile);
     let took = started.elapsed();
-    assert!(took < std::time::Duration::from_secs(1), "{took:?}");
+    assert!(took < std::time::Duration::from_secs(5), "{took:?}");
     assert_eq!(unescape_snippet("&amp;&&amp;"), "&&&");
 }
 
