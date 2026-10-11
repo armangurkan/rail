@@ -116,8 +116,26 @@ fn every_key_name_parses() {
 #[test]
 fn unreadable_key_names_are_refused() {
     for bad in [
-        "", " ", "ctrl-", "shift-", "f13", "f0", "foo", "g x y", "g  x", "shift-1", "shift-up",
-        "a\u{1b}", "\u{7}", "ab",
+        "",
+        " ",
+        "ctrl-",
+        "shift-",
+        "f13",
+        "f0",
+        "foo",
+        "g x y",
+        "g  x",
+        "shift-1",
+        "shift-up",
+        "a\u{1b}",
+        "\u{7}",
+        "ab",
+        "\u{ad}",
+        "\u{61c}",
+        "\u{180e}",
+        "\u{fff9}",
+        "\u{e0001}",
+        "\u{e0041}",
     ] {
         assert_eq!(parse_binding(bad), None, "{bad:?}");
     }

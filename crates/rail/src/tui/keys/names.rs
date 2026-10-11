@@ -124,16 +124,16 @@ fn named(text: &str) -> Option<KeyCode> {
     Some(code)
 }
 
-/// One printable character that is not white space, a control or an invisible formatting
-/// character (zero-width marks, bidirectional overrides, the byte order mark).
+/// One printable character that is not white space, a control or a Unicode format character
+/// (zero-width marks, soft hyphens, bidirectional overrides, tags): none of those can be seen
+/// or safely shown back to the user.
 fn character(text: &str) -> Option<KeyCode> {
     let mut chars = text.chars();
     let c = chars.next()?;
-    let invisible = matches!(
-        c,
-        '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}'
-    );
-    let printable = chars.next().is_none() && !c.is_whitespace() && !c.is_control() && !invisible;
+    let printable = chars.next().is_none()
+        && !c.is_whitespace()
+        && !c.is_control()
+        && !rail_core::config::is_format_char(c);
     printable.then_some(KeyCode::Char(c))
 }
 

@@ -143,11 +143,15 @@ A key name is a character (`a`, `O`, `/`), a named key (`enter`, `esc`, `tab`, `
 `space`, `up`, `down`, `left`, `right`, `pageup`, `pagedown`, `home`, `end`, `f1` to `f12`),
 either with `ctrl-`, `alt-` or `shift-` in front (`ctrl-r`, `shift-tab`), or two keys with a
 space between them for a sequence (`g x`). A key you set replaces that action's default keys.
-Rail refuses to start, naming the file and line, when `[keys]` names an action it does not know,
+`rail setup` refuses to start, naming the file and line, when `[keys]` names an action it does not know,
 a key it cannot read, `Ctrl-C` (which always quits), or a key another action of the same view
 already uses (a key that starts another action's sequence counts). A view's own key wins over a
-global one: `q` closes the reader but quits from the list. In the mail screen `?` lists the keys
-of the view you are in, marking the ones you changed.
+global one: `q` closes the reader but quits from the list.
+
+Today only the wizard reads `[keys]`, so the check runs when `rail setup` starts. The `global.*`,
+`list.*`, `sidebar.*` and `reader.*` actions below take effect in the mail screen, which a later
+task in this release adds; `?` will list the keys of the view you are in there, marking the ones
+you changed.
 
 | Action | Works in | Default keys | What it does |
 |---|---|---|---|
