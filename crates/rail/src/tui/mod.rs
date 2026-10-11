@@ -8,6 +8,7 @@ pub mod data;
 pub mod effects;
 pub mod keys;
 pub mod modals;
+pub mod open;
 pub mod run;
 pub mod screen;
 pub mod screens;

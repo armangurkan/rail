@@ -238,6 +238,13 @@ the line has none or several. Rail shows the address first and opens only `http`
 `mailto` links. `a` lists the thread's attachments (name, type, size); opening and saving them
 comes in a later version.
 
+`o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file
+under its cache directory (`~/.cache/rail/open/`, or `$XDG_CACHE_HOME/rail/open/`) with scripts
+blocked, and removes the file when you close the reader. The first time in a session Rail asks
+first, because **remote images in the message load in the browser**, which can tell the sender
+you opened it; Rail itself never loads them. A message whose body is not stored yet is fetched
+first. A message with no HTML part says so: its text is all there is.
+
 Bodies of recent mail (`body_cache_days`) are already in the store. An older message shows
 **fetching…** while the daemon fetches its body from Gmail; the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
@@ -471,6 +478,8 @@ are converted to text by Rail's own scanner without running scripts or loading a
 syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
 finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail does not
 change or delete mail on the server.
+
+Opening a message in the browser (`o`) is the one way remote content in mail is ever loaded, and only after you confirm; the reader shows text only.
 
 **Mail and AI agents.** Through MCP, mail content never reaches an agent today. Text from outside
 Rail (preset files, provider and system error messages) comes back to the agent marked as

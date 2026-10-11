@@ -23,6 +23,8 @@ pub enum Command {
         links: Vec<String>,
         number: usize,
     },
+    /// Open the message with this id in the browser, once confirmed.
+    OpenHtml(i64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -246,10 +246,6 @@ impl Reader {
         self.current().get(self.cursor).cloned()
     }
 
-    #[allow(
-        dead_code,
-        reason = "`o` (Task 9) opens the cursor's message in the browser"
-    )]
     pub fn message_at_cursor(&self) -> Option<&MessageView> {
         let message = self.cursor_line()?.kind.message()?;
         self.detail.messages.get(message)

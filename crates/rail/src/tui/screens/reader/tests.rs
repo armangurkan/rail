@@ -25,6 +25,8 @@ use crate::tui::test_util::{
 };
 use crate::tui::theme::Theme;
 
+mod open;
+
 const BODY: &str = "Hi Dana,\n\nThe plan is in the doc[1]; notes are on the wiki[2].\n\n> On Tue, Tom wrote:\n> one\n> two\n> three\n> four\n\nThanks,\nTom";
 
 struct Fixture {

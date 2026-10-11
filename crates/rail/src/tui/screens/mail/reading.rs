@@ -2,7 +2,7 @@
 //! links and attachments.
 
 use rail_core::ops::{BodyFetchResponse, ErrorCode, MAX_BODY_FETCH, OpError};
-use rail_core::store::view::ThreadDetail;
+use rail_core::store::view::{BodyState, HtmlBody, ThreadDetail};
 
 use super::{Focus, Glyphs, MailScreen, error_line};
 use crate::tui::app::Effect;
@@ -46,7 +46,9 @@ impl MailScreen {
                     }
                 }
                 self.focus = Focus::Reader;
-                self.fetch_wanted()
+                let mut effects = self.fetch_wanted();
+                effects.extend(self.resume_open());
+                effects
             }
             Ok(None) => {
                 self.close_reader();
@@ -112,6 +114,7 @@ impl MailScreen {
             Err(error) => {
                 tracing::warn!(code = ?error.code, "a body fetch failed");
                 reader.fetch_failed(&error);
+                self.pending_open = None;
             }
         }
         effects
@@ -149,8 +152,7 @@ impl MailScreen {
             ReaderOutcome::Back => self.close_reader(),
             ReaderOutcome::FollowLink => self.follow_link(),
             ReaderOutcome::Attachments => self.attachments(),
-            // Task 9 opens the HTML in the browser.
-            ReaderOutcome::OpenBrowser => {}
+            ReaderOutcome::OpenBrowser => return self.open_html(),
         }
         Vec::new()
     }
@@ -158,9 +160,132 @@ impl MailScreen {
     pub(super) fn close_reader(&mut self) {
         self.reader = None;
         self.modal = None;
+        self.open_files.remove_all();
+        self.pending_open = None;
         // An answer to a read still in flight must not reopen the thread.
         self.latest_thread = self.next_seq();
         self.focus = Focus::List;
+    }
+
+    /// `o` on the message at the cursor (or the latest).
+    pub(super) fn open_html(&mut self) -> Vec<Effect> {
+        let Some(reader) = self.reader.as_ref() else {
+            return Vec::new();
+        };
+        let Some(message) = reader
+            .message_at_cursor()
+            .or_else(|| reader.detail().messages.last())
+        else {
+            return Vec::new();
+        };
+        let (id, body, has_html) = (message.id, message.body.clone(), message.has_html);
+        match body {
+            BodyState::NotFetched => {
+                self.pending_open = Some(id);
+                self.status
+                    .notify("fetching the message for the browser…", self.tick);
+                self.fetch_wanted()
+            }
+            _ if !has_html => {
+                self.status.notify(
+                    "This message has no HTML part; the reader shows all of its text.",
+                    self.tick,
+                );
+                Vec::new()
+            }
+            _ => self.confirm_open(id),
+        }
+    }
+
+    /// Ask once per session, naming remote images; then read the HTML.
+    fn confirm_open(&mut self, message_id: i64) -> Vec<Effect> {
+        if self.html_confirmed {
+            return vec![self.ctx.store.html(message_id)];
+        }
+        let lines = vec![
+            "Rail writes this message's HTML to a private temporary file and opens it in your browser."
+                .to_string(),
+            "Remote images in this message will load there, which can tell the sender you opened it."
+                .to_string(),
+            "Rail asks once per session; the file is removed when you close the reader."
+                .to_string(),
+        ];
+        self.modal = Some(Modal::Confirm(Confirm::new(
+            "Open in the browser?",
+            lines,
+            Command::OpenHtml(message_id),
+        )));
+        Vec::new()
+    }
+
+    /// After a re-read: the message `o` waited for has its body now (or failed).
+    fn resume_open(&mut self) -> Vec<Effect> {
+        let Some(id) = self.pending_open else {
+            return Vec::new();
+        };
+        let found = self
+            .reader
+            .as_ref()
+            .and_then(|r| r.detail().messages.iter().find(|m| m.id == id))
+            .map(|m| (m.body.clone(), m.has_html));
+        match found {
+            Some((BodyState::NotFetched, _)) => Vec::new(),
+            Some((_, true)) => {
+                self.pending_open = None;
+                self.confirm_open(id)
+            }
+            Some((_, false)) | None => {
+                self.pending_open = None;
+                self.status
+                    .notify("This message has no HTML part to open.", self.tick);
+                Vec::new()
+            }
+        }
+    }
+
+    pub(super) fn html_read(
+        &mut self,
+        message_id: i64,
+        result: Result<Option<HtmlBody>, ReadError>,
+    ) -> Vec<Effect> {
+        match result {
+            Ok(Some(HtmlBody::Html(html))) => self.open_file(&html),
+            Ok(Some(HtmlBody::NotFetched)) => {
+                self.pending_open = Some(message_id);
+                return self.fetch_wanted();
+            }
+            Ok(Some(HtmlBody::Absent) | None) => {
+                self.status
+                    .notify("This message has no HTML part to open.", self.tick);
+            }
+            Err(error) => self.read_failed(error),
+        }
+        Vec::new()
+    }
+
+    fn open_file(&mut self, html: &str) {
+        let opened = self
+            .open_files
+            .write(html)
+            .map_err(|e| {
+                format!(
+                    "Could not write the message for the browser: {}",
+                    escape(&e.to_string())
+                )
+            })
+            .and_then(|path| {
+                url::Url::from_file_path(&path).map_err(|()| {
+                    "Could not open the message: its path is not absolute".to_string()
+                })
+            })
+            .and_then(|url| {
+                (self.ctx.opener)(&url)
+                    .map_err(|e| format!("Could not start the browser: {}", escape(&e.to_string())))
+            });
+        if let Err(text) = opened {
+            tracing::warn!("could not open a message in the browser");
+            self.status.error(text, self.ctx.clock.now(), self.tick);
+        }
     }
 
     fn follow_link(&mut self) {
@@ -230,6 +355,11 @@ impl MailScreen {
                 self.modal = None;
                 self.confirm_link(&links, number);
             }
+            ModalOutcome::Run(Command::OpenHtml(message_id)) => {
+                self.modal = None;
+                self.html_confirmed = true;
+                return vec![self.ctx.store.html(message_id)];
+            }
             ModalOutcome::Run(Command::OpenLink(url)) => {
                 self.modal = None;
                 if let Err(error) = (self.ctx.opener)(&url) {
@@ -243,6 +373,12 @@ impl MailScreen {
             }
         }
         Vec::new()
+    }
+
+    /// Replace the browser opener (tests).
+    #[cfg(test)]
+    pub(crate) fn set_opener(&mut self, opener: crate::tui::effects::Opener) {
+        self.ctx.opener = opener;
     }
 
     /// The open reader (tests).

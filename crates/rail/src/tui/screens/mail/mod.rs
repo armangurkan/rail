@@ -47,6 +47,7 @@ use crate::tui::data::{
 use crate::tui::effects::Opener;
 use crate::tui::keys::{Action, Chord, Keymap, Resolved, View};
 use crate::tui::modals::Modal;
+use crate::tui::open::OpenFiles;
 use crate::tui::screen::Screen;
 use crate::tui::screens::reader::Reader;
 use crate::tui::theme::Theme;
@@ -149,6 +150,12 @@ pub struct MailScreen {
     /// The open thread, drawn in the pane or full screen.
     reader: Option<Reader>,
     modal: Option<Modal>,
+    /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
+    open_files: OpenFiles,
+    /// The browser confirmation was answered yes this session.
+    html_confirmed: bool,
+    /// The message `o` is waiting on a body fetch for.
+    pending_open: Option<i64>,
     seq: u64,
     latest_list: u64,
     /// The newest thread read: an older answer is dropped.
@@ -163,6 +170,7 @@ pub struct MailScreen {
 
 impl MailScreen {
     pub fn new(ctx: MailContext, accounts: Vec<AccountEntry>) -> Self {
+        let open_files = OpenFiles::new(&ctx.paths.cache_dir);
         Self {
             ctx,
             account_ids: vec![None; accounts.len()],
@@ -180,6 +188,9 @@ impl MailScreen {
             navigating: None,
             reader: None,
             modal: None,
+            open_files,
+            html_confirmed: false,
+            pending_open: None,
             seq: 0,
             latest_list: 0,
             latest_thread: 0,
@@ -425,6 +436,7 @@ impl MailScreen {
                 result,
             } if seq == self.latest_thread => self.thread_read(thread_id, result),
             MailEvent::Bodies { thread_id, result } => self.bodies_answered(thread_id, result),
+            MailEvent::Html { message_id, result } => self.html_read(message_id, result),
             MailEvent::Daemon(event) => self.on_daemon(event),
             MailEvent::Timer {
                 token,
@@ -500,6 +512,7 @@ impl MailScreen {
                 if let Some(reader) = self.reader.as_mut() {
                     reader.fetch_failed(&error);
                 }
+                self.pending_open = None;
                 Vec::new()
             }
             DaemonEvent::Refreshed(Ok(())) => Vec::new(),
@@ -542,6 +555,13 @@ fn account_number(action: Action) -> Option<usize> {
 
 impl Screen for MailScreen {
     fn start(&mut self) -> Vec<Effect> {
+        match self.open_files.sweep(std::time::SystemTime::now()) {
+            Ok(0) => {}
+            Ok(removed) => tracing::info!(removed, "removed message files a previous session left"),
+            Err(error) => {
+                tracing::warn!(error = %error, "could not clean the opened-messages directory");
+            }
+        }
         vec![
             self.ctx.link.watch(),
             self.read_list(PageAt::First, Place::Top),
