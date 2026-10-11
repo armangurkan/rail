@@ -433,3 +433,48 @@ async fn search_reports_the_accounts_it_could_not_ask() {
     assert_eq!(found.failures[0].account, "corp");
     assert_eq!(found.failures[0].error.code, ErrorCode::Unsupported);
 }
+
+/// Review minor 8: a search of every account shows only the accounts configured now, never
+/// the mail a removed account left in the store.
+#[tokio::test]
+async fn searching_every_account_leaves_out_removed_accounts_mail() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = paths_with(&tmp, WORK);
+    {
+        let store = Store::open(&paths.db_file()).unwrap();
+        store
+            .conn()
+            .execute(
+                "INSERT INTO accounts (name, kind, address) VALUES ('gone', 'gmail', 'gone@example.com')",
+                [],
+            )
+            .unwrap();
+        let gone = store.account_id("gone@example.com").unwrap().unwrap();
+        let (writer, task) = crate::sync::spawn_writer(&paths.db_file()).unwrap();
+        let mut left_behind = envelope("g1", "t-gone", now_ms(1));
+        left_behind.subject = "budget from a removed account".into();
+        writer
+            .write(crate::sync::Batch {
+                upserts: vec![left_behind],
+                ..crate::sync::Batch::new(gone)
+            })
+            .await
+            .unwrap();
+        drop(writer);
+        assert!(task.finish(Duration::from_secs(5)).await);
+    }
+    let mock = MockProvider::new();
+    let mut current = envelope("w1", "t-work", now_ms(2));
+    current.subject = "budget for work".into();
+    mock.seed(current);
+    let (client, _daemon) = daemon(&paths, &mock, ServeConfig::default()).await;
+    until(&client, "work", |s| s.passes_completed >= 1).await;
+    let request = SearchRequest {
+        query: "budget".into(),
+        account: None,
+        limit: 10,
+    };
+    let found = client.call::<Search>(&request).await.unwrap();
+    let threads: Vec<&str> = found.hits.iter().map(|h| h.thread_id.as_str()).collect();
+    assert_eq!(threads, ["t-work"]);
+}

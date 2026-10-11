@@ -175,11 +175,12 @@ impl Store {
     }
 
     /// Full-text search over the store, newest first. `text` is the user's words, quoted by
-    /// `fts_query`; nothing matches when it has no words.
+    /// `fts_query`; nothing matches when it has no words. `accounts` limits it to those
+    /// account ids (`None`: every account in the store).
     pub fn search_local(
         &self,
         text: &str,
-        account_id: Option<i64>,
+        accounts: Option<&[i64]>,
         limit: usize,
     ) -> Result<Vec<StoredHit>, StoreError> {
         let Some(query) = fts_query(text) else {
@@ -187,12 +188,14 @@ impl Store {
         };
         let sql = format!(
             "SELECT {HIT_COLUMNS} JOIN messages_fts f ON f.rowid = m.id
-             WHERE messages_fts MATCH ?1 AND (?2 IS NULL OR m.account_id = ?2)
+             WHERE messages_fts MATCH ?1
+               AND (?2 IS NULL OR m.account_id IN (SELECT value FROM json_each(?2)))
              ORDER BY m.internal_date DESC, m.id DESC LIMIT ?3"
         );
+        let accounts = accounts.map(|ids| serde_json::Value::from(ids.to_vec()).to_string());
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![query, account_id, limit], hit)?;
+        let rows = stmt.query_map(params![query, accounts, limit], hit)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -270,12 +273,12 @@ mod tests {
         assert_eq!(ids, ["m1"]);
         assert_eq!(hits[0].account, "work");
         assert_eq!(hits[0].thread_remote_id, "t1");
-        let both = store.search_local("roadmap", Some(1), 10).unwrap();
+        let both = store.search_local("roadmap", Some(&[1]), 10).unwrap();
         let ids: Vec<&str> = both.iter().map(|h| h.remote_id.as_str()).collect();
         assert_eq!(ids, ["m2", "m1"], "newest first");
         assert!(
             store
-                .search_local("roadmap", Some(2), 10)
+                .search_local("roadmap", Some(&[2]), 10)
                 .unwrap()
                 .is_empty()
         );

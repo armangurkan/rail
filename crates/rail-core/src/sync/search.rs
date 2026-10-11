@@ -34,8 +34,8 @@ pub async fn run(ctx: &DaemonContext, request: SearchRequest) -> Result<SearchRe
     {
         return Err(error);
     }
-    let (account_id, address) = local_account(ctx, request.account.clone(), db.clone()).await?;
-    let local = local_hits(db.clone(), query.clone(), account_id, limit).await?;
+    let (accounts, address) = local_accounts(ctx, request.account.clone(), db.clone()).await?;
+    let local = local_hits(db.clone(), query.clone(), accounts, limit).await?;
     // Accounts the server is not asked for (no engine, Microsoft 365, the writer gone) are
     // failures, so the front end can say whose mail was searched only locally.
     let (targets, mut failures) = ctx.sync.search_plan(address.as_deref()).await;
@@ -75,22 +75,32 @@ fn checked_query(query: &str) -> Result<String, OpError> {
     Ok(query.to_string())
 }
 
-/// The store id and address of the account `who` names, or `(None, None)` for every account.
-async fn local_account(
+/// The store ids searched locally, and the address of the account `who` names: that one
+/// account, or every account configured now. A removed account's mail stays in the store but
+/// is never shown, even when a new account reuses its name.
+async fn local_accounts(
     ctx: &DaemonContext,
     who: Option<String>,
     db: PathBuf,
-) -> Result<(Option<i64>, Option<String>), OpError> {
-    let Some(who) = who else {
-        return Ok((None, None));
-    };
+) -> Result<(Vec<i64>, Option<String>), OpError> {
     let path = ctx.paths.config_file();
     blocking(move || {
-        let config = config::load(&path)?;
+        let config = match config::load(&path) {
+            Err(config::ConfigError::Missing { .. }) => config::Config::default(),
+            loaded => loaded?,
+        };
+        let store = Store::open_reader(&db)?;
+        let Some(who) = who else {
+            let mut ids = Vec::new();
+            for account in &config.accounts {
+                ids.extend(store.account_id(&account.address.to_ascii_lowercase())?);
+            }
+            return Ok((ids, None));
+        };
         let address = find_account(&config, &who)?.address.to_ascii_lowercase();
-        let id = Store::open_reader(&db)?.account_id(&address)?;
         // An account the store has no row for yet matches nothing locally.
-        Ok((Some(id.unwrap_or(-1)), Some(address)))
+        let ids = store.account_id(&address)?.into_iter().collect();
+        Ok((ids, Some(address)))
     })
     .await
 }
@@ -98,11 +108,15 @@ async fn local_account(
 async fn local_hits(
     db: PathBuf,
     query: String,
-    account: Option<i64>,
+    accounts: Vec<i64>,
     limit: usize,
 ) -> Result<Vec<StoredHit>, OpError> {
     // Several messages of one thread can match: ask for more than `limit` rows.
-    blocking(move || Ok(Store::open_reader(&db)?.search_local(&query, account, limit * 4)?)).await
+    blocking(move || {
+        let store = Store::open_reader(&db)?;
+        Ok(store.search_local(&query, Some(&accounts), limit * 4)?)
+    })
+    .await
 }
 
 async fn server_hits(
