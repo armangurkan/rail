@@ -613,6 +613,37 @@ async fn q_quits_from_the_list_and_ctrl_c_always() {
     assert!(f.screen.claims_key(key(KeyCode::Char('j'))));
 }
 
+#[tokio::test]
+async fn a_key_that_ends_no_chord_is_read_on_its_own() {
+    let mut f = fixture(3).await;
+    let g = f.screen.update(Msg::Key(key(KeyCode::Char('g'))));
+    assert!(g.is_empty() && f.screen.chord.is_pending());
+    let quit = f.screen.update(Msg::Key(key(KeyCode::Char('q'))));
+    assert!(
+        matches!(quit.as_slice(), [Effect::Quit]),
+        "g then q quits: {quit:?}"
+    );
+    assert!(!f.screen.chord.is_pending());
+    f.screen.update(Msg::Key(key(KeyCode::Char('g'))));
+    press(&mut f, KeyCode::Char('j')).await;
+    assert_eq!(f.screen.list.selected_index(), 1, "g then j moves");
+    assert!(!f.screen.chord.is_pending());
+}
+
+#[tokio::test]
+async fn a_focus_change_drops_a_waiting_chord_key() {
+    let mut f = fixture(3).await;
+    let open = f.screen.update(Msg::Key(key(KeyCode::Enter)));
+    f.screen.update(Msg::Key(key(KeyCode::Char('g'))));
+    assert!(f.screen.chord.is_pending());
+    settle(&mut f.screen, open).await;
+    assert_eq!(f.screen.focus, Focus::Reader);
+    assert!(
+        !f.screen.chord.is_pending(),
+        "the list's g is not the reader's"
+    );
+}
+
 #[test]
 fn tiny_terminals_draw_without_panicking() {
     let tmp = tempfile::tempdir().unwrap();

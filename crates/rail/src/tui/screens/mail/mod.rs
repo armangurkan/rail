@@ -348,6 +348,8 @@ impl MailScreen {
 
     pub(crate) fn act(&mut self, action: Action) -> Vec<Effect> {
         match action {
+            // The shell quits on its own key; this is `q` read after a chord's first key.
+            Action::GlobalQuit => return vec![Effect::Quit],
             Action::GlobalPalette => {
                 self.modal = Some(Modal::Palette(Palette::new(self.palette_entries())));
                 return Vec::new();
@@ -727,7 +729,8 @@ impl Screen for MailScreen {
     }
 
     fn update(&mut self, msg: Msg) -> Vec<Effect> {
-        match msg {
+        let focus = self.focus;
+        let effects = match msg {
             Msg::Key(key) => self.on_key(key),
             Msg::Tick => {
                 self.tick = self.tick.wrapping_add(1);
@@ -738,7 +741,12 @@ impl Screen for MailScreen {
             Msg::Task(TaskResult::Mail(event)) => self.on_mail(event),
             Msg::Task(TaskResult::JobPanicked(message)) => self.job_panicked(&message),
             Msg::Task(_) => Vec::new(),
+        };
+        if self.focus != focus {
+            // A chord's first key belongs to the view it was typed in.
+            self.chord.clear();
         }
+        effects
     }
 
     fn view(&self, frame: &mut Frame, theme: &Theme) {

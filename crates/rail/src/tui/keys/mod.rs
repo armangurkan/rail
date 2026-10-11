@@ -31,10 +31,6 @@ impl Chord {
         self.0.is_some()
     }
 
-    #[allow(
-        dead_code,
-        reason = "used by the filter line and the modals, which come later in Phase 5"
-    )]
     pub fn clear(&mut self) {
         self.0 = None;
     }
