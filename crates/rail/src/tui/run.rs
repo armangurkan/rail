@@ -23,6 +23,7 @@ use super::app::{App, Effect, Job, Msg, Osc52, TaggedResult, TaskResult, TaskSin
 use super::keys::Keymap;
 use super::screen::Screen;
 use super::terminal;
+use super::theme::Theme;
 
 /// How often `Msg::Tick` arrives. It exists only so spinners can animate.
 pub const TICK: Duration = Duration::from_millis(250);
@@ -34,9 +35,11 @@ const PANIC_FALLBACK: &str = "task panicked";
 /// screen back. SIGHUP and SIGTERM stay graceful (they quit the loop, nothing else) until the
 /// caller has dropped whatever cleans up after the screen and calls `finish_run`;
 /// a failed run resumes them itself, after the screen is dropped.
-pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>) -> io::Result<S> {
+pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>, theme: Theme) -> io::Result<S> {
     let mut tui = terminal::enter()?;
-    let mut app = App::new(screen, Box::new(Osc52)).with_keymap(keymap);
+    let mut app = App::new(screen, Box::new(Osc52))
+        .with_keymap(keymap)
+        .with_theme(theme);
     let events = Box::pin(EventStream::new());
     let result = run_loop(&mut tui.terminal, &mut app, events).await;
     drop(tui);
@@ -221,6 +224,7 @@ fn apply<S: Screen>(effect: Effect, app: &mut App<S>, tasks: &mut Tasks) -> Opti
         Effect::Quit => app.quit = true,
         Effect::CancelAll => tasks.cancel_all(),
         Effect::Spawn(job) => tasks.spawn(job),
+        Effect::Theme(theme) => app.theme = theme,
         Effect::Copy(text) => {
             let result = app.clipboard.copy(&text).map_err(|e| e.to_string());
             if let Err(reason) = &result {
@@ -337,6 +341,19 @@ mod tests {
 
     use crate::tui::app::TaskResult;
     use crate::tui::test_util::{Hello, RecordingClipboard, ctrl, key};
+    use ratatui::style::Color;
+
+    #[test]
+    fn a_theme_effect_replaces_the_apps_theme() {
+        let mut app = App::new(Hello::default(), Box::new(RecordingClipboard::default()));
+        let mut tasks = Tasks::new(mpsc::unbounded_channel().0);
+        let theme = Theme {
+            background: Some(Color::Rgb(9, 9, 9)),
+            ..Theme::default()
+        };
+        assert!(apply(Effect::Theme(theme), &mut app, &mut tasks).is_none());
+        assert_eq!(app.theme, theme);
+    }
 
     /// Dropping the listeners (when `run_loop` returns) must not make the signals deadly: the
     /// terminal is not restored yet and the screen not dropped. Only

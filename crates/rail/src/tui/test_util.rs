@@ -37,6 +37,7 @@ use super::screen::Screen;
 use super::screens::mail::{AccountEntry, MailContext};
 use super::screens::wizard::WizardScreen;
 use super::theme::Theme;
+use super::theme::choice::{ColorDepth, ThemeChoice};
 
 /// Where the in-process test daemons send token refreshes and Gmail calls: nothing listens.
 const UNREACHABLE_TOKEN_URL: &str = "http://127.0.0.1:9/token";
@@ -461,6 +462,8 @@ pub fn mail_ctx(paths: &Paths, fake: Arc<FakeDaemon>) -> MailContext {
         icons: Icons::Unicode,
         split_threshold: 140,
         hyperlinks: false,
+        depth: ColorDepth::TrueColor,
+        theme_choice: ThemeChoice::default(),
     }
 }
 
@@ -471,13 +474,13 @@ pub fn work_and_home() -> Vec<AccountEntry> {
             name: "work".into(),
             address: "w@example.com".into(),
             kind: AccountKind::Gmail,
-            color: Color::Cyan,
+            color: Some(Color::Cyan),
         },
         AccountEntry {
             name: "home".into(),
             address: "h@example.com".into(),
             kind: AccountKind::Gmail,
-            color: Color::Magenta,
+            color: Some(Color::Magenta),
         },
     ]
 }

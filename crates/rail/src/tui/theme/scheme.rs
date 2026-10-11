@@ -8,6 +8,7 @@ use ratatui::style::Color;
 /// The table `scripts/update-schemes.sh` writes.
 const TABLE: &str = include_str!("schemes.txt");
 /// How many schemes the table holds; the test pins it so a bad regeneration fails CI.
+#[cfg(test)]
 pub const COUNT: usize = 769;
 /// Columns per line: name, background, foreground, selection bg, selection fg, 16 palette.
 const COLUMNS: usize = 21;
@@ -21,7 +22,7 @@ impl Rgb {
     /// `#rrggbb`, nothing else.
     pub fn parse(hex: &str) -> Option<Rgb> {
         let digits = hex.strip_prefix('#')?;
-        if digits.len() != 6 || !digits.is_ascii() {
+        if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         let byte = |i: usize| u8::from_str_radix(&digits[i..i + 2], 16).ok();

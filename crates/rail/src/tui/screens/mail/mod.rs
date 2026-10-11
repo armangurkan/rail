@@ -53,18 +53,10 @@ use crate::tui::open::OpenFiles;
 use crate::tui::screen::Screen;
 use crate::tui::screens::reader::Reader;
 use crate::tui::theme::Theme;
+use crate::tui::theme::choice::{ColorDepth, ThemeChoice};
 
 /// Rows the list is assumed to show before the first frame says.
 const FALLBACK_HEIGHT: usize = 20;
-/// Account colours for accounts without `color`, by position.
-const PALETTE: [Color; 6] = [
-    Color::Cyan,
-    Color::Magenta,
-    Color::Green,
-    Color::Yellow,
-    Color::Blue,
-    Color::Red,
-];
 
 /// What the mail screen needs from the outside world.
 #[derive(Clone)]
@@ -80,6 +72,12 @@ pub struct MailContext {
     pub split_threshold: u16,
     /// The terminal shows OSC 8 hyperlinks.
     pub hyperlinks: bool,
+    /// What the terminal can show; the theme picker needs it to preview.
+    #[allow(dead_code)] // read by the pickers
+    pub depth: ColorDepth,
+    /// The scheme and accent in force, which the pickers change one at a time.
+    #[allow(dead_code)] // read by the pickers
+    pub theme_choice: ThemeChoice,
 }
 
 /// One configured account, in `config.toml`'s order.
@@ -88,26 +86,25 @@ pub struct AccountEntry {
     pub name: String,
     pub address: String,
     pub kind: AccountKind,
-    pub color: Color,
+    /// `None` takes the theme's colour by position.
+    pub color: Option<Color>,
 }
 
 impl AccountEntry {
-    /// The configured accounts; `color` read as a ratatui colour name or `#rrggbb`, else the
-    /// palette by position.
+    /// The configured accounts; `color` read as a ratatui colour name or `#rrggbb`, else `None`
+    /// (the theme's colour by position).
     pub fn from_config(config: &Config) -> Vec<AccountEntry> {
         config
             .accounts
             .iter()
-            .enumerate()
-            .map(|(index, account)| AccountEntry {
+            .map(|account| AccountEntry {
                 name: account.name.clone(),
                 address: account.address.to_ascii_lowercase(),
                 kind: account.kind,
                 color: account
                     .color
                     .as_deref()
-                    .and_then(|c| c.parse::<Color>().ok())
-                    .unwrap_or(PALETTE[index % PALETTE.len()]),
+                    .and_then(|c| c.parse::<Color>().ok()),
             })
             .collect()
     }
@@ -181,6 +178,14 @@ pub struct MailScreen {
 }
 
 impl MailScreen {
+    /// The dot colour of account `index`: its own, or the theme's by position.
+    pub(super) fn account_color(&self, index: usize, theme: &Theme) -> Color {
+        self.accounts
+            .get(index)
+            .and_then(|a| a.color)
+            .unwrap_or_else(|| theme.account_color(index))
+    }
+
     pub fn new(ctx: MailContext, accounts: Vec<AccountEntry>) -> Self {
         let open_files = OpenFiles::new(&ctx.paths.cache_dir);
         Self {

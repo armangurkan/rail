@@ -17,6 +17,8 @@ use crate::tui::keys::Keymap;
 use crate::tui::run::{finish_run, run_app};
 use crate::tui::screens::mail::{AccountEntry, MailContext, MailScreen};
 use crate::tui::text::hyperlinks_supported;
+use crate::tui::theme::Theme;
+use crate::tui::theme::choice::{ColorDepth, ThemeChoice, color_depth};
 use crate::{browser, daemon_link, test_hooks};
 
 /// Printed instead of the mail screen in a pipe.
@@ -29,20 +31,37 @@ pub async fn run(paths: &Paths, text: &str, config: &Config) -> color_eyre::Resu
         text,
         &paths.config_file(),
     )?);
+    let choice =
+        ThemeChoice::from_config(&config.general, text, &paths.config_file()).map_err(|e| {
+            color_eyre::eyre::eyre!(
+                "{e}\nhint: pick a theme with :theme inside Rail, or remove the key"
+            )
+        })?;
+    let depth = color_depth(|name| std::env::var(name).ok());
+    let theme = Theme::from_choice(choice, depth);
     if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
         eprintln!("{MAIL_PIPE_HINT}");
         return Ok(ExitCode::from(2));
     }
     let accounts = AccountEntry::from_config(config);
-    let screen = MailScreen::new(context(paths, config, keymap.clone()), accounts)
-        .with_panic_on_key(test_hooks::mail_panic());
+    let screen = MailScreen::new(
+        context(paths, config, keymap.clone(), depth, choice),
+        accounts,
+    )
+    .with_panic_on_key(test_hooks::mail_panic());
     // The screen is dropped (it removes the files `o` wrote) before a signal may kill Rail.
-    drop(run_app(screen, keymap).await?);
+    drop(run_app(screen, keymap, theme).await?);
     finish_run().await;
     Ok(ExitCode::SUCCESS)
 }
 
-fn context(paths: &Paths, config: &Config, keymap: Arc<Keymap>) -> MailContext {
+fn context(
+    paths: &Paths,
+    config: &Config,
+    keymap: Arc<Keymap>,
+    depth: ColorDepth,
+    theme_choice: ThemeChoice,
+) -> MailContext {
     // The TUI opens a URL only when the user asks; it runs where the user is, so the browser
     // inherits this process's own display.
     let opener: Opener = Arc::new(|url| browser::launch(url, &BrowserEnv::default()));
@@ -56,5 +75,7 @@ fn context(paths: &Paths, config: &Config, keymap: Arc<Keymap>) -> MailContext {
         icons: config.general.icons,
         split_threshold: config.general.split_threshold,
         hyperlinks: hyperlinks_supported(|name| std::env::var(name).ok()),
+        depth,
+        theme_choice,
     }
 }

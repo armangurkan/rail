@@ -52,3 +52,8 @@ fn a_malformed_table_names_its_line() {
     assert_eq!(one.len(), 1);
     assert_eq!(one[0].name, "Good");
 }
+
+#[test]
+fn a_signed_hex_pair_is_not_a_colour() {
+    assert_eq!(Rgb::parse("#+f+f+f"), None);
+}
