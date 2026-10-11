@@ -53,6 +53,8 @@ pub struct Worker {
     board: StatusBoard,
     signal: Arc<Notify>,
     clock: Clock,
+    /// How often a paused worker re-reads the account's `needs_auth` flag.
+    paused_poll: Duration,
 }
 
 /// What the loop does next.
@@ -85,6 +87,7 @@ impl Worker {
             board: parts.board,
             signal: parts.signal,
             clock: parts.clock,
+            paused_poll: MAX_IDLE,
         }
     }
 
@@ -104,6 +107,8 @@ impl Worker {
             if self.paused() {
                 tokio::select! {
                     () = self.signal.notified() => continue,
+                    // The engine clears `needs_auth` without telling the worker: look again.
+                    () = tokio::time::sleep(self.paused_poll) => continue,
                     () = stopped(&mut stop) => break,
                 }
             }
@@ -290,7 +295,10 @@ impl Worker {
             .as_deref()
             .filter(|e| e.starts_with("gave up"))
         {
+            // A row that gave up is final, whatever its last error was.
             error.message = last.split(':').next().unwrap_or(last).to_string();
+            error.code = ErrorCode::Provider;
+            error.class = ErrorClass::Permanent;
         }
         self.board.report_failure(&ActionFailed {
             account: self.name.clone(),

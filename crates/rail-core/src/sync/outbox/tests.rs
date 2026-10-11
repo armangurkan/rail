@@ -459,3 +459,44 @@ async fn a_blocked_row_does_not_make_the_worker_poll() {
     let worker = rig.worker();
     assert!(matches!(worker.step().await, super::Next::Idle(wait) if wait == super::MAX_IDLE));
 }
+
+#[tokio::test]
+async fn a_paused_worker_notices_the_flag_cleared_without_a_wake() {
+    let rig = rig().await;
+    let t1 = t(&rig.store(), "t1");
+    rig.mock
+        .fail_next(Call::Modify, ProviderError::NeedsAuth { detail: None });
+    rig.enqueue(Action::Archive {}, vec![t1], "a").await;
+    let mut worker = rig.worker();
+    worker.paused_poll = super::MIN_IDLE;
+    let mut rig = rig;
+    rig.task = Some(tokio::spawn(worker.run(rig.stop.subscribe())));
+    rig.until("paused", |r| r.board.get(ADDRESS).unwrap().needs_auth)
+        .await;
+    // The engine clears the flag (a good labels step) and does not notify the worker.
+    rig.board.update(ADDRESS, |s| s.needs_auth = false);
+    rig.until("sent without a wake", |r| r.depth() == (0, 0))
+        .await;
+    assert_eq!(rig.mock.with(|m| m.modifies.len()), 1);
+}
+
+#[tokio::test]
+async fn a_row_that_gave_up_is_reported_as_final() {
+    let mut rig = rig().await;
+    let t1 = t(&rig.store(), "t1");
+    let id = rig.enqueue(Action::Archive {}, vec![t1], "a").await;
+    Store::open(&rig.db)
+        .unwrap()
+        .conn()
+        .execute("UPDATE outbox SET attempts = 19 WHERE id = ?1", [id])
+        .unwrap();
+    rig.mock
+        .fail_next(Call::Modify, ProviderError::transient("Gmail is busy"));
+    rig.start();
+    rig.until("the notice", |r| !r.failures.lock().unwrap().is_empty())
+        .await;
+    let error = rig.failures.lock().unwrap()[0].error.clone();
+    assert_eq!(error.message, "gave up after 20 attempts");
+    assert_eq!(error.class, crate::error::ErrorClass::Permanent);
+    assert_eq!(error.code, crate::ops::ErrorCode::Provider);
+}
