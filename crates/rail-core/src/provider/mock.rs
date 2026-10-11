@@ -24,6 +24,8 @@ pub(crate) enum Call {
     Body,
     Search,
     Envelopes,
+    Modify,
+    Trash,
 }
 
 pub(crate) enum Change {
@@ -77,6 +79,12 @@ pub(crate) struct Mailbox {
     pub metadata_gets: Vec<String>,
     /// The scoped retry policy each call ran under (`None`: the client's own), in order.
     pub policies: Vec<(Call, Option<RetryPolicy>)>,
+    /// Every `modify_threads` call: (thread ids, add, remove), in order.
+    pub modifies: Vec<(Vec<RemoteId>, Vec<RemoteId>, Vec<RemoteId>)>,
+    /// Every thread id `trash_threads` was given, in order.
+    pub trashed: Vec<RemoteId>,
+    /// How long each modify or trash call takes.
+    pub action_delay: Duration,
 }
 
 impl Default for Mailbox {
@@ -112,6 +120,9 @@ impl Default for Mailbox {
             list_tokens: Vec::new(),
             metadata_gets: Vec::new(),
             policies: Vec::new(),
+            modifies: Vec::new(),
+            trashed: Vec::new(),
+            action_delay: Duration::ZERO,
         }
     }
 }
@@ -236,6 +247,45 @@ fn record(m: &mut Mailbox, change: Change) {
     m.history_id += 1;
     let id = m.history_id;
     m.history.push((id, change));
+}
+
+/// Apply a thread change to the mock's messages, with a history record each, as Gmail would.
+fn relabel_threads(m: &mut Mailbox, ids: &[RemoteId], add: &[RemoteId], remove: &[RemoteId]) {
+    use super::{STARRED_LABEL, UNREAD_LABEL};
+    let flag = |labels: &[RemoteId], name: &str| labels.iter().any(|l| l == name);
+    let folders = |labels: &[RemoteId]| -> Vec<RemoteId> {
+        labels
+            .iter()
+            .filter(|l| *l != UNREAD_LABEL && *l != STARRED_LABEL)
+            .cloned()
+            .collect()
+    };
+    let changed: Vec<String> = m
+        .messages
+        .values()
+        .filter(|e| ids.contains(&e.thread_id))
+        .map(|e| e.remote_id.clone())
+        .collect();
+    for id in changed {
+        let change = Relabel {
+            remote_id: id.clone(),
+            add_folders: folders(add),
+            remove_folders: folders(remove),
+            read: flag(remove, UNREAD_LABEL)
+                .then_some(true)
+                .or(flag(add, UNREAD_LABEL).then_some(false)),
+            starred: flag(add, STARRED_LABEL)
+                .then_some(true)
+                .or(flag(remove, STARRED_LABEL).then_some(false)),
+        };
+        if let Some(env) = m.messages.get_mut(&id) {
+            env.folders.retain(|f| !change.remove_folders.contains(f));
+            env.folders.extend(change.add_folders.iter().cloned());
+            env.is_read = change.read.unwrap_or(env.is_read);
+            env.is_starred = change.starred.unwrap_or(env.is_starred);
+        }
+        record(m, Change::Relabel(change));
+    }
 }
 
 fn arrive(m: &mut Mailbox, envelope: Envelope) {
@@ -437,11 +487,64 @@ impl Provider for MockProvider {
             next: None,
         })
     }
+
+    async fn modify_threads(
+        &self,
+        ids: &[RemoteId],
+        add: &[RemoteId],
+        remove: &[RemoteId],
+    ) -> Result<(), ProviderError> {
+        self.enter(Call::Modify, None)?;
+        let delay = self.lock().action_delay;
+        tokio::time::sleep(delay).await;
+        let mut m = self.lock();
+        m.modifies
+            .push((ids.to_vec(), add.to_vec(), remove.to_vec()));
+        relabel_threads(&mut m, ids, add, remove);
+        Ok(())
+    }
+
+    async fn trash_threads(&self, ids: &[RemoteId]) -> Result<(), ProviderError> {
+        self.enter(Call::Trash, None)?;
+        let delay = self.lock().action_delay;
+        tokio::time::sleep(delay).await;
+        let mut m = self.lock();
+        m.trashed.extend(ids.iter().cloned());
+        relabel_threads(&mut m, ids, &["TRASH".into()], &[super::INBOX_LABEL.into()]);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_mock_records_thread_changes_and_plays_them_as_history() {
+        let mock = MockProvider::new();
+        mock.seed(envelope("m1", "t1", 1_000));
+        let cursor = SyncCursor(mock.with(|m| m.history_id).to_string());
+        mock.modify_threads(
+            &["t1".into()],
+            &["STARRED".into()],
+            &["INBOX".into(), "UNREAD".into()],
+        )
+        .await
+        .unwrap();
+        mock.trash_threads(&["t1".into()]).await.unwrap();
+        let calls: Vec<Call> = mock.with(|m| m.calls.iter().map(|(c, _)| *c).collect());
+        assert_eq!(calls, [Call::Modify, Call::Trash]);
+        let env = mock.with(|m| m.messages["m1"].clone());
+        assert!(env.is_starred && env.is_read);
+        assert_eq!(env.folders, ["TRASH"]);
+        let changes = mock.changes(&cursor).await.unwrap();
+        assert_eq!(changes.relabeled.len(), 2);
+        mock.fail_next(Call::Trash, ProviderError::NotFound);
+        assert_eq!(
+            mock.trash_threads(&["t1".into()]).await,
+            Err(ProviderError::NotFound)
+        );
+    }
 
     #[tokio::test]
     async fn the_mock_pages_newest_first_and_plays_history() {

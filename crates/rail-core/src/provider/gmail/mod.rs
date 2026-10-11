@@ -1,6 +1,7 @@
-//! The Gmail provider: labels, `messages.list` and `messages.get`, history and search, over
-//! the shared `ApiClient`. Every string Gmail returns is outside text.
+//! The Gmail provider: labels, `messages.list` and `messages.get`, history and search, thread
+//! changes (`threads.modify`, `threads.trash`), over the shared `ApiClient`. Every string Gmail returns is outside text.
 
+mod actions;
 mod body;
 mod history;
 mod html;
@@ -11,6 +12,8 @@ pub(crate) mod list;
 pub(crate) mod metadata;
 mod wire;
 
+#[cfg(test)]
+mod actions_tests;
 #[cfg(test)]
 mod body_tests;
 #[cfg(test)]
@@ -53,6 +56,10 @@ pub(crate) const COST_LABELS: u32 = 1;
 pub(crate) const COST_PROFILE: u32 = 1;
 pub(crate) const COST_HISTORY: u32 = 2;
 pub(crate) const COST_ATTACHMENT: u32 = 5;
+pub(crate) const COST_THREAD_MODIFY: u32 = 10;
+pub(crate) const COST_THREAD_TRASH: u32 = 20;
+/// Gmail's limit on each of `addLabelIds` and `removeLabelIds`.
+pub const MAX_LABELS_PER_MODIFY: usize = 100;
 
 /// The most server hits one search asks for.
 pub const MAX_SEARCH_RESULTS: usize = 100;
@@ -169,6 +176,19 @@ impl super::Provider for GmailProvider {
 
     async fn envelopes(&self, ids: &[RemoteId]) -> Result<EnvelopePage, ProviderError> {
         self.metadata(ids).await
+    }
+
+    async fn modify_threads(
+        &self,
+        ids: &[RemoteId],
+        add: &[RemoteId],
+        remove: &[RemoteId],
+    ) -> Result<(), ProviderError> {
+        self.modify(ids, add, remove).await
+    }
+
+    async fn trash_threads(&self, ids: &[RemoteId]) -> Result<(), ProviderError> {
+        self.trash(ids).await
     }
 }
 

@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 /// A provider's identifier for a message, thread or folder.
 pub type RemoteId = String;
 
+/// The system labels `Provider::modify_threads` takes for archive (remove `INBOX`), read
+/// (remove `UNREAD`) and star (add `STARRED`): Gmail's ids. A provider without labels maps them.
+pub const INBOX_LABEL: &str = "INBOX";
+pub const UNREAD_LABEL: &str = "UNREAD";
+pub const STARRED_LABEL: &str = "STARRED";
+
 /// Where the next delta starts (Gmail: a `historyId`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncCursor(pub String);

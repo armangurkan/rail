@@ -1,6 +1,6 @@
 //! Mail providers: the read side of the `Provider` trait, the types it speaks, the HTTP layer
-//! providers share, and the Gmail implementation. Actions, attachments and sends join the
-//! trait in Phase 6.
+//! providers share, and the Gmail implementation. Attachments and sends join the trait in
+//! later phases.
 
 pub mod error;
 pub mod gmail;
@@ -16,9 +16,9 @@ pub(crate) mod mock;
 
 pub use error::ProviderError;
 pub use types::{
-    AttachmentMeta, Body, ChangeSet, Envelope, EnvelopePage, FolderKind, IdPage,
-    MAX_PAGE_TOKEN_BYTES, Mailbox, PageToken, Profile, Relabel, RemoteFolder, RemoteId, SyncCursor,
-    Window,
+    AttachmentMeta, Body, ChangeSet, Envelope, EnvelopePage, FolderKind, INBOX_LABEL, IdPage,
+    MAX_PAGE_TOKEN_BYTES, Mailbox, PageToken, Profile, Relabel, RemoteFolder, RemoteId,
+    STARRED_LABEL, SyncCursor, UNREAD_LABEL, Window,
 };
 
 /// One account's mailbox, read through its provider's API. Every method speaks Rail types;
@@ -47,4 +47,14 @@ pub trait Provider: Send + Sync {
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<RemoteId>, ProviderError>;
     /// Envelopes for these ids; ids that no longer exist are left out.
     async fn envelopes(&self, ids: &[RemoteId]) -> Result<EnvelopePage, ProviderError>;
+    /// Add and remove labels (system ones too: `INBOX_LABEL`, `UNREAD_LABEL`, `STARRED_LABEL`)
+    /// on every message of each thread, one thread at a time. Idempotent.
+    async fn modify_threads(
+        &self,
+        ids: &[RemoteId],
+        add: &[RemoteId],
+        remove: &[RemoteId],
+    ) -> Result<(), ProviderError>;
+    /// Move each thread to the provider's trash (restorable there). Idempotent.
+    async fn trash_threads(&self, ids: &[RemoteId]) -> Result<(), ProviderError>;
 }

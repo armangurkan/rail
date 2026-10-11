@@ -1,4 +1,4 @@
-//! The HTTP layer providers share: bearer tokens, a quota pacer, retries on 429, 5xx and
+//! The HTTP layer providers share: GET and JSON POST requests with bearer tokens, a quota pacer, retries on 429, 5xx and
 //! rate-limit 403s with capped exponential backoff and jitter (honouring `Retry-After` in
 //! seconds or as an HTTP-date), one token refresh per request on 401 (shared by every request
 //! refused with the same token), a shorter retry policy for interactive work, and capped
@@ -162,6 +162,13 @@ pub struct ApiClient {
     max_response: usize,
 }
 
+/// One request the loop sends: GET with a query, or POST with an optional JSON body.
+struct Outgoing<'a> {
+    method: reqwest::Method,
+    query: &'a [(&'a str, String)],
+    body: Option<Vec<u8>>,
+}
+
 /// A JSON answer, or why one that arrived could not be read.
 pub(crate) enum Readable<T> {
     Parsed(T),
@@ -248,7 +255,12 @@ impl ApiClient {
         cost: u32,
     ) -> Result<Readable<T>, ProviderError> {
         let url = self.resolve(path)?;
-        let Some(bytes) = self.get(&url, query, cost).await? else {
+        let outgoing = Outgoing {
+            method: reqwest::Method::GET,
+            query,
+            body: None,
+        };
+        let Some(bytes) = self.send(&url, &outgoing, cost).await? else {
             return Ok(Readable::Unreadable(ProviderError::permanent(&format!(
                 "Gmail's answer was larger than {} KiB",
                 self.max_response / 1024
@@ -258,6 +270,28 @@ impl ApiClient {
             Ok(value) => Readable::Parsed(value),
             Err(e) => Readable::Unreadable(malformed(&e)),
         })
+    }
+
+    /// POST `path` with `body` as JSON (an empty body when `None`), spending `cost` per try,
+    /// through the same pacing, retries, 401 refresh and origin check as a GET. The answer is
+    /// not read beyond its status: a 2xx (even one over the response cap) is success.
+    pub(crate) async fn post_json(
+        &self,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        cost: u32,
+    ) -> Result<(), ProviderError> {
+        let url = self.resolve(path)?;
+        let body = body
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(|_| ProviderError::permanent("Rail could not encode a request"))?;
+        let outgoing = Outgoing {
+            method: reqwest::Method::POST,
+            query: &[],
+            body: Some(body.unwrap_or_default()),
+        };
+        self.send(&url, &outgoing, cost).await.map(|_| ())
     }
 
     /// `path` joined to the base, refused unless it stays under the base: paths carry ids
@@ -275,10 +309,10 @@ impl ApiClient {
         Ok(url)
     }
 
-    async fn get(
+    async fn send(
         &self,
         url: &Url,
-        query: &[(&str, String)],
+        outgoing: &Outgoing<'_>,
         cost: u32,
     ) -> Result<Option<Vec<u8>>, ProviderError> {
         let policy = retry_policy_override().unwrap_or(self.policy);
@@ -293,7 +327,7 @@ impl ApiClient {
                 Some(token) => token,
                 None => self.tokens.token().await?,
             };
-            match self.attempt(url, query, &token).await {
+            match self.attempt(url, outgoing, &token).await {
                 Attempt::Done(bytes) => return Ok(Some(bytes)),
                 Attempt::TooLarge => return Ok(None),
                 Attempt::Unauthorized(_) if !refreshed => {
@@ -323,22 +357,25 @@ impl ApiClient {
         }
     }
 
-    async fn attempt(&self, url: &Url, query: &[(&str, String)], token: &str) -> Attempt {
+    async fn attempt(&self, url: &Url, outgoing: &Outgoing<'_>, token: &str) -> Attempt {
         let started = Instant::now();
-        let sent = self
+        let mut request = self
             .http
-            .get(url.clone())
-            .query(query)
-            .bearer_auth(token)
-            .send()
-            .await;
-        let response = match sent {
+            .request(outgoing.method.clone(), url.clone())
+            .query(outgoing.query)
+            .bearer_auth(token);
+        if let Some(body) = &outgoing.body {
+            request = request
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.clone());
+        }
+        let response = match request.send().await {
             Ok(response) => response,
             Err(e) => return Attempt::Failed(transport(e)),
         };
         let status = response.status();
         tracing::debug!(
-            method = "GET",
+            method = outgoing.method.as_str(),
             path = url.path(),
             status = status.as_u16(),
             elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),

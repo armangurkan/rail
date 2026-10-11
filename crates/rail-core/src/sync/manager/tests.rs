@@ -342,6 +342,20 @@ impl crate::provider::Provider for Panics {
     ) -> Result<crate::provider::EnvelopePage, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
+    async fn modify_threads(
+        &self,
+        _: &[crate::provider::RemoteId],
+        _: &[crate::provider::RemoteId],
+        _: &[crate::provider::RemoteId],
+    ) -> Result<(), crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
+    async fn trash_threads(
+        &self,
+        _: &[crate::provider::RemoteId],
+    ) -> Result<(), crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
 }
 
 /// An engine that ends on its own is noticed, shown as stopped with an error,
@@ -639,6 +653,17 @@ impl crate::provider::Provider for RetryingSearch {
         ids: &[crate::provider::RemoteId],
     ) -> Answer<crate::provider::EnvelopePage> {
         self.inner.envelopes(ids).await
+    }
+    async fn modify_threads(
+        &self,
+        ids: &[crate::provider::RemoteId],
+        add: &[crate::provider::RemoteId],
+        remove: &[crate::provider::RemoteId],
+    ) -> Answer<()> {
+        self.inner.modify_threads(ids, add, remove).await
+    }
+    async fn trash_threads(&self, ids: &[crate::provider::RemoteId]) -> Answer<()> {
+        self.inner.trash_threads(ids).await
     }
 }
 
