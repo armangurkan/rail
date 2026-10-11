@@ -50,6 +50,9 @@ type Flight = Shared<BoxFuture<'static, Result<String, ProviderError>>>;
 pub(crate) struct RefreshFlight {
     tokens: Arc<dyn AccessTokens>,
     current: Mutex<Option<(Vec<u8>, Flight)>>,
+    /// Requests that reached `refresh_after`, so a test can wait until a burst has joined.
+    #[cfg(test)]
+    pub(crate) arrivals: std::sync::atomic::AtomicUsize,
 }
 
 impl RefreshFlight {
@@ -57,6 +60,8 @@ impl RefreshFlight {
         Self {
             tokens,
             current: Mutex::new(None),
+            #[cfg(test)]
+            arrivals: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -64,26 +69,35 @@ impl RefreshFlight {
         self.tokens.token().await
     }
 
-    /// A new token after the API refused `rejected`. The first request refused with it starts
-    /// the refresh; the others await the same one. A finished refresh answers later refusals
-    /// of the same token with its token; a failed one does not (they refresh again).
-    pub(crate) async fn refresh_after(&self, rejected: &str) -> Result<String, ProviderError> {
-        let flight = self.join(Sha256::digest(rejected.as_bytes()).to_vec());
-        flight.await
+    /// A new token after the API refused `rejected`, and whether it is a finished refresh's
+    /// token reused rather than a refresh this request started or joined in flight. The first
+    /// request refused with a token starts the refresh; the others await the same one. A
+    /// finished successful refresh answers later refusals of the same token with its token
+    /// (reused: it is not a refresh made for that request); a failed one does not (they
+    /// refresh again).
+    pub(crate) async fn refresh_after(
+        &self,
+        rejected: &str,
+    ) -> Result<(String, bool), ProviderError> {
+        #[cfg(test)]
+        self.arrivals
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (flight, reused) = self.join(Sha256::digest(rejected.as_bytes()).to_vec());
+        flight.await.map(|token| (token, reused))
     }
 
-    fn join(&self, key: Vec<u8>) -> Flight {
+    fn join(&self, key: Vec<u8>) -> (Flight, bool) {
         let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((held, flight)) = current.as_ref()
             && *held == key
             && !matches!(flight.peek(), Some(Err(_)))
         {
-            return flight.clone();
+            return (flight.clone(), flight.peek().is_some());
         }
         let tokens = self.tokens.clone();
         let flight = async move { tokens.refresh().await }.boxed().shared();
         *current = Some((key, flight.clone()));
-        flight
+        (flight, false)
     }
 }
 

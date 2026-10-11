@@ -296,8 +296,11 @@ impl ApiClient {
                 Attempt::Done(bytes) => return Ok(Some(bytes)),
                 Attempt::TooLarge => return Ok(None),
                 Attempt::Unauthorized(_) if !refreshed => {
-                    refreshed = true;
-                    renewed = Some(self.tokens.refresh_after(&token).await?);
+                    let (fresh, reused) = self.tokens.refresh_after(&token).await?;
+                    // A reused result is not a refresh made for this request: if its token is
+                    // refused too, the request still gets its one real refresh.
+                    refreshed = !reused;
+                    renewed = Some(fresh);
                 }
                 Attempt::Unauthorized(detail) => return Err(ProviderError::NeedsAuth { detail }),
                 Attempt::Failed(ProviderError::Transient { retry_after, .. })
