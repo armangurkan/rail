@@ -192,6 +192,9 @@ fn texts(value: &HeaderValue<'_>) -> Vec<String> {
         .collect()
 }
 
+/// The furthest a snippet reference's `;` may stand from its `&` (`&#x10FFFF;` is 10).
+const MAX_REFERENCE_END: usize = 10;
+
 /// Gmail's snippet carries HTML character references (`&#39;`, `&amp;`): decode those, and
 /// leave anything else, including a bare `&` and a reference to a control character below
 /// U+0020 or DEL, as it is.
@@ -201,9 +204,12 @@ pub fn unescape_snippet(text: &str) -> String {
     while let Some(start) = rest.find('&') {
         out.push_str(&rest[..start]);
         let tail = &rest[start..];
+        // The `;` is looked for only where a reference Rail decodes could end, so a run of
+        // bare `&` costs one pass, not one scan of the rest each.
         let decoded = tail
-            .find(';')
-            .filter(|end| *end <= 10)
+            .bytes()
+            .take(MAX_REFERENCE_END + 1)
+            .position(|b| b == b';')
             .and_then(|end| entity(&tail[1..end]).map(|c| (c, end)));
         match decoded {
             Some((c, end)) => {

@@ -486,6 +486,17 @@ fn snippet_character_references_are_decoded() {
     );
 }
 
+/// Review minor 10: a snippet of ampersands with no `;` is read in one pass, not once per `&`.
+#[test]
+fn a_snippet_of_bare_ampersands_is_linear() {
+    let hostile = "&".repeat(1 << 20);
+    let started = std::time::Instant::now();
+    assert_eq!(unescape_snippet(&hostile), hostile);
+    let took = started.elapsed();
+    assert!(took < std::time::Duration::from_secs(1), "{took:?}");
+    assert_eq!(unescape_snippet("&amp;&&amp;"), "&&&");
+}
+
 #[test]
 fn window_queries_use_whole_seconds() {
     assert_eq!(list::window_query(&Window::default()), None);
