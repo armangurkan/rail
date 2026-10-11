@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
+pub(crate) use self::parts::unobserved;
 use self::parts::{
     Engines, PlannedAccount, Prepared, Running, failed_status, finish_writer, initial_status, key,
     named, not_running, not_syncing, read_config, retry_observer, shutting_down, stop_engine,

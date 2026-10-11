@@ -39,11 +39,12 @@ pub async fn run(ctx: &DaemonContext, request: SearchRequest) -> Result<SearchRe
     // Accounts the server is not asked for (no engine, Microsoft 365, the writer gone) are
     // failures, so the front end can say whose mail was searched only locally.
     let (targets, mut failures) = ctx.sync.search_plan(address.as_deref()).await;
-    let servers = join_all(
+    // A search's retries are not a sync's: they leave each account's phase alone.
+    let servers = super::manager::unobserved(join_all(
         targets
             .iter()
             .map(|t| server_hits(ctx, &db, t, &query, limit)),
-    )
+    ))
     .await;
     let mut found = Vec::new();
     for (target, outcome) in targets.iter().zip(servers) {

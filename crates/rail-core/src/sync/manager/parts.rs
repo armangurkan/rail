@@ -217,8 +217,23 @@ pub(super) async fn finish_writer(writer: Option<(WriterHandle, WriterTask)>, gr
     }
 }
 
+tokio::task_local! {
+    /// Set while a server search runs: its retries are not the engine's.
+    static SEARCHING: ();
+}
+
+/// Run `work` (a server search) so that the HTTP layer's retries inside it leave the account's
+/// sync phase alone: the account is not retrying a sync step, and no engine step would set its
+/// phase back afterwards.
+pub(crate) async fn unobserved<F: Future>(work: F) -> F::Output {
+    SEARCHING.scope((), work).await
+}
+
 pub(super) fn retry_observer(board: StatusBoard, address: String) -> RetryObserver {
     Arc::new(move |wait: Duration| {
+        if SEARCHING.try_with(|()| ()).is_ok() {
+            return;
+        }
         let at = unix_now() + i64::try_from(wait.as_secs()).unwrap_or(0);
         board.update(&address, |s| {
             s.phase = SyncPhase::Retrying;

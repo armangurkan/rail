@@ -561,3 +561,91 @@ async fn unnamed_wakes_honour_a_failed_accounts_backoff() {
     }
     assert_eq!(builds_of(&builds), 2, "one retry for two wakes");
 }
+
+/// The mock, with every server search waiting through one HTTP-layer retry first.
+struct RetryingSearch {
+    inner: MockProvider,
+    observer: crate::provider::http::RetryObserver,
+}
+
+type Answer<T> = Result<T, crate::provider::ProviderError>;
+
+#[async_trait::async_trait]
+impl crate::provider::Provider for RetryingSearch {
+    async fn folders(&self) -> Answer<Vec<crate::provider::RemoteFolder>> {
+        self.inner.folders().await
+    }
+    async fn profile(&self) -> Answer<crate::provider::Profile> {
+        self.inner.profile().await
+    }
+    async fn backfill(
+        &self,
+        window: &crate::provider::Window,
+        page: Option<&crate::provider::PageToken>,
+    ) -> Answer<crate::provider::EnvelopePage> {
+        self.inner.backfill(window, page).await
+    }
+    async fn changes(
+        &self,
+        cursor: &crate::provider::SyncCursor,
+    ) -> Answer<crate::provider::ChangeSet> {
+        self.inner.changes(cursor).await
+    }
+    async fn body(&self, id: &str) -> Answer<crate::provider::Body> {
+        self.inner.body(id).await
+    }
+    async fn search(&self, query: &str, limit: usize) -> Answer<Vec<crate::provider::RemoteId>> {
+        (self.observer)(Duration::from_secs(30));
+        self.inner.search(query, limit).await
+    }
+    async fn envelopes(
+        &self,
+        ids: &[crate::provider::RemoteId],
+    ) -> Answer<crate::provider::EnvelopePage> {
+        self.inner.envelopes(ids).await
+    }
+}
+
+/// Review minor 5: a server search that retries leaves an idle account's phase unchanged
+/// (only a sync step's retries show as `retrying`).
+#[tokio::test]
+async fn a_retrying_search_leaves_an_idle_accounts_phase_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    std::fs::write(paths.config_file(), WORK).unwrap();
+    let mock = MockProvider::new();
+    let factory: super::ProviderFactory = Arc::new(move |request: super::ProviderRequest| {
+        Ok(Arc::new(RetryingSearch {
+            inner: mock.clone(),
+            observer: request.observer,
+        }) as Arc<dyn crate::provider::Provider>)
+    });
+    let (ctx, _) = daemon_context(&paths);
+    let ctx = Arc::new(ctx.with_provider_factory(factory));
+    ctx.sync.reconcile(&ctx).await;
+    until(&ctx, |s| s.passes_completed >= 1 && !s.pass_running).await;
+    let request = crate::ops::SearchRequest {
+        query: "anything".into(),
+        account: None,
+        limit: 5,
+    };
+    let searched = tokio::time::timeout(
+        Duration::from_secs(5),
+        crate::sync::search::run(&ctx, request),
+    )
+    .await;
+    assert!(searched.expect("search answered").is_ok());
+    let status = ctx.sync.board().get("me@example.com").unwrap();
+    assert_eq!(status.phase, SyncPhase::Idle);
+    assert!(status.next_attempt_at.is_some_and(|at| at > 0));
+    let observer = super::parts::retry_observer(ctx.sync.board().clone(), "me@example.com".into());
+    observer(Duration::from_secs(30));
+    let status = ctx.sync.board().get("me@example.com").unwrap();
+    assert_eq!(
+        status.phase,
+        SyncPhase::Retrying,
+        "a sync's retry still shows"
+    );
+    ctx.sync.shutdown(Duration::from_secs(5)).await;
+}
