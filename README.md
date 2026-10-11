@@ -154,7 +154,10 @@ refused with "use an absolute path".
 | `rail_sync_status` | Each account's sync: phase, counts of messages, threads and bodies stored, last success, last error (Gmail's words quoted as outside text) and next attempt. Read-only. No mail content. |
 | `rail_sync_now` | Wakes one account's sync, or all, instead of waiting for the next poll; returns at once. With no Gmail account configured it says so and wakes nothing (Microsoft 365 sync is not available yet). No mail content. |
 
-No tool returns mail content (subjects, senders, snippets or bodies) yet, and none sends mail; `rail search` is a terminal command only, so agents still cannot read your mail.
+No MCP tool returns mail content (subjects, senders, snippets or bodies) yet, and none sends mail.
+That is not a wall around your mail: an agent that can run shell commands can run `rail search`
+(or read `rail.db`) like any program you run. There, the control is your agent client's own
+approval of shell commands (see below).
 
 `rail_account_remove` and `rail_secrets_configure` ask you to confirm in the agent's own dialog
 (MCP elicitation), showing what changes: the account and what is removed, or the old and new
