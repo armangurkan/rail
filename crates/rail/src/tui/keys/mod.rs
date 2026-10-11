@@ -33,7 +33,7 @@ impl Chord {
 
     #[allow(
         dead_code,
-        reason = "used by the mail screens and help, which come later in Phase 5"
+        reason = "used by the filter line and the modals, which come later in Phase 5"
     )]
     pub fn clear(&mut self) {
         self.0 = None;

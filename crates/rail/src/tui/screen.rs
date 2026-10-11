@@ -14,6 +14,12 @@ pub trait Screen {
     /// Draw the whole frame.
     fn view(&self, frame: &mut Frame, theme: &Theme);
 
+    /// The effects to run before the first frame (the mail screen's first reads and its
+    /// daemon subscription).
+    fn start(&mut self) -> Vec<Effect> {
+        Vec::new()
+    }
+
     /// True while focus is in a text field, so `q` is typed instead of quitting.
     fn captures_text(&self) -> bool {
         false

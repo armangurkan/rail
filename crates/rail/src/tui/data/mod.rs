@@ -4,8 +4,7 @@
 
 #![allow(
     dead_code,
-    unused_imports,
-    reason = "the mail screen that consumes these arrives in the next Phase 5 tasks"
+    reason = "the reader (Task 8), the filter (Task 10) and `rail` itself (Task 11) use the rest"
 )]
 
 mod daemon_link;
@@ -21,10 +20,6 @@ use rail_core::store::view::{HtmlBody, ThreadDetail};
 
 pub use daemon_link::DaemonLink;
 #[cfg(test)]
-#[allow(
-    unused_imports,
-    reason = "the mail screen tests use them in the next Phase 5 task"
-)]
 pub use daemon_link::{FakeCall, FakeDaemon};
 pub use store_reader::{
     ListOutcome, ListRequest, ReadError, ScopeChoice, SidebarOutcome, StoreReader,

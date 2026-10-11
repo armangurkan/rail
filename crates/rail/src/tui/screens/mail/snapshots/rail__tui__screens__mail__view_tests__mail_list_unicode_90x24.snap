@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/view_tests.rs
+expression: "draw(&screen, width, height)"
+---
+▍All inboxes  2 accounts · 5 unread                                                 ? help
+●      11:54  Dana Reyes, Tom         (3) ★   Q4 roadmap review — can we move to Thursday?
+●      09:53  GitLab                       📎  Pipeline failed: rail!42
+●  Yesterday  Sender                          subject h1
+●        Wed  Priya Nair                      Re: offsite logistics
+●     Sep 09  Evil\u{7}Corp                   pay\u{202e}fdp.exe \u{1b}[2J urgent
+● 2024-09-04  Sender                          A very long subject that cannot possibly fi…
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+work ✓  ·  home ⟳ 1200/5000

@@ -6,7 +6,7 @@
 
 #![allow(
     dead_code,
-    reason = "used by the mail screen, reader and modals, which come later in Phase 5"
+    reason = "the list uses escape, fit, pad and outside; wrapping, blocks, links and hyperlinks are for the reader and `rail` (Tasks 8 to 11)"
 )]
 
 use rail_core::provider::links::{MAX_LINK_BYTES, SCHEMES};

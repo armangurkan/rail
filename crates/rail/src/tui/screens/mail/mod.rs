@@ -1,0 +1,550 @@
+//! The mail screen: the thread list over the local store, the sidebar of accounts and labels,
+//! and the status bar (the reader and the modals join in later tasks). Keys go through the
+//! keymap; every read and daemon call is a job whose answer comes back as a `MailEvent`.
+
+#![allow(
+    dead_code,
+    unused_imports,
+    reason = "the binary opens the mail screen from `rail` in Phase 5 Task 11; until then only tests build it"
+)]
+
+mod layout;
+mod list;
+mod sidebar;
+mod status;
+#[cfg(test)]
+mod tests;
+mod view;
+#[cfg(test)]
+mod view_tests;
+
+use std::cell::Cell;
+use std::sync::Arc;
+
+use crossterm::event::KeyEvent;
+use rail_core::config::{AccountKind, Config, Icons};
+use rail_core::ops::OpError;
+use rail_core::paths::Paths;
+use rail_core::store::filter::{Filter, parse};
+use rail_core::store::view::PageAt;
+use ratatui::Frame;
+use ratatui::style::Color;
+
+pub use layout::{SIDEBAR_MIN_COLUMNS, SIDEBAR_WIDTH};
+pub use list::{ListWindow, MAX_WINDOW, Place};
+pub use sidebar::{Sidebar, SidebarItem};
+pub use status::{DaemonState, ErrorEntry, StatusBar, error_line};
+pub use view::Glyphs;
+
+use crate::tui::app::{Effect, Msg, TaskResult};
+use crate::tui::clock::Clock;
+use crate::tui::data::{
+    DaemonEvent, DaemonLink, ListOutcome, ListRequest, MailEvent, REQUERY_DEBOUNCE, ReadError,
+    ScopeChoice, SidebarOutcome, StoreReader, Timer, timer,
+};
+use crate::tui::effects::Opener;
+use crate::tui::keys::{Action, Chord, Keymap, Resolved, View};
+use crate::tui::screen::Screen;
+use crate::tui::theme::Theme;
+
+/// Rows the list is assumed to show before the first frame says.
+const FALLBACK_HEIGHT: usize = 20;
+/// Account colours for accounts without `color`, by position.
+const PALETTE: [Color; 6] = [
+    Color::Cyan,
+    Color::Magenta,
+    Color::Green,
+    Color::Yellow,
+    Color::Blue,
+    Color::Red,
+];
+
+/// What the mail screen needs from the outside world.
+#[derive(Clone)]
+pub struct MailContext {
+    pub paths: Paths,
+    pub keymap: Arc<Keymap>,
+    pub store: StoreReader,
+    pub link: DaemonLink,
+    /// Starts the browser (`o`, `gx`).
+    pub opener: Opener,
+    pub clock: Clock,
+    pub icons: Icons,
+    pub split_threshold: u16,
+    /// The terminal shows OSC 8 hyperlinks.
+    pub hyperlinks: bool,
+}
+
+/// One configured account, in `config.toml`'s order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountEntry {
+    pub name: String,
+    pub address: String,
+    pub kind: AccountKind,
+    pub color: Color,
+}
+
+impl AccountEntry {
+    /// The configured accounts; `color` read as a ratatui colour name or `#rrggbb`, else the
+    /// palette by position.
+    pub fn from_config(config: &Config) -> Vec<AccountEntry> {
+        config
+            .accounts
+            .iter()
+            .enumerate()
+            .map(|(index, account)| AccountEntry {
+                name: account.name.clone(),
+                address: account.address.to_ascii_lowercase(),
+                kind: account.kind,
+                color: account
+                    .color
+                    .as_deref()
+                    .and_then(|c| c.parse::<Color>().ok())
+                    .unwrap_or(PALETTE[index % PALETTE.len()]),
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    List,
+    Sidebar,
+    Reader,
+}
+
+/// What the list area shows instead of rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreState {
+    Loading,
+    Ready,
+    NotSetUp,
+    Failed(OpError),
+}
+
+pub struct MailScreen {
+    ctx: MailContext,
+    accounts: Vec<AccountEntry>,
+    account_ids: Vec<Option<i64>>,
+    scope: ScopeChoice,
+    filter: Filter,
+    list: ListWindow,
+    /// Where the selection goes when the newest list read answers.
+    place: Place,
+    sidebar: Sidebar,
+    status: StatusBar,
+    focus: Focus,
+    /// Set by `b` and `Tab`; by the width until then.
+    sidebar_shown: Option<bool>,
+    store_state: StoreState,
+    /// The list area's rows and the frame's width, from the last frame drawn.
+    size: Cell<(u16, u16)>,
+    seq: u64,
+    latest_list: u64,
+    latest_sidebar: u64,
+    requery_token: u64,
+    requery_pending: bool,
+    chord: Chord,
+    tick: usize,
+    panic_on_key: bool,
+}
+
+impl MailScreen {
+    pub fn new(ctx: MailContext, accounts: Vec<AccountEntry>) -> Self {
+        Self {
+            ctx,
+            account_ids: vec![None; accounts.len()],
+            accounts,
+            scope: ScopeChoice::Unified,
+            filter: parse(""),
+            list: ListWindow::default(),
+            place: Place::Top,
+            sidebar: Sidebar::default(),
+            status: StatusBar::default(),
+            focus: Focus::List,
+            sidebar_shown: None,
+            store_state: StoreState::Loading,
+            size: Cell::new((0, 0)),
+            seq: 0,
+            latest_list: 0,
+            latest_sidebar: 0,
+            requery_token: 0,
+            requery_pending: false,
+            chord: Chord::default(),
+            tick: 0,
+            panic_on_key: false,
+        }
+    }
+
+    /// Debug builds' test hook (`RAIL_TEST_MAIL_PANIC`): panic on the first key, so a binary
+    /// test can check that the terminal is restored.
+    pub fn with_panic_on_key(mut self, on: bool) -> Self {
+        self.panic_on_key = on;
+        self
+    }
+
+    fn next_seq(&mut self) -> u64 {
+        self.seq += 1;
+        self.seq
+    }
+
+    fn height(&self) -> usize {
+        match self.size.get().0 {
+            0 => FALLBACK_HEIGHT,
+            rows => usize::from(rows),
+        }
+    }
+
+    /// Shown when set by `b`/`Tab`, else from the last frame's width.
+    fn sidebar_visible(&self) -> bool {
+        self.sidebar_shown
+            .unwrap_or_else(|| layout::sidebar_by_default(self.size.get().1))
+    }
+
+    fn list_request(&mut self, at: PageAt, place: Place) -> ListRequest {
+        let seq = self.next_seq();
+        self.latest_list = seq;
+        self.place = place;
+        ListRequest {
+            seq,
+            scope: self.scope.clone(),
+            addresses: self.accounts.iter().map(|a| a.address.clone()).collect(),
+            names: self.accounts.iter().map(|a| a.name.clone()).collect(),
+            filter: self.filter.clone(),
+            at,
+            utc_offset: self.ctx.clock.utc_offset(),
+        }
+    }
+
+    fn read_list(&mut self, at: PageAt, place: Place) -> Effect {
+        let request = self.list_request(at, place);
+        self.ctx.store.list(request)
+    }
+
+    fn read_sidebar(&mut self) -> Effect {
+        let seq = self.next_seq();
+        self.latest_sidebar = seq;
+        let addresses = self.accounts.iter().map(|a| a.address.clone()).collect();
+        self.ctx.store.sidebar(seq, addresses)
+    }
+
+    /// The store changed: re-read the visible window and the sidebar once things settle.
+    pub(crate) fn dirty(&mut self) -> Vec<Effect> {
+        if self.requery_pending {
+            return Vec::new();
+        }
+        self.requery_pending = true;
+        self.requery_token += 1;
+        vec![timer(REQUERY_DEBOUNCE, self.requery_token, Timer::Requery)]
+    }
+
+    fn requery(&mut self) -> Vec<Effect> {
+        self.requery_pending = false;
+        self.list.cancel_loading();
+        let list = self.list_request(self.list.requery_at(), Place::Keep);
+        let sidebar_seq = self.next_seq();
+        self.latest_sidebar = sidebar_seq;
+        vec![self.ctx.store.refresh(list, sidebar_seq)]
+    }
+
+    /// Show `scope`. The old rows stay drawn until the new ones arrive (spec §3); a page
+    /// read of the old scope still in flight is dropped by its sequence number.
+    fn set_scope(&mut self, scope: ScopeChoice) -> Vec<Effect> {
+        self.sidebar.point_at(&scope);
+        self.scope = scope;
+        self.list.cancel_loading();
+        vec![self.read_list(PageAt::First, Place::Top)]
+    }
+
+    /// The views keys are read in, most specific first.
+    pub(crate) fn views(&self) -> [View; 2] {
+        let view = match self.focus {
+            Focus::List => View::List,
+            Focus::Sidebar => View::Sidebar,
+            Focus::Reader => View::Reader,
+        };
+        [view, View::Global]
+    }
+
+    fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        if self.panic_on_key {
+            panic!("rail test panic in the mail screen");
+        }
+        let views = self.views();
+        match self.ctx.keymap.resolve(&views, &mut self.chord, key) {
+            Resolved::Action(action) => self.act(action),
+            Resolved::Pending | Resolved::Unbound => Vec::new(),
+        }
+    }
+
+    pub(crate) fn act(&mut self, action: Action) -> Vec<Effect> {
+        if let Some(effects) = self.shared_action(action) {
+            return effects;
+        }
+        match self.focus {
+            Focus::List => self.list_action(action),
+            Focus::Sidebar => self.sidebar_action(action),
+            Focus::Reader => Vec::new(),
+        }
+    }
+
+    /// Actions of both the list and the sidebar.
+    fn shared_action(&mut self, action: Action) -> Option<Vec<Effect>> {
+        if self.focus == Focus::Reader {
+            return None;
+        }
+        let effects = match action {
+            Action::ListSidebar => {
+                let shown = !self.sidebar_visible();
+                self.sidebar_shown = Some(shown);
+                if !shown {
+                    self.focus = Focus::List;
+                }
+                Vec::new()
+            }
+            Action::SidebarFocus => {
+                self.sidebar_shown = Some(true);
+                self.focus = match self.focus {
+                    Focus::Sidebar => Focus::List,
+                    _ => Focus::Sidebar,
+                };
+                Vec::new()
+            }
+            Action::ListUnified => self.set_scope(ScopeChoice::Unified),
+            Action::ListRefresh => self.refresh(),
+            other => return account_number(other).map(|n| self.go_to_account(n)),
+        };
+        Some(effects)
+    }
+
+    fn go_to_account(&mut self, number: usize) -> Vec<Effect> {
+        if number > self.accounts.len() {
+            self.status
+                .notify(format!("There is no account {number}"), self.tick);
+            return Vec::new();
+        }
+        self.set_scope(ScopeChoice::Account(number - 1))
+    }
+
+    fn list_action(&mut self, action: Action) -> Vec<Effect> {
+        let height = self.height();
+        let page = isize::try_from(height).unwrap_or(isize::MAX);
+        let wanted = match action {
+            Action::ListDown => self.list.move_by(1, height),
+            Action::ListUp => self.list.move_by(-1, height),
+            Action::ListPageDown => self.list.move_by(page, height),
+            Action::ListPageUp => self.list.move_by(-page, height),
+            Action::ListTop => self.list.top(height),
+            Action::ListBottom => self.list.bottom(height),
+            _ => None,
+        };
+        match wanted {
+            Some(at) => {
+                let place = match at {
+                    PageAt::First => Place::Top,
+                    PageAt::Last => Place::Bottom,
+                    _ => Place::Keep,
+                };
+                vec![self.read_list(at, place)]
+            }
+            None => Vec::new(),
+        }
+    }
+
+    fn sidebar_action(&mut self, action: Action) -> Vec<Effect> {
+        match action {
+            Action::SidebarDown => self.sidebar.down(),
+            Action::SidebarUp => self.sidebar.up(),
+            Action::SidebarOpen => {
+                if let Some(item) = self.sidebar.selected() {
+                    let scope = item.scope.clone();
+                    self.focus = Focus::List;
+                    return self.set_scope(scope);
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    /// `Ctrl-r`: sync now and re-read when connected; subscribe again only after the daemon
+    /// link reported itself lost (a live watch would forward every update twice); while the
+    /// first subscription is still being made there is nothing to ask the daemon.
+    fn refresh(&mut self) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        match self.status.daemon {
+            DaemonState::Connected => effects.push(self.ctx.link.refresh()),
+            DaemonState::Unreachable => {
+                self.status.connecting();
+                effects.push(self.ctx.link.watch());
+            }
+            DaemonState::Connecting => {}
+        }
+        effects.extend(self.requery());
+        effects
+    }
+
+    fn on_mail(&mut self, event: MailEvent) -> Vec<Effect> {
+        match event {
+            MailEvent::Listed { seq, result } => self.listed(seq, result),
+            MailEvent::Sidebar { seq, result } => self.sidebar_counted(seq, result),
+            MailEvent::Daemon(event) => self.on_daemon(event),
+            MailEvent::Timer {
+                token,
+                kind: Timer::Requery,
+            } if token == self.requery_token && self.requery_pending => self.requery(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn listed(&mut self, seq: u64, result: Result<ListOutcome, ReadError>) -> Vec<Effect> {
+        if seq != self.latest_list {
+            return Vec::new();
+        }
+        match result {
+            Ok(outcome) => {
+                self.account_ids = outcome.account_ids;
+                self.store_state = StoreState::Ready;
+                let height = self.height();
+                self.list
+                    .apply(outcome.page, outcome.at, self.place, height);
+                self.place = Place::Keep;
+            }
+            Err(error) => {
+                self.list.cancel_loading();
+                self.read_failed(error);
+            }
+        }
+        Vec::new()
+    }
+
+    fn sidebar_counted(
+        &mut self,
+        seq: u64,
+        result: Result<SidebarOutcome, ReadError>,
+    ) -> Vec<Effect> {
+        if seq != self.latest_sidebar {
+            return Vec::new();
+        }
+        match result {
+            Ok(outcome) => self.sidebar.rebuild(&self.accounts, &outcome),
+            Err(error) => self.read_failed(error),
+        }
+        Vec::new()
+    }
+
+    fn read_failed(&mut self, error: ReadError) {
+        match error {
+            ReadError::NotSetUp => self.store_state = StoreState::NotSetUp,
+            ReadError::Failed(error) => {
+                tracing::warn!(code = ?error.code, "a mail screen read failed");
+                let text = format!("The store could not be read: {}", error_line(&error));
+                self.status.error(text, self.ctx.clock.now(), self.tick);
+                self.store_state = StoreState::Failed(error);
+            }
+        }
+    }
+
+    fn on_daemon(&mut self, event: DaemonEvent) -> Vec<Effect> {
+        match event {
+            DaemonEvent::Connected(statuses) => {
+                self.status.connected(statuses);
+                self.dirty()
+            }
+            DaemonEvent::Progress(status) => {
+                self.status.progress(*status);
+                self.dirty()
+            }
+            DaemonEvent::Lost(error) => {
+                tracing::warn!(code = ?error.code, "the daemon link was lost");
+                self.status.lost(&error, self.ctx.clock.now(), self.tick);
+                Vec::new()
+            }
+            DaemonEvent::Refreshed(Ok(())) => Vec::new(),
+            DaemonEvent::Refreshed(Err(error)) => {
+                // The watch may be live: only `Lost` says the link is gone.
+                tracing::warn!(code = ?error.code, "sync.now failed");
+                let text = format!("Could not sync now: {}", error_line(&error));
+                self.status.error(text, self.ctx.clock.now(), self.tick);
+                Vec::new()
+            }
+        }
+    }
+
+    /// The status bar's text, for tests and the view.
+    pub(crate) fn status_line(&self) -> String {
+        self.status.line(
+            &self.accounts,
+            &Glyphs::of(self.ctx.icons),
+            &self.ctx.keymap,
+        )
+    }
+}
+
+/// The account number of a `list.account_n` action.
+fn account_number(action: Action) -> Option<usize> {
+    let number = match action {
+        Action::ListAccount1 => 1,
+        Action::ListAccount2 => 2,
+        Action::ListAccount3 => 3,
+        Action::ListAccount4 => 4,
+        Action::ListAccount5 => 5,
+        Action::ListAccount6 => 6,
+        Action::ListAccount7 => 7,
+        Action::ListAccount8 => 8,
+        Action::ListAccount9 => 9,
+        _ => return None,
+    };
+    Some(number)
+}
+
+impl Screen for MailScreen {
+    fn start(&mut self) -> Vec<Effect> {
+        vec![
+            self.ctx.link.watch(),
+            self.read_list(PageAt::First, Place::Top),
+            self.read_sidebar(),
+        ]
+    }
+
+    fn update(&mut self, msg: Msg) -> Vec<Effect> {
+        match msg {
+            Msg::Key(key) => self.on_key(key),
+            Msg::Tick => {
+                self.tick = self.tick.wrapping_add(1);
+                self.status.tick(self.tick);
+                Vec::new()
+            }
+            Msg::Resize(..) => Vec::new(),
+            Msg::Task(TaskResult::Mail(event)) => self.on_mail(event),
+            Msg::Task(TaskResult::JobPanicked(message)) => {
+                tracing::error!(panic = %message, "a mail screen job panicked");
+                let text = format!(
+                    "internal error: {}; see rail.log",
+                    crate::tui::text::escape(&message)
+                );
+                self.status.error(text, self.ctx.clock.now(), self.tick);
+                Vec::new()
+            }
+            Msg::Task(_) => Vec::new(),
+        }
+    }
+
+    fn view(&self, frame: &mut Frame, theme: &Theme) {
+        self.render(frame, theme);
+    }
+
+    /// The active view's own keys and a waiting chord are the screen's; the global quit key
+    /// is the shell's unless the view binds it (`q` closes the reader).
+    fn claims_key(&self, key: KeyEvent) -> bool {
+        if self.chord.is_pending() {
+            return true;
+        }
+        let mut chord = self.chord;
+        let [view, _] = self.views();
+        !matches!(
+            self.ctx.keymap.resolve(&[view], &mut chord, key),
+            Resolved::Unbound
+        )
+    }
+}

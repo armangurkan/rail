@@ -1,0 +1,178 @@
+//! The status bar: each account's sync state from `sync.status` and `sync.progress`, whether
+//! the daemon is reachable, one transient notice, and the recent errors `:errors` lists.
+
+use std::collections::{HashSet, VecDeque};
+
+use rail_core::ops::{AccountSyncStatus, OpError, SyncPhase};
+
+use super::AccountEntry;
+use super::view::Glyphs;
+use crate::tui::keys::{Action, Keymap};
+use crate::tui::text::{escape, outside};
+
+/// Ticks (250 ms each) a notice stays: five seconds.
+pub const NOTICE_TICKS: usize = 20;
+/// Errors `:errors` keeps.
+pub const MAX_ERRORS: usize = 50;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonState {
+    Connecting,
+    Connected,
+    Unreachable,
+}
+
+/// One error as shown: when (Unix seconds) and the escaped text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorEntry {
+    pub at: i64,
+    pub text: String,
+}
+
+#[derive(Debug)]
+pub struct StatusBar {
+    statuses: Vec<AccountSyncStatus>,
+    pub daemon: DaemonState,
+    /// The notice, the tick it expires at, and whether it is an error.
+    notice: Option<(String, usize, bool)>,
+    errors: VecDeque<ErrorEntry>,
+    /// Accounts whose login hint was shown this session.
+    hinted: HashSet<String>,
+}
+
+impl Default for StatusBar {
+    fn default() -> Self {
+        Self {
+            statuses: Vec::new(),
+            daemon: DaemonState::Connecting,
+            notice: None,
+            errors: VecDeque::new(),
+            hinted: HashSet::new(),
+        }
+    }
+}
+
+/// An error on one line: Rail's message, the outside text labelled and escaped, the hint.
+pub fn error_line(error: &OpError) -> String {
+    let mut line = escape(&error.message);
+    if let Some(detail) = &error.detail {
+        line.push_str(&format!(" ({})", outside(detail.get())));
+    }
+    if let Some(hint) = &error.hint {
+        line.push_str(&format!(" hint: {}", escape(hint)));
+    }
+    line
+}
+
+impl StatusBar {
+    pub fn connected(&mut self, statuses: Vec<AccountSyncStatus>) {
+        self.statuses = statuses;
+        self.daemon = DaemonState::Connected;
+    }
+
+    pub fn progress(&mut self, status: AccountSyncStatus) {
+        match self
+            .statuses
+            .iter_mut()
+            .find(|s| s.address == status.address)
+        {
+            Some(known) => *known = status,
+            None => self.statuses.push(status),
+        }
+    }
+
+    pub fn connecting(&mut self) {
+        self.daemon = DaemonState::Connecting;
+    }
+
+    /// The daemon went away (or could not be reached).
+    pub fn lost(&mut self, error: &OpError, now: i64, tick: usize) {
+        self.daemon = DaemonState::Unreachable;
+        self.error(error_line(error), now, tick);
+    }
+
+    pub fn notify(&mut self, text: impl Into<String>, tick: usize) {
+        self.notice = Some((text.into(), tick + NOTICE_TICKS, false));
+    }
+
+    /// Show `text` (already escaped) and keep it for `:errors`. The caller logs the code.
+    pub fn error(&mut self, text: String, now: i64, tick: usize) {
+        self.notice = Some((text.clone(), tick + NOTICE_TICKS, true));
+        self.errors.push_back(ErrorEntry { at: now, text });
+        if self.errors.len() > MAX_ERRORS {
+            self.errors.pop_front();
+        }
+    }
+
+    /// True the first time an account's login hint is asked for this session.
+    pub fn first_login_hint(&mut self, account: &str) -> bool {
+        self.hinted.insert(account.to_string())
+    }
+
+    pub fn tick(&mut self, tick: usize) {
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|(_, until, _)| tick >= *until)
+        {
+            self.notice = None;
+        }
+    }
+
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_ref().map(|(text, _, _)| text.as_str())
+    }
+
+    pub fn notice_is_error(&self) -> bool {
+        self.notice.as_ref().is_some_and(|(_, _, error)| *error)
+    }
+
+    pub fn errors(&self) -> impl DoubleEndedIterator<Item = &ErrorEntry> {
+        self.errors.iter()
+    }
+
+    /// The bar's text (every part escaped): the notice, each account, the daemon.
+    pub fn line(&self, accounts: &[AccountEntry], glyphs: &Glyphs, keymap: &Keymap) -> String {
+        let mut parts: Vec<String> = self.notice().map(str::to_string).into_iter().collect();
+        for account in accounts {
+            let status = self
+                .statuses
+                .iter()
+                .find(|s| s.address.eq_ignore_ascii_case(&account.address));
+            parts.push(account_part(&escape(&account.name), status, glyphs));
+        }
+        match self.daemon {
+            DaemonState::Connected => {}
+            DaemonState::Connecting => parts.push("connecting to the daemon…".to_string()),
+            DaemonState::Unreachable => parts.push(format!(
+                "daemon unreachable ({} retries)",
+                keymap.label(Action::ListRefresh)
+            )),
+        }
+        parts.join("  ·  ")
+    }
+}
+
+fn account_part(name: &str, status: Option<&AccountSyncStatus>, glyphs: &Glyphs) -> String {
+    let Some(s) = status else {
+        return format!("{name} …");
+    };
+    if s.needs_auth {
+        return format!("{name} {} needs login", glyphs.problem);
+    }
+    match s.phase {
+        SyncPhase::Unsupported => format!("{name} - no sync yet"),
+        SyncPhase::Backfill => match s.backfill_estimate {
+            Some(total) => format!("{name} {} {}/{total}", glyphs.syncing, s.backfill_fetched),
+            None => format!("{name} {} {}", glyphs.syncing, s.backfill_fetched),
+        },
+        SyncPhase::Labels | SyncPhase::Delta | SyncPhase::Bodies | SyncPhase::Prune => {
+            format!("{name} {}", glyphs.syncing)
+        }
+        SyncPhase::Retrying => format!("{name} {} retrying", glyphs.syncing),
+        SyncPhase::Stopped => format!("{name} stopped"),
+        SyncPhase::NeedsAuth => format!("{name} {} needs login", glyphs.problem),
+        SyncPhase::Idle if s.last_pass_failed => format!("{name} {} sync failed", glyphs.problem),
+        SyncPhase::Idle => format!("{name} {}", glyphs.ok),
+    }
+}

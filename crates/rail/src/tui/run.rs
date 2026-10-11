@@ -53,6 +53,13 @@ where
     let mut tasks = Tasks::new(sink);
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut pending: VecDeque<Msg> = VecDeque::new();
+    for effect in app.screen.start() {
+        pending.extend(apply(effect, app, &mut tasks));
+    }
+    for msg in pending {
+        dispatch(msg, app, &mut tasks);
+    }
     draw(terminal, app)?;
     while !app.quit {
         let msg = tokio::select! {
@@ -273,6 +280,20 @@ mod tests {
             .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
             .collect();
         assert_eq!(row, "hello from rail");
+    }
+
+    #[tokio::test]
+    async fn start_effects_run_before_the_first_key() {
+        let mut terminal = terminal();
+        let screen = Hello {
+            quit_at_start: true,
+            ..Hello::default()
+        };
+        let mut app = App::new(screen, Box::new(RecordingClipboard::default()));
+        let events = keys(vec![key(KeyCode::Char('x'))]);
+        run_loop(&mut terminal, &mut app, events).await.unwrap();
+        assert!(app.quit);
+        assert!(app.screen.keys.is_empty(), "quit before reading a key");
     }
 
     #[tokio::test]

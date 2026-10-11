@@ -112,18 +112,26 @@ impl StoreReader {
     pub fn sidebar(&self, seq: u64, addresses: Vec<String>) -> Effect {
         let reader = self.clone();
         job(move |sink| async move {
-            let result = reader
-                .read(move |store| {
-                    let account_ids = store.account_ids(&addresses)?;
-                    let known: Vec<i64> = account_ids.iter().flatten().copied().collect();
-                    let counts = store.sidebar_counts(&known)?;
-                    Ok(SidebarOutcome {
-                        counts,
-                        account_ids,
-                    })
-                })
-                .await;
+            let result = reader.read(move |store| sidebar(store, &addresses)).await;
             send(&sink, MailEvent::Sidebar { seq, result });
+        })
+    }
+
+    /// After a store change: the list read and then the sidebar counts, in one job.
+    pub fn refresh(&self, list: ListRequest, sidebar_seq: u64) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let (seq, addresses) = (list.seq, list.addresses.clone());
+            let result = reader.read(move |store| self::list(store, &list)).await;
+            send(&sink, MailEvent::Listed { seq, result });
+            let result = reader.read(move |store| sidebar(store, &addresses)).await;
+            send(
+                &sink,
+                MailEvent::Sidebar {
+                    seq: sidebar_seq,
+                    result,
+                },
+            );
         })
     }
 
@@ -174,6 +182,17 @@ fn open(db: &std::path::Path) -> Result<Store, ReadError> {
         Err(StoreError::NotSetUp { .. }) => Err(ReadError::NotSetUp),
         Err(error) => Err(ReadError::Failed(error.into())),
     }
+}
+
+/// Each configured account's store id and the sidebar's counts.
+fn sidebar(store: &Store, addresses: &[String]) -> Result<SidebarOutcome, StoreError> {
+    let account_ids = store.account_ids(addresses)?;
+    let known: Vec<i64> = account_ids.iter().flatten().copied().collect();
+    let counts = store.sidebar_counts(&known)?;
+    Ok(SidebarOutcome {
+        counts,
+        account_ids,
+    })
 }
 
 /// The page `request` asks for, its scope and `account:` resolved to store ids.
