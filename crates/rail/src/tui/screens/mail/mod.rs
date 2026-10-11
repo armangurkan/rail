@@ -574,12 +574,14 @@ impl MailScreen {
         vec![self.read_list(PageAt::First, Place::Top)]
     }
 
-    /// Every palette entry: the commands with their keys, `errors`, each account and label.
+    /// Every palette entry: each key action of the active view and the global ones with its key, `errors`, each account and label.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let key = |a: Action| self.ctx.keymap.label(a);
-        let mut entries: Vec<PaletteEntry> = PALETTE_ACTIONS
-            .into_iter()
-            .map(|a| PaletteEntry {
+        let views = self.views();
+        let mut entries: Vec<PaletteEntry> = Action::ALL
+            .iter()
+            .filter(|a| a.views().iter().any(|v| views.contains(v)))
+            .map(|&a| PaletteEntry {
                 text: a.description().to_string(),
                 search: format!("{} {}", a.description(), a.id()),
                 key: key(a),
@@ -619,16 +621,6 @@ impl MailScreen {
         entries
     }
 }
-
-/// The commands the palette lists besides `errors`, accounts and labels.
-const PALETTE_ACTIONS: [Action; 6] = [
-    Action::ListFilter,
-    Action::ListSidebar,
-    Action::ListUnified,
-    Action::ListRefresh,
-    Action::GlobalHelp,
-    Action::GlobalQuit,
-];
 
 /// The `list.account_n` action for account number `n` (1 to 9).
 fn account_action(n: usize) -> Option<Action> {

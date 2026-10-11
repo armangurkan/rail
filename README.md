@@ -258,8 +258,8 @@ shows how Rail read your filter, so a typo such as `form:dana` shows up as a wor
 the filter; `Esc` clears it. The filter searches the local store only (`rail search` also asks
 Gmail).
 
-`:` opens the command palette: type a few letters of a command, an account or a label and press
-`Enter`; the key bound to each command is shown beside it. `:errors` lists the session's recent
+`:` opens the command palette: type a few letters of a key action for the current view, an account or a label
+and press `Enter`; the key bound to each command is shown beside it. `:errors` lists the session's recent
 errors. `?` shows the keys of the view you are in, marking the ones you changed in `[keys]`.
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing with a count during

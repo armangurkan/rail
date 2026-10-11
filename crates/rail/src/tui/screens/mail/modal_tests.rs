@@ -209,3 +209,49 @@ async fn help_shows_the_keys_of_the_view_you_are_in() {
         "{text}"
     );
 }
+
+#[tokio::test]
+async fn a_palette_action_picked_in_the_reader_keeps_the_reader_open() {
+    let (_tmp, mut screen) = screen().await;
+    let effects = press(&mut screen, KeyCode::Enter);
+    settle(&mut screen, effects).await;
+    assert!(screen.reader().is_some());
+    press(&mut screen, KeyCode::Char(':'));
+    type_in(&mut screen, "keys for this view");
+    press(&mut screen, KeyCode::Enter);
+    assert!(screen.reader().is_some(), "the reader stays open");
+    let text = snapshot(90, 40, |frame| screen.view(frame, &Theme::default()));
+    assert!(
+        text.contains("Reader") && text.contains("Open a link"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn a_list_action_from_the_palette_works_from_the_sidebar() {
+    let (_tmp, mut screen) = screen().await;
+    press(&mut screen, KeyCode::Tab);
+    assert_eq!(screen.focus, Focus::Sidebar);
+    screen.run_palette(Target::Action(crate::tui::keys::Action::ListFilter));
+    type_in(&mut screen, "x");
+    assert_eq!(screen.filter_text, "x", "the filter line opened");
+    assert_eq!(screen.focus, Focus::List);
+}
+
+#[tokio::test]
+async fn the_palette_lists_the_keys_of_the_active_view() {
+    use crate::tui::keys::Action;
+    let (_tmp, mut screen) = screen().await;
+    let has = |screen: &MailScreen, a: Action| {
+        screen
+            .palette_entries()
+            .iter()
+            .any(|e| e.target == Target::Action(a))
+    };
+    assert!(has(&screen, Action::ListFilter) && has(&screen, Action::GlobalHelp));
+    assert!(!has(&screen, Action::ReaderFollowLink));
+    let effects = press(&mut screen, KeyCode::Enter);
+    settle(&mut screen, effects).await;
+    assert!(has(&screen, Action::ReaderFollowLink) && has(&screen, Action::GlobalHelp));
+    assert!(!has(&screen, Action::ListFilter));
+}

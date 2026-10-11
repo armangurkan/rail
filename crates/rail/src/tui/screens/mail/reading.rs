@@ -7,7 +7,7 @@ use rail_core::store::view::{BodyState, HtmlBody, ThreadDetail};
 use super::{Focus, Glyphs, MailScreen, error_line};
 use crate::tui::app::Effect;
 use crate::tui::data::{FILTER_DEBOUNCE, ReadError, Timer, timer};
-use crate::tui::keys::Action;
+use crate::tui::keys::{Action, View};
 use crate::tui::modals::{
     AttachmentList, AttachmentRow, Command, Confirm, ErrorList, LinkPrompt, Modal, ModalOutcome,
     Target,
@@ -431,7 +431,24 @@ impl MailScreen {
         Vec::new()
     }
 
-    fn run_palette(&mut self, target: Target) -> Vec<Effect> {
+    /// Run a palette action as if its own view had focus: global and reader actions leave the
+    /// reader open; others close it and move focus to the list or the sidebar.
+    fn focus_for(&mut self, action: Action) {
+        let views = action.views();
+        if views.contains(&View::Global) || views.contains(&self.views()[0]) {
+            return;
+        }
+        if self.focus == Focus::Reader {
+            self.close_reader();
+        }
+        self.focus = if views.contains(&View::List) {
+            Focus::List
+        } else {
+            Focus::Sidebar
+        };
+    }
+
+    pub(super) fn run_palette(&mut self, target: Target) -> Vec<Effect> {
         match target {
             Target::Errors => {
                 let rows = self
@@ -449,11 +466,7 @@ impl MailScreen {
             }
             Target::Action(Action::GlobalQuit) => vec![Effect::Quit],
             Target::Action(action) => {
-                if self.focus == Focus::Reader
-                    && !action.views().contains(&crate::tui::keys::View::Reader)
-                {
-                    self.close_reader();
-                }
+                self.focus_for(action);
                 self.act(action)
             }
         }
