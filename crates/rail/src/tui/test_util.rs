@@ -25,6 +25,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::app::{Clipboard, Effect, Msg, TaskResult};
 use super::effects::{EffectContext, Opener};
+use super::keys::Keymap;
 use super::screen::Screen;
 use super::screens::wizard::WizardScreen;
 use super::theme::Theme;
@@ -86,6 +87,8 @@ impl Clipboard for RecordingClipboard {
 /// keys with `on_key`.
 pub struct Hello {
     pub typing: bool,
+    /// Whether the screen claims every key (see `Screen::claims_key`).
+    pub claims: bool,
     pub keys: Vec<KeyEvent>,
     /// Every `TaskResult::Copied` the screen was told about.
     pub copied: Vec<Result<(), String>>,
@@ -96,6 +99,7 @@ impl Default for Hello {
     fn default() -> Self {
         Self {
             typing: false,
+            claims: false,
             keys: Vec::new(),
             copied: Vec::new(),
             on_key: Box::new(|_| Vec::new()),
@@ -127,6 +131,10 @@ impl Screen for Hello {
 
     fn captures_text(&self) -> bool {
         self.typing
+    }
+
+    fn claims_key(&self, _key: KeyEvent) -> bool {
+        self.claims
     }
 }
 
@@ -249,8 +257,17 @@ pub fn redirect_when_asked(mut urls: mpsc::UnboundedReceiver<Url>) -> tokio::tas
     })
 }
 
+/// The default keymap, shared.
+pub fn keymap() -> Arc<Keymap> {
+    Arc::new(Keymap::defaults())
+}
+
 pub fn wizard_screen() -> WizardScreen {
-    WizardScreen::new(Wizard::new(Some(existing_config()), None), test_ctx())
+    WizardScreen::new(
+        Wizard::new(Some(existing_config()), None),
+        test_ctx(),
+        keymap(),
+    )
 }
 
 pub fn press(screen: &mut WizardScreen, code: KeyCode) -> Vec<Effect> {

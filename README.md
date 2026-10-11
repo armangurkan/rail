@@ -105,7 +105,7 @@ rail daemon install        # keep syncing after you log out and back in
    daemon starts at login. Without it, the daemon starts on demand whenever a `rail` command needs
    it and keeps running while any account is configured.
 
-### Wizard keys
+### Keys
 
 | Key | Action |
 |---|---|
@@ -121,12 +121,92 @@ rail daemon install        # keep syncing after you log out and back in
 | `q` | Quit, except while typing in a text field. |
 | `Ctrl-C` | Quit from anywhere. While an account is being saved, it waits for the save to finish. |
 
+These are the wizard's default keys, the `wizard.*` actions in the table below; each can be changed.
+
 The wizard exits 0 if at least one account was saved and 1 with `setup cancelled; nothing was
 saved` otherwise. Quitting while the browser login is pending cancels that login. An account whose
 save had already started is always finished, never left half-written; Rail then says so and exits
 0. If you quit after an admin-consent error, Rail prints the admin-consent URL once the terminal is
 back so you can forward it to an administrator. When stdout is not a terminal, every way of opening
 the wizard prints a hint and exits 2.
+
+Every key Rail reads is an *action* with an id and a default key. Change one in `config.toml`:
+
+```toml
+[keys]
+"list.filter" = "/"
+"reader.open_browser" = "O"
+"global.palette" = ":"
+```
+
+A key name is a character (`a`, `O`, `/`), a named key (`enter`, `esc`, `tab`, `backtab`,
+`space`, `up`, `down`, `left`, `right`, `pageup`, `pagedown`, `home`, `end`, `f1` to `f12`),
+either with `ctrl-`, `alt-` or `shift-` in front (`ctrl-r`, `shift-tab`), or two keys with a
+space between them for a sequence (`g x`). A key you set replaces that action's default keys.
+Rail refuses to start, naming the file and line, when `[keys]` names an action it does not know,
+a key it cannot read, `Ctrl-C` (which always quits), or a key another action of the same view
+already uses (a key that starts another action's sequence counts). A view's own key wins over a
+global one: `q` closes the reader but quits from the list. In the mail screen `?` lists the keys
+of the view you are in, marking the ones you changed.
+
+| Action | Works in | Default keys | What it does |
+|---|---|---|---|
+| `global.quit` | global | `q` | Quit Rail. |
+| `global.palette` | global | `:` | Open the command palette. |
+| `global.help` | global | `?` | Show the keys for this view. |
+| `list.open` | list | `enter` | Open the thread. |
+| `list.filter` | list | `/` | Filter the list as you type. |
+| `list.sidebar` | list, sidebar | `b` | Show or hide the sidebar. |
+| `list.account_1` | list, sidebar | `1` | Go to account 1's inbox. |
+| `list.account_2` | list, sidebar | `2` | Go to account 2's inbox. |
+| `list.account_3` | list, sidebar | `3` | Go to account 3's inbox. |
+| `list.account_4` | list, sidebar | `4` | Go to account 4's inbox. |
+| `list.account_5` | list, sidebar | `5` | Go to account 5's inbox. |
+| `list.account_6` | list, sidebar | `6` | Go to account 6's inbox. |
+| `list.account_7` | list, sidebar | `7` | Go to account 7's inbox. |
+| `list.account_8` | list, sidebar | `8` | Go to account 8's inbox. |
+| `list.account_9` | list, sidebar | `9` | Go to account 9's inbox. |
+| `list.unified` | list, sidebar | `0` | Go to the unified inbox. |
+| `list.refresh` | list, sidebar | `ctrl-r` | Sync now; reconnect to the daemon. |
+| `list.down` | list | `j` `down` | Next thread. |
+| `list.up` | list | `k` `up` | Previous thread. |
+| `list.page_down` | list | `pagedown` `ctrl-d` | One page down. |
+| `list.page_up` | list | `pageup` `ctrl-u` | One page up. |
+| `list.top` | list | `home` `g g` | Newest thread. |
+| `list.bottom` | list | `end` `G` | Oldest thread. |
+| `sidebar.focus` | list, sidebar | `tab` | Move between the sidebar and the list. |
+| `sidebar.down` | sidebar | `j` `down` | Next mailbox. |
+| `sidebar.up` | sidebar | `k` `up` | Previous mailbox. |
+| `sidebar.open` | sidebar | `enter` | Show this mailbox. |
+| `reader.next` | reader | `n` | Next message. |
+| `reader.prev` | reader | `p` | Previous message. |
+| `reader.expand` | reader | `tab` | Expand or collapse the message. |
+| `reader.unfold` | reader | `enter` | Show or hide the quoted lines. |
+| `reader.open_browser` | reader | `o` | Open the message in the browser. |
+| `reader.attachments` | reader | `a` | List the attachments. |
+| `reader.follow_link` | reader | `g x` | Open a link. |
+| `reader.back` | reader | `q` `esc` | Close the thread. |
+| `reader.down` | reader | `j` `down` | Next line. |
+| `reader.up` | reader | `k` `up` | Previous line. |
+| `reader.page_down` | reader | `pagedown` `space` | One page down. |
+| `reader.page_up` | reader | `pageup` | One page up. |
+| `reader.top` | reader | `home` `g g` | First line. |
+| `reader.bottom` | reader | `end` `G` | Last line. |
+| `wizard.back` | wizard | `esc` | Go back one step. |
+| `wizard.portal` | wizard | `f1` | Open the provider portal or the preset's help. |
+| `wizard.next_field` | wizard | `tab` | Next field. |
+| `wizard.prev_field` | wizard | `backtab` | Previous field. |
+| `wizard.next` | wizard | `enter` | Choose or continue. |
+| `wizard.up` | wizard | `up` `k` | Move up. |
+| `wizard.down` | wizard | `down` `j` | Move down. |
+| `wizard.page_up` | wizard | `pageup` | Scroll one page up. |
+| `wizard.page_down` | wizard | `pagedown` | Scroll one page down. |
+| `wizard.top` | wizard | `home` | Scroll to the top. |
+| `wizard.bottom` | wizard | `end` | Scroll to the end. |
+| `wizard.open_portal` | wizard | `o` | Open the portal from the instructions. |
+| `wizard.toggle` | wizard | `space` | Tick or untick the checkbox. |
+| `wizard.retry` | wizard | `r` | Retry after an error. |
+| `wizard.copy_url` | wizard | `c` | Copy the URL shown. |
 
 ## Account setup
 

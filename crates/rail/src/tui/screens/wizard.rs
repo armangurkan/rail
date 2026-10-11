@@ -4,22 +4,24 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rail_core::error::ErrorClass;
 use rail_core::onboarding::{
-    Action, Body, Busy, Event, Failure, Field, FieldView, Input, PresetEntry, Primary, Step,
-    ViewModel, Wizard,
+    Action as WizardAction, Body, Busy, Event, Failure, Field, FieldView, Input, PresetEntry,
+    Primary, Step, ViewModel, Wizard,
 };
 use ratatui::Frame;
 use url::Url;
 
 use crate::tui::app::{Effect, Msg, TaskResult};
 use crate::tui::effects::{EffectContext, to_effect};
+use crate::tui::keys::{Action, Chord, Keymap, Resolved, View, is_text_key};
 use crate::tui::screen::Screen;
 use crate::tui::theme::Theme;
-use crate::tui::widgets::scroll_panel::{ScrollPanel, line_count};
-use crate::tui::widgets::select::{Select, SelectOutcome};
+use crate::tui::widgets::scroll_panel::{Scroll, ScrollPanel, line_count};
+use crate::tui::widgets::select::{Nav, Select, SelectOutcome};
 use crate::tui::widgets::text_input::TextInput;
 
 /// The instructions panel's text width and height before the first frame is drawn.
@@ -46,6 +48,8 @@ pub(super) enum Mode {
 pub struct WizardScreen {
     pub(super) wizard: Wizard,
     ctx: EffectContext,
+    pub(super) keymap: Arc<Keymap>,
+    chord: Chord,
     pub(super) model: ViewModel,
     /// Edit state (cursor, masking) per text field; the wizard owns the values.
     pub(super) inputs: BTreeMap<Field, TextInput>,
@@ -67,13 +71,15 @@ pub struct WizardScreen {
 
 impl WizardScreen {
     /// A screen showing `wizard`, running its actions with `ctx`.
-    pub fn new(wizard: Wizard, ctx: EffectContext) -> Self {
+    pub fn new(wizard: Wizard, ctx: EffectContext, keymap: Arc<Keymap>) -> Self {
         let model = wizard.view_model();
         let step = wizard.step();
         let select = Select::new(choices(&model.body));
         let mut screen = Self {
             wizard,
             ctx,
+            keymap,
+            chord: Chord::default(),
             model,
             inputs: BTreeMap::new(),
             focus: 0,
@@ -171,7 +177,7 @@ impl WizardScreen {
         });
     }
 
-    fn effects(&self, actions: Vec<Action>) -> Vec<Effect> {
+    fn effects(&self, actions: Vec<WizardAction>) -> Vec<Effect> {
         actions
             .into_iter()
             .map(|action| to_effect(action, &self.ctx))
@@ -240,6 +246,17 @@ impl WizardScreen {
         }
     }
 
+    /// The wizard action `key` means, unless it types text in the focused field.
+    fn action(&mut self, key: KeyEvent) -> Option<Action> {
+        if self.captures_text() && is_text_key(key) {
+            return None;
+        }
+        match self.keymap.resolve(&[View::Wizard], &mut self.chord, key) {
+            Resolved::Action(action) => Some(action),
+            Resolved::Pending | Resolved::Unbound => None,
+        }
+    }
+
     fn on_key(&mut self, key: KeyEvent) -> Vec<Input> {
         self.notice = None;
         self.failure = None;
@@ -247,34 +264,34 @@ impl WizardScreen {
             self.quit_after_save |= is_ctrl_c(key);
             return Vec::new();
         }
-        match key.code {
-            KeyCode::Esc => return vec![Input::Back],
-            KeyCode::F(1) => return vec![Input::OpenPortal],
-            KeyCode::Tab | KeyCode::BackTab => {
-                self.move_focus(key.code == KeyCode::Tab);
+        let action = self.action(key);
+        match action {
+            Some(Action::WizardBack) => return vec![Input::Back],
+            Some(Action::WizardPortal) => return vec![Input::OpenPortal],
+            Some(step @ (Action::WizardNextField | Action::WizardPrevField)) => {
+                self.move_focus(step == Action::WizardNextField);
                 return Vec::new();
             }
             _ => {}
         }
         if !self.captures_text()
-            && let Some(input) = self.failure_key(key)
+            && let Some(input) = action.and_then(|a| self.failure_input(a))
         {
             return vec![input];
         }
         match self.mode() {
-            Mode::Choices => self.choose_key(key),
-            Mode::Fields => self.field_key(key),
-            Mode::Instructions(lines) => self.instructions_key(key, lines),
-            Mode::Message if key.code == KeyCode::Enter => vec![Input::Next],
+            Mode::Choices => self.choose(action),
+            Mode::Fields => self.field_key(key, action),
+            Mode::Instructions(lines) => self.instructions(action, lines),
+            Mode::Message if action == Some(Action::WizardNext) => vec![Input::Next],
             Mode::Message => Vec::new(),
         }
     }
 
-    fn failure_key(&self, key: KeyEvent) -> Option<Input> {
-        let failure = self.model.failure.as_ref();
-        match key.code {
-            KeyCode::Char('r') if failure.is_some() => Some(Input::Retry),
-            KeyCode::Char('c') if self.can_copy_url() => Some(Input::CopyConsentUrl),
+    fn failure_input(&self, action: Action) -> Option<Input> {
+        match action {
+            Action::WizardRetry if self.model.failure.is_some() => Some(Input::Retry),
+            Action::WizardCopyUrl if self.can_copy_url() => Some(Input::CopyConsentUrl),
             _ => None,
         }
     }
@@ -290,37 +307,51 @@ impl WizardScreen {
         consent || (self.step == Step::Login && self.model.url.is_some())
     }
 
-    fn choose_key(&mut self, key: KeyEvent) -> Vec<Input> {
-        match self.select.handle_key(key) {
+    fn choose(&mut self, action: Option<Action>) -> Vec<Input> {
+        let nav = match action {
+            Some(Action::WizardUp) => Nav::Up,
+            Some(Action::WizardDown) => Nav::Down,
+            Some(Action::WizardNext) => Nav::Choose,
+            _ => return Vec::new(),
+        };
+        match self.select.handle(nav) {
             SelectOutcome::Chosen(index) => vec![Input::Choose(index)],
             SelectOutcome::Moved | SelectOutcome::Ignored => Vec::new(),
         }
     }
 
-    fn instructions_key(&mut self, key: KeyEvent, lines: u16) -> Vec<Input> {
-        match key.code {
-            KeyCode::Enter => vec![Input::Next],
-            KeyCode::Char('o') => vec![Input::OpenPortal],
-            _ => {
-                let page = self.panel_size().1;
-                self.scroll.handle_key(key, lines, page);
-                Vec::new()
-            }
-        }
+    fn instructions(&mut self, action: Option<Action>, lines: u16) -> Vec<Input> {
+        let step = match action {
+            Some(Action::WizardNext) => return vec![Input::Next],
+            Some(Action::WizardOpenPortal) => return vec![Input::OpenPortal],
+            Some(Action::WizardUp) => Scroll::Up,
+            Some(Action::WizardDown) => Scroll::Down,
+            Some(Action::WizardPageUp) => Scroll::PageUp,
+            Some(Action::WizardPageDown) => Scroll::PageDown,
+            Some(Action::WizardTop) => Scroll::Top,
+            Some(Action::WizardBottom) => Scroll::Bottom,
+            _ => return Vec::new(),
+        };
+        let page = self.panel_size().1;
+        self.scroll.scroll(step, lines, page);
+        Vec::new()
     }
 
-    fn field_key(&mut self, key: KeyEvent) -> Vec<Input> {
+    /// In a field, characters are text (or nothing, on the checkbox) and only the arrow keys
+    /// move between fields, as before the keymap: `j` and `k` are letters there.
+    fn field_key(&mut self, key: KeyEvent, action: Option<Action>) -> Vec<Input> {
         let Some(view) = self.focused_field() else {
             return Vec::new();
         };
         let (field, checkbox) = (view.field, view.checkbox.is_some());
-        match key.code {
-            KeyCode::Enter => vec![Input::Next],
-            KeyCode::Up | KeyCode::Down => {
-                self.move_focus(key.code == KeyCode::Down);
+        let typed = is_text_key(key);
+        match action {
+            Some(Action::WizardNext) => vec![Input::Next],
+            Some(step @ (Action::WizardUp | Action::WizardDown)) if !typed => {
+                self.move_focus(step == Action::WizardDown);
                 Vec::new()
             }
-            KeyCode::Char(' ') if checkbox => vec![Input::ToggleAdmin],
+            Some(Action::WizardToggle) if checkbox => vec![Input::ToggleAdmin],
             _ if checkbox => Vec::new(),
             _ => self.edit(field, key),
         }
@@ -377,6 +408,15 @@ impl Screen for WizardScreen {
 
     fn defers_quit(&self) -> bool {
         self.saving()
+    }
+
+    fn claims_key(&self, key: KeyEvent) -> bool {
+        let mut chord = self.chord;
+        self.chord.is_pending()
+            || !matches!(
+                self.keymap.resolve(&[View::Wizard], &mut chord, key),
+                Resolved::Unbound
+            )
     }
 }
 
@@ -682,7 +722,11 @@ mod tests {
         std::fs::write(paths.config_file(), config_text).unwrap();
         let (ctx, mut url_rx) = daemon_ctx(&paths, None).await;
         let config = rail_core::config::load(&paths.config_file()).unwrap();
-        let screen = WizardScreen::new(Wizard::new(Some(config), None), ctx.clone());
+        let screen = WizardScreen::new(
+            Wizard::new(Some(config), None),
+            ctx.clone(),
+            crate::tui::test_util::keymap(),
+        );
         let mut app = App::new(screen, Box::new(RecordingClipboard::default()));
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         let (key_tx, mut key_rx) = mpsc::unbounded_channel::<io::Result<TermEvent>>();
@@ -756,7 +800,11 @@ mod tests {
         let server = token_server("ACCESS-only-in-the-daemon", "REFRESH-only-in-the-daemon").await;
         let (ctx, urls) = daemon_ctx(&paths, Some(format!("{}/token", server.uri()))).await;
         let config = rail_core::config::load(&paths.config_file()).unwrap();
-        let mut screen = WizardScreen::new(Wizard::new(Some(config), None), ctx.clone());
+        let mut screen = WizardScreen::new(
+            Wizard::new(Some(config), None),
+            ctx.clone(),
+            crate::tui::test_util::keymap(),
+        );
         let browser = redirect_when_asked(urls);
         let effects = drive(&mut screen, gmail_own_app_keys("me@example.com"));
         let events = settle_effects(&mut screen, effects).await;
@@ -780,5 +828,34 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(tokens.access_token, "ACCESS-only-in-the-daemon");
+    }
+
+    /// A rebound wizard key works, the default it replaced does nothing, and the hint says so.
+    #[test]
+    fn a_rebound_wizard_key_moves_the_list_and_the_hint_follows() {
+        let text = "[keys]\n\"wizard.down\" = \"s\"\n";
+        let path = std::path::Path::new("/c/config.toml");
+        let config = rail_core::config::parse(text, path).unwrap();
+        let keymap = Arc::new(Keymap::from_config(&config.keys, text, path).unwrap());
+        let mut screen = WizardScreen::new(
+            Wizard::new(Some(crate::tui::test_util::existing_config()), None),
+            crate::tui::test_util::test_ctx(),
+            keymap,
+        );
+        press(&mut screen, KeyCode::Down);
+        press(&mut screen, KeyCode::Enter);
+        assert_eq!(screen.wizard.step(), Step::Preset, "↓ no longer moves");
+        let mut screen = WizardScreen::new(
+            Wizard::new(Some(crate::tui::test_util::existing_config()), None),
+            crate::tui::test_util::test_ctx(),
+            screen.keymap.clone(),
+        );
+        press(&mut screen, KeyCode::Char('s'));
+        press(&mut screen, KeyCode::Enter);
+        assert_eq!(screen.wizard.step(), Step::Provider);
+        let text = crate::tui::test_util::snapshot(80, 24, |frame| {
+            screen.view(frame, &crate::tui::theme::Theme::default())
+        });
+        assert!(text.contains("↑/s move"), "{text}");
     }
 }

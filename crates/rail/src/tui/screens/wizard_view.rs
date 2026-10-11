@@ -8,6 +8,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::wizard::{Mode, WizardScreen};
+use crate::tui::keys::Action;
 use crate::tui::theme::Theme;
 use crate::tui::widgets::select::Checkbox;
 use crate::tui::widgets::status_line::StatusLine;
@@ -78,11 +79,18 @@ impl WizardScreen {
         };
         let mut lines = vec![Line::styled(view.text.as_str(), theme.error)];
         match &view.primary {
-            Primary::Retry => lines.push(Line::styled("Press r to retry.", theme.accent)),
+            Primary::Retry => lines.push(Line::styled(
+                format!("Press {} to retry.", self.keymap.label(Action::WizardRetry)),
+                theme.accent,
+            )),
             Primary::CopyUrl(url) => {
                 lines.push(Line::styled(url.as_str(), theme.accent));
                 lines.push(Line::styled(
-                    "Press c to copy this URL, or r to retry once it is approved.",
+                    format!(
+                        "Press {} to copy this URL, or {} to retry once it is approved.",
+                        self.keymap.label(Action::WizardCopyUrl),
+                        self.keymap.label(Action::WizardRetry)
+                    ),
                     theme.muted,
                 ));
             }
@@ -202,7 +210,13 @@ impl WizardScreen {
             ));
             lines.push(Line::styled(url.as_str(), theme.accent));
             if self.wizard.step() == Step::Login {
-                lines.push(Line::styled("Press c to copy this URL.", theme.muted));
+                lines.push(Line::styled(
+                    format!(
+                        "Press {} to copy this URL.",
+                        self.keymap.label(Action::WizardCopyUrl)
+                    ),
+                    theme.muted,
+                ));
             }
         }
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
@@ -236,26 +250,59 @@ impl WizardScreen {
                 .or(self.model.notice.as_deref())
                 .or(self.model.busy.as_deref())
         };
+        let hints = self.hints();
         let status = StatusLine {
             message,
             spinner: self.model.busy.as_ref().map(|_| self.tick),
-            hints: self.hints(),
+            hints: &hints,
             theme,
         };
         frame.render_widget(status, area);
     }
 
-    fn hints(&self) -> &'static str {
+    fn hints(&self) -> String {
         if self.saving() {
-            return "Saving the account · Ctrl-C quits once it is saved";
+            return "Saving the account · Ctrl-C quits once it is saved".to_string();
         }
+        let k = |action: Action| self.keymap.label(action);
         let checkbox = self.focused_field().is_some_and(|f| f.checkbox.is_some());
         match self.mode() {
-            Mode::Choices => "↑/↓ move · Enter choose · Esc back · q quit",
-            Mode::Fields if checkbox => "Space toggle · Tab next field · Enter continue · Esc back",
-            Mode::Fields => "Tab next field · Enter continue · Esc back · Ctrl-C quit",
-            Mode::Instructions(_) => "↑/↓ scroll · o open the portal · Enter continue · Esc back",
-            Mode::Message => "Enter continue · r retry · Esc back · q quit",
+            Mode::Choices => format!(
+                "{}/{} move · {} choose · {} back · {} quit",
+                k(Action::WizardUp),
+                k(Action::WizardDown),
+                k(Action::WizardNext),
+                k(Action::WizardBack),
+                k(Action::GlobalQuit)
+            ),
+            Mode::Fields if checkbox => format!(
+                "{} toggle · {} next field · {} continue · {} back",
+                k(Action::WizardToggle),
+                k(Action::WizardNextField),
+                k(Action::WizardNext),
+                k(Action::WizardBack)
+            ),
+            Mode::Fields => format!(
+                "{} next field · {} continue · {} back · Ctrl-C quit",
+                k(Action::WizardNextField),
+                k(Action::WizardNext),
+                k(Action::WizardBack)
+            ),
+            Mode::Instructions(_) => format!(
+                "{}/{} scroll · {} open the portal · {} continue · {} back",
+                k(Action::WizardUp),
+                k(Action::WizardDown),
+                k(Action::WizardOpenPortal),
+                k(Action::WizardNext),
+                k(Action::WizardBack)
+            ),
+            Mode::Message => format!(
+                "{} continue · {} retry · {} back · {} quit",
+                k(Action::WizardNext),
+                k(Action::WizardRetry),
+                k(Action::WizardBack),
+                k(Action::GlobalQuit)
+            ),
         }
     }
 }

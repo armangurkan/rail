@@ -4,6 +4,7 @@
 
 pub mod app;
 pub mod effects;
+pub mod keys;
 pub mod run;
 pub mod screen;
 pub mod screens;

@@ -12,8 +12,10 @@ pub struct Config {
     pub general: General,
     #[serde(default)]
     pub accounts: Vec<AccountConfig>,
+    /// `[keys]`: action id to key name. The values keep their position in the file, so the
+    /// TUI's keymap can name the line of a bad one.
     #[serde(default)]
-    pub keys: BTreeMap<String, String>,
+    pub keys: BTreeMap<String, toml::Spanned<String>>,
     /// Free-form until the TUI phase defines the theme schema.
     #[serde(default)]
     pub theme: BTreeMap<String, toml::Value>,

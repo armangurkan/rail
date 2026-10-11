@@ -3,6 +3,7 @@
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use rail_core::config::{AccountKind, load_text_or_empty};
 use rail_core::onboarding::Wizard;
@@ -11,6 +12,7 @@ use url::Url;
 
 use crate::cmd::account::report as report_error;
 use crate::tui::effects::{EffectContext, Settled};
+use crate::tui::keys::Keymap;
 use crate::tui::run::run_app;
 use crate::tui::screens::wizard::WizardScreen;
 
@@ -35,13 +37,23 @@ pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre
         eprintln!("{PIPE_HINT}");
         return Ok(ExitCode::from(2));
     }
-    // A broken config.toml fails here, with its line number, before the terminal changes.
-    let (_, config) = load_text_or_empty(&paths.config_file())?;
+    // A broken config.toml (or [keys] entry) fails here, with its line number, before the
+    // terminal changes.
+    let (text, config) = load_text_or_empty(&paths.config_file())?;
+    let keymap = Arc::new(Keymap::from_config(
+        &config.keys,
+        &text,
+        &paths.config_file(),
+    )?);
     // The daemon starts (or fails, with its reason) before the terminal changes.
     let ctx = EffectContext::new(paths.clone());
     ctx.daemon.client().await.map_err(report_error)?;
-    let screen = WizardScreen::new(Wizard::new(Some(config), kind_hint), ctx.clone());
-    let screen = run_app(screen).await;
+    let screen = WizardScreen::new(
+        Wizard::new(Some(config), kind_hint),
+        ctx.clone(),
+        keymap.clone(),
+    );
+    let screen = run_app(screen, keymap).await;
     // A quit mid-login leaves nothing waiting in the daemon.
     let settled = ctx.settle().await;
     let screen = screen?;

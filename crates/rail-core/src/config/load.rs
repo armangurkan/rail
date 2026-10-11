@@ -225,7 +225,10 @@ unread = { bold = true }
         assert_eq!(c.accounts[0].client_secret.as_deref(), Some("shh"));
         assert_eq!(c.accounts[1].kind, AccountKind::M365);
         assert_eq!(c.accounts[1].tenant.as_deref(), Some("common"));
-        assert_eq!(c.keys.get("archive").map(String::as_str), Some("e"));
+        assert_eq!(
+            c.keys.get("archive").map(|k| k.get_ref().as_str()),
+            Some("e")
+        );
         assert!(c.theme.contains_key("unread"));
     }
 

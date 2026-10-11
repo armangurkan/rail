@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
@@ -15,6 +16,7 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use super::app::{App, Effect, Job, Msg, Osc52, TaggedResult, TaskResult, TaskSink, update, view};
+use super::keys::Keymap;
 use super::screen::Screen;
 use super::terminal;
 
@@ -24,10 +26,11 @@ pub const TICK: Duration = Duration::from_millis(250);
 /// The message a panicking job reports when its payload is not a string.
 const PANIC_FALLBACK: &str = "task panicked";
 
-/// Run `screen` full-screen until it quits, restore the terminal, and hand the screen back.
-pub async fn run_app<S: Screen>(screen: S) -> io::Result<S> {
+/// Run `screen` full-screen with `keymap` until it quits, restore the terminal, and hand the
+/// screen back.
+pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>) -> io::Result<S> {
     let mut tui = terminal::enter()?;
-    let mut app = App::new(screen, Box::new(Osc52));
+    let mut app = App::new(screen, Box::new(Osc52)).with_keymap(keymap);
     let events = Box::pin(EventStream::new());
     let result = run_loop(&mut tui.terminal, &mut app, events).await;
     drop(tui);
