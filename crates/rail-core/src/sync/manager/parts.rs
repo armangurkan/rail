@@ -199,9 +199,17 @@ pub(super) fn named(status: &AccountSyncStatus, who: &str) -> bool {
 }
 
 pub(super) async fn stop_engine(running: Running) {
+    stop_engine_within(running, ENGINE_STOP).await;
+}
+
+/// `stop_engine`, aborting the task once `limit` (at most `ENGINE_STOP`) has passed.
+pub(super) async fn stop_engine_within(running: Running, limit: Duration) {
     let _ = running.stop.send(true);
     let mut task = running.task;
-    if tokio::time::timeout(ENGINE_STOP, &mut task).await.is_err() {
+    if tokio::time::timeout(limit.min(ENGINE_STOP), &mut task)
+        .await
+        .is_err()
+    {
         tracing::warn!(account = %running.name, "an engine did not stop in time; aborting it");
         task.abort();
     }

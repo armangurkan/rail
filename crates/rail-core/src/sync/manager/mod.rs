@@ -20,7 +20,7 @@ pub(crate) use self::parts::unobserved;
 use self::parts::{
     Engines, PlannedAccount, Prepared, Running, failed_status, finish_writer, initial_status, key,
     named, not_running, not_syncing, read_config, retry_observer, shutting_down, stop_engine,
-    unsupported, writer_gone,
+    stop_engine_within, unsupported, writer_gone,
 };
 use super::batch::{Batch, StateUpdate};
 use super::engine::{Engine, EngineParts};
@@ -632,18 +632,26 @@ impl SyncManager {
         (targets, skipped)
     }
 
-    /// Refuse new starts at once, then stop every engine at its next await point and let the
-    /// writer commit the batch in hand, waiting at most `grace` for it.
+    /// Refuse new starts at once, then stop every engine at its next await point (all at
+    /// once, each aborted after `ENGINE_STOP`) and let the writer commit the batch in hand.
+    /// The whole of it (the wait for the engines lock, the engines, the writer) takes at most
+    /// `grace`, one deadline for every step, so the daemon's own exit budget holds.
     pub async fn shutdown(&self, grace: Duration) {
         self.stopping.store(true, Ordering::SeqCst);
-        let Ok(mut engines) = tokio::time::timeout(grace, self.engines.lock()).await else {
+        let deadline = Instant::now() + grace;
+        let left = || deadline.saturating_duration_since(Instant::now());
+        let Ok(mut engines) = tokio::time::timeout_at(deadline, self.engines.lock()).await else {
             tracing::warn!("the sync engines were still busy at shutdown");
             return;
         };
-        for (_, running) in engines.running.drain() {
-            stop_engine(running).await;
-        }
-        finish_writer(engines.writer.take(), grace).await;
+        let stopping: Vec<Running> = engines.running.drain().map(|(_, r)| r).collect();
+        futures_util::future::join_all(
+            stopping
+                .into_iter()
+                .map(|running| stop_engine_within(running, left())),
+        )
+        .await;
+        finish_writer(engines.writer.take(), left()).await;
     }
 }
 

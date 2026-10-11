@@ -649,3 +649,37 @@ async fn a_retrying_search_leaves_an_idle_accounts_phase_alone() {
     );
     ctx.sync.shutdown(Duration::from_secs(5)).await;
 }
+
+/// Review minor 6: sync's shutdown takes at most its grace in all, even when the engines lock
+/// is busy for part of it and the writer never finishes its batch: one deadline, not a grace
+/// per step.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_keeps_to_one_deadline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ctx = context(&tmp, &MockProvider::new());
+    ctx.sync.reconcile(&ctx).await;
+    until(&ctx, |s| s.passes_completed >= 1 && !s.pass_running).await;
+    let (_permits, gate) = std::sync::mpsc::channel::<()>();
+    let (stuck, task) = crate::sync::writer::spawn_gated(&ctx.paths.db_file(), gate).unwrap();
+    let pending = {
+        let handle = stuck.clone();
+        tokio::spawn(async move { handle.write(Batch::new(1)).await })
+    };
+    let busy = {
+        let mut engines = ctx.sync.engines.lock().await;
+        engines.writer = Some((stuck, task));
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let _held = ctx.sync.engines.lock().await;
+            tokio::time::sleep(Duration::from_millis(400)).await;
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let grace = Duration::from_millis(700);
+    let started = std::time::Instant::now();
+    ctx.sync.shutdown(grace).await;
+    let took = started.elapsed();
+    assert!(took < grace + Duration::from_millis(250), "{took:?}");
+    busy.await.unwrap();
+    pending.abort();
+}

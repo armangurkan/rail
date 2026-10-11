@@ -58,6 +58,15 @@ impl Default for ServeConfig {
 /// How long `finish` waits for pending tasks to end after cancelling them.
 const TASK_JOIN: Duration = Duration::from_secs(5);
 
+/// The whole of `finish`, under `DAEMON_EXIT_TIMEOUT` (35 s), which `rail daemon stop` waits
+/// for the daemon to exit: sync's shutdown and the running saves together get at most
+/// `SAVE_GRACE` (30 s); the pending tasks get what is left of `TASK_JOIN` before the last
+/// `CLOSE_GRACE` (3 s), which the connections get. So 30 + 3 = 33 s at worst, then removing
+/// the socket, with 2 s to spare.
+const FINISH_BUDGET: Duration = Duration::from_secs(33);
+const _: () = assert!(SAVE_GRACE.as_secs() + CLOSE_GRACE.as_secs() <= FINISH_BUDGET.as_secs());
+const _: () = assert!(FINISH_BUDGET.as_secs() < crate::daemon::DAEMON_EXIT_TIMEOUT.as_secs());
+
 /// How long `finish` lets connections answer their last requests and flush before aborting.
 const CLOSE_GRACE: Duration = Duration::from_secs(3);
 
@@ -307,16 +316,29 @@ impl Server {
     /// connection so none serves a request after this; remove the socket; and only then
     /// release `daemon.lock`.
     async fn finish(mut self) -> Result<(), OpError> {
+        let deadline = Instant::now() + FINISH_BUDGET;
+        let left = |reserve: Duration| {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .saturating_sub(reserve)
+        };
         drop(self.listener);
         self.ctx.pending.stop_new();
-        self.ctx.sync.shutdown(SAVE_GRACE).await;
         self.ctx.pending.cancel_waiting();
-        self.ctx.pending.wait_for_saves(SAVE_GRACE).await;
-        self.ctx.pending.join_tasks(TASK_JOIN).await;
+        // The sync writer and the saves of logins write different things: they finish side
+        // by side, inside one grace.
+        tokio::join!(
+            self.ctx.sync.shutdown(SAVE_GRACE),
+            self.ctx.pending.wait_for_saves(SAVE_GRACE)
+        );
+        self.ctx
+            .pending
+            .join_tasks(TASK_JOIN.min(left(CLOSE_GRACE)))
+            .await;
         // Connections stop reading, let their requests answer and flush what is queued (the
         // reply to `daemon.stop` among it); whatever is slower than that is aborted.
         self.state.begin_close();
-        let drained = tokio::time::timeout(CLOSE_GRACE, async {
+        let drained = tokio::time::timeout(CLOSE_GRACE.min(left(Duration::ZERO)), async {
             while self.connections.join_next().await.is_some() {}
         })
         .await;

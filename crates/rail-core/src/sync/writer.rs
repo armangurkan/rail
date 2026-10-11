@@ -68,6 +68,15 @@ pub fn spawn_writer(db: &Path) -> Result<(WriterHandle, WriterTask), OpError> {
     spawn(db, None)
 }
 
+/// `spawn_writer` whose every batch waits for a permit from `permits` first.
+#[cfg(test)]
+pub(crate) fn spawn_gated(
+    db: &Path,
+    permits: std::sync::mpsc::Receiver<()>,
+) -> Result<(WriterHandle, WriterTask), OpError> {
+    spawn(db, Some(permits))
+}
+
 /// `spawn_writer`; when `permits` is given (tests), each batch waits for a permit first.
 fn spawn(
     db: &Path,
