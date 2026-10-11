@@ -17,6 +17,7 @@ mod sync_write;
 #[cfg(test)]
 mod sync_write_tests;
 pub mod view;
+mod view_labels;
 #[cfg(test)]
 mod view_sidebar_tests;
 #[cfg(test)]

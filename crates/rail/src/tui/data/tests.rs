@@ -483,3 +483,55 @@ async fn a_refresh_job_reports_its_end_after_its_answers_and_after_a_panic() {
         "the refresh ended anyway"
     );
 }
+
+#[tokio::test]
+async fn the_fake_records_actions_and_answers_in_order() {
+    use rail_core::ops::Action;
+    let fake = std::sync::Arc::new(FakeDaemon::default());
+    let link = DaemonLink::fake(fake.clone());
+    let call = ApplyCall {
+        seq: 1,
+        account: "work".into(),
+        threads: vec![4],
+        action: Action::Archive {},
+        grace: true,
+    };
+    let bound = Duration::from_secs(5);
+    let applied = events(link.apply(call.clone()), 1, bound).await;
+    assert!(matches!(&applied[..], [MailEvent::Applied { result: Ok(r), .. }] if r.rows == [1]));
+    events(link.undo(vec![1]), 1, bound).await;
+    events(link.retry(1), 1, bound).await;
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        [
+            FakeCall::Apply {
+                account: "work".into(),
+                threads: vec![4],
+                action: Action::Archive {},
+                grace: true
+            },
+            FakeCall::Undo { rows: vec![1] },
+            FakeCall::Retry { row: 1 }
+        ]
+    );
+}
+
+#[test]
+fn an_action_failure_debug_names_the_row_and_nothing_of_the_error() {
+    use rail_core::error::ErrorClass;
+    use rail_core::ops::{Action, ActionFailed, ErrorCode};
+    let mut error = OpError::new(ErrorCode::Provider, ErrorClass::Permanent, "refused");
+    error.detail = Some("SECRET gmail text".into());
+    let event = MailEvent::ActionFailed(Box::new(ActionFailed {
+        account: "SECRET-account".into(),
+        row: 7,
+        threads: vec![1, 2],
+        action: Action::Archive {},
+        error,
+    }));
+    let text = format!("{event:?}");
+    assert!(
+        text.contains("row: 7") && !text.contains("SECRET"),
+        "{text}"
+    );
+}

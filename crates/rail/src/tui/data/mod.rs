@@ -13,10 +13,13 @@ use std::time::Duration;
 
 use futures_util::FutureExt;
 
-use rail_core::ops::{AccountSyncStatus, BodyFetchResponse, OpError};
-use rail_core::store::view::{HtmlBody, ThreadDetail};
+use rail_core::ops::{
+    AccountSyncStatus, ActionApplyResponse, ActionFailed, ActionRetryResponse, ActionUndoResponse,
+    BodyFetchResponse, OpError, OutboxId,
+};
+use rail_core::store::view::{HtmlBody, LabelChoices, ThreadDetail};
 
-pub use daemon_link::DaemonLink;
+pub use daemon_link::{ApplyCall, DaemonLink};
 #[cfg(test)]
 pub use daemon_link::{FakeCall, FakeDaemon};
 pub use store_reader::{
@@ -72,6 +75,22 @@ pub enum MailEvent {
         thread_id: i64,
         result: Result<BodyFetchResponse, OpError>,
     },
+    /// `action.apply` answered for `call`.
+    Applied {
+        call: ApplyCall,
+        result: Result<ActionApplyResponse, OpError>,
+    },
+    Undone(Result<ActionUndoResponse, OpError>),
+    Retried {
+        row: OutboxId,
+        result: Result<ActionRetryResponse, OpError>,
+    },
+    /// The daemon gave up on an action and reverted it.
+    ActionFailed(Box<ActionFailed>),
+    Labels {
+        seq: u64,
+        result: Result<LabelChoices, ReadError>,
+    },
     /// The refresh with this sequence number gave its last answer, or its job panicked.
     RefreshEnded {
         seq: u64,
@@ -114,6 +133,30 @@ impl fmt::Debug for MailEvent {
             Self::Bodies { thread_id, result } => f
                 .debug_struct("Bodies")
                 .field("thread_id", thread_id)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::Applied { call, result } => f
+                .debug_struct("Applied")
+                .field("seq", &call.seq)
+                .field("threads", &call.threads.len())
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::Undone(result) => f
+                .debug_struct("Undone")
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::Retried { row, result } => f
+                .debug_struct("Retried")
+                .field("row", row)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::ActionFailed(failure) => f
+                .debug_struct("ActionFailed")
+                .field("row", &failure.row)
+                .finish(),
+            Self::Labels { seq, result } => f
+                .debug_struct("Labels")
+                .field("seq", seq)
                 .field("ok", &result.is_ok())
                 .finish(),
             Self::RefreshEnded { seq } => f.debug_struct("RefreshEnded").field("seq", seq).finish(),

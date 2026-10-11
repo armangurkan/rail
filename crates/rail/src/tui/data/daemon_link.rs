@@ -9,10 +9,11 @@ use std::time::Duration;
 use rail_core::daemon::wire::Notification;
 use rail_core::daemon::{Connector, DaemonClient};
 use rail_core::error::ErrorClass;
-use rail_core::ops::op::{BodyFetch, SyncNow, SyncStatus};
+use rail_core::ops::op::{ActionApply, ActionRetry, ActionUndo, BodyFetch, SyncNow, SyncStatus};
 use rail_core::ops::{
-    AccountSyncStatus, BodyFetchRequest, ErrorCode, OpError, SyncNowRequest, SyncStatusRequest,
-    names,
+    AccountSyncStatus, ActionApplyRequest, ActionFailed, ActionRetryRequest, ActionUndoRequest,
+    BodyFetchRequest, ErrorCode, OpError, OutboxId, SyncNowRequest, SyncStatusRequest,
+    client_token, names,
 };
 use tokio::sync::broadcast::{self, error::RecvError};
 
@@ -22,6 +23,18 @@ use crate::tui::app::{Effect, TaskSink};
 /// How often the watch checks whether its connection closed (the notification channel lives
 /// as long as the client, so it does not end by itself).
 const CLOSED_POLL: Duration = Duration::from_secs(1);
+
+/// One `action.apply` the mail screen sends: `seq` ties the calls of one key press together
+/// (one per account), so their rows make one undo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyCall {
+    pub seq: u64,
+    /// The account's name.
+    pub account: String,
+    pub threads: Vec<i64>,
+    pub action: rail_core::ops::Action,
+    pub grace: bool,
+}
 
 #[derive(Clone)]
 pub struct DaemonLink {
@@ -97,6 +110,56 @@ impl DaemonLink {
             }
         }
     }
+
+    /// Apply `call`'s action; a fresh client token per press, so a resend finds its row.
+    #[allow(dead_code, reason = "used by the mail screen in the next task")]
+    pub fn apply(&self, call: ApplyCall) -> Effect {
+        match self.link.clone() {
+            Link::Daemon(connector) => job(move |sink| async move {
+                let request = ActionApplyRequest {
+                    account: call.account.clone(),
+                    threads: call.threads.clone(),
+                    action: call.action.clone(),
+                    grace: call.grace,
+                    client_token: client_token(),
+                };
+                let result = connector.call::<ActionApply>(&request).await;
+                send(&sink, MailEvent::Applied { call, result });
+            }),
+            #[cfg(test)]
+            Link::Fake(fake) => job(move |sink| async move { fake.apply(&sink, call) }),
+        }
+    }
+
+    /// Take back the rows of one press.
+    #[allow(dead_code, reason = "used by the mail screen in the next task")]
+    pub fn undo(&self, rows: Vec<OutboxId>) -> Effect {
+        match self.link.clone() {
+            Link::Daemon(connector) => job(move |sink| async move {
+                let result = connector
+                    .call::<ActionUndo>(&ActionUndoRequest { rows })
+                    .await;
+                send(&sink, MailEvent::Undone(result));
+            }),
+            #[cfg(test)]
+            Link::Fake(fake) => job(move |sink| async move { fake.undo(&sink, rows) }),
+        }
+    }
+
+    /// Send a failed row again.
+    #[allow(dead_code, reason = "used by the mail screen in the next task")]
+    pub fn retry(&self, row: OutboxId) -> Effect {
+        match self.link.clone() {
+            Link::Daemon(connector) => job(move |sink| async move {
+                let result = connector
+                    .call::<ActionRetry>(&ActionRetryRequest { row })
+                    .await;
+                send(&sink, MailEvent::Retried { row, result });
+            }),
+            #[cfg(test)]
+            Link::Fake(fake) => job(move |sink| async move { fake.retry(&sink, row) }),
+        }
+    }
 }
 
 /// Connect, subscribe and report every status. The receiver is taken before `sync.now`, so no
@@ -131,6 +194,7 @@ async fn follow(
         tokio::select! {
             note = notes.recv() => match note {
                 Ok(note) if note.method == names::SYNC_PROGRESS => progress(note, sink),
+                Ok(note) if note.method == names::ACTION_FAILED => action_failed(note, sink),
                 Ok(_) => {}
                 Err(RecvError::Lagged(_)) => {
                     // Missed some: every status again answers them all.
@@ -161,6 +225,14 @@ fn progress(note: Notification, sink: &TaskSink) {
     }
 }
 
+fn action_failed(note: Notification, sink: &TaskSink) {
+    match serde_json::from_value::<ActionFailed>(note.params) {
+        Ok(failure) => send(sink, MailEvent::ActionFailed(Box::new(failure))),
+        // The daemon's own JSON, and `detail` may hold Gmail's text: nothing is repeated.
+        Err(_) => tracing::warn!("an action.failed notification did not parse"),
+    }
+}
+
 fn closed() -> OpError {
     OpError::new(
         ErrorCode::Daemon,
@@ -182,6 +254,23 @@ pub struct FakeDaemon {
     /// bodies to the store here, as the daemon would).
     #[allow(clippy::type_complexity, reason = "a test hook, named once")]
     pub on_fetch: std::sync::Mutex<Option<Box<dyn FnMut(&[String]) + Send>>>,
+    /// Runs with each `action.apply` before the fake answers (a test applies it to the store
+    /// here, as the daemon would); its answer is the fake's. Rows `[n]` counting up when unset.
+    #[allow(clippy::type_complexity, reason = "a test hook, named once")]
+    pub on_apply: std::sync::Mutex<
+        Option<
+            Box<
+                dyn FnMut(&ApplyCall) -> Result<rail_core::ops::ActionApplyResponse, OpError>
+                    + Send,
+            >,
+        >,
+    >,
+    /// The answer to the next `action.undo`; every row undone when unset.
+    pub undo_answer: std::sync::Mutex<Option<Result<rail_core::ops::ActionUndoResponse, OpError>>>,
+    /// The answer to the next `action.retry`; retried when unset.
+    pub retry_answer:
+        std::sync::Mutex<Option<Result<rail_core::ops::ActionRetryResponse, OpError>>>,
+    pub next_row: std::sync::atomic::AtomicI64,
 }
 
 #[cfg(test)]
@@ -189,7 +278,22 @@ pub struct FakeDaemon {
 pub enum FakeCall {
     Watch,
     Refresh,
-    Fetch { account: String, ids: Vec<String> },
+    Fetch {
+        account: String,
+        ids: Vec<String>,
+    },
+    Apply {
+        account: String,
+        threads: Vec<i64>,
+        action: rail_core::ops::Action,
+        grace: bool,
+    },
+    Undo {
+        rows: Vec<OutboxId>,
+    },
+    Retry {
+        row: OutboxId,
+    },
 }
 
 #[cfg(test)]
@@ -239,5 +343,52 @@ impl FakeDaemon {
             })
         });
         send(sink, MailEvent::Bodies { thread_id, result });
+    }
+
+    fn apply(&self, sink: &TaskSink, call: ApplyCall) {
+        use std::sync::atomic::Ordering;
+        self.record(FakeCall::Apply {
+            account: call.account.clone(),
+            threads: call.threads.clone(),
+            action: call.action.clone(),
+            grace: call.grace,
+        });
+        let hooked = self
+            .on_apply
+            .lock()
+            .unwrap()
+            .as_mut()
+            .map(|hook| hook(&call));
+        let result = hooked.unwrap_or_else(|| {
+            let row = self.next_row.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(rail_core::ops::ActionApplyResponse {
+                rows: vec![row],
+                applied: call.threads.len(),
+            })
+        });
+        let result = if self.down() { Err(closed()) } else { result };
+        send(sink, MailEvent::Applied { call, result });
+    }
+
+    fn undo(&self, sink: &TaskSink, rows: Vec<OutboxId>) {
+        self.record(FakeCall::Undo { rows: rows.clone() });
+        let result = self.undo_answer.lock().unwrap().take().unwrap_or(Ok(
+            rail_core::ops::ActionUndoResponse {
+                undone: rows,
+                too_late: vec![],
+            },
+        ));
+        send(sink, MailEvent::Undone(result));
+    }
+
+    fn retry(&self, sink: &TaskSink, row: OutboxId) {
+        self.record(FakeCall::Retry { row });
+        let result = self
+            .retry_answer
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or(Ok(rail_core::ops::ActionRetryResponse { retried: true }));
+        send(sink, MailEvent::Retried { row, result });
     }
 }

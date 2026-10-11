@@ -244,6 +244,18 @@ impl StoreReader {
             send(&sink, MailEvent::Html { message_id, result });
         })
     }
+
+    /// The pickers' labels for one account and what `threads` carry now.
+    #[allow(dead_code, reason = "used by the pickers in a later task")]
+    pub fn labels(&self, seq: u64, account_id: i64, threads: Vec<i64>) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| store.label_choices(account_id, &threads))
+                .await;
+            send(&sink, MailEvent::Labels { seq, result });
+        })
+    }
 }
 
 fn open(db: &std::path::Path) -> Result<Store, ReadError> {

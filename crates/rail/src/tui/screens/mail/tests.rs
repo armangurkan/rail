@@ -591,7 +591,7 @@ async fn an_override_in_the_keymap_drives_the_list() {
     let paths = Paths::all_in(tmp.path());
     let envelopes: Vec<_> = inbox_threads("w", 3).into_iter().map(|e| (0, e)).collect();
     seed_store(&paths, &[("work", "w@example.com")], &envelopes);
-    let text = "[keys]\n\"list.down\" = \"s\"\n";
+    let text = "[keys]\n\"list.down\" = \"x\"\n";
     let path = std::path::Path::new("/c/config.toml");
     let config = rail_core::config::parse(text, path).unwrap();
     let mut ctx = mail_ctx(&paths, Arc::new(FakeDaemon::default()));
@@ -601,7 +601,7 @@ async fn an_override_in_the_keymap_drives_the_list() {
     settle(&mut screen, effects).await;
     screen.update(Msg::Key(key(KeyCode::Char('j'))));
     assert_eq!(screen.list.selected_index(), 0, "j no longer moves");
-    screen.update(Msg::Key(key(KeyCode::Char('s'))));
+    screen.update(Msg::Key(key(KeyCode::Char('x'))));
     assert_eq!(screen.list.selected_index(), 1);
 }
 

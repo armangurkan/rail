@@ -92,6 +92,7 @@ actions! {
     GlobalQuit => "global.quit", [Global], ["q"], "Quit Rail";
     GlobalPalette => "global.palette", [Global], [":"], "Open the command palette";
     GlobalHelp => "global.help", [Global], ["?"], "Show the keys for this view";
+    GlobalUndo => "global.undo", [Global], ["z"], "Undo the last action";
     ListOpen => "list.open", [List], ["enter"], "Open the thread";
     ListFilter => "list.filter", [List], ["/"], "Filter the list as you type";
     ListSidebar => "list.sidebar", [List, Sidebar], ["b"], "Show or hide the sidebar";
@@ -112,6 +113,14 @@ actions! {
     ListPageUp => "list.page_up", [List], ["pageup", "ctrl-u"], "One page up";
     ListTop => "list.top", [List], ["home", "g g"], "Newest thread";
     ListBottom => "list.bottom", [List], ["end", "G"], "Oldest thread";
+    ListArchive => "list.archive", [List, Reader], ["e"], "Archive the thread or the selection";
+    ListTrash => "list.trash", [List, Reader], ["d"], "Move to Gmail's Trash (asks first)";
+    ListStar => "list.star", [List, Reader], ["s"], "Star or unstar";
+    ListRead => "list.read", [List, Reader], ["u"], "Mark read or unread";
+    ListLabels => "list.labels", [List, Reader], ["l"], "Add or remove labels";
+    ListMove => "list.move", [List, Reader], ["m"], "Move to a label (archives)";
+    ListSelect => "list.select", [List], ["space"], "Select or unselect the thread";
+    ListClearSelection => "list.clear_selection", [List], ["esc"], "Clear the selection";
     SidebarFocus => "sidebar.focus", [List, Sidebar], ["tab"], "Move between the sidebar and the list";
     SidebarDown => "sidebar.down", [Sidebar], ["j", "down"], "Next mailbox";
     SidebarUp => "sidebar.up", [Sidebar], ["k", "up"], "Previous mailbox";
