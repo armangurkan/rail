@@ -456,7 +456,7 @@ client_id = "2"
         let err = p("[general]\ntheme = \"a\u{202E}b\"\n")
             .unwrap_err()
             .to_string();
-        assert!(err.contains("theme"), "{err}");
+        assert!(err.contains("the theme must not contain control characters, format characters or whitespace other than spaces"), "{err}");
         assert!(!err.contains('\u{202E}'), "{err:?}");
     }
 
@@ -475,12 +475,12 @@ client_id = "2"
             assert_eq!(c.general.theme.as_deref(), Some(name));
         }
         let err = p("[general]\ntheme = \"a\\tb\"\n").unwrap_err().to_string();
-        assert!(err.contains("theme"), "{err}");
+        assert!(err.contains("the theme must not contain control characters, format characters or whitespace other than spaces"), "{err}");
         let err = p("[general]\ntheme = \"a\u{202E}b\"\n")
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("theme") && !err.contains('\u{202E}'),
+            err.contains("the theme must not contain control characters, format characters or whitespace other than spaces") && !err.contains('\u{202E}'),
             "{err:?}"
         );
     }

@@ -474,4 +474,23 @@ mod tests {
             "[general]\n"
         );
     }
+
+    #[test]
+    fn set_general_text_saves_a_spaced_theme_and_refuses_control_and_format_characters() {
+        let path = Path::new("c.toml");
+        let out = set_general_text("", path, "theme", Some("Catppuccin Mocha")).unwrap();
+        assert_eq!(
+            parse(&out, path).unwrap().general.theme.as_deref(),
+            Some("Catppuccin Mocha")
+        );
+        for bad in ["a\tb", "a\u{202E}b"] {
+            let err = set_general_text("", path, "theme", Some(bad)).unwrap_err();
+            let message = err.to_string();
+            assert!(message.contains("theme"), "{message}");
+            assert!(
+                !message.contains(bad.chars().nth(1).unwrap()),
+                "{message:?}"
+            );
+        }
+    }
 }
