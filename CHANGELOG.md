@@ -150,7 +150,9 @@ All notable changes to Rail are recorded here. The format follows
   at the left so its end shows, or every `mailto:` recipient: `To`, `Cc` and `Bcc`, at most five
   lines and then "... and K more recipients"), then the address, cut if it is long. A warning
   names the whole host when the address has a user name or password before the `@`
-  (`https://bank.com@evil.example`). The yes/no hint always stays on the last row.
+  (`https://bank.com@evil.example`). A `mailto:` link with a parameter other than `to`, `cc`, `bcc`,
+  `subject` or `body` (such as `attach=`) gets a first-line warning naming up to five of them. The
+  yes/no hint always stays on the last row.
 - Help and `:errors` show a `↓ more` / `↑ more` line (`v more` / `^ more` with `icons = "ascii"`)
   when there is more to scroll, and help keeps the `* set in config.toml` legend in its title;
   `:errors` scrolls with `j`/`k` or the arrow keys. Help closes on the bound help key, `Esc` or `q`.
@@ -168,12 +170,17 @@ All notable changes to Rail are recorded here. The format follows
   text is escaped on the terminal.
 - `rail secrets set` refuses control and format characters in `--vault`/`--account`, as MCP did.
 - Account addresses refuse Unicode format characters (bidi overrides, zero-width spaces).
-- A label renamed in Gmail keeps the sidebar cursor, and a deleted label sends it to its account's
-  inbox.
+- A label renamed in Gmail keeps the sidebar cursor, and the header keeps its unread count and shows
+  the new name; a deleted label sends the screen to its account's inbox. A label beyond the
+  500-per-account sidebar cap gets its own notice ("more than 500 labels") instead of "gone".
 - A failed sidebar read shows in the sidebar and a failed thread read in the reader, and both reach
   the status bar and `:errors`; only a failed list read replaces the list.
 - After a message fetch gets through to the daemon again, the status bar says "daemon reachable
-  again" instead of keeping "daemon unreachable".
+  again" instead of keeping "daemon unreachable"; a later fetch that finds the daemon gone again
+  puts "daemon unreachable" back.
+- The first `j` in help and `:errors` after the top shows a new row (the `↑ more` line used to take
+  the row it would have revealed).
+- Upgrading a store whose full-text triggers or table were already missing no longer fails.
 - An HTML answer for a message outside the open thread is dropped; the reader's cursor is clamped
   when the body shrinks; a re-read of the open thread no longer moves the focus; a refresh ends
   only when the refresh itself ends, even if it panics.
@@ -189,8 +196,9 @@ All notable changes to Rail are recorded here. The format follows
 - `rail daemon install` on macOS uses the uid of the user running it, not the owner of `HOME`.
 - The daemon notices a `config.toml` edit that keeps the file's modification time: it compares a
   digest of the contents as well.
-- A store older than the build is reported as temporary (the daemon migrates it), so `rail doctor`
-  warns instead of failing; a newer store is still an error.
+- A store the daemon is still migrating is reported as a temporary error where an engine's sync
+  status lines or a search meet it, instead of a failure; `rail doctor`'s store line still fails on
+  any store error, and a newer store is still an error.
 
 ### Security
 
