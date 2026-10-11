@@ -1,7 +1,8 @@
 //! `format=full` messages as Rail bodies. The text part is chosen as a mail reader would (the
 //! HTML of a `multipart/alternative`, the first readable part of a `multipart/mixed`, never a
-//! forwarded `message/rfc822`). HTML becomes text through `html::html_text`, which fetches
-//! nothing and runs in bounded time; plain text is decoded from its charset.
+//! forwarded `message/rfc822`). HTML becomes text through `html::html_render` into text with
+//! numbered link markers, which fetches nothing and runs in bounded time; plain text is
+//! decoded from its charset, and its bare addresses get markers too.
 //! The text keeps its lines and tabs and loses every other control and format character. A
 //! body over `MAX_BODY_BYTES` is cut and ends with `TRUNCATED_MARKER`.
 
@@ -9,11 +10,12 @@ use base64::Engine as _;
 use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 
-use super::html::html_text;
+use super::html::html_render;
 use super::metadata::{cut, one_line_capped};
 use super::wire::{AttachmentBody, Message, Part};
 use super::{COST_ATTACHMENT, COST_GET, GmailProvider, checked_id, safe_id};
 use crate::config::model::is_format_char;
+use crate::provider::links::{Rendered, plain_links};
 use crate::provider::{AttachmentMeta, Body, ProviderError};
 
 /// The most body text (and HTML) Rail keeps for one message.
@@ -245,12 +247,19 @@ pub(crate) fn render(
     let decoded = to_text(&data[..data.len().min(MAX_BODY_BYTES)], charset);
     let kept = cut(&decoded, MAX_BODY_BYTES);
     let rendered = match kind {
-        Kind::Html => clean(&html_text(kept)),
-        Kind::Plain => clean(kept),
+        Kind::Html => {
+            let html = html_render(kept);
+            Rendered {
+                text: clean(&html.text),
+                links: html.links,
+            }
+        }
+        Kind::Plain => plain_links(&clean(kept)),
     };
-    let mut text = cut(&rendered, MAX_BODY_BYTES).to_string();
-    let truncated =
-        data.len() > MAX_BODY_BYTES || decoded.len() > kept.len() || rendered.len() > text.len();
+    let mut text = cut(&rendered.text, MAX_BODY_BYTES).to_string();
+    let truncated = data.len() > MAX_BODY_BYTES
+        || decoded.len() > kept.len()
+        || rendered.text.len() > text.len();
     if truncated {
         text.push_str(TRUNCATED_MARKER);
     }
@@ -259,6 +268,7 @@ pub(crate) fn render(
         html: (kind == Kind::Html).then(|| kept.to_string()),
         truncated,
         attachments,
+        links: rendered.links,
     })
 }
 

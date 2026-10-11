@@ -428,3 +428,25 @@ async fn attachment_names_and_types_are_one_line_and_capped() {
     assert!(second.filename.chars().count() < 5_000);
     assert!(second.mime_type.chars().count() < 5_000);
 }
+
+#[test]
+fn rendered_bodies_carry_their_links() {
+    let html = body::render(
+        body::Kind::Html,
+        b"<p>Read <a href=\"https://a.example\">this</a></p>",
+        None,
+        Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(html.text, "Read this[1]");
+    assert_eq!(html.links, ["https://a.example"]);
+    let plain = body::render(
+        body::Kind::Plain,
+        b"go to https://a.example now",
+        None,
+        Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(plain.text, "go to https://a.example [1] now");
+    assert_eq!(plain.links, ["https://a.example"]);
+}
