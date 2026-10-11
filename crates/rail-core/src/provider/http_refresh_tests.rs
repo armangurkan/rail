@@ -298,3 +298,27 @@ async fn a_request_reuses_a_finished_refresh_at_most_once() {
     .await
     .expect("deadlocked");
 }
+
+/// `get`'s own bookkeeping, whatever the flight reports: even if every refresh claims to be
+/// a reuse, a refused request stops with `NeedsAuth` after three authorised attempts.
+#[tokio::test]
+async fn a_flight_that_always_reports_reuse_still_ends_in_needs_auth() {
+    tokio::time::timeout(BOUND, async {
+        let server = MockServer::start().await;
+        Mock::given(path("/a/gmail/v1/users/me/labels"))
+            .respond_with(google_error(401, "authError", "Invalid Credentials"))
+            .mount(&server)
+            .await;
+        let tokens = Arc::new(StaleTokens {
+            fresh: vec!["new1", "new2", "new3", "new4"],
+            refreshes: AtomicUsize::new(0),
+        });
+        let api = client_under(&server, "a", tokens);
+        api.tokens.always_reused.store(true, Ordering::SeqCst);
+        let err = get(&api).await.unwrap_err();
+        assert!(matches!(err, ProviderError::NeedsAuth { .. }), "{err:?}");
+        assert_eq!(server.received_requests().await.unwrap().len(), 3);
+    })
+    .await
+    .expect("deadlocked");
+}

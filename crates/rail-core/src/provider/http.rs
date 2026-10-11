@@ -301,8 +301,10 @@ impl ApiClient {
                     // A reused result is not a refresh made for this request: if its token is
                     // refused too, the request gets its one real refresh. Reuse happens at most
                     // once, so a request makes at most three authorised attempts.
+                    // Any refresh after a reuse is the request's real one, however it was
+                    // reported: the cap holds on this side too.
+                    refreshed = !reused || reused_once;
                     reused_once |= reused;
-                    refreshed = !reused;
                     renewed = Some(fresh);
                 }
                 Attempt::Unauthorized(detail) => return Err(ProviderError::NeedsAuth { detail }),

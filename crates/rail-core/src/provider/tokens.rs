@@ -53,6 +53,9 @@ pub(crate) struct RefreshFlight {
     /// Requests that reached `refresh_after`, so a test can wait until a burst has joined.
     #[cfg(test)]
     pub(crate) arrivals: std::sync::atomic::AtomicUsize,
+    /// Makes every `refresh_after` report a reused result, as a racing flight could.
+    #[cfg(test)]
+    pub(crate) always_reused: std::sync::atomic::AtomicBool,
 }
 
 impl RefreshFlight {
@@ -62,6 +65,8 @@ impl RefreshFlight {
             current: Mutex::new(None),
             #[cfg(test)]
             arrivals: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            always_reused: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -84,6 +89,8 @@ impl RefreshFlight {
         self.arrivals
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let (flight, reused) = self.join(Sha256::digest(rejected.as_bytes()).to_vec(), allow_reuse);
+        #[cfg(test)]
+        let reused = reused || self.always_reused.load(std::sync::atomic::Ordering::SeqCst);
         flight.await.map(|token| (token, reused))
     }
 
@@ -91,13 +98,19 @@ impl RefreshFlight {
         let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((held, flight)) = current.as_ref()
             && *held == key
-            && match flight.peek() {
-                None => true,
-                Some(Ok(_)) => allow_reuse,
-                Some(Err(_)) => false,
-            }
         {
-            return (flight.clone(), flight.peek().is_some());
+            // One read: the decision and the reported `reused` must agree even if another
+            // task finishes the flight meanwhile.
+            let finished = match flight.peek() {
+                None => Some(false),
+                Some(Ok(_)) => Some(true),
+                Some(Err(_)) => None,
+            };
+            if let Some(finished) = finished
+                && (!finished || allow_reuse)
+            {
+                return (flight.clone(), finished);
+            }
         }
         let tokens = self.tokens.clone();
         let flight = async move { tokens.refresh().await }.boxed().shared();
