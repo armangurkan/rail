@@ -1,7 +1,7 @@
 //! What the sync engine and search read. Every query here only reads; the writer
 //! (`sync::writer`) is the only code that changes sync data.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{OptionalExtension, params};
 
@@ -282,6 +282,42 @@ impl Store {
         }
         Ok(hits)
     }
+
+    /// The body state of each of `ids` the store holds for the account; ids it does not hold
+    /// are left out. One query.
+    pub fn body_states(
+        &self,
+        account_id: i64,
+        ids: &[String],
+    ) -> Result<HashMap<String, StoredBody>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT remote_id, body_fetched_at IS NOT NULL, body_text = ?3 FROM messages
+             WHERE account_id = ?1 AND remote_id IN (SELECT value FROM json_each(?2))",
+        )?;
+        let ids = serde_json::Value::from(ids.to_vec()).to_string();
+        let rows = stmt.query_map(
+            params![account_id, ids, crate::sync::UNREADABLE_BODY],
+            |r| {
+                let state = match (r.get::<_, bool>(1)?, r.get::<_, Option<bool>>(2)?) {
+                    (false, _) => StoredBody::Pending,
+                    (true, Some(true)) => StoredBody::Unreadable,
+                    (true, _) => StoredBody::Stored,
+                };
+                Ok((r.get::<_, String>(0)?, state))
+            },
+        )?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+/// What the store holds of one message's body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredBody {
+    Stored,
+    /// The `UNREADABLE_BODY` marker.
+    Unreadable,
+    /// Not fetched yet.
+    Pending,
 }
 
 #[cfg(test)]
@@ -417,5 +453,28 @@ mod tests {
         let mut found: Vec<&str> = hits.iter().map(|h| h.remote_id.as_str()).collect();
         found.sort_unstable();
         assert_eq!(found, ["m1", "m3"]);
+    }
+
+    #[test]
+    fn body_states_tell_stored_unreadable_and_pending_apart() {
+        let store = seeded();
+        store
+            .conn()
+            .execute_batch(&format!(
+                "UPDATE messages SET body_text = 'x', body_fetched_at = 1 WHERE remote_id = 'm1';
+                 UPDATE messages SET body_text = '{}', body_fetched_at = 1 WHERE remote_id = 'm2';",
+                crate::sync::UNREADABLE_BODY.replace('\'', "''")
+            ))
+            .unwrap();
+        let ids: Vec<String> = ["m1", "m2", "m3", "zz"].map(String::from).to_vec();
+        let states = store.body_states(1, &ids).unwrap();
+        assert_eq!(states.get("m1"), Some(&StoredBody::Stored));
+        assert_eq!(states.get("m2"), Some(&StoredBody::Unreadable));
+        assert_eq!(states.get("m3"), Some(&StoredBody::Pending));
+        assert_eq!(states.get("zz"), None);
+        assert!(
+            store.body_states(2, &ids).unwrap().is_empty(),
+            "another account's ids"
+        );
     }
 }

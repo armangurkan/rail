@@ -3,6 +3,7 @@
 
 mod backfill;
 pub mod batch;
+pub mod body_fetch;
 pub mod engine;
 pub mod manager;
 mod pass;
@@ -17,8 +18,8 @@ mod engine_tests;
 pub use batch::{Batch, BatchOutcome, Origin, Prune, ResumeToken, StateUpdate, Sweep};
 pub use engine::{Clock, Engine, EngineParts, SyncError};
 pub use manager::{
-    CONFIG_CHECK, ENGINE_STOP, MAX_WRITER_RESTARTS, ProviderFactory, ProviderRequest, SETTLE_WAIT,
-    SearchTarget, SyncManager, WRITER_HEALTHY,
+    CONFIG_CHECK, ENGINE_STOP, MAX_WRITER_RESTARTS, ProviderFactory, ProviderRequest, Reach,
+    SETTLE_WAIT, SearchTarget, SyncManager, WRITER_HEALTHY,
 };
 pub use status::{StatusBoard, Subscriber};
 pub use writer::{WRITER_QUEUE, WriterHandle, WriterTask, spawn_writer};

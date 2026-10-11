@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use accounts::AccountRow;
-pub use sync_read::{StoreCounts, StoredHit, SyncStateRow, fts_query};
+pub use sync_read::{StoreCounts, StoredBody, StoredHit, SyncStateRow, fts_query};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags};
 
