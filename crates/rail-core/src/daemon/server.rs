@@ -6,11 +6,12 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
+use tokio::time::{Instant, MissedTickBehavior, interval};
 
 use super::connect::{
     START_TIMEOUT, VERSION, check_socket_path, open_lock_file, remove_stale_socket, socket_answers,
@@ -242,8 +243,12 @@ impl Server {
         let mut stop = std::pin::pin!(stop);
         self.ctx.sync.count_accounts(&self.ctx.paths);
         SyncManager::reconcile_in_background(self.ctx.clone());
-        let mut config_tick = tokio::time::interval(CONFIG_CHECK);
-        config_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Intervals, not a sleep re-armed each turn: another arm firing more often than the
+        // idle check would otherwise keep re-arming it, and the daemon would never idle out.
+        let mut config_tick = interval(CONFIG_CHECK);
+        config_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut idle_tick = interval(tick);
+        idle_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 () = &mut stop => {
@@ -259,7 +264,7 @@ impl Server {
                 },
                 () = self.state.shutdown.notified() => break,
                 _ = config_tick.tick() => SyncManager::tick(&self.ctx),
-                () = tokio::time::sleep(tick) => {
+                _ = idle_tick.tick() => {
                     if self.state.idle_expired(&self.ctx) {
                         tracing::info!("no clients and nothing pending; exiting");
                         break;
@@ -294,14 +299,14 @@ impl Server {
         self.connections.spawn(connection.serve(stream));
     }
 
-    /// The single shutdown point, in the one order that matters: stop listening; stop the sync
-    /// engines and let the writer commit its batch; end the logins still waiting for a
+    /// The single shutdown point, in the one order that matters: stop listening; refuse new
+    /// logins; stop the sync engines and let the writer commit its batch; end the logins still waiting for a
     /// browser; give running saves their time to finish; end every connection so none serves
     /// a request after this; remove the socket; and only then release `daemon.lock`.
     async fn finish(mut self) -> Result<(), OpError> {
         drop(self.listener);
-        self.ctx.sync.shutdown(SAVE_GRACE).await;
         self.ctx.pending.stop_new();
+        self.ctx.sync.shutdown(SAVE_GRACE).await;
         self.ctx.pending.cancel_waiting();
         self.ctx.pending.wait_for_saves(SAVE_GRACE).await;
         self.ctx.pending.join_tasks(TASK_JOIN).await;

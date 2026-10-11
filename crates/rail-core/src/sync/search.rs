@@ -26,12 +26,19 @@ pub async fn run(ctx: &DaemonContext, request: SearchRequest) -> Result<SearchRe
     let query = checked_query(&request.query)?;
     let limit = request.limit.clamp(1, MAX_SEARCH_LIMIT);
     // The writer opens (and migrates) the store, so the readers below never meet a missing
-    // database. The handle is not kept: shutdown waits for every handle to go.
-    drop(ctx.sync.writer(ctx).await?);
+    // database. The handle is not kept: shutdown waits for every handle to go. Without a
+    // writer (shutting down, or given up) an existing store is still searched locally.
     let db = ctx.paths.db_file();
+    if let Err(error) = ctx.sync.writer(ctx).await
+        && !db.exists()
+    {
+        return Err(error);
+    }
     let (account_id, address) = local_account(ctx, request.account.clone(), db.clone()).await?;
     let local = local_hits(db.clone(), query.clone(), account_id, limit).await?;
-    let targets = ctx.sync.search_targets(address.as_deref()).await;
+    // Accounts the server is not asked for (no engine, Microsoft 365, the writer gone) are
+    // failures, so the front end can say whose mail was searched only locally.
+    let (targets, mut failures) = ctx.sync.search_plan(address.as_deref()).await;
     let servers = join_all(
         targets
             .iter()
@@ -39,7 +46,6 @@ pub async fn run(ctx: &DaemonContext, request: SearchRequest) -> Result<SearchRe
     )
     .await;
     let mut found = Vec::new();
-    let mut failures = Vec::new();
     for (target, outcome) in targets.iter().zip(servers) {
         match outcome {
             Ok(hits) => found.extend(hits),

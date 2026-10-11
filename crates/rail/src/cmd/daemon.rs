@@ -19,8 +19,9 @@ use crate::{browser, daemon_link, test_hooks};
 /// Serve until stopped, idle, or SIGINT or SIGTERM (which shut down like `daemon.stop`: saves
 /// in flight get their grace, then the socket goes and the lock is released; exit 0). The
 /// debug-only test hooks for the browser opener, the token endpoint, the Gmail API root and
-/// the idle timeout (and its rule for configured accounts) reach the daemon here. Nothing is printed: the daemon logs to `rail.log`, including why it could
-/// not start, since its stderr goes nowhere.
+/// the idle timeout (and its rule for configured accounts) reach the daemon here. Nothing is
+/// printed: the daemon logs to `rail.log`, including why it could not start, since its
+/// stderr goes nowhere.
 pub async fn run(paths: &Paths) -> color_eyre::Result<ExitCode> {
     serve(paths).await.map_err(|error| {
         tracing::error!(error = %error.message, "the daemon could not start or stopped on an error");

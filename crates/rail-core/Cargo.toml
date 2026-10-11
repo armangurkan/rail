@@ -40,6 +40,8 @@ futures-util.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Paused time for the idle tests.
+tokio = { workspace = true, features = ["test-util"] }
 wiremock.workspace = true
 tracing-subscriber.workspace = true
 

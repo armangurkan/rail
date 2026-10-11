@@ -17,7 +17,7 @@ pub use batch::{Batch, BatchOutcome, Origin, Prune, StateUpdate, Sweep};
 pub use engine::{Clock, Engine, EngineParts, SyncError};
 pub use manager::{
     CONFIG_CHECK, ENGINE_STOP, MAX_WRITER_RESTARTS, ProviderFactory, ProviderRequest, SETTLE_WAIT,
-    SearchTarget, SyncManager,
+    SearchTarget, SyncManager, WRITER_HEALTHY,
 };
 pub use status::{StatusBoard, Subscriber};
 pub use writer::{WRITER_QUEUE, WriterHandle, WriterTask, spawn_writer};

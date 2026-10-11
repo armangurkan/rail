@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -38,6 +39,9 @@ pub(crate) struct Caller {
     frames: mpsc::WeakUnboundedSender<Vec<u8>>,
     /// The display and browser the connection's hello named (checked).
     browser: BrowserEnv,
+    /// The id of the connection's live `sync.progress` subscriber; 0 when it has none.
+    /// Shared by every request of one connection.
+    watching: Arc<AtomicU64>,
 }
 
 impl Caller {
@@ -45,7 +49,18 @@ impl Caller {
         Self {
             frames: frames.downgrade(),
             browser,
+            watching: Arc::default(),
         }
+    }
+
+    /// This caller, sharing the connection's `sync.progress` watch.
+    pub(crate) fn sharing_watch(mut self, watching: Arc<AtomicU64>) -> Self {
+        self.watching = watching;
+        self
+    }
+
+    pub(crate) fn watching(&self) -> &AtomicU64 {
+        &self.watching
     }
 
     pub(crate) fn browser(&self) -> &BrowserEnv {

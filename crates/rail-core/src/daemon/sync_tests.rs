@@ -400,3 +400,36 @@ async fn a_stop_during_sync_ends_in_time_with_the_store_intact() {
     let reader = Store::open_reader(&paths.db_file()).unwrap();
     assert_eq!(reader.counts(1).unwrap().messages, 10);
 }
+
+/// Fix round 1: at the default idle timeout a daemon with no accounts exits (the 2 s config
+/// check must not keep re-arming the idle check).
+#[tokio::test(start_paused = true)]
+async fn a_daemon_without_accounts_idles_out_at_the_default_timeout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = paths_with(&tmp, "[general]\nsecrets = \"file\"\n");
+    let (ctx, _) = daemon_context(&paths);
+    let daemon = start_daemon(ctx, ServeConfig::default()).await;
+    tokio::time::timeout(super::IDLE_TIMEOUT + Duration::from_secs(60), daemon)
+        .await
+        .expect("the daemon idled out")
+        .unwrap()
+        .unwrap();
+}
+
+/// Fix round 1: accounts the server search skipped are reported, so the CLI can say so.
+#[tokio::test]
+async fn search_reports_the_accounts_it_could_not_ask() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = paths_with(&tmp, &format!("{WORK}{CORP}"));
+    let (client, _daemon) = daemon(&paths, &MockProvider::new(), ServeConfig::default()).await;
+    until(&client, "work", |s| s.passes_completed >= 1).await;
+    let request = SearchRequest {
+        query: "budget".into(),
+        account: None,
+        limit: 10,
+    };
+    let found = client.call::<Search>(&request).await.unwrap();
+    assert_eq!(found.failures.len(), 1, "{:?}", found.failures);
+    assert_eq!(found.failures[0].account, "corp");
+    assert_eq!(found.failures[0].error.code, ErrorCode::InvalidInput);
+}

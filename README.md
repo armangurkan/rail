@@ -563,11 +563,15 @@ exits after ten minutes with no client connected and no login waiting. It follow
 picked up within seconds; removing an account stops its sync but keeps its mail in the store,
 and adding it back resumes where it stopped. An edit that leaves `config.toml` invalid is logged
 once and the running syncs carry on unchanged. A login you begin opens the browser on the display
-of the command that began it (its `DISPLAY`, `WAYLAND_DISPLAY` and `BROWSER`), even when the
-daemon itself started without one. Its logs go to `rail.log`; it never writes to the terminal.
-If the store's writer fails, the daemon starts it (and every account's sync) again, up to three
-times; after that sync pauses until the daemon restarts, and `rail doctor` reports it as a store
-error.
+of the command that began it: that command's `DISPLAY`, `WAYLAND_DISPLAY` and `BROWSER`
+override the daemon's own for that launch, so it works even when the daemon started without a
+display; a variable the command does not have (or does not send, as an older client) keeps
+the value the daemon inherited. Its logs go to `rail.log`; it never writes to the terminal. An
+account whose sync cannot start (a locked 1Password, say) or stops unexpectedly shows the error
+in its sync status and is tried again after 1, 5 and then every 15 minutes (or at once when
+its sync is asked for). If the store's writer fails, the daemon starts it (and every account's sync)
+again, up to three times (a writer that stayed up an hour starts that count again); after that
+sync pauses until the daemon restarts, and `rail doctor` reports it as a store error.
 
 The daemon listens on a Unix socket (see [Where things live](#where-things-live)) in a directory
 only you can open (mode 0700); the socket itself is 0600, and the daemon drops any connection

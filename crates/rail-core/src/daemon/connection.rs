@@ -4,6 +4,7 @@
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -92,6 +93,7 @@ impl Connection {
     ) {
         let mut reader = BufReader::new(read);
         let mut hello: Option<BrowserEnv> = None;
+        let watching = Arc::new(AtomicU64::new(0));
         loop {
             let next = tokio::select! {
                 next = self.next_frame(&mut reader, hello.is_some()) => next,
@@ -107,7 +109,10 @@ impl Connection {
                 }
                 Err(_) => return,
             };
-            if self.handle(&frame, &mut hello, frames, tasks).is_break() {
+            if self
+                .handle(&frame, &mut hello, &watching, frames, tasks)
+                .is_break()
+            {
                 return;
             }
         }
@@ -132,6 +137,7 @@ impl Connection {
         &self,
         frame: &[u8],
         hello: &mut Option<BrowserEnv>,
+        watching: &Arc<AtomicU64>,
         frames: &mpsc::UnboundedSender<Vec<u8>>,
         tasks: &mut JoinSet<()>,
     ) -> ControlFlow<()> {
@@ -159,7 +165,8 @@ impl Connection {
         let call = Call {
             ctx: self.ctx.clone(),
             server: self.server.clone(),
-            caller: Caller::new(frames.clone(), hello.clone().unwrap_or_default()),
+            caller: Caller::new(frames.clone(), hello.clone().unwrap_or_default())
+                .sharing_watch(watching.clone()),
         };
         let (registry, frames) = (self.registry.clone(), frames.clone());
         reap_finished(tasks);
