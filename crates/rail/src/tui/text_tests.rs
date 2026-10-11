@@ -68,6 +68,10 @@ fn wrapping_never_emits_blank_rows_and_keeps_leading_and_trailing_spaces() {
     assert_eq!(wrap("ab  ", 40), ["ab  "]);
     assert_eq!(wrap("   ", 40), ["   "]);
     assert_eq!(wrap("    x", 2), [" x"]);
+    assert_eq!(wrap("日", 1), ["日"]);
+    assert_eq!(wrap("日 ", 1), ["日"]);
+    assert_eq!(wrap(" 日", 2), ["日"]);
+    assert_eq!(wrap("ab", 0), ["a", "b"]);
 }
 
 #[test]

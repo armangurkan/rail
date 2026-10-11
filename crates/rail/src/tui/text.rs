@@ -137,19 +137,26 @@ pub fn wrap(row: &str, cols: usize) -> Vec<String> {
                 rows.push(std::mem::take(&mut current));
                 used = 0;
             }
+            // Here `current` is empty or only the indentation.
+            let mut content = false;
             for grapheme in piece.graphemes(true) {
                 let gw = width(grapheme);
                 if used + gw > cols && used > 0 {
-                    rows.push(std::mem::take(&mut current));
+                    // Indentation alone is dropped, never emitted as a row of spaces.
+                    let flushed = std::mem::take(&mut current);
+                    if content {
+                        rows.push(flushed);
+                    }
                     used = 0;
                 }
                 current.push_str(grapheme);
                 used += gw;
+                content = true;
             }
         }
         has_word = true;
     }
-    current.extend(std::iter::repeat_n(' ', gap.min(cols - used)));
+    current.extend(std::iter::repeat_n(' ', gap.min(cols.saturating_sub(used))));
     rows.push(current);
     rows
 }
