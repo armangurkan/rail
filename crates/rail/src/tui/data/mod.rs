@@ -80,7 +80,11 @@ pub enum MailEvent {
         call: ApplyCall,
         result: Result<ActionApplyResponse, OpError>,
     },
-    Undone(Result<ActionUndoResponse, OpError>),
+    /// `action.undo` answered for the action with this `seq`.
+    Undone {
+        seq: u64,
+        result: Result<ActionUndoResponse, OpError>,
+    },
     Retried {
         row: OutboxId,
         result: Result<ActionRetryResponse, OpError>,
@@ -141,8 +145,9 @@ impl fmt::Debug for MailEvent {
                 .field("threads", &call.threads.len())
                 .field("ok", &result.is_ok())
                 .finish(),
-            Self::Undone(result) => f
+            Self::Undone { seq, result } => f
                 .debug_struct("Undone")
+                .field("seq", seq)
                 .field("ok", &result.is_ok())
                 .finish(),
             Self::Retried { row, result } => f

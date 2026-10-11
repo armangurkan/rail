@@ -131,18 +131,18 @@ impl DaemonLink {
         }
     }
 
-    /// Take back the rows of one press.
+    /// Take back the rows of the action with this `seq`.
     #[allow(dead_code, reason = "used by the mail screen in the next task")]
-    pub fn undo(&self, rows: Vec<OutboxId>) -> Effect {
+    pub fn undo(&self, seq: u64, rows: Vec<OutboxId>) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
                 let result = connector
                     .call::<ActionUndo>(&ActionUndoRequest { rows })
                     .await;
-                send(&sink, MailEvent::Undone(result));
+                send(&sink, MailEvent::Undone { seq, result });
             }),
             #[cfg(test)]
-            Link::Fake(fake) => job(move |sink| async move { fake.undo(&sink, rows) }),
+            Link::Fake(fake) => job(move |sink| async move { fake.undo(&sink, seq, rows) }),
         }
     }
 
@@ -370,7 +370,7 @@ impl FakeDaemon {
         send(sink, MailEvent::Applied { call, result });
     }
 
-    fn undo(&self, sink: &TaskSink, rows: Vec<OutboxId>) {
+    fn undo(&self, sink: &TaskSink, seq: u64, rows: Vec<OutboxId>) {
         self.record(FakeCall::Undo { rows: rows.clone() });
         let result = self.undo_answer.lock().unwrap().take().unwrap_or(Ok(
             rail_core::ops::ActionUndoResponse {
@@ -378,7 +378,7 @@ impl FakeDaemon {
                 too_late: vec![],
             },
         ));
-        send(sink, MailEvent::Undone(result));
+        send(sink, MailEvent::Undone { seq, result });
     }
 
     fn retry(&self, sink: &TaskSink, row: OutboxId) {

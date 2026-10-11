@@ -499,7 +499,7 @@ async fn the_fake_records_actions_and_answers_in_order() {
     let bound = Duration::from_secs(5);
     let applied = events(link.apply(call.clone()), 1, bound).await;
     assert!(matches!(&applied[..], [MailEvent::Applied { result: Ok(r), .. }] if r.rows == [1]));
-    events(link.undo(vec![1]), 1, bound).await;
+    events(link.undo(3, vec![1]), 1, bound).await;
     events(link.retry(1), 1, bound).await;
     assert_eq!(
         *fake.calls.lock().unwrap(),

@@ -461,6 +461,114 @@ async fn u_right_after_opening_marks_unread() {
     );
 }
 
+fn applied_rows(seq: u64, account: &str, rows: Vec<i64>) -> MailEvent {
+    MailEvent::Applied {
+        call: ApplyCall {
+            seq,
+            account: account.into(),
+            threads: vec![1],
+            action: MailAction::Archive {},
+            grace: true,
+        },
+        result: Ok(ActionApplyResponse { rows, applied: 1 }),
+    }
+}
+
+fn apply_failed(seq: u64, account: &str) -> MailEvent {
+    MailEvent::Applied {
+        call: ApplyCall {
+            seq,
+            account: account.into(),
+            threads: vec![1],
+            action: MailAction::Archive {},
+            grace: true,
+        },
+        result: Err(OpError::not_found("gone")),
+    }
+}
+
+/// Two accounts' calls sent (not run), `z` pressed, then the first account answers.
+async fn undoing_with_one_call_left(f: &mut Fixture) {
+    for _ in 0..4 {
+        press(f, KeyCode::Char(' ')).await;
+    }
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Char('e'))));
+    press(f, KeyCode::Char('z')).await;
+    feed(f, applied(1, "work", 10)).await;
+    assert_eq!(undo_calls(f), [vec![10]]);
+    assert!(f.screen.status_line().contains("undoing…"));
+}
+
+#[tokio::test]
+async fn the_last_call_failing_still_reports_the_undo_that_happened() {
+    let mut f = fixture(2).await;
+    *f.fake.undo_answer.lock().unwrap() = Some(Ok(rail_core::ops::ActionUndoResponse {
+        undone: vec![],
+        too_late: vec![10],
+    }));
+    undoing_with_one_call_left(&mut f).await;
+    feed(&mut f, apply_failed(1, "home")).await;
+    assert!(
+        f.screen.status_line().contains("too late to undo"),
+        "{}",
+        f.screen.status_line()
+    );
+    press(&mut f, KeyCode::Char('z')).await;
+    assert!(f.screen.status_line().contains("Nothing to undo"));
+}
+
+#[tokio::test]
+async fn the_last_call_returning_no_rows_still_reports_the_undo_that_happened() {
+    let mut f = fixture(2).await;
+    undoing_with_one_call_left(&mut f).await;
+    feed(&mut f, applied_rows(1, "home", vec![])).await;
+    assert!(
+        f.screen.status_line().contains("undone"),
+        "{}",
+        f.screen.status_line()
+    );
+}
+
+#[tokio::test]
+async fn a_stale_undo_answer_does_not_touch_the_newer_action() {
+    let mut f = fixture(3).await;
+    let _first = f.screen.update(Msg::Key(key(KeyCode::Char('e'))));
+    feed(&mut f, applied(1, "work", 10)).await;
+    let _undo = f.screen.update(Msg::Key(key(KeyCode::Char('z'))));
+    let _second = f.screen.update(Msg::Key(key(KeyCode::Char('e'))));
+    feed(&mut f, applied(2, "work", 20)).await;
+    let stale = MailEvent::Undone {
+        seq: 1,
+        result: Ok(rail_core::ops::ActionUndoResponse {
+            undone: vec![10],
+            too_late: vec![],
+        }),
+    };
+    feed(&mut f, stale).await;
+    assert!(
+        f.screen.status_line().contains("archived 1 · z undoes"),
+        "{}",
+        f.screen.status_line()
+    );
+    press(&mut f, KeyCode::Char('z')).await;
+    assert_eq!(undo_calls(&f), [vec![20]], "the newer rows stay undoable");
+    assert!(f.screen.status_line().contains("undone"));
+}
+
+#[tokio::test]
+async fn an_undo_answer_with_no_action_says_nothing() {
+    let mut f = fixture(3).await;
+    let stray = MailEvent::Undone {
+        seq: 9,
+        result: Ok(rail_core::ops::ActionUndoResponse {
+            undone: vec![],
+            too_late: vec![],
+        }),
+    };
+    feed(&mut f, stray).await;
+    assert!(!f.screen.status_line().contains("undone"));
+}
+
 #[tokio::test]
 async fn the_trash_prompt_at_90_and_150_columns() {
     for width in [90, 150] {

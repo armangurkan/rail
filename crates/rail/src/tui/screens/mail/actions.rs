@@ -39,6 +39,26 @@ pub(super) struct LastAction {
     selected: Vec<(i64, Picked)>,
     /// Some failed call already put its targets back.
     restored: bool,
+    /// Some undo was answered.
+    undid: bool,
+}
+
+impl LastAction {
+    fn new(seq: u64, count: usize, until: usize, selected: Vec<(i64, Picked)>) -> Self {
+        Self {
+            seq,
+            rows: Vec::new(),
+            count,
+            until,
+            pending: 0,
+            undo_wanted: false,
+            undos: 0,
+            too_late: false,
+            selected,
+            restored: false,
+            undid: false,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -178,22 +198,13 @@ impl MailScreen {
         let seq = self.actions.seq;
         if grace {
             let from_selection = self.targets_are_selection(targets);
-            self.actions.last = Some(LastAction {
-                seq,
-                rows: Vec::new(),
-                count: targets.len(),
-                until: self.tick + UNDO_TICKS,
-                pending: 0,
-                undo_wanted: false,
-                undos: 0,
-                too_late: false,
-                selected: if from_selection {
-                    targets.to_vec()
-                } else {
-                    Vec::new()
-                },
-                restored: false,
-            });
+            let selected = if from_selection {
+                targets.to_vec()
+            } else {
+                Vec::new()
+            };
+            let until = self.tick + UNDO_TICKS;
+            self.actions.last = Some(LastAction::new(seq, targets.len(), until, selected));
             if from_selection {
                 self.actions.selection.clear();
             }
@@ -300,7 +311,7 @@ impl MailScreen {
         if waiting {
             self.status.notify("undoing…", tick);
         }
-        vec![self.ctx.link.undo(rows)]
+        vec![self.ctx.link.undo(last.seq, rows)]
     }
 
     /// Mark-read on open: no grace, no notice, nothing to undo.
@@ -343,7 +354,7 @@ impl MailScreen {
     pub(super) fn action_event(&mut self, event: MailEvent) -> Vec<Effect> {
         match event {
             MailEvent::Applied { call, result } => self.applied(&call, result),
-            MailEvent::Undone(result) => {
+            MailEvent::Undone { seq, result } => {
                 let (too_late, failed) = match &result {
                     Ok(answer) => (!answer.too_late.is_empty(), false),
                     Err(error) => {
@@ -351,7 +362,7 @@ impl MailScreen {
                         (false, true)
                     }
                 };
-                self.undone(too_late, failed);
+                self.undone(seq, too_late, failed);
                 self.dirty()
             }
             MailEvent::Retried { result, .. } => {
@@ -407,11 +418,11 @@ impl MailScreen {
         last.pending = last.pending.saturating_sub(1);
         if last.undo_wanted {
             if rows.is_empty() {
-                self.settle_undo();
+                self.finish_undo(true);
                 return Vec::new();
             }
             last.undos += 1;
-            return vec![self.ctx.link.undo(rows)];
+            return vec![self.ctx.link.undo(last.seq, rows)];
         }
         last.rows.extend(rows);
         let (done, _) = verbs(action);
@@ -439,44 +450,53 @@ impl MailScreen {
                 .collect();
             self.actions.selection.restore(&back);
         }
-        if last.pending == 0 && last.rows.is_empty() && last.undos == 0 {
+        if last.undo_wanted {
+            self.finish_undo(false);
+        } else if last.pending == 0 && last.rows.is_empty() && last.undos == 0 {
             self.actions.last = None;
-        } else {
-            self.settle_undo();
         }
     }
 
-    /// The record of an undone action ends when its last call and undo are answered.
-    fn settle_undo(&mut self) {
+    /// Once `z` was pressed and every call and undo of the record is answered, report the
+    /// combined result and drop the record. `say_nothing`: say so when nothing was undone
+    /// (no error is on the bar to say why).
+    fn finish_undo(&mut self, say_nothing: bool) {
+        let tick = self.tick;
         let done = self
             .actions
             .last
             .as_ref()
             .is_some_and(|l| l.undo_wanted && l.pending == 0 && l.undos == 0);
-        if done {
-            self.actions.last = None;
+        if !done {
+            return;
+        }
+        let Some(last) = self.actions.last.take() else {
+            return;
+        };
+        if last.undid {
+            let text = if last.too_late {
+                "too late to undo"
+            } else {
+                "undone"
+            };
+            self.status.notify(text, tick);
+        } else if say_nothing {
+            self.status.notify("Nothing to undo.", tick);
         }
     }
 
-    /// An `action.undo` answered: report once every call and undo of the record is in.
-    fn undone(&mut self, too_late: bool, failed: bool) {
-        let tick = self.tick;
-        let all_in = match self.actions.last.as_mut() {
-            Some(last) => {
-                last.undos = last.undos.saturating_sub(1);
-                last.too_late |= too_late;
-                last.undos == 0 && last.pending == 0
-            }
-            None => true,
-        };
-        if !all_in {
+    /// An `action.undo` answered. An answer for another action than the newest is stale and
+    /// ignored.
+    fn undone(&mut self, seq: u64, too_late: bool, failed: bool) {
+        let Some(last) = self.actions.last.as_mut().filter(|l| l.seq == seq) else {
             return;
-        }
-        let late = self.actions.last.take().is_some_and(|l| l.too_late) || too_late;
+        };
+        last.undos = last.undos.saturating_sub(1);
         if !failed {
-            let text = if late { "too late to undo" } else { "undone" };
-            self.status.notify(text, tick);
+            last.undid = true;
+            last.too_late |= too_late;
         }
+        self.finish_undo(false);
     }
 
     fn action_error(&mut self, what: &str, error: &OpError) {
