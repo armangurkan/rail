@@ -55,6 +55,8 @@ rustix = { version = "1.1.5", default-features = false, features = ["std", "proc
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# `cargo llvm-cov` builds with `--cfg coverage`; timing tests scale their limits for it.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
