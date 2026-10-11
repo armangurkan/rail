@@ -18,7 +18,7 @@ use ratatui::widgets::{Block, Borders, Clear};
 use url::Url;
 
 pub use confirm::{AttachmentList, AttachmentRow, Confirm, LinkPrompt};
-pub use errors::ErrorList;
+pub use errors::{ErrorList, ErrorRow};
 pub use filter::FilterLine;
 pub use help::Help;
 pub use palette::{Palette, PaletteEntry, Target};
@@ -40,6 +40,17 @@ pub enum Command {
     ClearFilter,
     /// Run what a palette entry stands for.
     Palette(Target),
+    /// The trash confirmation was answered yes.
+    Trash,
+    /// Send this failed outbox row again.
+    Retry(rail_core::ops::OutboxId),
+}
+
+/// What a label picker does with its choice; Task 7 moves this into the picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerMode {
+    Toggle,
+    Move,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

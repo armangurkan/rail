@@ -83,6 +83,30 @@ impl ScrollBox {
         true
     }
 
+    /// `render`, first moving the offset just enough that rows `start..=end` are shown.
+    pub(super) fn render_revealing(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        rows: Vec<Line<'_>>,
+        theme: &Theme,
+        start: usize,
+        end: usize,
+    ) {
+        let (total, height) = (rows.len(), usize::from(area.height));
+        for _ in 0..=total {
+            let shown = window(total, self.offset.get(), height);
+            if end >= shown.first + shown.rows && shown.below {
+                self.offset.set(self.offset.get() + 1);
+            } else if start < shown.first && self.offset.get() > 0 {
+                self.offset.set(self.offset.get() - 1);
+            } else {
+                break;
+            }
+        }
+        self.render(frame, area, rows, theme);
+    }
+
     /// Draw the visible part of `rows` in `area`, with the hints.
     pub(super) fn render(&self, frame: &mut Frame, area: Rect, rows: Vec<Line<'_>>, theme: &Theme) {
         let shown = window(rows.len(), self.offset.get(), usize::from(area.height));

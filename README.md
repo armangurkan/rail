@@ -17,8 +17,8 @@ terminal and want something in the spirit of mutt with threads, a unified inbox 
 readable HTML and a command palette. It also speaks MCP, so an AI coding agent can help you set it
 up without ever seeing your secrets.
 
-> **Rail is pre-1.0.** Account setup, background sync, search and reading mail work today;
-> actions (archive, label, reply, compose) are next.
+> **Rail is pre-1.0.** Account setup, background sync, search, reading mail and acting on threads
+> (archive, trash, star, read) work today; composing and replying are next.
 
 ## Contents
 
@@ -26,6 +26,7 @@ up without ever seeing your secrets.
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Reading mail](#reading-mail)
+- [Doing things to mail](#doing-things-to-mail)
 - [Account setup](#account-setup)
 - [Using Rail from an AI agent (MCP)](#using-rail-from-an-ai-agent-mcp)
 - [Security and privacy](#security-and-privacy)
@@ -50,12 +51,15 @@ up without ever seeing your secrets.
   store, a sidebar with unread counts, a reader with folded quotes and numbered (clickable) links,
   filter as you type, a command palette, keys you can change in `config.toml`, and `o` to open a
   message's HTML in the browser. See [Reading mail](#reading-mail).
+- Archive, trash, star and mark read or unread, alone or as a selection, with undo. See
+  [Doing things to mail](#doing-things-to-mail). Labelling and moving (`l`, `m`) are next: the
+  keys exist, but the pickers come in the next change.
 - `rail doctor`, a single health check for config, store, tokens, sync and the daemon.
 - An MCP server (`rail mcp`) for setting up and inspecting Rail from an AI agent.
 
 **Coming**
 
-- Next: actions (archive, label, delete, mark read) and composing and sending, with agent sends
+- Next: the label and move pickers, then composing, replying and sending, with agent sends
   governed by the per-account `ai_send` policy.
 - Then: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
   sync and are searched locally only.
@@ -167,6 +171,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `global.quit` | global | `q` | Quit Rail. |
 | `global.palette` | global | `:` | Open the command palette. |
 | `global.help` | global | `?` | Show the keys for this view. |
+| `global.undo` | global | `z` | Undo the last action. |
 | `list.open` | list | `enter` | Open the thread. |
 | `list.filter` | list | `/` | Filter the list as you type. |
 | `list.sidebar` | list, sidebar | `b` | Show or hide the sidebar. |
@@ -187,6 +192,14 @@ are in, with `*` after the ones set in `config.toml`.
 | `list.page_up` | list | `pageup` `ctrl-u` | One page up. |
 | `list.top` | list | `home` `g g` | Newest thread. |
 | `list.bottom` | list | `end` `G` | Oldest thread. |
+| `list.archive` | list, reader | `e` | Archive the thread or the selection. |
+| `list.trash` | list, reader | `d` | Move to Gmail's Trash (asks first). |
+| `list.star` | list, reader | `s` | Star or unstar. |
+| `list.read` | list, reader | `u` | Mark read or unread. |
+| `list.labels` | list, reader | `l` | Add or remove labels (the picker is not built yet). |
+| `list.move` | list, reader | `m` | Move to a label (archives; the picker is not built yet). |
+| `list.select` | list | `space` | Select or unselect the thread. |
+| `list.clear_selection` | list | `esc` | Clear the selection. |
 | `sidebar.focus` | list, sidebar | `tab` | Move between the sidebar and the list. |
 | `sidebar.down` | sidebar | `j` `down` | Next mailbox. |
 | `sidebar.up` | sidebar | `k` `up` | Previous mailbox. |
@@ -287,19 +300,45 @@ local store only (`rail search` also asks Gmail).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account
 or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
-the session's recent errors. `?` shows the keys of the view you are in, marking with `*` the ones
+the session's recent errors; `Enter` on an action Gmail refused sends it again. `?` shows the keys of the view you are in, marking with `*` the ones
 set in `config.toml`; `?` again (or whatever `global.help` is bound to), `Esc` or `q` closes it.
 Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more` line (`v more` and
 `^ more` with `icons = "ascii"`) says there is more beyond the box.
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`
-for Microsoft 365 accounts), whether the daemon can be reached (`connecting to the daemon…`,
+for Microsoft 365 accounts; after the state, `2 queued` for actions on their way to Gmail and
+`1 failed` for actions Gmail refused, see [Doing things to mail](#doing-things-to-mail)), whether the daemon can be reached (`connecting to the daemon…`,
 `daemon unreachable`, or `daemon reachable again` once a message fetch gets through after the
 connection was lost), and notices. When the daemon cannot be reached the list still reads from
 the store; `Ctrl-r` reconnects (and starts a sync) and resumes live updates. A store read that
 fails says so where it was shown (the list, the top of the sidebar, or the reader's title) and in
 the status bar; `:errors` keeps it.
+
+## Doing things to mail
+
+From the thread list or the reader: `e` archives, `d` moves to Gmail's Trash (Rail asks first;
+Gmail keeps trashed mail there for 30 days, and Rail never deletes mail for good), `s` stars or
+unstars, `u` marks read or unread. An action applies to the whole thread, as in Gmail. The list
+changes at once; the daemon sends the change to Gmail in the background, so it also goes through
+if you quit Rail. `l` and `m` (labels and moving) are bound already, but their pickers come in
+the next change; for now they only say so.
+
+`Space` selects the thread under the cursor (a `▸` replaces its dot, `>` with `icons = "ascii"`)
+and moves down; the status bar counts the selection. With a selection, an action applies to every
+selected thread, then the selection clears; `Esc` clears it. The selection stays while you change
+the filter or the mailbox. In the reader, the keys act on the open thread (`Space` still pages
+down); archive and trash close the reader.
+
+After an action the status bar says what happened, for example `archived 3 · z undoes`: for ten
+seconds `z` takes it back. Only the last action can be undone, and only while it has not been sent
+yet ("too late to undo" otherwise). Opening a thread marks it read; `u` marks it unread again.
+
+Each account in the status bar shows actions on their way to Gmail (`2 queued`) and actions Gmail
+refused (`1 failed`). While an account needs a login, its actions wait and are sent after the
+login. When Gmail refuses an action for good (the thread or the label no longer exists), Rail
+undoes it in the list, shows "Could not archive: …" on the thread's row, and keeps the error in
+`:errors`, where `Enter` on it sends the action again. Microsoft 365 accounts cannot be changed yet.
 
 ## Account setup
 

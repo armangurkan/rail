@@ -21,6 +21,7 @@ use crate::tui::test_util::{
     BASE_MS, inbox_threads, key, mail_ctx, mail_envelope, seed_store, settle, status, work_and_home,
 };
 
+mod actions;
 mod state;
 
 struct Fixture {

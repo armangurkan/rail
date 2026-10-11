@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/actions.rs
+expression: shot
+---
+▍All inboxes  2 accounts · 5 unread                                                 ? help
+●  Yesterday  Sender                          subject wm2
+●  Yesterday  Sender                          subject hm1
+●  Yesterday  Sender                          subject wm1
+●  Yesterday  Sender                          subject hm0
+●  Yesterday  Sender                          subject wm0
+
+
+
+         ┌ Trash? ──────────────────────────────────────────────────────────────┐
+         │Trash "subject wm2"?                                                  │
+         │Gmail keeps trashed mail in its Trash for 30 days.                    │
+         │                                                                      │
+         │y yes · n or Esc no                                                   │
+         └──────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+work ✓  ·  home ✓

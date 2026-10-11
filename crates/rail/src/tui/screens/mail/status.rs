@@ -31,6 +31,8 @@ pub enum DaemonState {
 pub struct ErrorEntry {
     pub at: i64,
     pub text: String,
+    /// The failed outbox row `Enter` in `:errors` sends again.
+    pub retry: Option<rail_core::ops::OutboxId>,
 }
 
 #[derive(Debug)]
@@ -118,9 +120,39 @@ impl StatusBar {
     /// Show `text` (already escaped) and keep it for `:errors`. The caller logs the code.
     pub fn error(&mut self, text: String, now: i64, tick: usize) {
         self.notice = Some((text.clone(), tick + NOTICE_TICKS, true));
-        self.errors.push_back(ErrorEntry { at: now, text });
+        self.errors.push_back(ErrorEntry {
+            at: now,
+            text,
+            retry: None,
+        });
         if self.errors.len() > MAX_ERRORS {
             self.errors.pop_front();
+        }
+    }
+
+    /// A notice that stays `ticks` ticks.
+    pub fn notify_for(&mut self, text: impl Into<String>, tick: usize, ticks: usize) {
+        self.notice = Some((text.into(), tick + ticks, false));
+    }
+
+    /// `error`, kept in `:errors` with the outbox row `Enter` retries.
+    pub fn error_with_retry(
+        &mut self,
+        text: String,
+        now: i64,
+        tick: usize,
+        row: rail_core::ops::OutboxId,
+    ) {
+        self.error(text, now, tick);
+        if let Some(last) = self.errors.back_mut() {
+            last.retry = Some(row);
+        }
+    }
+
+    /// A retried row's `:errors` lines no longer offer a retry.
+    pub fn retried(&mut self, row: rail_core::ops::OutboxId) {
+        for entry in self.errors.iter_mut().filter(|e| e.retry == Some(row)) {
+            entry.retry = None;
         }
     }
 
@@ -181,6 +213,17 @@ fn account_part(name: &str, status: Option<&AccountSyncStatus>, glyphs: &Glyphs)
     let Some(s) = status else {
         return format!("{name} …");
     };
+    let mut part = sync_part(name, s, glyphs);
+    if s.outbox.pending > 0 {
+        part.push_str(&format!(" {} queued", s.outbox.pending));
+    }
+    if s.outbox.failed > 0 {
+        part.push_str(&format!(" {} failed", s.outbox.failed));
+    }
+    part
+}
+
+fn sync_part(name: &str, s: &AccountSyncStatus, glyphs: &Glyphs) -> String {
     if s.needs_auth {
         return format!("{name} {} needs login", glyphs.problem);
     }
