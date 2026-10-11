@@ -49,7 +49,15 @@ async fn kill_the_writer(ctx: &DaemonContext) {
     };
     let err = writer.write(batch).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::Store);
-    assert!(writer.is_closed());
+    // The panicking thread drops the batch's reply (so `write` fails) before unwinding drops
+    // the queue, so the handle may report closed a moment later.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !writer.is_closed() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the dead writer's queue closed");
 }
 
 fn report() -> DoctorReport {
