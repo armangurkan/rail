@@ -109,11 +109,12 @@ impl ListWindow {
         }
     }
 
-    /// Where a re-read after a store change starts: from the window's first row when the
-    /// window does not hold the newest thread, else from the top (so new mail shows).
+    /// Where a re-read after a store change starts: from the first row on screen, so the
+    /// selection (always on screen, and a screen is shorter than a page) is in the page that
+    /// comes back; from the top when the screen starts at the newest thread (so new mail shows).
     pub fn requery_at(&self) -> PageAt {
-        match self.rows.first() {
-            Some(first) if self.newer => PageAt::From(first.key),
+        match self.rows.get(self.offset) {
+            Some(top) if self.offset > 0 || self.newer => PageAt::From(top.key),
             _ => PageAt::First,
         }
     }

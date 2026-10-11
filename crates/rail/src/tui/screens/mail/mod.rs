@@ -139,6 +139,9 @@ pub struct MailScreen {
     store_state: StoreState,
     /// The list area's rows and the frame's width, from the last frame drawn.
     size: Cell<(u16, u16)>,
+    /// The newest list read that replaces the window (a scope change, `Home`, `End`) while it
+    /// is in flight: a re-query reuses it instead of overriding it.
+    navigating: Option<(PageAt, Place)>,
     seq: u64,
     latest_list: u64,
     latest_sidebar: u64,
@@ -165,6 +168,7 @@ impl MailScreen {
             sidebar_shown: None,
             store_state: StoreState::Loading,
             size: Cell::new((0, 0)),
+            navigating: None,
             seq: 0,
             latest_list: 0,
             latest_sidebar: 0,
@@ -217,6 +221,7 @@ impl MailScreen {
     }
 
     fn read_list(&mut self, at: PageAt, place: Place) -> Effect {
+        self.navigating = matches!(at, PageAt::First | PageAt::Last).then_some((at, place));
         let request = self.list_request(at, place);
         self.ctx.store.list(request)
     }
@@ -241,7 +246,10 @@ impl MailScreen {
     fn requery(&mut self) -> Vec<Effect> {
         self.requery_pending = false;
         self.list.cancel_loading();
-        let list = self.list_request(self.list.requery_at(), Place::Keep);
+        let (at, place) = self
+            .navigating
+            .unwrap_or_else(|| (self.list.requery_at(), Place::Keep));
+        let list = self.list_request(at, place);
         let sidebar_seq = self.next_seq();
         self.latest_sidebar = sidebar_seq;
         vec![self.ctx.store.refresh(list, sidebar_seq)]
@@ -401,6 +409,7 @@ impl MailScreen {
         if seq != self.latest_list {
             return Vec::new();
         }
+        self.navigating = None;
         match result {
             Ok(outcome) => {
                 self.account_ids = outcome.account_ids;

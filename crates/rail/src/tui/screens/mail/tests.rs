@@ -281,6 +281,50 @@ async fn a_thread_that_moves_while_paging_is_shown_once() {
 }
 
 #[tokio::test]
+async fn a_requery_after_scrolling_past_a_page_keeps_the_same_thread() {
+    let mut f = fixture(700).await;
+    press(&mut f, KeyCode::Char('1')).await;
+    press_n(&mut f, KeyCode::Char('j'), 150).await;
+    assert_eq!(selected(&f).as_deref(), Some("subject wm549"));
+    store_changed(&mut f).await;
+    assert_eq!(
+        selected(&f).as_deref(),
+        Some("subject wm549"),
+        "the same thread"
+    );
+    assert!(f.screen.list.rows().len() <= MAX_WINDOW);
+}
+
+#[tokio::test]
+async fn a_requery_during_a_scope_change_does_not_override_it() {
+    let mut f = fixture(3).await;
+    press(&mut f, KeyCode::Char('j')).await;
+    assert_eq!(f.screen.list.selected_index(), 1);
+    let switch = f.screen.update(Msg::Key(key(KeyCode::Char('2'))));
+    let progress = status("work", "w@example.com", SyncPhase::Delta);
+    let event = MailEvent::Daemon(DaemonEvent::Progress(Box::new(progress)));
+    let timer = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+    settle(&mut f.screen, timer).await;
+    settle(&mut f.screen, switch).await;
+    assert_eq!(f.screen.scope, ScopeChoice::Account(1));
+    assert_eq!(f.screen.list.rows().len(), 2, "the new scope's rows");
+    assert_eq!(f.screen.list.selected_index(), 0, "at the top");
+}
+
+#[tokio::test]
+async fn a_requery_during_end_does_not_drop_it() {
+    let mut f = fixture(5).await;
+    press(&mut f, KeyCode::Char('1')).await;
+    let end = f.screen.update(Msg::Key(key(KeyCode::End)));
+    let progress = status("work", "w@example.com", SyncPhase::Delta);
+    let event = MailEvent::Daemon(DaemonEvent::Progress(Box::new(progress)));
+    let timer = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+    settle(&mut f.screen, timer).await;
+    settle(&mut f.screen, end).await;
+    assert!(f.screen.list.rows().len() <= 5);
+}
+
+#[tokio::test]
 async fn store_changes_are_coalesced_and_an_idle_screen_runs_nothing() {
     let mut f = fixture(3).await;
     let progress = |f: &mut Fixture| {
