@@ -79,6 +79,9 @@ fn render_config(out: &mut String, report: &DoctorReport) {
             accounts(n.unwrap_or(0))
         ),
     };
+    if let Some(note) = &report.layout_note {
+        let _ = writeln!(out, "{WARN} layout   {}", escaped(note));
+    }
 }
 
 fn accounts(n: usize) -> String {
@@ -270,6 +273,23 @@ mod tests {
     }
 
     const FILE_BACKEND_ONE_ACCOUNT: &str = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\n";
+
+    #[test]
+    fn the_layout_note_is_a_warning_line_that_does_not_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(dir.path());
+        write_config(
+            &paths,
+            "[general]\nsecrets = \"file\"\nlayout = \"stack\"\n",
+        );
+        let report = gather(&paths, &ItemIdCache::default());
+        let text = render(&report);
+        assert!(
+            text.contains("warn layout   general.layout = \"stack\" acts as \"auto\""),
+            "{text}"
+        );
+        assert!(report.is_healthy());
+    }
 
     #[test]
     fn sync_lines_show_phase_last_success_and_last_error() {

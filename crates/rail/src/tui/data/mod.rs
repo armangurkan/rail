@@ -2,11 +2,6 @@
 //! the store, read on blocking tasks (`StoreReader`), and the daemon (`DaemonLink`). Debounce
 //! timers are jobs too, so nothing runs while nothing happens.
 
-#![allow(
-    dead_code,
-    reason = "the reader (Task 8), the filter (Task 10) and `rail` itself (Task 11) use the rest"
-)]
-
 mod daemon_link;
 mod store_reader;
 #[cfg(test)]

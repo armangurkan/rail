@@ -2,12 +2,6 @@
 //! and the status bar (the reader and the modals join in later tasks). Keys go through the
 //! keymap; every read and daemon call is a job whose answer comes back as a `MailEvent`.
 
-#![allow(
-    dead_code,
-    unused_imports,
-    reason = "the binary opens the mail screen from `rail` in Phase 5 Task 11; until then only tests build it"
-)]
-
 mod layout;
 mod list;
 #[cfg(test)]
@@ -33,10 +27,11 @@ use rail_core::store::view::PageAt;
 use ratatui::Frame;
 use ratatui::style::Color;
 
-pub use layout::{SIDEBAR_MIN_COLUMNS, SIDEBAR_WIDTH};
-pub use list::{ListWindow, MAX_WINDOW, Place};
-pub use sidebar::{Sidebar, SidebarItem};
-pub use status::{DaemonState, ErrorEntry, StatusBar, error_line};
+#[cfg(test)]
+pub use list::MAX_WINDOW;
+pub use list::{ListWindow, Place};
+pub use sidebar::Sidebar;
+pub use status::{DaemonState, StatusBar, error_line};
 pub use view::Glyphs;
 pub(crate) use view::visible_offset;
 

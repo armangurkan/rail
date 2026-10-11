@@ -70,8 +70,9 @@ Screens are checked with [insta](https://insta.rs) snapshots of a `TestBackend` 
 Debug builds honour a few `RAIL_TEST_*` environment variables so the binary tests can stand in for
 the browser (`RAIL_TEST_OPENER`), the token endpoint (`RAIL_TEST_TOKEN_URL`), the Gmail API root
 (`RAIL_TEST_GMAIL_URL`), shorten the daemon's idle timeout (`RAIL_TEST_IDLE_SECS`,
-`RAIL_TEST_IDLE_WITH_ACCOUNTS`) and `rail sync`'s stall watch (`RAIL_TEST_SYNC_STALL_SECS`), and
-record the `systemctl`/`launchctl` commands `rail daemon install` would run instead of running them
+`RAIL_TEST_IDLE_WITH_ACCOUNTS`) and `rail sync`'s stall watch (`RAIL_TEST_SYNC_STALL_SECS`), make
+the mail screen panic on its first key (`RAIL_TEST_MAIL_PANIC`, for the terminal-restore test),
+and record the `systemctl`/`launchctl` commands `rail daemon install` would run instead of running them
 (`RAIL_TEST_SERVICE_LOG`). Release builds ignore them all. Every binary test also sets
 `XDG_CONFIG_HOME` (and, on macOS, `HOME`) inside its temporary directory. One unit test checks the
 generated systemd unit with `systemd-analyze verify` and is skipped where that is missing; the

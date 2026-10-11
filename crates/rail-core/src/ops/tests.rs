@@ -630,6 +630,7 @@ fn a_doctor_report_keeps_config_parser_text_in_detail() {
         secrets_error: None,
         secrets_checked: false,
         accounts: Vec::new(),
+        layout_note: None,
     };
     assert!(!report.is_healthy());
     assert_isolated(report.config_error.as_ref().unwrap());

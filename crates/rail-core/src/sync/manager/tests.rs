@@ -74,6 +74,7 @@ fn report() -> DoctorReport {
         secrets_error: None,
         secrets_checked: true,
         accounts: Vec::new(),
+        layout_note: None,
     }
 }
 

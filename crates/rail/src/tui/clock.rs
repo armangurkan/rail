@@ -1,11 +1,6 @@
 //! The time dates are shown against, in the local time zone. Tests fix both the time and the
 //! zone, so nothing on screen depends on when or where a test runs.
 
-#![allow(
-    dead_code,
-    reason = "the mail screen that holds a clock is wired to `rail` in Phase 5 Task 11"
-)]
-
 use jiff::tz::TimeZone;
 use jiff::{Timestamp, Zoned};
 
@@ -26,6 +21,7 @@ impl Clock {
         }
     }
 
+    #[cfg(test)]
     pub fn fixed(now: i64, tz: TimeZone) -> Self {
         Self { now: Some(now), tz }
     }

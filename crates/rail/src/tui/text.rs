@@ -4,11 +4,6 @@
 //! here: controls, Unicode format characters and line separators are escaped first, and width
 //! is measured on the escaped text, so no cell can ever carry a raw control.
 
-#![allow(
-    dead_code,
-    reason = "the list uses escape, fit, pad and outside; wrapping, blocks, links and hyperlinks are for the reader and `rail` (Tasks 8 to 11)"
-)]
-
 use rail_core::provider::links::{MAX_LINK_BYTES, SCHEMES};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;

@@ -1,5 +1,6 @@
-//! The entry points that open the onboarding wizard: `rail` on first run, `rail setup`, and
-//! `rail account add` without flags. The wizard never starts when stdout is not a terminal.
+//! The entry points that open the onboarding wizard (`rail setup`, `rail account add` without
+//! flags) and `rail` itself, which opens the mail screen once an account exists. The wizard
+//! never starts when stdout is not a terminal.
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
@@ -19,24 +20,21 @@ use crate::tui::screens::wizard::WizardScreen;
 /// Printed instead of starting the wizard in a pipe.
 pub const PIPE_HINT: &str = "rail: the setup wizard needs an interactive terminal; use `rail account add <gmail|m365> --address <address> --client-id <id>` instead";
 
-const NOT_BUILT: &str = "rail: the TUI is not built yet; run `rail --help` for available commands";
-
-/// `rail` with no subcommand: the wizard on first run, otherwise the placeholder until the
-/// Phase 4 TUI exists.
+/// `rail` with no subcommand: the wizard when no account is configured yet, otherwise the
+/// mail screen. A broken config fails here, with its line, before the terminal changes.
 pub async fn first_run(paths: &Paths) -> color_eyre::Result<ExitCode> {
-    if paths.config_file().exists() {
-        eprintln!("{NOT_BUILT}");
-        return Ok(ExitCode::from(2));
+    if !paths.config_file().exists() {
+        return wizard(paths, None).await;
     }
-    wizard(paths, None).await
+    let (text, config) = load_text_or_empty(&paths.config_file())?;
+    if config.accounts.is_empty() {
+        return wizard(paths, None).await;
+    }
+    crate::cmd::mail::run(paths, &text, &config).await
 }
 
 /// Run the wizard full-screen. Everything it prints, it prints after the terminal is back.
 pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre::Result<ExitCode> {
-    if !std::io::stdout().is_terminal() {
-        eprintln!("{PIPE_HINT}");
-        return Ok(ExitCode::from(2));
-    }
     // A broken config.toml (or [keys] entry) fails here, with its line number, before the
     // terminal changes.
     let (text, config) = load_text_or_empty(&paths.config_file())?;
@@ -45,6 +43,10 @@ pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre
         &text,
         &paths.config_file(),
     )?);
+    if !std::io::stdout().is_terminal() {
+        eprintln!("{PIPE_HINT}");
+        return Ok(ExitCode::from(2));
+    }
     // The daemon starts (or fails, with its reason) before the terminal changes.
     let ctx = EffectContext::new(paths.clone());
     ctx.daemon.client().await.map_err(report_error)?;

@@ -3,7 +3,7 @@
 //! never reads a token value beyond whether it exists.
 
 use crate::auth::{ItemIdCache, SecretStore, open_secret_store};
-use crate::config::{self, Config, SecretsBackend};
+use crate::config::{self, Config, Layout, SecretsBackend};
 use crate::ops::{AccountStatus, DoctorReport, OpError, Untrusted};
 use crate::paths::Paths;
 use crate::store::{AccountRow, Store};
@@ -32,6 +32,12 @@ pub fn gather(paths: &Paths, ids: &ItemIdCache) -> DoctorReport {
         secrets_error: None,
         secrets_checked: false,
         accounts: Vec::new(),
+        layout_note: None,
+    };
+    report.layout_note = match config.general.layout {
+        Layout::Auto => None,
+        Layout::Split => Some(layout_note("split")),
+        Layout::Stack => Some(layout_note("stack")),
     };
     let rows = check_store(&mut report);
     if let Some(config) = &loaded {
@@ -39,6 +45,10 @@ pub fn gather(paths: &Paths, ids: &ItemIdCache) -> DoctorReport {
         check_secrets(&mut report, secrets.as_ref());
     }
     report
+}
+
+fn layout_note(value: &str) -> String {
+    format!("general.layout = \"{value}\" acts as \"auto\" in this version of Rail")
 }
 
 /// Open the store, recording schema version, size and any failure.
@@ -116,6 +126,23 @@ mod tests {
     }
 
     const FILE_BACKEND_ONE_ACCOUNT: &str = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"x\"\nai_send = \"drafts\"\n";
+
+    #[test]
+    fn a_split_or_stack_layout_is_noted_and_auto_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(dir.path());
+        write_config(
+            &paths,
+            "[general]\nsecrets = \"file\"\nlayout = \"split\"\n",
+        );
+        let report = gather(&paths, &ItemIdCache::default());
+        assert_eq!(
+            report.layout_note.as_deref(),
+            Some("general.layout = \"split\" acts as \"auto\" in this version of Rail")
+        );
+        write_config(&paths, "[general]\nsecrets = \"file\"\n");
+        assert_eq!(gather(&paths, &ItemIdCache::default()).layout_note, None);
+    }
 
     #[test]
     fn a_missing_config_fails_and_skips_the_secrets_probe() {

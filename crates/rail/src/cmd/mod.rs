@@ -2,6 +2,7 @@ pub mod account;
 mod confirm;
 pub mod daemon;
 pub mod doctor;
+pub mod mail;
 pub mod mcp;
 pub mod search;
 pub mod secrets;
