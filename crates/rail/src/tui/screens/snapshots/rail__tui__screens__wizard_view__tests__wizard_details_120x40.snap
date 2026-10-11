@@ -1,0 +1,44 @@
+---
+source: crates/rail/src/tui/screens/wizard_view.rs
+expression: text
+---
+ Rail setup      │
+                 │  Account details
+ ✓ Start         │
+ ✓ Provider      │  Email address
+ ✓ Instructions  │
+ ▸ Details       │  Account name
+ – Admin consent │                 used in the UI and in config.toml
+   Login         │  Colour
+   Done          │                 optional, for example blue
+                 │  Client ID
+                 │
+                 │  Client secret
+                 │                 required for Gmail
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+
+Tab next field · Enter continue · Esc back · Ctrl-C quit

@@ -51,6 +51,20 @@ temporary directories and in-process mock servers; nothing may touch the real XD
 real OS keyring, a real browser, a real 1Password account (a fake `op` script stands in), a real
 systemd or launchd unit, or the network.
 
+### Snapshot tests
+
+Screens are checked with [insta](https://insta.rs) snapshots of a `TestBackend` frame: the
+`.snap` files live in a `snapshots/` directory next to the test module and are committed.
+
+- A new snapshot: `INSTA_UPDATE=unseen cargo test -p rail <test>` writes it; read it before
+  committing.
+- A change you meant: `cargo test` fails and writes `<name>.snap.new` beside the old file. Review
+  with `cargo insta review` (from `cargo install cargo-insta`), or compare the two files and
+  rename the `.snap.new` over the `.snap`.
+- CI never writes snapshots (insta sees `CI`): a missing or changed snapshot fails the build.
+- Snapshot rows are trimmed of trailing spaces, and every clock in a snapshot test is fixed, in
+  UTC; hyperlinks are off.
+
 ### Test hooks
 
 Debug builds honour a few `RAIL_TEST_*` environment variables so the binary tests can stand in for

@@ -58,6 +58,16 @@ pub fn render_lines(width: u16, height: u16, draw: impl FnOnce(&mut Frame)) -> V
         .collect()
 }
 
+/// `render_lines` as one snapshot text: each row trimmed of trailing spaces (so an editor that
+/// trims them cannot break a snapshot), joined by line breaks.
+pub fn snapshot(width: u16, height: u16, draw: impl FnOnce(&mut Frame)) -> String {
+    render_lines(width, height, draw)
+        .iter()
+        .map(|row| row.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Records copies instead of touching the real clipboard.
 #[derive(Clone, Default)]
 pub struct RecordingClipboard(pub Arc<Mutex<Vec<String>>>);

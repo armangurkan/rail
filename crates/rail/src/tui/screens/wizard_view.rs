@@ -276,11 +276,13 @@ mod tests {
     use rail_core::error::ErrorClass;
     use rail_core::onboarding::{Event, Failure, Preset, PresetEntry};
 
+    use url::Url;
+
     use crate::tui::app::{Effect, Msg, TaskResult};
     use crate::tui::screen::Screen;
     use crate::tui::screens::wizard::WizardScreen;
     use crate::tui::test_util::{
-        SIZES, feed, gmail_own_app_keys, press, render_lines, type_text, wizard_screen,
+        SIZES, feed, gmail_own_app_keys, press, render_lines, snapshot, type_text, wizard_screen,
     };
     use crate::tui::theme::Theme;
     use crate::tui::widgets::status_line::SPINNER;
@@ -305,6 +307,50 @@ mod tests {
                 KeyCode::Enter,
             ],
         );
+    }
+
+    /// The wizard's steps as the keymap migration must leave them, at both sizes. Taken before
+    /// the migration; the migration may not change a single cell.
+    fn snapshot_states() -> Vec<(&'static str, WizardScreen)> {
+        let mut provider = wizard_screen();
+        keys(&mut provider, &[KeyCode::Down, KeyCode::Enter]);
+        let mut instructions = wizard_screen();
+        keys(
+            &mut instructions,
+            &[KeyCode::Down, KeyCode::Enter, KeyCode::Enter],
+        );
+        let mut details = wizard_screen();
+        to_gmail_details(&mut details);
+        let mut login = wizard_screen();
+        for k in gmail_own_app_keys("me@gmail.com") {
+            login.update(Msg::Key(k));
+        }
+        let url = Url::parse("https://accounts.example/auth?state=s").unwrap();
+        feed(&mut login, Event::LoginUrl(url));
+        let mut retry = wizard_screen();
+        for k in gmail_own_app_keys("me@gmail.com") {
+            retry.update(Msg::Key(k));
+        }
+        let failure = Failure::new("boom", ErrorClass::Transient);
+        feed(&mut retry, Event::LoginFinished(Err(failure)));
+        vec![
+            ("start", wizard_screen()),
+            ("provider", provider),
+            ("instructions", instructions),
+            ("details", details),
+            ("login", login),
+            ("retry", retry),
+        ]
+    }
+
+    #[test]
+    fn wizard_snapshots() {
+        for (name, screen) in snapshot_states() {
+            for (width, height) in SIZES {
+                let text = snapshot(width, height, |frame| screen.view(frame, &Theme::default()));
+                insta::assert_snapshot!(format!("wizard_{name}_{width}x{height}"), text);
+            }
+        }
     }
 
     fn assert_shows(screen: &WizardScreen, needles: &[&str]) {

@@ -1,0 +1,44 @@
+---
+source: crates/rail/src/tui/screens/wizard_view.rs
+expression: text
+---
+ Rail setup      │
+                 │  Log in
+ ✓ Start         │
+ ✓ Provider      │  Log in as me@gmail.com in your browser. Waiting for the browser to finish.
+ ✓ Instructions  │
+ ✓ Details       │  If the browser did not open, visit:
+ – Admin consent │  https://accounts.example/auth?state=s
+ ▸ Login         │  Press c to copy this URL.
+   Done          │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+⠋ Waiting for the browser login
+Enter continue · r retry · Esc back · q quit
