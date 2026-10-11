@@ -1,5 +1,5 @@
--- Rail schema v2: sync state. Additive only; see
--- docs/superpowers/specs/2026-10-10-rail-gmail-sync-design.md §4 and the Phase 4 plan.
+-- Rail schema v2: sync state. Additive only: it adds tables and columns and changes
+-- nothing that v1 created.
 -- Times: *_at are Unix seconds; internal_date, backfill_before and backfill_window are
 -- Gmail's internalDate in milliseconds. accounts.last_sync_at already exists (0001).
 

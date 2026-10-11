@@ -10,75 +10,102 @@
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 ![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)
 
-Rail is a Rust terminal mail client built on ratatui: a modern, fast homage to mutt with a local
-store, a thread view, a unified inbox, readable HTML and a command palette. Gmail and Microsoft 365
-first.
+Rail is a terminal mail client for Gmail and Microsoft 365, written in Rust. It keeps a local copy
+of your mail in SQLite, synced by a small background daemon, so every list, search and open is a
+local query and the interface never waits on the network. It is built for people who live in a
+terminal and want something in the spirit of mutt with threads, a unified inbox across accounts,
+readable HTML and a command palette. It also speaks MCP, so an AI coding agent can help you set it
+up without ever seeing your secrets.
 
-**Status: pre-alpha.** The setup wizard, login, config, store, `rail doctor`, the background daemon,
-1Password storage, the MCP server for AI coding agents, Gmail sync into the local store (`rail sync`),
-`rail search` and start at login (`rail daemon install`) work. The mail views are not built yet:
-with an account configured, `rail` still prints that the TUI is not built and exits with status 2,
-and mail can be searched but not yet read. Microsoft 365 accounts can log in but do not sync yet.
+> **Rail is pre-1.0 and you cannot read mail in it yet.** Account setup, background sync and
+> search work today. The mail views (thread list, reader) are the next thing being built. Running
+> `rail` with an account configured prints that the TUI is not built yet and exits with
+> status 2.
 
-## Why Rail
+## Contents
 
-- **Threads are the unit.** The list shows conversations, and the reader collapses and expands them.
-- **One inbox.** All accounts merge into a unified view with per-account colour and a quick filter.
-- **Readable HTML.** HTML mail renders in the terminal, with one key to open it in a browser.
-- **Everything is local.** Every list, scroll, search and open is a SQLite query. The UI never waits
-  on the network.
-- **Palette and keymap.** `:` fuzzy-matches every command, folder and account; `?` shows the keymap for
-  the current view.
+- [Status](#status)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Account setup](#account-setup)
+- [Using Rail from an AI agent (MCP)](#using-rail-from-an-ai-agent-mcp)
+- [Security and privacy](#security-and-privacy)
+- [Configuration](#configuration)
+- [Commands](#commands)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
 
-## Roadmap
+## Status
 
-| Phase | Scope | Status |
-|---|---|---|
-| 1 | Workspace, config, store schema, secrets, OAuth login, `rail account`, `rail doctor` | Done |
-| 2 | App shell and onboarding: setup wizard, organisation presets, admin consent, `rail setup`, `rail account login` | Done |
-| 3 | Daemon, operation layer and MCP server: `rail daemon`, `rail mcp`, guided provider setup, 1Password, `ai_send` | Done |
-| 4 | Gmail provider and sync, inside the daemon: `rail sync` fills the store, `rail search`, start at login | Done |
-| 5 | TUI read path: thread list, sidebar, reader, palette, help, filter, display-quality HTML rendering | Next |
-| 6 | Actions through the outbox and the compose round-trip; agent sends under `ai_send` | Planned |
-| 7 | Microsoft Graph provider and device-code flow | Planned |
-| 8 | Polish: search operators, auto layout, theme, inline images | Planned |
+**Works today**
 
-The overall design is in [`docs/superpowers/specs/2026-10-09-rail-design.md`](docs/superpowers/specs/2026-10-09-rail-design.md);
-the shell and the wizard are in [`docs/superpowers/specs/2026-10-09-rail-onboarding-design.md`](docs/superpowers/specs/2026-10-09-rail-onboarding-design.md),
-the daemon and the MCP server in [`docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md`](docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md),
-and Gmail sync in [`docs/superpowers/specs/2026-10-10-rail-gmail-sync-design.md`](docs/superpowers/specs/2026-10-10-rail-gmail-sync-design.md).
+- Setup wizard (`rail setup`) and a flag form for scripts (`rail account add`), including
+  organisation presets and Microsoft admin consent.
+- OAuth login for Gmail / Google Workspace and Microsoft 365; tokens kept in the OS keyring, a
+  private file, or 1Password.
+- Gmail sync into the local store: labels, message envelopes, and bodies of recent threads, kept
+  current by a background daemon that can start at login (`rail daemon install`).
+- `rail search` over the local store and, through Gmail's own search, the whole mailbox.
+- `rail doctor`, a single health check for config, store, tokens, sync and the daemon.
+- An MCP server (`rail mcp`) for setting up and inspecting Rail from an AI agent.
+
+**Coming**
+
+- Next: reading mail in the terminal (thread list, sidebar, reader, palette, display-quality HTML).
+- Then: actions (archive, label, delete) and composing and sending, with agent sends governed by
+  the per-account `ai_send` policy.
+- Then: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
+  sync and are searched locally only.
+- Later: search operators, layout and theme options, inline images.
+
+**Pre-1.0 caveats.** Config keys, command output and the store's schema may change between
+releases. The store migrates forward on its own; there is no downgrade path. Rail is tested on
+Linux and macOS only.
 
 ## Install
 
-Requires Rust 1.88 or newer.
+Rail builds from source with Cargo. You need Rust 1.88 or newer and a C compiler (SQLite is
+bundled and compiled in). Supported platforms are Linux and macOS.
 
-    cargo install --path crates/rail
+```sh
+git clone https://github.com/vitosans/rail
+cd rail
+cargo install --locked --path crates/rail
+```
 
-## Get started
+This puts `rail` in `~/.cargo/bin`. To upgrade, pull and run the same command; the first command
+of the new version replaces any older daemon still running.
 
-Run Rail with no arguments:
+## Quick start
 
-    rail
+```sh
+rail setup                 # add an account: guided steps, then a browser login
+rail sync                  # fill the local store and watch progress
+rail search invoice        # one line per matching thread
+rail doctor                # check that everything is in order
+rail daemon install        # keep syncing after you log out and back in
+```
 
-With no config file yet, Rail opens the setup wizard. It asks how you want to set up the account:
+1. **`rail setup`** opens the setup wizard (running `rail` with no config does the same). Choose a
+   preset your organisation gave you, or set up your own app: the wizard shows the portal steps
+   from [Account setup](#account-setup), opens the portal with `o`, asks for the values it gave
+   you, and logs you in through the browser. It needs an interactive terminal; in scripts use
+   [`rail account add` with flags](#commands).
+2. **`rail sync`** wakes the background sync and shows progress (counts only, never mail) until
+   each account is caught up. Newest mail arrives first, so recent mail is searchable within
+   seconds, but a first sync of a large mailbox takes hours (about 250 messages a minute, under
+   Gmail's quota). Set [`history_days`](#sync-settings) to sync only recent mail. Ctrl-C stops
+   watching, not the sync.
+3. **`rail search <query>`** prints date, account, sender and subject for each matching thread,
+   newest first. Gmail's search syntax works for the Gmail part.
+4. **`rail doctor`** reports on the config, store, token backend, each account's tokens and sync,
+   the daemon and the login unit.
+5. **`rail daemon install`** writes a systemd user unit (Linux) or a launchd agent (macOS) so the
+   daemon starts at login. Without it, the daemon starts on demand whenever a `rail` command needs
+   it and keeps running while any account is configured.
 
-- **Use a preset from my organisation.** Pick the preset your organisation installed, or type the
-  path or `https://` URL it gave you. Enter your address, log in through the browser, done.
-- **Set up my own app.** Choose Gmail or Microsoft 365. The wizard shows the portal steps (the same
-  ones as in [Setup](#setup) below), opens the portal with `o`, and asks for the values the portal
-  gave you. For Microsoft the client ID field is the app's *Application (client) ID*. The Gmail
-  client secret field also takes an `op://` 1Password reference (see
-  [Tokens in 1Password](#tokens-in-1password)).
-
-The wizard ends with a report of where everything lives and offers to add another account.
-Then run `rail sync` to fill the store (the daemon keeps it current from then on) and
-`rail daemon install` to keep syncing after you log out and in (see [Start at login](#start-at-login)).
-The newest mail arrives first, so the inbox is usable within seconds, but a first sync of a large
-mailbox takes hours; see [Sync settings](#sync-settings) to shorten it.
-`rail setup` opens it any time. `rail account add` with no arguments opens it too, and
-`rail account add gmail` (or `m365`) opens it with that provider already chosen.
-
-Keys:
+### Wizard keys
 
 | Key | Action |
 |---|---|
@@ -89,159 +116,40 @@ Keys:
 | `Esc` | Go back one step. |
 | `F1` | Open the provider portal, or the preset's help link. |
 | `o` | On the Instructions step, open the provider portal in your browser. |
-| `r` / `c` | `r` retries when an error is shown. `c` copies the admin-consent URL shown with an error, or the login URL on the Login step. |
+| `r` | Retry when an error is shown. |
+| `c` | Copy the admin-consent URL shown with an error, or the login URL on the Login step (OSC 52; some terminals ignore it, so select the URL on screen if nothing was copied). |
 | `q` | Quit, except while typing in a text field. |
-| `Ctrl-C` | Quit from anywhere. While an account is being saved, `Esc` and `q` do nothing and `Ctrl-C` waits for the save to finish, then quits. |
+| `Ctrl-C` | Quit from anywhere. While an account is being saved, it waits for the save to finish. |
 
-The [background daemon](#the-background-daemon) saves the account as soon as the browser hands the
-login back, and the wizard then shows where everything was saved. `Esc` or `Ctrl-C` while the
-wizard waits for the browser cancels that login (or admin consent) in the daemon, so nothing is
-left waiting there. A save the daemon has already started is never interrupted, so a half-written
-account never happens: if you quit just as the browser came back, the daemon finishes the save and
-Rail says so once the terminal is back (see below).
+The wizard exits 0 if at least one account was saved and 1 with `setup cancelled; nothing was
+saved` otherwise. Quitting while the browser login is pending cancels that login. An account whose
+save had already started is always finished, never left half-written; Rail then says so and exits
+0. If you quit after an admin-consent error, Rail prints the admin-consent URL once the terminal is
+back so you can forward it to an administrator. When stdout is not a terminal, every way of opening
+the wizard prints a hint and exits 2.
 
-`c` copies with the terminal clipboard escape sequence (OSC 52), which some terminals ignore without
-saying so; if nothing was copied, select the URL on screen. The login URL only works while Rail is
-running, so open it before you quit (select it on screen if the browser did not open). If the wizard
-ends before it finishes, Rail prints only the last admin-consent URL it showed once the terminal is
-back, so a non-administrator can forward it to an administrator. The login URL is never printed.
+## Account setup
 
-When the wizard exits, the status is 0 if at least one account was saved (also when you quit after a
-save; Rail then prints "setup interrupted; saved: <names>"), and 1 with "setup cancelled; nothing was
-saved" otherwise. Quitting before the save of an account saves nothing for that account. Quitting
-while the daemon was already saving one keeps it: Rail prints "setup cancelled; the account being
-saved was kept — check `rail account list`" and exits 0.
-
-The wizard needs an interactive terminal. When stdout is a pipe or a file, every way of opening it
-(`rail`, `rail setup`, `rail account add` without flags) prints a one-line hint and exits with
-status 2; use the flag form of `rail account add` instead.
-
-## Use Rail from an AI agent (MCP)
-
-Rail is also an [MCP](https://modelcontextprotocol.io) server, so a coding agent with a shell
-(Claude Code, Codex, Cursor and similar) can do everything the wizard does, including setting up
-the Google project or the Microsoft app registration. Register it once:
-
-    claude mcp add rail -- rail mcp
-
-(other clients: run the command `rail mcp` as a stdio server). Then ask the agent to run Rail's
-`setup` prompt. It checks `rail_status`, asks which providers you want, and walks you through
-`rail_provider_guide` one step at a time: it runs the `gcloud` or `az` commands with your
-approval, hands you the browser for the pages only you can complete (the Google consent screen
-and the desktop client download, and every login), and finishes with `rail_account_add` and
-`rail_wait`. No secret passes through the agent: `rail_account_add` takes the absolute path of the
-client secret JSON you downloaded, an `op://` reference or a preset, never the secret itself, and
-tokens stay in the daemon. A `client_secret` sent by an agent is refused, and a value in
-`client_secret_ref` that is not an `op://` reference is refused without being repeated anywhere,
-in case it was a pasted secret. Every tool refuses arguments it does not know. File paths given to any
-tool must be absolute (the daemon's working directory is not the agent's); a relative one is
-refused with "use an absolute path".
-
-| Tool | What it does |
-|---|---|
-| `rail_status` | Everything `rail doctor` checks, including each account's `ai_send` policy, plus the daemon's state. Read-only. |
-| `rail_accounts_list` | Configured accounts, token presence, `ai_send` policy. Read-only. |
-| `rail_presets_list` | Presets installed on this machine. Read-only. |
-| `rail_preset_fetch` | A preset from an `https://` URL or an absolute file path. Read-only. |
-| `rail_provider_guide` | The Google or Microsoft setup steps, as data. Read-only. |
-| `rail_account_add` | Validates a new account, opens its login and returns the URL and an id. With `store_secret_in_1password` set, Rail keeps the client secret in 1Password (see below). |
-| `rail_account_login` | Logs in again to a configured account. |
-| `rail_admin_consent` | Microsoft admin consent for one organisation. |
-| `rail_wait` | Waits, at most five minutes per call, for a login or consent to finish. Read-only. An agent giving up on a wait does not cancel the login. |
-| `rail_cancel` | Cancels a login or consent that has not reached the save. |
-| `rail_secrets_configure` | Moves tokens between the keyring, the file and 1Password (see below). Needs your confirmation. |
-| `rail_account_remove` | Removes an account's config entry and tokens; its mail stays. Destructive; needs your confirmation. |
-| `rail_sync_status` | Each account's sync: phase, counts of messages, threads and bodies stored, last success, last error (Gmail's words quoted as outside text) and next attempt. Read-only. No mail content. |
-| `rail_sync_now` | Wakes one account's sync, or all, instead of waiting for the next poll; returns at once. With no Gmail account configured it says so and wakes nothing (Microsoft 365 sync is not available yet). No mail content. |
-
-No MCP tool returns mail content (subjects, senders, snippets or bodies) yet, and none sends mail.
-That is not a wall around your mail: an agent that can run shell commands can run `rail search`
-(or read `rail.db`) like any program you run. There, the control is your agent client's own
-approval of shell commands (see below).
-
-`rail_account_remove` and `rail_secrets_configure` ask you to confirm in the agent's own dialog
-(MCP elicitation), showing what changes: the account and what is removed, or the old and new
-token store, the vault and how many accounts' tokens move (and, when the target is the file, that
-tokens will sit in a plain 0600 file instead of the keyring or 1Password; when tokens are not
-moved, that each account then needs `rail account login`). The daemon writes that text, with
-every name, address, vault and 1Password account quoted and shown in plain ASCII (every
-non-ASCII character as `\u{..}`, so a look-alike letter cannot pass for a Latin one) and never
-cut, so none can fake a line, hide characters or look like another; vault and 1Password account
-names over 100 characters, and addresses over 254, are refused instead. The text is bound to a
-digest of the exact plan, the old token store included: the confirmed request must carry the
-digest, and if anything changed in between (an account added, say), nothing runs and the agent
-has to ask you again. Neither tool has an input that confirms for you. When you decline, dismiss the dialog or
-leave its box unticked, nothing changes. A client that cannot show the dialog changes nothing
-either: the agent is told to ask you to run `rail account remove <name>` or `rail secrets set`
-in a terminal (or to edit `secrets` and `[onepassword]` in `config.toml` yourself). Every tool
-has a terminal command that does the same. A setting that is already in place
-needs no confirmation.
-
-What this protects is the MCP path: through MCP, an account is removed and tokens move only after
-you confirm in your agent client's dialog. It is not a wall around Rail. An agent that can also
-run shell commands runs them as you, so it could drive `rail` (in a pseudo-terminal) or talk to the
-daemon's socket directly, like any program you run; Rail cannot stop a program running as the same
-user. There, the control is your agent client's own approval of shell commands: keep it on, and
-read a command that runs `rail` before you allow it.
-
-Text from outside Rail, such as preset files, the mail provider's and the system's error messages
-now and email later, comes back marked as untrusted. In the summaries the agent reads, every such
-piece is quoted on one line, cut to 200 characters, and preceded by a notice that it is data,
-never instructions. That lowers the risk of a message or a preset steering the agent; the
-`ai_send` policy (see [Configuration](#what-an-ai-agent-may-do-with-your-mail-ai_send)) is the real
-control for sending.
-
-`rail mcp` writes only MCP messages to its standard output and logs to `rail.log`; it logs the
-MCP library's own messages only at error level, since its warnings about malformed arguments
-can quote what the agent sent. A more specific `RUST_LOG` target overrides that: with
-`RUST_LOG=rmcp::handler=warn`, those warnings come back and may quote tool arguments, so do not
-set one while an agent might be sending a pasted secret, and treat `rail.log` as sensitive then.
-Every Rail command (the daemon too) keeps the HTTP and TLS libraries (`hyper`, `hyper_util`, `h2`,
-`reqwest`, `rustls`) at `warn` whatever `RUST_LOG` says, since at debug they would log request
-lines with Gmail search text, the access token and mail; only a more specific target (such as
-`RUST_LOG=hyper::proto=debug`) overrides that, and then `rail.log` holds all of those.
-It talks to the background daemon like every other command.
-
-## Commands
-
-| Command | What it does |
-|---|---|
-| `rail` | Opens the setup wizard when there is no config yet. With a config it prints that the TUI is not built yet and exits with status 2. |
-| `rail setup` | Opens the setup wizard to add an account. |
-| `rail account add [<gmail\|m365>]` | With no arguments, or only a provider, opens the setup wizard. |
-| `rail account add <gmail\|m365> --address <address> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>] [--store-secret-in-1password]` | Adds an account without the wizard, for scripts. `--address` needs the provider and `--client-id`; any other flag needs `--address`. A partial set exits with status 1 and names the missing flag. `--client-secret` may be an `op://` 1Password reference; with `--store-secret-in-1password`, Rail instead stores the secret you gave in the `[onepassword]` vault and writes an `op://` reference into `config.toml` (see [Tokens in 1Password](#tokens-in-1password)). |
-| `rail account login <name-or-address>` | Logs in again to an account already in `config.toml` and replaces its tokens. Use it when tokens were revoked, expired or deleted from the keyring. |
-| `rail account list` | Lists configured accounts and whether their tokens are stored, in columns as wide as the longest name and address. It asks the store whether tokens exist without reading them, so a 1Password backend never reveals a token to list accounts. |
-| `rail account remove <name-or-address>` | Removes an account's entry in `config.toml` and its stored tokens; its mail stays in the store. Interactive only: it shows what goes (the daemon's text, with the name and address quoted) and asks `Remove? [y/N]`, and only `y` or `yes` removes; if the account changed while you answered, it says so, removes nothing, and asks you to run the command again. When stdin or stdout is not a terminal it removes nothing and exits with status 1; there is no flag to skip the question, so a script cannot answer it through a pipe. An agent that can run shell commands could still drive it as you; see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp). |
-| `rail sync [<account>] [--no-wait]` | Wakes the background sync for one account (name or address) or all, and shows its progress (labels, envelopes fetched of the mailbox's size, bodies, retries) until each account is caught up; it prints counts and phases only, never mail. Exits 0 when all are, 1 if any sync failed (with Rail's message and Gmail's words quoted on a line of their own), 2 if any account needs `rail account login` (2 wins when both apply). `--no-wait` only wakes it and exits 0. A long sync is watched for as long as it makes progress; if no account's status changes for 10 minutes, it stops watching, says ``still syncing in the daemon; `rail doctor` shows progress``, and exits 0 (or 1 or 2 as above if something failed). If the daemon stops or is replaced during the watch, `rail sync` starts or finds the new one, asks it to sync again, says so on standard error and follows it (at most three times). Ctrl-C stops the command (exit 130), not the sync. With no Gmail account configured it says so and exits 0. Microsoft 365 accounts sync in a later version. |
-| `rail search <query> [--account <name>] [--limit N]` | Searches the local store and, through Gmail's own search, the whole mailbox, even mail older than `history_days`, of the accounts in `config.toml` now (a removed account's mail stays in the store but is not shown). Prints one line per thread, newest first (local hits first when two share a date): date (UTC), account, sender (cut to 30 characters) and subject (cut to 120), with control and invisible formatting characters shown escaped (`\n`, `\u{1b}`, `\u{202e}`, `\u{2028}`); never a snippet or body. Mail found only on Gmail is fetched into the store and kept for 14 days after it was last searched for. `--limit` is 1 to 100 and defaults to 20. Standard output carries only result lines: `No messages found.` and every note go to standard error. An account Gmail could not be asked for is named there after the results, with Rail's reason and Gmail's words quoted on a line of their own; its local hits are still shown. Microsoft 365 accounts get one note instead (`Microsoft 365 accounts are searched locally only until Microsoft support arrives`). Exits 1 when nothing was found and a Gmail search failed, or for an unknown `--account`. |
-| `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves every account's tokens there (with `--no-migrate`, only the setting changes and each account then needs `rail account login`). `--vault` and `--account` are the 1Password vault and account; they must not contain control or format characters, and the daemon refuses them for every front end. Interactive only, like `rail account remove`: it shows the daemon's description of the change and asks `Change? [y/N]`; only `y` or `yes` changes anything. If the settings changed while you answered, it says so and changes nothing; if the setting is already in place it says nothing needed changing. When stdin or stdout is not a terminal it changes nothing and exits with status 1. |
-| `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
-| `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
-| `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
-| `rail daemon install` | Starts Rail's daemon at login, so mail keeps syncing without a command running: on Linux it writes `~/.config/systemd/user/rail.service` (under `$XDG_CONFIG_HOME` when set) and runs `systemctl --user daemon-reload` and `systemctl --user enable --now rail.service`; on macOS it writes `~/Library/LaunchAgents/io.github.vitosans.rail.plist` and loads it with `launchctl bootstrap`. A daemon already running is stopped first, so only one runs. Running it again rewrites the unit only if it changed (it says `already up to date` otherwise) and enables and starts it again. On Linux it first checks that a user service manager answers (`systemctl --user show --property=Version`); where none does (some containers), or `systemctl` cannot be run at all, it says which, changes nothing and exits 1. If enabling fails, the previous unit is put back (or, on a first install, the new one is disabled and removed), so nothing is left half-installed. It then waits up to 10 seconds for the unit's daemon to answer and exits 1, with the unit's state, if it does not. See [Start at login](#start-at-login). |
-| `rail daemon uninstall` | Stops and disables the login unit and removes its file. Says `Rail's login unit is not installed; nothing to remove.` and exits 0 when none is installed. A `disable` that fails is reported with systemctl's words and the file is still removed. Where no user service manager answers, it still removes the file (and its enable link) and says why there was nothing to stop. |
-| `rail mcp` | Serves Rail's tools to an AI agent over MCP on standard input and output (see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp)). |
-| `rail doctor` | Checks the config file, the store (with its size), the secrets backend, every account's tokens and `ai_send` policy, and the daemon, plus each account's sync: its phase, last success, counts and last error (an account that needs a login, or whose last sync (or the start of its sync) failed with an error retrying cannot mend, such as Gmail refusing a request or the store failing, and is not being retried, fails the check; any other past error is a warning). The checks run in the daemon, so if it cannot start, `rail doctor` fails outright with the reason (for example a socket path too long for a Unix socket; set `RAIL_RUNTIME_DIR` to a shorter directory). Also says whether the login unit (`rail daemon install`) is installed, enabled and still runs this binary; that line never changes the exit status. Exits non-zero for config, store, secrets-backend and token-read errors and for a Gmail account that needs a login or whose sync failed for good; a Microsoft 365 account with no tokens shows as `missing` without failing the check (see [Check everything](#check-everything)). |
-
-## Setup
-
-Rail ships no OAuth client of its own. Create one per provider once, then log in, either in the
-wizard or with the flags shown here.
+Rail ships no OAuth client of its own: you register one per provider once (or use a preset from
+your organisation), then log in. The wizard walks you through the same steps shown here.
 
 ### Gmail / Google Workspace
 
 1. In Google Cloud Console create a project and enable the **Gmail API**.
-2. OAuth consent screen: External. **Publishing status must be "In production"**, even unverified.
-   An app left in "Testing" expires refresh tokens after 7 days and Rail will keep asking you to log in.
-3. Credentials: create an **OAuth client ID** of type **Desktop app**. Copy the client id and secret.
-   A desktop-app secret is not actually secret; keeping it in `config.toml` is fine.
+2. **OAuth consent screen**: External. **Publishing status must be "In production"**, even
+   unverified. An app left in "Testing" has its refresh tokens expire after 7 days, and Rail will
+   keep asking you to log in.
+3. **Credentials**: create an **OAuth client ID** of type **Desktop app** and copy the client id
+   and secret. A desktop-app secret is not actually secret; keeping it in `config.toml` is fine (or
+   keep it in [1Password](#tokens-in-1password)).
 4. Log in with `rail setup`, or:
 
-       rail account add gmail --address you@gmail.com \
-         --client-id XXXX.apps.googleusercontent.com --client-secret GOCSPX-...
+   ```sh
+   rail account add gmail --address you@example.com \
+     --client-id XXXX.apps.googleusercontent.com --client-secret GOCSPX-...
+   ```
 
-   A browser opens for consent. Google shows an "unverified app" warning for your own app; continue.
+   A browser opens for consent. Google warns that your own app is unverified; continue.
 
 <!-- guide:google v1 -->
 **The same steps with `gcloud`.** `gcloud` can create the project and enable the API, but it cannot
@@ -256,39 +164,44 @@ gcloud config set project <project-id>
 gcloud services enable gmail.googleapis.com
 ```
 
-An AI agent connected over MCP walks you through exactly these steps (see
-[Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp)). Then, in the browser:
+Then, in the browser:
 
 - the consent screen at `https://console.cloud.google.com/apis/credentials/consent?project=<project-id>`:
   External, then publish ("In production");
 - the credentials page at `https://console.cloud.google.com/apis/credentials?project=<project-id>`:
   Create credentials, OAuth client ID, Desktop app, and download the JSON file.
 
+An AI agent connected over MCP can walk you through exactly these steps (see
+[Using Rail from an AI agent](#using-rail-from-an-ai-agent-mcp)).
+
 ### Microsoft 365 / Outlook
 
 1. In Azure Portal, **App registrations** > New. Supported account types: pick what matches your
-   mailbox (work/school, personal, or both). Redirect URI: platform **Mobile and desktop applications**,
-   value `http://127.0.0.1`. Rail listens on `http://127.0.0.1:<random port>`, and Azure matches any
-   port for a loopback redirect. If the portal refuses an `http://127.0.0.1` URI, add it by editing the
-   app's **Manifest** (`replyUrlsWithType`) instead.
-2. Under **Authentication**, enable "Allow public client flows".
-3. API permissions: Microsoft Graph delegated `Mail.ReadWrite`, `Mail.Send`, `User.Read`, `offline_access`.
+   mailbox (work/school, personal, or both). Redirect URI: platform **Mobile and desktop
+   applications**, value `http://127.0.0.1`. Rail listens on `http://127.0.0.1:<random port>`, and
+   Azure matches any port for a loopback redirect. If the portal refuses an `http://127.0.0.1` URI,
+   add it by editing the app's **Manifest** (`replyUrlsWithType`) instead.
+2. Under **Authentication**, set "Allow public client flows" to **Yes**. Rail is a desktop app and
+   holds no client secret; without this Microsoft answers `AADSTS7000218`.
+3. **API permissions**: Microsoft Graph delegated `Mail.ReadWrite`, `Mail.Send`, `User.Read`,
+   `offline_access`.
 4. Log in with `rail setup`, or:
 
-       rail account add m365 --address you@corp.com --client-id <application-id>
+   ```sh
+   rail account add m365 --address you@example.com --client-id <application-id>
+   ```
 
-   The client ID is the **Application (client) ID** on the app registration's **Overview** page
-   (not the *Object ID*). If you chose "Accounts in this organizational directory only" (single
-   tenant), you must also give the tenant: add `--tenant <tenant-id-or-domain>`, or fill in the
-   wizard's *Tenant* field. Microsoft refuses the default `common` endpoint for single-tenant apps;
-   add `--tenant` too if your organisation restricts `common`.
+   The client ID is the **Application (client) ID** on the registration's **Overview** page, not
+   the *Object ID*. For a single-tenant app ("Accounts in this organizational directory only") also
+   pass `--tenant <tenant-id-or-domain>` (or fill in the wizard's *Tenant* field): Microsoft refuses
+   the default `common` endpoint for single-tenant apps. Add `--tenant` too if your organisation
+   restricts `common`.
 
 <!-- guide:microsoft v1 -->
 **The same steps with `az`.** The Azure CLI can do the whole registration of an app for work or
-school accounts (single or multiple organisations); personal Microsoft accounts use the manual steps
-above. Use the tenant id or a
-domain the tenant owns for `<tenant>`, and `AzureADMyOrg` (one organisation) or
-`AzureADMultipleOrgs` for `<audience>`:
+school accounts (single or multiple organisations); personal Microsoft accounts use the portal steps
+above. Use the tenant id or a domain the tenant owns for `<tenant>`, and `AzureADMyOrg` (one
+organisation) or `AzureADMultipleOrgs` for `<audience>`:
 
 ```sh
 az version
@@ -303,407 +216,264 @@ az ad app permission add --id <app-id> --api 00000003-0000-0000-c000-00000000000
 `az ad sp show` lists the ids of the four Microsoft Graph permissions for `az ad app permission add`.
 An administrator can then approve Rail for the whole organisation. Approval needs the app's identity
 in the tenant (an "already exists" error from the first command means it is done); if the second
-command reports that the permissions or the service principal are not found, wait a minute and run it
-again, because directory changes take a moment to propagate:
+command reports that the permissions or the service principal are not found, wait a minute and run
+it again, because directory changes take a moment to propagate:
 
 ```sh
 az ad sp create --id <app-id>
 az ad app permission admin-consent --id <app-id>
 ```
 
-### Work or school accounts
+### Work or school accounts and admin consent
 
-This section is complete on its own: it covers everything a person or an administrator needs for a
-Microsoft 365 work or school mailbox.
-
-**Single-tenant or multi-tenant registration.** When you register the app, "Accounts in this
-organizational directory only" (single tenant) is the right choice for one organisation. Log in
-through that organisation's tenant: put its tenant ID or domain in the wizard's *Tenant* field, or
-pass `--tenant`. Microsoft refuses the default `common` endpoint for single-tenant apps. Choose
-"Accounts in any organizational directory" (multi-tenant) only when people from several
-organisations will use the same registration; then `common` works, but each organisation still has
-to consent.
+**Single or multi-tenant.** "Accounts in this organizational directory only" (single tenant) is
+right for one organisation; log in through its tenant ID or domain. Choose "Accounts in any
+organizational directory" only when several organisations share one registration; then `common`
+works, but each organisation still has to consent.
 
 **Finding the tenant ID.** In Azure Portal open **Microsoft Entra ID** > **Overview** and copy the
-*Tenant ID*, or open your app registration's **Overview** and copy the *Directory (tenant) ID*. A
-domain the tenant owns (`contoso.onmicrosoft.com`, or a verified domain such as `contoso.com`) works
-in the same places.
-
-**Enable public client flows.** Rail is a desktop app and holds no client secret. In the app
-registration open **Authentication** and set "Allow public client flows" to **Yes**. Without it
-Microsoft answers with `AADSTS7000218`.
-
-**Permissions.** Under **API permissions** add Microsoft Graph *delegated* permissions
-`Mail.ReadWrite`, `Mail.Send`, `User.Read` and `offline_access`. Under Microsoft's defaults these
-delegated permissions do not require admin consent, but many organisations block user consent for
-every app (see below).
-
-**Redirect URI.** Add the platform **Mobile and desktop applications** with the value
-`http://127.0.0.1`. Rail uses the same URI for login and for admin consent, and Azure matches any
-port on a loopback address.
+*Tenant ID*, or copy the *Directory (tenant) ID* from your app registration's **Overview**. A domain
+the tenant owns (`contoso.onmicrosoft.com`, or a verified domain such as `contoso.com`) works in the
+same places.
 
 **Admin consent.** Many organisations stop users from approving apps themselves. An administrator
 approves Rail once for everyone, in any of three ways:
 
 - *From the wizard.* On the Details step tick **I am an administrator of this tenant**. Rail opens
   Microsoft's admin-consent page for your tenant, waits for the redirect to `http://127.0.0.1`, and
-  confirms. The tenant must be a concrete tenant ID or domain, not `common`; if you left it empty
-  or at `common`, the wizard asks for it. Then it continues with your own login.
-- *From the portal.* In Azure Portal open the app's **API permissions** and choose **Grant admin
-  consent for <organisation>**.
-- *During a normal login.* An administrator who just logs in (without ticking the box) is shown
-  Microsoft's consent page with a **Consent on behalf of your organization** checkbox. Ticking it
-  grants consent for everyone, exactly like the other two ways.
+  confirms, then continues with your own login. The tenant must be a concrete tenant ID or domain,
+  not `common`; the wizard asks for it if needed.
+- *From the portal.* Open the app's **API permissions** and choose **Grant admin consent for
+  <organisation>**.
+- *During a normal login.* An administrator who logs in is shown Microsoft's consent page with a
+  **Consent on behalf of your organization** checkbox; ticking it grants consent for everyone.
 
-After any of these, users should no longer see the consent prompt for exactly the permissions listed above,
-unless the tenant's other policies (Conditional Access, app assignment, MFA) intervene; the table
-below lists the `AADSTS` codes for those. If you are not an administrator and your login fails
-with `AADSTS65001` or `AADSTS90094`, the wizard shows the exact admin-consent URL. Press `c` to copy
-it, send it to an administrator, and press `r` to retry once they have approved.
-
-**When Microsoft refuses.** The error names an `AADSTS` code:
-
-| Code | Meaning | What to do |
-|---|---|---|
-| `AADSTS65001` | Nobody has consented to Rail's permissions yet. | An administrator grants admin consent (wizard step or portal). Non-administrators send them the URL the wizard shows. |
-| `AADSTS90094` | Your organisation requires an administrator to approve apps. | Same as above: send the admin-consent URL to an administrator, then retry with `r`. |
-| `AADSTS50076`, `AADSTS50079` | Multi-factor authentication or another policy step is required. | Complete the prompt Microsoft shows in the browser. If it keeps failing, ask your administrator which policy applies; Rail cannot bypass it. |
-| `AADSTS50194` | A single-tenant app was used with the `common` endpoint. | Set the tenant to your tenant ID or domain. |
-| `AADSTS50020` | The account belongs to a different tenant than the app. | Log in with an account from the app's tenant, or register the app for multiple organisations. |
-| `AADSTS700016` | The application is not found in that tenant. | Check the client ID (the *Application (client) ID*, not the object ID) and the tenant. |
-| `AADSTS7000218` | Microsoft expected a client secret. | Enable "Allow public client flows" under **Authentication**. |
-| `AADSTS50011` | The redirect URI does not match the registration. | Add `http://127.0.0.1` under **Mobile and desktop applications**. |
-| `AADSTS53003` | A Conditional Access policy blocked the login. | Ask your administrator; the policy, not Rail, decides. |
-
-**Tokens that expire early.** Some organisations enforce a sign-in frequency policy that ends a
-session after hours or days. When that happens a token refresh fails with "refresh token rejected" and
-names `rail account login <name>` as the fix. Log in again; this replaces the tokens and leaves
-`config.toml` alone:
-
-    rail account login work
-
-See [Logging in again](#logging-in-again).
+If you are not an administrator and your login fails with `AADSTS65001` or `AADSTS90094`, the
+wizard shows the exact admin-consent URL. Press `c` to copy it, send it to an administrator, and
+press `r` to retry once they have approved. Tenant policies (Conditional Access, app assignment,
+MFA) can still intervene after consent; see [Microsoft sign-in errors](#microsoft-sign-in-errors).
 
 ### Presets for your organisation
 
-An administrator can save every colleague the portal work: register the app once, then hand out a
-preset file that fills in the wizard. A preset never contains tokens, and Rail never writes preset
-files.
+An administrator can save every colleague the portal work: register the app once (as above, with
+public client flows enabled and admin consent granted), then hand out a preset file that fills in
+the wizard. A preset never contains tokens, and Rail never writes preset files.
 
-1. **Register the app once**, as in [Microsoft 365 / Outlook](#microsoft-365--outlook) and
-   [Work or school accounts](#work-or-school-accounts): single tenant is usually right, redirect
-   URI `http://127.0.0.1` under **Mobile and desktop applications**, delegated Graph permissions
-   `Mail.ReadWrite`, `Mail.Send`, `User.Read`, `offline_access`.
-2. **Enable public client flows** under **Authentication**.
-3. **Grant admin consent** for the organisation, in the portal (**API permissions** > **Grant admin
-   consent**) or with the wizard's administrator box.
-4. **Write the preset file**:
+```toml
+name = "Contoso Microsoft 365"       # shown in the wizard's preset list
+kind = "m365"                        # or "gmail"
+client_id = "00000000-0000-0000-0000-000000000000"
+tenant = "contoso.onmicrosoft.com"   # Microsoft only
+# client_secret = "GOCSPX-..."       # optional; Gmail desktop clients need it
+# help_url = "https://intranet.example.com/rail"   # optional "Need help?" link (F1 in the wizard)
+```
 
-   ```toml
-   name = "Contoso Microsoft 365"       # shown in the wizard's preset list
-   kind = "m365"                        # or "gmail"
-   client_id = "00000000-0000-0000-0000-000000000000"
-   tenant = "contoso.onmicrosoft.com"   # Microsoft only
-   # client_secret = "GOCSPX-..."       # optional; Gmail desktop apps need it
-   # help_url = "https://intranet.example/rail"   # optional "Need help?" link (F1 in the wizard)
-   ```
+`kind` and `client_id` are required; the rest is optional. Unknown keys and wrong types are
+rejected with the file's path and line number. Users still enter their own address.
 
-   `kind` and `client_id` are required; `name`, `tenant`, `client_secret` and `help_url` are
-   optional. Unknown keys and wrong types are rejected with the file's path and line number, like
-   `config.toml`. A preset fills in the app registration; users still enter their own address.
-5. **Publish it**, in one of two ways:
-   - on the intranet over `https`, so people can type the URL;
-   - as a file under `/etc/rail/presets/*.toml` on each machine, or in a user's
-     `~/.config/rail/presets/*.toml` (`$RAIL_CONFIG_DIR/presets` when that is set).
+Publish a preset in either of two ways:
 
-   The wizard lists the presets it finds in those two directories. A user can also type a preset's
-   path or an `https://` URL on the preset step. Rail fetches a URL with the same timeouts as its
-   logins, refuses plain `http://` (anyone on the network could alter the file), refuses redirects
-   (an intranet URL behind single sign-on fails with "HTTP 302"; use the file instead), refuses
-   bodies over 64 KiB, and never saves the fetched file.
+- as a file in `/etc/rail/presets/*.toml` on each machine, or a user's `~/.config/rail/presets/*.toml`
+  (`$RAIL_CONFIG_DIR/presets` when that is set); the wizard lists these;
+- on the intranet over `https`, so people can type the URL on the preset step. Rail refuses plain
+  `http://`, redirects (an intranet URL behind single sign-on fails with "HTTP 302"; use the file
+  instead) and bodies over 64 KiB, and never saves the fetched file.
 
-For Gmail, register a Desktop app client as in [Gmail / Google Workspace](#gmail--google-workspace)
-and include its `client_secret`.
+A colleague then runs `rail setup`, chooses **Use a preset from my organisation**, picks the preset
+(or types its path or URL), enters their address and logs in.
 
-**What a colleague then does:**
+## Using Rail from an AI agent (MCP)
 
-1. Run `rail`. With no config the setup wizard opens (`rail setup` does the same at any time).
-2. Choose **Use a preset from my organisation** and pick the preset, or type its path or URL.
-3. Enter their email address.
-4. Log in in the browser. The wizard reports where everything was saved.
+Rail is an [MCP](https://modelcontextprotocol.io) server, so an AI coding agent (Claude Code,
+Codex, Cursor and similar) can do what the wizard does, including creating the Google project or
+the Microsoft app registration. Register it once:
 
-### Logging in again
+```sh
+claude mcp add rail -- rail mcp
+```
 
-If a provider revokes Rail or a sign-in frequency policy ends the session, a token refresh fails and
-the error names the fix. If the tokens are deleted from the keyring, `rail doctor` reports them as
-missing and names the same fix:
+Other clients: run `rail mcp` as a stdio server. Then ask the agent to run Rail's `setup` prompt.
+It checks `rail_status`, asks which providers you want, and walks through `rail_provider_guide`
+one step at a time: it runs the `gcloud` or `az` commands with your approval, hands you the
+browser for the pages only you can complete (the Google consent screen, the client download, every
+login), and finishes with `rail_account_add` and `rail_wait`.
 
-    rail account login work
+| Tool | What it does |
+|---|---|
+| `rail_status` | Everything `rail doctor` checks, plus the daemon's state. Read-only. |
+| `rail_accounts_list` | Configured accounts, token presence, `ai_send` policy. Read-only. |
+| `rail_presets_list` | Presets installed on this machine. Read-only. |
+| `rail_preset_fetch` | A preset from an `https://` URL or an absolute file path. Read-only. |
+| `rail_provider_guide` | The Google or Microsoft setup steps, as data. Read-only. |
+| `rail_account_add` | Validates a new account, opens its login and returns the URL and an id. |
+| `rail_account_login` | Logs in again to a configured account. |
+| `rail_admin_consent` | Microsoft admin consent for one organisation. |
+| `rail_wait` | Waits, at most five minutes per call, for a login or consent to finish. Giving up on a wait does not cancel the login. |
+| `rail_cancel` | Cancels a login or consent that has not reached the save. |
+| `rail_sync_status` | Each account's sync phase, counts, last success, last error and next attempt. No mail content. |
+| `rail_sync_now` | Wakes one account's sync, or all, and returns at once. No mail content. |
+| `rail_secrets_configure` | Moves tokens between the keyring, the file and 1Password. Needs your confirmation. |
+| `rail_account_remove` | Removes an account's config entry and tokens; its mail stays. Needs your confirmation. |
 
-The argument is the account's name or its address, matched without regard to case. Rail runs the
-browser login for the account already in `config.toml` and replaces its tokens; the config file is
-not touched.
+**What the tools cannot do.** No tool returns mail content (subjects, senders, snippets or bodies)
+and none sends mail. No secret passes through the agent: `rail_account_add` takes the absolute path
+of the client-secret JSON you downloaded, an `op://` reference or a preset, never the secret itself,
+and a `client_secret` sent by an agent is refused. Tokens stay in the daemon. Tools refuse unknown
+arguments and relative file paths.
 
-### Check everything
+**Confirmation.** `rail_account_remove` and `rail_secrets_configure` ask you to confirm in your
+agent client's own dialog (MCP elicitation). The text is written by Rail, not the agent, with every
+name, address and vault quoted and shown in plain ASCII so look-alike characters cannot pass for
+others. It is bound to a digest of the exact plan: if anything changes before you answer, nothing
+runs and you are asked again. No tool input confirms on your behalf. Declining, dismissing or a
+client that cannot show the dialog changes nothing; the agent is told to ask you to run the
+equivalent terminal command (`rail account remove <name>`, `rail secrets set`) instead.
 
-    rail doctor
-    rail account list
+**The honest limit.** This protects the MCP path only. An agent that can run shell commands runs
+them as you: it could run `rail search`, read `rail.db`, drive `rail` in a pseudo-terminal or talk
+to the daemon's socket, like any program you run. Rail cannot stop a program running as the same
+user. There, the control is your agent client's approval of shell commands: keep it on, and read a
+command that runs `rail` before you allow it.
 
-`rail doctor` reports the config file and how many accounts it holds, the store and its schema
-version, the secrets backend, and token presence and last sync time for every account, then one `sync`
-line per account (its phase, last success in UTC and what the store holds, or `needs a login`,
-or its last error with the provider's words quoted under it; Microsoft 365 accounts show `skip`),
-then a `login` line (`skip` when `rail daemon install` has not run; `ok` when the unit is installed
-and enabled; `warn` when it is installed but not enabled, or when it no longer matches what this
-binary would write, for example after you moved the `rail` binary; the `login` line never changes
-the exit status), then ends with an `ok   daemon` line naming the daemon that ran the checks. An account that needs a
-login, or whose last sync (or the start of its sync) failed with an error retrying cannot mend
-(Gmail refusing a request, the store failing) and is not being retried, fails the check; any other past error is a `warn` line. Text Rail did not write (a keyring's or SQLite's
-message, the config parser's) is marked `from outside Rail` and shown in quotes with control
-characters escaped. It exits non-zero for config, store, secrets-backend and token-read errors, and
-for a Gmail account whose sync needs a login or failed for good. An account with no stored tokens is listed as
-`missing`, with the `rail account login` advice; for a Gmail account its sync line then says
-`needs a login` and the exit status is non-zero. A Microsoft 365 account with no tokens does not
-change the exit status yet, so scripts that care should grep for `missing`.
+## Security and privacy
+
+**Tokens.** OAuth tokens are never written to `config.toml`. They live in one of:
+
+- the **OS keyring** (default; service `rail`): Secret Service on Linux, the Keychain on macOS;
+- a **private file** (`secrets = "file"`): `secrets.json` in the data directory, mode 0600, for
+  machines without a Secret Service;
+- **1Password** (`secrets = "1password"`), through the `op` CLI; see
+  [Tokens in 1Password](#tokens-in-1password).
+
+Tokens, client secrets and authorization codes never appear in logs, error messages or terminal
+output. Files that hold mail or credentials are created owner-only (0600 files, 0700 directories)
+and written atomically.
+
+**What is stored locally.** For each Gmail account, `rail.db` holds every label; the envelope
+(sender, recipients, subject, date, flags, labels, snippet) of every message inside
+`history_days` (the whole mailbox by default); the text of bodies for threads with mail newer than
+`body_cache_days`; and attachment names, types and sizes (never attachment contents). HTML bodies
+are converted to text by Rail's own scanner without running scripts or loading anything remote, so
+syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
+finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail does not
+change or delete mail on the server.
+
+**Mail and AI agents.** Through MCP, mail content never reaches an agent today. Text from outside
+Rail (preset files, provider and system error messages) comes back to the agent marked as
+untrusted: quoted on one line, cut to 200 characters, and preceded by a notice that it is data, not
+instructions. The per-account [`ai_send`](#ai_send-what-an-ai-agent-may-do-with-your-mail) policy
+will govern sending once send tools exist. See [the honest limit](#using-rail-from-an-ai-agent-mcp)
+for agents with shell access.
+
+**The daemon.** It listens on a Unix socket in a directory only you can open (0700); the socket is
+0600, and connections from other users are dropped. On screen, text Rail did not write (a provider's
+error, the system's) is shown on its own line, quoted, with control characters escaped.
+
+**Logs.** `rail.log` never holds tokens or mail at the default levels. Rail keeps the HTTP and TLS
+libraries (`hyper`, `hyper_util`, `h2`, `reqwest`, `rustls`) at `warn` whatever `RUST_LOG` says.
+Setting a more specific target, such as `RUST_LOG=hyper::proto=debug` or
+`RUST_LOG=rmcp::handler=warn`, overrides that and can write request lines, access tokens, mail or
+tool arguments to `rail.log`; treat the log as sensitive if you do.
 
 ## Configuration
 
-The wizard and `rail account add` write `config.toml` for you and preserve any comments you add later.
-A minimal file looks like this:
+The wizard and `rail account add` write `config.toml` for you and keep any comments you add. A
+minimal file:
 
 ```toml
 [general]
-# "keyring" (default) stores tokens in the OS keyring; "file" uses a private file instead.
-secrets = "keyring"
+secrets = "keyring"            # "keyring" (default), "file" or "1password"
 
 [[accounts]]
 name = "work"
-kind = "gmail"            # "gmail" or "m365"
+kind = "gmail"                 # "gmail" or "m365"
 address = "you@example.com"
 client_id = "XXXX.apps.googleusercontent.com"
-client_secret = "GOCSPX-..."   # Gmail only
+client_secret = "GOCSPX-..."   # Gmail only; may be an op:// reference
 color = "blue"
 ```
 
-Tokens are never written to `config.toml`.
+Unknown keys and wrong types fail to load, with the file's path and line number. Edits are picked
+up by the running daemon within seconds; an edit that leaves the file invalid is logged and the
+running syncs carry on unchanged.
 
-An account's `address` must contain `@` and be at most 254 characters, and `address`, `color`
-and `tenant` must not contain spaces, control characters or Unicode format characters (such as the right-to-left override U+202E or zero-width spaces): they are shown on the terminal and
-in confirmations, where an escape sequence could otherwise act. `rail account add` refuses such a
-value, and a hand-edited `config.toml` holding one fails to load with its path and line.
+### `[general]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `secrets` | `"keyring"` | Where tokens are kept: `"keyring"`, `"file"` or `"1password"`. Change it with `rail secrets set` to move existing tokens. |
+| `poll_interval` | `"60s"` | How often each account is checked for new mail. At least `5s`. |
+| `history_days` | `0` | How many days of mail the store keeps; `0` is the whole mailbox. |
+| `body_cache_days` | `30` | Bodies of threads with mail this recent are fetched ahead of time. |
+| `editor`, `layout`, `split_threshold` | unset, `"auto"`, `140` | Reserved for the mail UI; accepted but no effect yet. |
+
+### `[[accounts]]`
+
+| Key | Required | Meaning |
+|---|---|---|
+| `name` | yes | Short name used in commands and output; unique among accounts. |
+| `kind` | yes | `"gmail"` or `"m365"`. |
+| `address` | yes | The mailbox address. Must contain `@`, at most 254 characters. |
+| `client_id` | yes | Your OAuth client id (Google) or Application (client) ID (Microsoft). |
+| `client_secret` | Gmail | The desktop client's secret, or an `op://vault/item/field` reference. |
+| `tenant` | no | Microsoft tenant ID or domain (default `common`). |
+| `color` | no | Account colour in the UI. |
+| `history_days`, `body_cache_days` | no | Per-account overrides of the `[general]` values. |
+| `ai_send` | no | `"confirm"` (default), `"drafts"` or `"client"`; see below. |
+| `signature` | no | Reserved for composing; accepted but no effect yet. |
+
+`address`, `color` and `tenant` must not contain spaces, control characters or Unicode format
+characters (such as U+202E); such a value is refused by `rail account add` and fails to load from
+a hand-edited file.
 
 ### Sync settings
 
 ```toml
 [general]
-poll_interval = "60s"   # how often each account is checked for new mail; at least 5s
-history_days = 0        # how much mail the store keeps; 0 is the whole mailbox
-body_cache_days = 30    # bodies of threads with mail this recent are fetched ahead of time
+poll_interval = "60s"
+history_days = 0        # whole mailbox
+body_cache_days = 30
 
 [[accounts]]
 name = "work"
 # ...
-history_days = 90       # optional: this account's own window
-body_cache_days = 7     # optional: this account's own body cache
+history_days = 90       # this account keeps only the last 90 days
+body_cache_days = 7
 ```
 
-A `body_cache_days` larger than a non-zero `history_days` is treated as `history_days`, and a
-`history_days` reaching back before 1970 means the whole mailbox.
-Shrinking `history_days` removes the local copies of older mail on the next pass (the mail on
-Gmail is never touched); growing it fetches further back from the next pass on, at most 2,000
-messages a pass, each pass first fetching new mail, so new mail still arrives within one
-`poll_interval` while the older mail fills in.
+- A `body_cache_days` larger than a non-zero `history_days` is treated as `history_days`.
+- Shrinking `history_days` removes local copies of older mail on the next pass (mail on Gmail is
+  never touched). Growing it fetches further back, at most 2,000 messages a pass, while new mail
+  keeps arriving within one `poll_interval`.
+- Starred mail and threads with recent mail are never pruned.
+- A first sync is paced to stay under Gmail's per-user quota, about 250 messages a minute:
+  100,000 messages take about seven hours. Newest mail is fetched first. Mail that arrives during
+  the first sync appears once it finishes; none is missed.
+- An interrupted sync resumes where it stopped. If Gmail's history for the account expires (after
+  a long time offline), Rail does a full resync, which reads every message again.
 
-**What the store keeps.** For each Gmail account: every label, the envelope (sender,
-recipients, subject, date, flags, labels, snippet) of every message inside `history_days` (the
-whole mailbox by default), and the rendered text of bodies for threads with mail newer than
-`body_cache_days`. HTML bodies are turned into text by Rail's own scanner, without running scripts or loading anything
-remote, so a tracking pixel is never requested by a sync. Scripts and styles are dropped and
-character references decoded, but tables are not laid out, lists are not numbered and link
-addresses are not shown, so HTML mail reads plainer than it will in the reader (display-quality
-rendering comes with the mail views in a later phase). A body over 10 MiB is cut and says so.
-Attachments are recorded by name, type and size only. Mail a search finds on Gmail outside the
-window is kept for 14 days after it was last searched for; starred mail and threads with recent
-mail are never pruned. A first sync of a large
-mailbox takes hours: Gmail charges 20 quota units for each message read and Rail paces itself to
-5,000 units a minute (under Gmail's per-user limit), which is about 250 messages a minute, so
-100,000 messages take about seven hours. The newest mail is fetched first, so the inbox is usable
-within seconds while the rest fills in; set `history_days` (for example 90) to fetch only recent
-mail and finish in minutes. Mail that arrives during that first sync appears once it finishes
-(Rail notes where the mailbox stood when it began, so none is missed). A sync stopped part way
-(the daemon stopped, the network lost) resumes where Gmail's listing stood, from the page token
-Rail stores after each page it lists. When there is no token to use (none stored, it is over a
-week old, the window grew, or a listing with it failed), Rail lists the whole window again from
-the top, skipping the messages it already stored (listing ids is cheap; reading a message is
-what costs quota). Rail never relies on Gmail's order, which is only roughly newest first, or on
-Gmail rejecting a stale token, which it does not do. A full resync, when Gmail's history for the
-account expires, reads every message again by design. Microsoft 365 accounts do not sync yet.
-
-### What an AI agent may do with your mail: `ai_send`
-
-Each account may set what a coding agent connected over MCP may do with its mail:
+### `ai_send`: what an AI agent may do with your mail
 
 ```toml
 [[accounts]]
 name = "work"
 # ...
-ai_send = "confirm"   # "confirm" (the default), "drafts", or "client"
+ai_send = "confirm"
 ```
 
-- `confirm`: Rail shows you, through your MCP client's confirmation dialog (MCP elicitation), the
-  recipients, the subject and the start of the body, and sends only on an explicit yes. A client
-  without that dialog will get drafts-only behaviour; that fallback arrives with the send
-  tools.
+- `confirm` (default): Rail shows you the recipients, subject and start of the body in your MCP
+  client's confirmation dialog and sends only on an explicit yes. A client without that dialog
+  gets drafts-only behaviour.
 - `drafts`: the agent may create and edit drafts, never send.
-- `client`: Rail relies on your MCP client's own per-call approval prompt. This is the weakest
-  option.
+- `client`: Rail relies on your MCP client's own per-call approval prompt. The weakest option.
 
-The policy will cover sending, replying, forwarding and deleting. Mail tools do not exist yet;
-today the key is only recorded and reported (`rail doctor`, `status`, `accounts.list`), and
-nothing enforces it.
-
-### Where things live
-
-| What | Linux path |
-|---|---|
-| Config | `~/.config/rail/config.toml` |
-| Presets | `~/.config/rail/presets/*.toml`, `/etc/rail/presets/*.toml` |
-| Store | `~/.local/share/rail/rail.db` |
-| Tokens | OS keyring (service `rail`), `~/.local/share/rail/secrets.json` with `secrets = "file"`, or 1Password items with `secrets = "1password"` |
-| Logs | `~/.local/state/rail/rail.log` |
-| Daemon socket | `$XDG_RUNTIME_DIR/rail/rail.sock` (the state directory where there is no runtime directory, as on macOS) |
-| Login unit (`rail daemon install`) | `$XDG_CONFIG_HOME/systemd/user/rail.service` (default `~/.config`); on macOS `~/Library/LaunchAgents/io.github.vitosans.rail.plist` |
-
-macOS uses the platform directories under `~/Library/Application Support/rail` instead. Override any
-location with `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR`, `RAIL_CACHE_DIR`, `RAIL_STATE_DIR` and
-`RAIL_RUNTIME_DIR` (the directory that holds the daemon's socket).
-
-No Secret Service on your box (tty-only Linux)? Put this in `config.toml` before adding accounts:
-
-```toml
-[general]
-secrets = "file"
-```
-
-Files that hold mail or credentials are created owner-only and written atomically.
-
-### The background daemon
-
-The setup wizard, the `rail account` commands and `rail doctor` talk to one background process,
-the Rail daemon, which runs every operation, so two of them running at once never race on the
-store, the config file or a login. The wizard starts (or reaches) the daemon before it takes over
-the terminal, so a daemon that cannot start is reported as a plain error. The daemon opens the
-login and consent pages, receives the tokens and saves the account; tokens, client secrets and
-authorization codes never pass through the wizard. A path you type in the wizard (a preset file)
-is resolved against the directory you ran `rail setup` in before it is sent. If the daemon stops
-while the wizard is open (`rail daemon stop`, or a crash), the wizard's next request connects to a
-fresh daemon, starting one if needed. A request that only reads is sent again on the new connection;
-one that changes something (beginning a login or a consent) is not, and the wizard asks you to try
-again. A login that was waiting in the stopped daemon is gone: retry it.
-You never start it yourself: the first command that needs it starts `rail daemon run` in the
-background (or, after `rail daemon install`, your login does; see [Start at login](#start-at-login)). While any account is configured it keeps running and syncs every Gmail account in
-the background: labels, envelopes for the configured window, and bodies for recent threads,
-then it checks each account for new mail every `poll_interval`. With no account configured it
-exits after ten minutes with no client connected and no login waiting. It follows
-`config.toml`: an account you add, log in to again or remove (and any edit to the file) is
-picked up within seconds; removing an account stops its sync but keeps its mail in the store,
-and adding it back resumes where it stopped. An edit that leaves `config.toml` invalid is logged
-once and the running syncs carry on unchanged. A login you begin opens the browser on the display
-of the command that began it: that command's `DISPLAY`, `WAYLAND_DISPLAY` and `BROWSER`
-override the daemon's own for that launch, so it works even when the daemon started without a
-display; a variable the command does not have (or does not send, as an older client) keeps
-the value the daemon inherited. Its logs go to `rail.log`; it never writes to the terminal. An
-account whose sync cannot start (a locked 1Password, say) or stops unexpectedly shows the error
-in its sync status and is tried again after 1, 5 and then every 15 minutes, at once when it is
-asked for by name (`rail sync work`) or logged in again, or when its settings in `config.toml`
-change. `rail sync` with no account wakes the others and leaves it to that wait, so asking again
-and again never prompts for 1Password again and again. If the store's writer fails, the daemon starts it (and every account's sync)
-again, up to three times (a writer that stayed up an hour starts that count again); after that
-sync pauses until the daemon restarts, and `rail doctor` reports it as a store error.
-
-The daemon listens on a Unix socket (see [Where things live](#where-things-live)) in a directory
-only you can open (mode 0700); the socket itself is 0600, and the daemon drops any connection
-from another user. `rail daemon status` shows what it is doing and `rail daemon stop` stops it.
-A login you begin in a command keeps waiting in the daemon until you finish it in the browser,
-cancel it with Ctrl-C, or it times out after 15 minutes; once the account is being saved, the
-save finishes even if the command that started it is gone. `rail daemon run` in the foreground
-stops the same way on Ctrl-C or SIGTERM: saves in flight finish first, then it exits 0.
-
-The daemon starts with the environment of the command that started it: `OP_SESSION_*` (a
-signed-in 1Password CLI) and `PATH`. It keeps that environment until it exits; run
-`rail daemon stop` to have the next command start one with your current environment. That
-includes where `op` is found: without `op_path`, the daemon runs the first `op` on the `PATH` it
-inherited. Set `op_path` under `[onepassword]` to pin it to one program.
-
-After an upgrade, the first command of the new version stops the older daemon and starts its
-own. A program of the older version that is still running (an open `rail mcp`, the setup
-wizard) does not stop the newer daemon in turn: its next request fails with "Rail was upgraded;
-restart this program", and the hint names the running daemon's version (its `MAJOR.MINOR.PATCH` only). A daemon whose version
-Rail cannot read is refused and left running; stop it with `rail daemon stop`.
-
-It also works on the directories of the command that started it, made absolute (a relative
-`RAIL_CONFIG_DIR=cfg` means `cfg` under that command's working directory). A later command whose
-`RAIL_CONFIG_DIR`, `RAIL_DATA_DIR` or `RAIL_STATE_DIR` names other directories (compared after
-resolving symlinks, so a symlinked config directory still counts as the same), but shares the
-same runtime directory, is refused with "a Rail daemon is already running with different
-directories" and changes nothing (as is one too old to say which directories it uses, unless
-it is older than the command, in which case it is replaced as usual); stop that daemon with `rail daemon stop` from the shell that
-started it, or use the same `RAIL_*` settings. Give each setup its own `RAIL_RUNTIME_DIR` to run
-two side by side.
-
-When a command or a step of the setup wizard fails, it shows Rail's own message and, on a line
-starting `hint:`, what to do next. Words from outside Rail (a provider's error description, the system's error text) come on a
-line of their own, quoted and with control characters escaped. No error ever shows a token, a
-client secret or an authorization code.
-
-### Start at login
-
-`rail daemon install` writes a unit that runs the `rail` binary you ran it with (its full,
-resolved path: install again after moving or upgrading it to a new place) as `rail daemon run`.
-The unit sets `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR`, `RAIL_CACHE_DIR`, `RAIL_STATE_DIR` and
-`RAIL_RUNTIME_DIR` to the directories your shell resolved at install time, and `PATH` to
-`/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` plus the directory of `op_path` if you set one, so
-the daemon finds the same files and the same `op` wherever it starts. Rail writes only values it
-resolved itself: paths are quoted for systemd (`%` doubled, `"` and `\` escaped; `$` is left as
-it is, since systemd expands no variable there) or XML-escaped for launchd, and a path with a
-newline or another control character (or, for `op_path`'s directory, a `:`) is refused with an
-error instead of being written. systemd refuses to run a program whose path contains `"`, `'`,
-`\`, `*`, `?` or `[`, so on Linux `rail daemon install` refuses such a binary location up front
-and asks you to move it. The unit file is written atomically with mode 0644; a missing
-`~/.config/systemd/user` or `~/Library/LaunchAgents` is created with your default permissions,
-and an existing one keeps its mode. The unit restarts the daemon if it fails (at most five times
-in five minutes) and not when it stops cleanly (`rail daemon stop`). `rail doctor` shows whether
-it is installed and enabled (on Linux, "enabled" means the
-`~/.config/systemd/user/default.target.wants/rail.service` link that `systemctl --user enable`
-makes exists; on macOS an installed agent counts as enabled), and warns when it no longer
-matches this binary.
-
-After starting the unit, `rail daemon install` waits up to 10 seconds for its daemon to answer.
-If none does, it says the unit is installed but its daemon did not start, shows what
-`systemctl --user status rail.service` (or `launchctl print`) reports, quoted as text from
-outside Rail, with a hint (`journalctl --user -u rail.service`, `rail doctor`), and exits 1; the
-unit stays installed. On Linux it also checks that the daemon answering is the one systemd runs:
-if another command started a daemon in between, it says so, asks you to run `rail daemon stop`,
-and exits 1. Any `systemctl` or `launchctl` command that fails is reported with Rail's own
-sentence and the tool's words (at most 4 KiB) quoted on a line of their own.
-
-On macOS the agent gets only those variables (launchd adds little more than `HOME`, `USER` and
-`TMPDIR`). On Linux, a systemd user service also inherits the user service manager's own
-environment, so the unit lists `UnsetEnvironment=DISPLAY WAYLAND_DISPLAY XAUTHORITY BROWSER
-RUST_LOG OP_ACCOUNT OP_SERVICE_ACCOUNT_TOKEN OP_CONNECT_HOST OP_CONNECT_TOKEN OP_CONFIG_DIR
-OP_BIOMETRIC_UNLOCK_ENABLED`. What the user manager can still pass in: the variables systemd sets
-for every user service (`HOME`, `USER`, `LOGNAME`, `SHELL`, `XDG_RUNTIME_DIR`, `LANG` and the
-like), and anything imported into it by your session or `environment.d` (`systemctl --user
-import-environment`), such as `DBUS_SESSION_BUS_ADDRESS` (which the OS keyring needs, so it is
-kept), `SSH_AUTH_SOCK`, or an `OP_SESSION_<account>` variable: systemd's `UnsetEnvironment=`
-takes exact names only, and those names depend on your 1Password account. `systemctl --user
-show-environment` lists what your user manager holds. A display and a browser are not needed
-at start: a login you begin from a terminal still opens the browser on that terminal's display.
+The policy will cover sending, replying, forwarding and deleting. No mail tools exist yet, so today
+the key is only recorded and reported (`rail doctor`, `rail_status`, `rail_accounts_list`).
 
 ### Tokens in 1Password
 
 With the [1Password CLI](https://developer.1password.com/docs/cli/) (`op`, version 2) installed and
-signed in, Rail can keep tokens in a vault instead of the OS keyring:
+signed in:
 
 ```toml
 [general]
@@ -712,132 +482,127 @@ secrets = "1password"
 [onepassword]
 vault = "Rail"                    # required
 # account = "my.1password.com"    # when several 1Password accounts are signed in
-# op_path = "/usr/bin/op"         # default: op on PATH
+# op_path = "/usr/bin/op"         # default: the first op on PATH
 ```
 
-Rail keeps one item per mail account in that vault, titled `Rail: <address>` and tagged `rail`,
-with the access and refresh tokens in concealed fields. Values reach `op` only through a JSON
-template on its standard input, never as command-line arguments (which other processes can read).
-Each `op` call may take up to 30 seconds, long enough for the 1Password app's unlock prompt. When
-1Password is locked or `op` is not signed in, Rail says so and asks you to unlock the app or run
-`op signin`; `rail doctor` checks this with `op whoami`.
+Rail keeps one item per mail account, titled `Rail: <address>` and tagged `rail`, with the tokens
+in concealed fields. Values reach `op` only on its standard input, never as command-line arguments.
 
-Turn on the 1Password app's CLI integration (**Settings → Developer → Integrate with 1Password
-CLI**). `op` then asks the running, unlocked app, from any shell, so the daemon can refresh tokens
-however it was started. A session from `op signin` lives only in the shell that ran it (as
-`OP_SESSION_<account>`) and ends after about 30 minutes without use, so the daemon only has it when
-it was started from that shell, and it reports 1Password as locked once the session ends. With
-several 1Password accounts, set `account` under `[onepassword]` (or `OP_ACCOUNT` for `op` itself).
+- **Turn on the 1Password app's CLI integration** (Settings → Developer → Integrate with 1Password
+  CLI). The daemon can then refresh tokens however it was started. A session from `op signin` lives
+  only in the shell that ran it and expires after about 30 minutes without use.
+- **Moving tokens.** `rail secrets set 1password --vault <vault>` copies each account's tokens,
+  reads them back to verify, updates `config.toml`, and only then deletes the old copies. A failure
+  part way leaves the old copies in charge. The same command moves them back to `keyring` or `file`.
+- **Client secret in 1Password.** Give `client_secret = "op://Rail/Google client/client_secret"`
+  (or pass an `op://` reference to `--client-secret`), or let Rail store it with
+  `rail account add ... --client-secret <secret> --store-secret-in-1password`. Rail reads it with
+  `op read` only when a login needs it and never caches or logs it. This works with any token
+  backend.
+- **`op_path`** is only ever read from `config.toml`. Rail refuses it when it is relative, not an
+  executable, owned by another user, or writable by anyone but its owner, or when a directory above
+  it is. A Homebrew-on-Linux `op` usually fails this check; prefer 1Password's own package (for
+  example `/usr/bin/op`).
 
-Rail resolves `op_path` once (following symlinks) and refuses it when it is
-relative, not an executable file, owned by another user, or writable by anyone but its owner, or when
-any directory above it belongs to another user or is writable by others (a sticky directory such as
-`/tmp` is fine); the resolved file is what runs. `op_path`
-is only ever read from `config.toml`; no daemon request can set it. A Homebrew-on-Linux `op` usually
-fails this check, because its prefix (`/home/linuxbrew/.linuxbrew`) is writable by a group or owned by
-another user; Rail then says which part it refused. Prefer 1Password's own package (for
-example `/usr/bin/op`). If you instead copy a binary into a directory only you can write, use
-`install -m 0755`, and set `op_path` to it by hand. A copy loses the package's setgid group, which
-can break the desktop-app integration (`op` then asks you to sign in separately). The 1Password
-Homebrew cask is macOS-only, so this mainly concerns manual and Linuxbrew installs. The daemon's `secrets.configure`
-operation switches backends, but only for a request a front end marked `confirm` after asking the
-user, carrying the digest of the plan the user was shown: tokens are copied to the new backend, read back to verify, and only
-then are the old copies deleted, so a failure part way leaves the old copies in place.
+### File locations
 
-A Gmail `client_secret` can live in 1Password too. In `config.toml`, or in
-`rail account add --client-secret`, give an `op://vault/item/field` secret reference instead of the
-value. Or let Rail put it there: `rail account add ... --client-secret <secret>
---store-secret-in-1password` (or `store_secret_in_1password` on `rail_account_add`, with the secret
-given by file) stores the secret in 1Password and writes an `op://` reference into `config.toml`.
-That needs a `[onepassword]` vault in `config.toml` and a client secret to store, and is refused
-for a client secret that is already an `op://` reference ("the client secret is already in
-1Password; drop store_secret_in_1password"), so nothing is copied out of an item someone else
-named; the wizard never does this:
+| What | Linux | macOS |
+|---|---|---|
+| Config | `~/.config/rail/config.toml` | `~/Library/Application Support/rail/config.toml` |
+| Presets | `~/.config/rail/presets/*.toml`, `/etc/rail/presets/*.toml` | `~/Library/Application Support/rail/presets/*.toml`, `/etc/rail/presets/*.toml` |
+| Store | `~/.local/share/rail/rail.db` | `~/Library/Application Support/rail/rail.db` |
+| Token file (`secrets = "file"`) | `~/.local/share/rail/secrets.json` | `~/Library/Application Support/rail/secrets.json` |
+| Log | `~/.local/state/rail/rail.log` | `~/Library/Application Support/rail/rail.log` |
+| Daemon socket | `$XDG_RUNTIME_DIR/rail/rail.sock` (the state directory when there is no runtime directory) | `~/Library/Application Support/rail/rail.sock` |
+| Login unit | `~/.config/systemd/user/rail.service` (under `$XDG_CONFIG_HOME` when set) | `~/Library/LaunchAgents/io.github.vitosans.rail.plist` |
 
-```toml
-client_secret = "op://Rail/Google client/client_secret"
-```
+Override any location with `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR`, `RAIL_CACHE_DIR`, `RAIL_STATE_DIR`
+and `RAIL_RUNTIME_DIR` (the directory that holds the daemon's socket). Give each setup its own
+`RAIL_RUNTIME_DIR` to run two side by side.
 
-Rail reads it with `op read` only when a login needs it, and never caches, logs or writes the
-value. This works with any token backend.
+### The background daemon
 
-To move existing tokens from the keyring or the file into 1Password (or back), run
-`rail secrets set 1password --vault <vault>` in a terminal and answer `y`, or ask an agent to call
-`rail_secrets_configure` with `backend = "1password"` and your vault, and confirm the change in its
-dialog. Rail copies each account's tokens, reads them back from the new backend, writes
-`config.toml`, and only then deletes the old copies; a failure part way leaves the old copies and
-the old config in charge. `op_path` is never set this way: only you choose, by editing
-`config.toml`, which program Rail runs as `op`.
+Every operation (logins, saves, sync, search, `rail doctor`) runs in one background process, so two
+commands never race on the store, the config or a login. You never start it yourself: the first
+command that needs it starts `rail daemon run` in the background, or your login does after
+`rail daemon install`. While any account is configured it keeps running and syncs; with none it
+exits after ten minutes idle. A login you begin keeps waiting in the daemon until you finish it,
+cancel it, or 15 minutes pass, and opens the browser on the display of the command that began it.
 
-## Project layout
+The daemon keeps the environment of the command that started it (notably `PATH` and any
+`OP_SESSION_*`). Run `rail daemon stop` to have the next command start one with your current
+environment. A command whose `RAIL_*_DIR` settings differ from the running daemon's is refused with
+"a Rail daemon is already running with different directories".
 
-```
-crates/rail-core/        Library: paths, config, store, auth, onboarding, operations, daemon. No terminal dependency.
-  src/config/            TOML model, loading with line-numbered errors, comment-preserving edits
-  src/store/             SQLite open, migrations, accounts repository
-  src/auth/              Secret stores (keyring, file, 1Password), OAuth endpoints, loopback listener, login and admin-consent flows, token refresh
-  src/onboarding/        Presets and the setup wizard's pure state machine
-  src/ops/               The operation layer: every request and response type, OpError, Untrusted
-  src/daemon/            JSON-RPC wire format, client and connector, the socket server and its handlers
-  src/accounts/          The add, login and remove pipeline the daemon runs
-  src/guide/             Google and Microsoft setup steps as versioned data
-  src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries) and the Gmail provider with its own HTML-to-text scanner
-  src/sync/              The daemon's sync: per-account engines, backfill and history passes, the single store writer, search
-  src/doctor.rs          The `rail doctor` checks
-crates/rail/             Binary: clap CLI, logging, `account`, `daemon`, `doctor`, `mcp`, `search`, `setup` and `sync` commands
-  src/cmd/mcp/           The MCP server: tools, the setup prompt, confirmation through elicitation, summaries
-  src/tui/               App shell: terminal guard, event loop, widgets, the wizard screen and its effects
-  tests/cli.rs           End-to-end tests against the built binary in a temporary XDG layout
-  tests/cli/daemon.rs    The daemon through the binary: on-demand start, status, stop, directories, signals
-  tests/cli/pty.rs       The same in a pseudo-terminal: the wizard's Ctrl-C and `rail account remove`'s question
-  tests/mcp.rs           `rail mcp` driven by an MCP client that accepts, declines or cannot show confirmations
-  tests/mcp/guarded.rs   The same for the two confirmed tools, removal and secret-store changes
-assets/brand/            Logos for light and dark backgrounds, and the app icon
-docs/superpowers/        Design specs and phase plans
-deny.toml                Licence and advisory policy for `cargo deny`
-```
+The login unit written by `rail daemon install` runs the exact `rail` binary you installed it with
+(install again after moving it) and pins the `RAIL_*` directories your shell resolved at install
+time. It restarts the daemon if it fails, at most five times in five minutes, and not after a clean
+`rail daemon stop`. It sets `PATH` to the system directories plus the directory of `op_path` if you
+set one, and on Linux unsets display, browser, `RUST_LOG` and 1Password variables inherited from the
+user service manager. `systemctl --user show-environment` lists what your user manager can still
+pass in.
 
-## Development
+## Commands
 
-    cargo test --workspace
-    cargo clippy --workspace --all-targets -- -D warnings
-    cargo fmt --all --check
-    cargo deny check
+| Command | What it does |
+|---|---|
+| `rail` | Opens the setup wizard when there is no config. With one, prints that the TUI is not built yet and exits 2. |
+| `rail setup` | Opens the setup wizard to add an account. |
+| `rail account add [gmail\|m365]` | With no flags, opens the wizard (with that provider chosen, if given). |
+| `rail account add <gmail\|m365> --address <addr> --client-id <id> [--client-secret <secret>] [--tenant <tenant>] [--name <name>] [--color <colour>] [--store-secret-in-1password]` | Adds an account without the wizard, then opens the browser login. A partial set of flags exits 1 and names the missing one. |
+| `rail account login <account>` | Logs in again to an existing account (name or address) and replaces its tokens; `config.toml` is untouched. |
+| `rail account list` | Lists accounts and whether their tokens are stored, without reading the tokens. |
+| `rail account remove <account>` | Removes the account's config entry and tokens; its mail stays in the store. Asks `Remove? [y/N]`; refuses (exit 1) when stdin or stdout is not a terminal. |
+| `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves them there (`--no-migrate`: setting only; each account then needs `rail account login`). Asks `Change? [y/N]`; interactive only. |
+| `rail sync [<account>] [--no-wait]` | Wakes the sync for one account or all and shows progress until caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs `rail account login`, 130 on Ctrl-C. If nothing changes for 10 minutes it stops watching (the sync goes on). `--no-wait` wakes it and exits 0. |
+| `rail search <query> [--account <account>] [--limit N]` | Searches the local store and, for Gmail, the whole mailbox. One line per thread: date (UTC), account, sender, subject; never a snippet or body. `--limit` is 1 to 100 (default 20). Results go to stdout, notes to stderr. Exits 1 for an unknown account, or when nothing was found and a Gmail search failed. |
+| `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit. Exits non-zero for config, store, token-backend and token-read errors, and for a Gmail account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
+| `rail daemon status` | Shows whether the daemon runs, with pid, version, load and socket. Exits 1 when none runs; never starts one. |
+| `rail daemon stop` | Asks the daemon to exit once any save in flight is written; waits up to 35 seconds. |
+| `rail daemon run` | Runs the daemon in the foreground (Ctrl-C or SIGTERM stops it cleanly). Rarely needed. |
+| `rail daemon install` | Writes and enables a systemd user unit (Linux) or launchd agent (macOS) that starts the daemon at login; stops a daemon already running first. If enabling fails it puts the previous state back and exits 1; if the daemon does not answer within 10 seconds it exits 1 with the unit's state (the unit stays installed). |
+| `rail daemon uninstall` | Stops, disables and removes the login unit. |
+| `rail mcp` | Serves Rail's tools to an AI agent over MCP on stdin and stdout. |
 
-Line coverage (needs `cargo-llvm-cov`):
+## Troubleshooting
 
-    cargo llvm-cov --workspace
+Start with `rail doctor`. Every error Rail prints is followed by a line starting `hint:` that says
+what to do next; words from outside Rail (a provider's or the system's) are quoted on a line of
+their own.
 
-Tests never touch the real XDG directories, the real OS keyring, the network, a real browser or a
-real 1Password account (a fake `op` script stands in).
-Debug builds honour seven test hooks: `RAIL_TEST_OPENER` (a program run instead of the browser),
-`RAIL_TEST_TOKEN_URL` (a token endpoint served by the test), `RAIL_TEST_GMAIL_URL` (the Gmail API
-root, so a test can serve it or make it unreachable), `RAIL_TEST_IDLE_SECS` (the daemon's idle
-timeout, so the daemons the binary tests start exit seconds after their last client),
-`RAIL_TEST_IDLE_WITH_ACCOUNTS` (let such a daemon idle out even with accounts configured),
-`RAIL_TEST_SYNC_STALL_SECS` (how long `rail sync` watches an unchanging status) and
-`RAIL_TEST_SERVICE_LOG` (`rail daemon install` and `uninstall` append the `systemctl` or
-`launchctl` commands they would run to that file instead of running them, and do not wait for a
-daemon). Release builds ignore all seven. Every binary test also sets `XDG_CONFIG_HOME` (and, on
-macOS, `HOME`) inside its temporary directory, so no test reads or writes the real systemd or
-launchd units; the unit tests drive install and uninstall through a fake service manager, and one
-checks the generated unit with `systemd-analyze verify` (offline; skipped where it is missing). Every binary test runs with the stand-in browser set, so neither it nor a
-daemon it starts can open a real one. On Linux, the tests that drive the wizard and `rail account remove` in a
-pseudo-terminal use util-linux `script` and are skipped where `script` is missing. The tests that
-exercise the real keyring and a real 1Password vault are ignored by default:
+| Symptom | Fix |
+|---|---|
+| A token refresh fails with "refresh token rejected", or `rail doctor` shows tokens `missing` | `rail account login <name>`. Common after a revoked grant, a sign-in frequency policy, or tokens deleted from the keyring. |
+| Gmail asks you to log in again every week | The OAuth consent screen is still in "Testing"; publish it ("In production"). |
+| No Secret Service (tty-only Linux, containers) | Set `secrets = "file"` under `[general]` before adding accounts, or move existing tokens with `rail secrets set file`. |
+| "1Password is locked" or `op` not signed in | Unlock the app, or turn on its CLI integration; `rail doctor` checks with `op whoami`. |
+| `rail doctor` fails because the daemon cannot start, e.g. the socket path is too long | Set `RAIL_RUNTIME_DIR` to a shorter directory. |
+| "a Rail daemon is already running with different directories" | Run `rail daemon stop` from the shell that started it, or use the same `RAIL_*` settings. |
+| "Rail was upgraded; restart this program" | An older `rail mcp` or wizard is still open after an upgrade; restart it. |
+| `rail daemon install` says no user service manager answers | Some containers have no `systemctl --user`; the daemon still starts on demand. |
+| `rail doctor` warns that the login unit does not match this binary | You moved or reinstalled `rail` elsewhere; run `rail daemon install` again. |
+| A first sync is taking hours | Expected for a large mailbox; set `history_days` to sync only recent mail. `rail doctor` and `rail_sync_status` show progress. |
+| The login URL did not open in a browser | Select it on screen and open it while Rail is still running. |
 
-    cargo test -p rail-core -- --ignored keyring_live
-    RAIL_OP_LIVE_VAULT=<vault> cargo test -p rail-core -- --ignored onepassword_live
-    RAIL_GMAIL_LIVE_ACCOUNT=<account name> cargo test -p rail-core -- --ignored gmail_live
+### Microsoft sign-in errors
 
-The last one uses your real config and token store, sends only GET requests to the Gmail API (it never changes the
-mailbox; a token refresh may POST to Google's token endpoint), prints counts and never mail, and confirms the Gmail API shapes the sync relies on.
+| Code | Meaning | What to do |
+|---|---|---|
+| `AADSTS65001` | Nobody has consented to Rail's permissions yet. | An administrator grants admin consent; non-administrators send them the URL the wizard shows. |
+| `AADSTS90094` | Your organisation requires an administrator to approve apps. | Same: send the admin-consent URL, then retry with `r`. |
+| `AADSTS50076`, `AADSTS50079` | MFA or another policy step is required. | Complete the prompt in the browser; if it keeps failing, ask your administrator. |
+| `AADSTS50194` | A single-tenant app was used with the `common` endpoint. | Set the tenant to your tenant ID or domain. |
+| `AADSTS50020` | The account belongs to a different tenant than the app. | Use an account from the app's tenant, or register the app for multiple organisations. |
+| `AADSTS700016` | The application is not found in that tenant. | Check the client ID (Application (client) ID, not Object ID) and the tenant. |
+| `AADSTS7000218` | Microsoft expected a client secret. | Enable "Allow public client flows" under **Authentication**. |
+| `AADSTS50011` | The redirect URI does not match the registration. | Add `http://127.0.0.1` under **Mobile and desktop applications**. |
+| `AADSTS53003` | A Conditional Access policy blocked the login. | Ask your administrator; the policy, not Rail, decides. |
 
-Changes a user can see or type update this README in the same change; see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the ground rules and commit format, and
-[CHANGELOG.md](CHANGELOG.md) for what has shipped.
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+development loop, ground rules and commit format, and [CHANGELOG.md](CHANGELOG.md) for what has
+shipped.
 
 ## License
 
