@@ -110,7 +110,7 @@ actions! {
     ListAccount8 => "list.account_8", [List, Sidebar], ["8"], "Go to account 8's inbox";
     ListAccount9 => "list.account_9", [List, Sidebar], ["9"], "Go to account 9's inbox";
     ListUnified => "list.unified", [List, Sidebar], ["0"], "Go to the unified inbox";
-    ListRefresh => "list.refresh", [List, Sidebar], ["ctrl-r"], "Sync now; reconnect to the daemon";
+    ListRefresh => "list.refresh", [List, Sidebar, Reader], ["ctrl-r"], "Sync now; reconnect to the daemon";
     ListDown => "list.down", [List], ["j", "down"], "Next thread";
     ListUp => "list.up", [List], ["k", "up"], "Previous thread";
     ListPageDown => "list.page_down", [List], ["pagedown", "ctrl-d"], "One page down";

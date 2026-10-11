@@ -643,3 +643,44 @@ async fn a_resize_wraps_the_lines_again() {
     assert!(narrow.contains("wiki[2]."), "{narrow}");
     assert!(narrow.lines().all(|l| crate::tui::text::width(l) <= 30));
 }
+
+/// A `Lost` event fails the pending fetches even when the request itself never answers, and
+/// `Ctrl-r` reconnects while the reader still has focus.
+#[tokio::test]
+async fn a_lost_link_fails_pending_fetches_and_ctrl_r_reconnects_from_the_reader() {
+    let mut f = fixture(false).await;
+    // The answer covers no id: both bodies stay "fetching…" as if the request never returned.
+    *f.fake.answer.lock().unwrap() = Some(Ok(BodyFetchResponse {
+        results: Vec::new(),
+    }));
+    press(&mut f, KeyCode::Enter).await;
+    assert!(all_text(&f).contains("fetching…"));
+    let closed = OpError::new(
+        ErrorCode::Daemon,
+        rail_core::error::ErrorClass::Transient,
+        "the connection to the daemon closed",
+    );
+    let lost = MailEvent::Daemon(DaemonEvent::Lost(closed));
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(lost)));
+    settle(&mut f.screen, effects).await;
+    let text = all_text(&f);
+    assert!(!text.contains("fetching…"), "{text}");
+    assert!(
+        text.contains("Could not fetch this message: the connection to the daemon closed"),
+        "{text}"
+    );
+    assert_eq!(f.screen.focus, Focus::Reader);
+    let effects = f.screen.update(Msg::Key(ctrl('r')));
+    settle(&mut f.screen, effects).await;
+    assert_eq!(
+        f.fake.calls.lock().unwrap().last(),
+        Some(&FakeCall::Watch),
+        "re-subscribed with the reader still open"
+    );
+    assert!(
+        !f.screen.status_line().contains("daemon unreachable"),
+        "{}",
+        f.screen.status_line()
+    );
+    assert_eq!(f.screen.focus, Focus::Reader);
+}

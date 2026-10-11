@@ -172,7 +172,7 @@ you changed.
 | `list.account_8` | list, sidebar | `8` | Go to account 8's inbox. |
 | `list.account_9` | list, sidebar | `9` | Go to account 9's inbox. |
 | `list.unified` | list, sidebar | `0` | Go to the unified inbox. |
-| `list.refresh` | list, sidebar | `ctrl-r` | Sync now; reconnect to the daemon. |
+| `list.refresh` | list, sidebar, reader | `ctrl-r` | Sync now; reconnect to the daemon. |
 | `list.down` | list | `j` `down` | Next thread. |
 | `list.up` | list | `k` `up` | Previous thread. |
 | `list.page_down` | list | `pagedown` `ctrl-d` | One page down. |

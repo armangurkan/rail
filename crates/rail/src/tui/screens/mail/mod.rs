@@ -319,7 +319,9 @@ impl MailScreen {
     /// Actions of both the list and the sidebar.
     fn shared_action(&mut self, action: Action) -> Option<Vec<Effect>> {
         if self.focus == Focus::Reader {
-            return None;
+            // Only the refresh key works in the reader: the status bar offers it after the
+            // daemon link is lost, whatever is on screen.
+            return (action == Action::ListRefresh).then(|| self.refresh());
         }
         let effects = match action {
             Action::ListSidebar => {
@@ -494,6 +496,10 @@ impl MailScreen {
             DaemonEvent::Lost(error) => {
                 tracing::warn!(code = ?error.code, "the daemon link was lost");
                 self.status.lost(&error, self.ctx.clock.now(), self.tick);
+                // A fetch that outlives the connection must not stay at "fetching…".
+                if let Some(reader) = self.reader.as_mut() {
+                    reader.fetch_failed(&error);
+                }
                 Vec::new()
             }
             DaemonEvent::Refreshed(Ok(())) => Vec::new(),
