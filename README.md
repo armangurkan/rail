@@ -351,7 +351,8 @@ Opening an unread thread marks it read at once in the reader; the list row and t
 follow a moment later. `u` marks it unread again.
 
 Each account in the status bar shows actions on their way to Gmail (`2 queued`) and actions Gmail
-refused (`1 failed`). The daemon sends them one thread at a time in the order you made them. When
+refused (`1 failed`). The daemon sends the actions on one thread in the order you made them;
+an action waiting to be tried again holds back only the later actions on its own threads. When
 Gmail cannot be reached it tries again after 1, then 5, then 15 minutes, then every 15 minutes,
 and gives up on an action after 20 attempts. While an account needs a login, its actions wait and
 are sent after the login, and an action still waiting when Rail starts again is sent. When Gmail
