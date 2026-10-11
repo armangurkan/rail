@@ -164,14 +164,23 @@ impl SyncManager {
     }
 
     /// Start, stop and restart engines to match `config.toml`. Failures are logged and shown
-    /// in the account's status; an invalid config leaves the running engines as they are.
+    /// in the account's status; an invalid config leaves the running engines as they are. An
+    /// account whose start failed waits out its backoff unless its settings changed, so
+    /// reconciles that follow one another never run `op read` for it twice.
     pub async fn reconcile(&self, ctx: &DaemonContext) {
-        self.reconcile_with(ctx, false).await;
+        self.reconcile_with(ctx, false, None).await;
     }
 
-    /// `reconcile`; with `fallback`, an invalid `config.toml` means the last one that parsed.
-    async fn reconcile_with(&self, ctx: &DaemonContext, fallback: bool) {
-        if let Err(error) = self.try_reconcile(ctx, fallback).await {
+    /// `reconcile`, trying the account `who` names again now even if its backoff has not
+    /// passed (it was asked for by name, or just logged in).
+    pub async fn reconcile_now(&self, ctx: &DaemonContext, who: &str) {
+        self.reconcile_with(ctx, false, Some(who)).await;
+    }
+
+    /// `reconcile`; with `fallback`, an invalid `config.toml` means the last one that parsed;
+    /// `now` names an account tried again whatever its backoff.
+    async fn reconcile_with(&self, ctx: &DaemonContext, fallback: bool, now: Option<&str>) {
+        if let Err(error) = self.try_reconcile(ctx, fallback, now).await {
             tracing::warn!(error = %error.message, "sync could not follow the configuration");
             #[cfg(test)]
             self.failed_reconciles.fetch_add(1, Ordering::SeqCst);
@@ -181,13 +190,18 @@ impl SyncManager {
         self.settled.send_replace(true);
     }
 
-    async fn try_reconcile(&self, ctx: &DaemonContext, fallback: bool) -> Result<(), OpError> {
+    async fn try_reconcile(
+        &self,
+        ctx: &DaemonContext,
+        fallback: bool,
+        now: Option<&str>,
+    ) -> Result<(), OpError> {
         let _one_at_a_time = self.reconciling.lock().await;
         let config = self.load_config(ctx, fallback).await?;
         if self.is_stopping() {
             return Ok(());
         }
-        for planned in self.plan(ctx, &config).await? {
+        for planned in self.plan(ctx, &config, now).await? {
             // No further `op read` once shutdown began.
             if self.is_stopping() {
                 break;
@@ -223,11 +237,13 @@ impl SyncManager {
     }
 
     /// Under the engines lock: stop what is no longer wanted and say which accounts need an
-    /// engine. Opens the writer first, so the store exists before anything reads it.
+    /// engine (not a failed one still waiting out its backoff, unless `now` names it). Opens
+    /// the writer first, so the store exists before anything reads it.
     async fn plan(
         &self,
         ctx: &DaemonContext,
         config: &Config,
+        now: Option<&str>,
     ) -> Result<Vec<PlannedAccount>, OpError> {
         let mut engines = self.engines.lock().await;
         if self.is_stopping() {
@@ -245,9 +261,17 @@ impl SyncManager {
                 continue;
             }
             if account.kind == AccountKind::Gmail {
+                let key = key(config, account);
+                let asked = now.is_some_and(|who| {
+                    account.name.eq_ignore_ascii_case(who)
+                        || account.address.eq_ignore_ascii_case(who)
+                });
+                if !asked && engines.waiting(&address, &key) {
+                    continue;
+                }
                 wanted.push(PlannedAccount {
                     account: account.clone(),
-                    key: key(config, account),
+                    key,
                     settings: SyncSettings::for_account(&config.general, account),
                 });
             } else {
@@ -349,7 +373,7 @@ impl SyncManager {
             Err(error) => {
                 tracing::warn!(account = %account.name, error = %error.message, "could not start syncing an account");
                 self.board.insert(failed_status(account, &error));
-                engines.record_failure(&address, error);
+                engines.record_failure(&address, planned.key.clone(), error);
             }
         }
     }
@@ -458,7 +482,7 @@ impl SyncManager {
                 .map(|r| (r.account_id, r.wake.clone()))
         };
         let Some((account_id, wake)) = running else {
-            return self.reconcile(ctx).await;
+            return self.reconcile_now(ctx, &key).await;
         };
         self.board.update(&key, |s| {
             s.needs_auth = false;
@@ -486,19 +510,25 @@ impl SyncManager {
     /// Wake the named account's engine (or every engine) and say which pass to wait for.
     /// `notify_one` keeps a permit, so a wake that arrives during a pass is not lost. An
     /// account named here whose engine failed is tried again first, inline (the caller asked
-    /// for that account); any other failed account is retried in the background, so running
-    /// engines are woken at once even while a build waits on 1Password.
+    /// for that account); a wake of every account retries, in the background, only the failed
+    /// accounts whose backoff has passed, so running engines are woken at once even while a
+    /// build waits on 1Password, and repeated wakes never prompt for 1Password again and again.
     pub async fn wake(
         &self,
         ctx: &Arc<DaemonContext>,
         who: Option<&str>,
     ) -> Result<Vec<SyncTarget>, OpError> {
         self.settled().await;
-        if who.is_some() && self.has_failed(who).await {
-            self.reconcile(ctx).await;
-        } else if self.has_failed(None).await && self.reconciling.try_lock().is_ok() {
-            // No reconcile in flight: start one for the failed accounts.
-            Self::reconcile_in_background(ctx.clone());
+        match who {
+            Some(who) if self.has_failed(Some(who)).await => self.reconcile_now(ctx, who).await,
+            Some(_) => {}
+            None if self.engines.lock().await.retry_due()
+                && self.reconciling.try_lock().is_ok() =>
+            {
+                // No reconcile in flight: start one for the failed accounts that are due.
+                Self::reconcile_in_background(ctx.clone());
+            }
+            None => {}
         }
         let engines = self.engines.lock().await;
         let mut targets = Vec::new();

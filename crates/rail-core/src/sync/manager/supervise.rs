@@ -65,7 +65,7 @@ impl SyncManager {
             let error = engine_ended();
             self.board
                 .update(&address, |s| stopped_by(s, "engine", &error));
-            engines.record_failure(&address, error);
+            engines.record_failure(&address, running.key, error);
         }
     }
 
@@ -97,7 +97,7 @@ impl SyncManager {
         );
         drop(engines);
         // An invalid config.toml must not leave sync stopped: the last good one is used.
-        self.reconcile_with(ctx, true).await;
+        self.reconcile_with(ctx, true, None).await;
     }
 
     fn give_up_on_the_writer(&self) {

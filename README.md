@@ -453,8 +453,8 @@ then a `login` line (`skip` when `rail daemon install` has not run; `ok` when th
 and enabled; `warn` when it is installed but not enabled, or when it no longer matches what this
 binary would write, for example after you moved the `rail` binary; the `login` line never changes
 the exit status), then ends with an `ok   daemon` line naming the daemon that ran the checks. An account that needs a
-login, or whose last sync failed with a permanent error (Gmail refusing a request) and is not
-being retried, fails the check; any other past error is a `warn` line. Text Rail did not write (a keyring's or SQLite's
+login, or whose last sync (or the start of its sync) failed with an error retrying cannot mend
+(Gmail refusing a request, the store failing) and is not being retried, fails the check; any other past error is a `warn` line. Text Rail did not write (a keyring's or SQLite's
 message, the config parser's) is marked `from outside Rail` and shown in quotes with control
 characters escaped. It exits non-zero for config, store, secrets-backend and token-read errors, and
 for a Gmail account whose sync needs a login or failed for good. An account with no stored tokens is listed as
@@ -606,8 +606,10 @@ override the daemon's own for that launch, so it works even when the daemon star
 display; a variable the command does not have (or does not send, as an older client) keeps
 the value the daemon inherited. Its logs go to `rail.log`; it never writes to the terminal. An
 account whose sync cannot start (a locked 1Password, say) or stops unexpectedly shows the error
-in its sync status and is tried again after 1, 5 and then every 15 minutes (or at once when
-its sync is asked for). If the store's writer fails, the daemon starts it (and every account's sync)
+in its sync status and is tried again after 1, 5 and then every 15 minutes, at once when it is
+asked for by name (`rail sync work`) or logged in again, or when its settings in `config.toml`
+change. `rail sync` with no account wakes the others and leaves it to that wait, so asking again
+and again never prompts for 1Password again and again. If the store's writer fails, the daemon starts it (and every account's sync)
 again, up to three times (a writer that stayed up an hour starts that count again); after that
 sync pauses until the daemon restarts, and `rail doctor` reports it as a store error.
 

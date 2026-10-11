@@ -418,6 +418,17 @@ async fn waking_every_account_does_not_wait_for_a_failed_ones_retry() {
     let ctx = slow_context(&tmp, slow_factory(&gate, &MockProvider::new(), true));
     ctx.sync.reconcile(&ctx).await;
     until(&ctx, |s| s.passes_completed >= 1 && !s.pass_running).await;
+    // The failed account's backoff has passed: the next reconcile retries it.
+    if let Some(failed) = ctx
+        .sync
+        .engines
+        .lock()
+        .await
+        .failed
+        .get_mut("slow@example.com")
+    {
+        failed.retry_at = tokio::time::Instant::now();
+    }
     super::SyncManager::reconcile_in_background(ctx.clone());
     entered(&gate).await;
     let woken = tokio::time::timeout(Duration::from_secs(2), ctx.sync.wake(&ctx, None))
@@ -480,4 +491,73 @@ async fn an_invalid_config_is_warned_about_once_even_with_a_retry_due() {
         .failed_reconciles
         .load(std::sync::atomic::Ordering::SeqCst);
     assert_eq!(failed, 1, "one warning over ten checks");
+}
+
+/// A factory whose builds always fail, counting them.
+fn failing_factory(builds: &Arc<std::sync::atomic::AtomicUsize>) -> super::ProviderFactory {
+    let builds = builds.clone();
+    Arc::new(move |_| {
+        builds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(crate::ops::OpError::invalid_input("1Password is locked"))
+    })
+}
+
+fn builds_of(builds: &std::sync::atomic::AtomicUsize) -> usize {
+    builds.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Review minor 4: reconciles that follow one another (the startup one and the first check,
+/// say) leave a failed account to its backoff instead of each running `op read` for it.
+#[tokio::test]
+async fn back_to_back_reconciles_build_a_failed_account_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let builds = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let paths = Paths::all_in(tmp.path());
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    std::fs::write(paths.config_file(), WORK).unwrap();
+    let (ctx, _) = daemon_context(&paths);
+    let ctx = Arc::new(ctx.with_provider_factory(failing_factory(&builds)));
+    ctx.sync.reconcile(&ctx).await;
+    ctx.sync.reconcile(&ctx).await;
+    assert_eq!(builds_of(&builds), 1);
+    ctx.sync.reconcile_now(&ctx, "work").await;
+    assert_eq!(builds_of(&builds), 2, "asked for by name: tried at once");
+}
+
+/// Review minor 4: two unnamed `sync.now` in a row run at most one retry build, and none
+/// before the failed account's backoff has passed.
+#[tokio::test]
+async fn unnamed_wakes_honour_a_failed_accounts_backoff() {
+    let tmp = tempfile::tempdir().unwrap();
+    let builds = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let paths = Paths::all_in(tmp.path());
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    std::fs::write(paths.config_file(), WORK).unwrap();
+    let (ctx, _) = daemon_context(&paths);
+    let ctx = Arc::new(ctx.with_provider_factory(failing_factory(&builds)));
+    ctx.sync.reconcile(&ctx).await;
+    assert_eq!(builds_of(&builds), 1);
+    for _ in 0..2 {
+        ctx.sync.wake(&ctx, None).await.unwrap();
+        // Time for a background reconcile, had one been started, to take its lock.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        reconciles_done(&ctx).await;
+    }
+    assert_eq!(builds_of(&builds), 1, "not before the backoff");
+    if let Some(failed) = ctx
+        .sync
+        .engines
+        .lock()
+        .await
+        .failed
+        .get_mut("me@example.com")
+    {
+        failed.retry_at = tokio::time::Instant::now();
+    }
+    for _ in 0..2 {
+        ctx.sync.wake(&ctx, None).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        reconciles_done(&ctx).await;
+    }
+    assert_eq!(builds_of(&builds), 2, "one retry for two wakes");
 }

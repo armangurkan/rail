@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
-use tokio::time::{Instant, MissedTickBehavior, interval};
+use tokio::time::{Instant, MissedTickBehavior, interval, interval_at};
 
 use super::connect::{
     START_TIMEOUT, VERSION, check_socket_path, open_lock_file, remove_stale_socket, socket_answers,
@@ -245,7 +245,9 @@ impl Server {
         SyncManager::reconcile_in_background(self.ctx.clone());
         // Intervals, not a sleep re-armed each turn: another arm firing more often than the
         // idle check would otherwise keep re-arming it, and the daemon would never idle out.
-        let mut config_tick = interval(CONFIG_CHECK);
+        // The first check waits one `CONFIG_CHECK`: the startup reconcile above covers now,
+        // and a second one at once would plan the same accounts (two 1Password prompts).
+        let mut config_tick = interval_at(Instant::now() + CONFIG_CHECK, CONFIG_CHECK);
         config_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut idle_tick = interval(tick);
         idle_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);

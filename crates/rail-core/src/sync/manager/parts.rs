@@ -78,6 +78,8 @@ pub(super) struct Running {
 pub(super) struct Failed {
     pub(super) error: OpError,
     pub(super) retry_at: Instant,
+    /// What the failed start was planned from: a change is tried at once, not after the wait.
+    pub(super) key: EngineKey,
 }
 
 /// An account `plan` decided to start, with what it was planned from.
@@ -111,12 +113,26 @@ pub(super) struct Engines {
 
 impl Engines {
     /// Record that `address` has no engine because of `error`, and when to try again.
-    pub(super) fn record_failure(&mut self, address: &str, error: OpError) {
+    pub(super) fn record_failure(&mut self, address: &str, key: EngineKey, error: OpError) {
         let attempts = self.attempts.entry(address.to_string()).or_insert(0);
         *attempts += 1;
         let retry_at = Instant::now() + retry_delay(*attempts);
+        self.failed.insert(
+            address.to_string(),
+            Failed {
+                error,
+                retry_at,
+                key,
+            },
+        );
+    }
+
+    /// True when `address` failed with these settings and its next try is not due yet: a
+    /// reconcile leaves it waiting (no `op read` before `retry_at`).
+    pub(super) fn waiting(&self, address: &str, key: &EngineKey) -> bool {
         self.failed
-            .insert(address.to_string(), Failed { error, retry_at });
+            .get(address)
+            .is_some_and(|f| f.key == *key && f.retry_at > Instant::now())
     }
 
     /// Push every failed account's next try out by its backoff again (a reconcile that
