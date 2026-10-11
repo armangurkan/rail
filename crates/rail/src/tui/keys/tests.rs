@@ -193,7 +193,7 @@ fn a_view_key_shadows_a_global_one_and_chords_resolve() {
         [Resolved::Pending, Resolved::Action(Action::ReaderDown)]
     );
     assert_eq!(
-        resolve(&map, &list, &[press(KeyCode::Char('z'))]),
+        resolve(&map, &list, &[press(KeyCode::Char('x'))]),
         [Resolved::Unbound]
     );
 }
@@ -216,13 +216,13 @@ fn an_override_replaces_the_defaults() {
 
 #[test]
 fn an_unknown_action_is_refused_with_path_and_line() {
-    let text = "[general]\nsecrets = \"file\"\n\n[keys]\n\"list.filter\" = \"/\"\n\"list.archive\" = \"e\"\n";
+    let text = "[general]\nsecrets = \"file\"\n\n[keys]\n\"list.filter\" = \"/\"\n\"list.compose\" = \"e\"\n";
     let error = configured(text).err().unwrap();
     assert_eq!(error.line, 6);
     assert_eq!(
         error.to_string(),
         format!(
-            "{PATH}:6: [keys] \"list.archive\" is not an action Rail knows (the README lists them)"
+            "{PATH}:6: [keys] \"list.compose\" is not an action Rail knows (the README lists them)"
         )
     );
 }
@@ -350,4 +350,55 @@ fn text_keys_are_printable_characters_without_ctrl_or_alt() {
         KeyModifiers::CONTROL
     )));
     assert!(!is_text_key(press(KeyCode::Enter)));
+}
+
+#[test]
+fn the_action_keys_have_their_spec_defaults_and_views() {
+    let map = Keymap::defaults();
+    let both = [View::List, View::Reader];
+    for (action, id, key, views) in [
+        (Action::ListArchive, "list.archive", "e", &both[..]),
+        (Action::ListTrash, "list.trash", "d", &both[..]),
+        (Action::ListStar, "list.star", "s", &both[..]),
+        (Action::ListRead, "list.read", "u", &both[..]),
+        (Action::ListLabels, "list.labels", "l", &both[..]),
+        (Action::ListMove, "list.move", "m", &both[..]),
+        (
+            Action::ListSelect,
+            "list.select",
+            "Space",
+            &[View::List][..],
+        ),
+        (
+            Action::ListClearSelection,
+            "list.clear_selection",
+            "Esc",
+            &[View::List][..],
+        ),
+        (Action::GlobalUndo, "global.undo", "z", &[View::Global][..]),
+    ] {
+        assert_eq!(
+            (action.id(), map.label(action).as_str(), action.views()),
+            (id, key, views)
+        );
+    }
+    // In the reader Esc still closes and Space still pages.
+    let reader = [View::Reader, View::Global];
+    assert_eq!(
+        resolve(&map, &reader, &[press(KeyCode::Esc)]),
+        [Resolved::Action(Action::ReaderBack)]
+    );
+    assert_eq!(
+        resolve(&map, &reader, &[press(KeyCode::Char(' '))]),
+        [Resolved::Action(Action::ReaderPageDown)]
+    );
+    assert_eq!(
+        resolve(&map, &reader, &[press(KeyCode::Char('e'))]),
+        [Resolved::Action(Action::ListArchive)]
+    );
+    let list = [View::List, View::Global];
+    assert_eq!(
+        resolve(&map, &list, &[press(KeyCode::Char('z'))]),
+        [Resolved::Action(Action::GlobalUndo)]
+    );
 }

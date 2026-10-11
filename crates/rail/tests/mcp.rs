@@ -331,6 +331,64 @@ async fn the_tools_carry_their_hints_and_no_raw_secret_input() {
     client.close().await;
 }
 
+/// Spec section 3: agents cannot change mail in this phase. No tool runs an action operation,
+/// no tool is named like one, and no tool's schema offers one. The tool list is pinned.
+#[tokio::test]
+async fn no_tool_changes_mail() {
+    let dir = tempfile::tempdir().unwrap();
+    write_config(&dir, FILE_BACKEND);
+    let client = start(&dir, host(None), None).await;
+    let tools = bounded("tools/list", client.list_all_tools())
+        .await
+        .unwrap();
+    let names: BTreeSet<String> = tools.iter().map(|t| t.name.to_string()).collect();
+    let expected: BTreeSet<String> = [
+        "rail_status",
+        "rail_accounts_list",
+        "rail_presets_list",
+        "rail_preset_fetch",
+        "rail_provider_guide",
+        "rail_account_add",
+        "rail_account_login",
+        "rail_admin_consent",
+        "rail_wait",
+        "rail_cancel",
+        "rail_secrets_configure",
+        "rail_account_remove",
+        "rail_sync_status",
+        "rail_sync_now",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    assert_eq!(names, expected, "the tool list is the one pinned here");
+    for tool in &tools {
+        let schema = serde_json::to_string(&tool.input_schema).unwrap();
+        for word in [
+            "archive",
+            "trash",
+            "star",
+            "label",
+            "outbox",
+            "client_token",
+            "action",
+            "undo",
+            "retry",
+        ] {
+            assert!(
+                !tool.name.contains(word),
+                "{} is named like {word}",
+                tool.name
+            );
+            assert!(
+                !schema.contains(word),
+                "{} offers {word}: {schema}",
+                tool.name
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn the_setup_prompt_and_the_instructions() {
     let dir = tempfile::tempdir().unwrap();

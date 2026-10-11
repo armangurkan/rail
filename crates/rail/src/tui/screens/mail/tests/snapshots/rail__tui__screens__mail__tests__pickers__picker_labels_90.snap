@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/pickers.rs
+expression: shot
+---
+▍All inboxes  2 accounts · 5 unread                                                 ? help
+●  Yesterday  Sender                          subject wm2
+●  Yesterday  Sender                          subject hm1
+●  Yesterday  Sender                          subject wm1
+●  Yesterday  S┌ Labels ──────────────────────────────────────────────────┐
+●  Yesterday  S│>                                                         │
+               │                                                          │
+               │[ ] Projects                                              │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │Space ticks · Enter applies · Esc cancels                 │
+               └──────────────────────────────────────────────────────────┘
+
+
+work ✓  ·  home ✓

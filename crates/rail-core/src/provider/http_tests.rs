@@ -515,3 +515,40 @@ async fn a_scoped_policy_replaces_the_clients_own_for_that_work_only() {
 
 #[path = "http_refresh_tests.rs"]
 mod refresh;
+
+#[tokio::test]
+async fn a_post_is_retried_and_refreshes_like_a_get() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/gmail/v1/users/me/threads/t1/modify"))
+        .and(bearer_token("tok-1"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/gmail/v1/users/me/threads/t1/modify"))
+        .and(bearer_token("tok-2"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/gmail/v1/users/me/threads/t1/modify"))
+        .and(bearer_token("tok-2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": "t1"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (api, waits) = client(&server, FixedTokens::new(["tok-1", "tok-2"]));
+    let body = serde_json::json!({"addLabelIds": [], "removeLabelIds": ["INBOX"]});
+    api.post_json("threads/t1/modify", Some(&body), 10)
+        .await
+        .unwrap();
+    assert_eq!(waits.lock().unwrap().len(), 1, "one retry after the 503");
+    assert!(
+        api.post_json("https://evil.example/x", None, 1)
+            .await
+            .is_err(),
+        "origin pinned"
+    );
+}

@@ -276,7 +276,7 @@ fn the_upgrade_runs_on_an_empty_store() {
     let (path, old) = version_4(dir.path());
     drop(old);
     let store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 5);
+    assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
     let sql: String = store
         .conn()
         .query_row(

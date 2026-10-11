@@ -154,7 +154,17 @@ async fn server_hits(
         searched: known.into_iter().collect(),
         ..Batch::new(target.account_id)
     };
-    ctx.sync.writer(ctx).await?.write(batch).await?;
+    if ctx
+        .sync
+        .writer(ctx)
+        .await?
+        .write(batch)
+        .await?
+        .failed_cleared
+        > 0
+    {
+        ctx.sync.outbox_changed(ctx).await;
+    }
     let path = db.to_path_buf();
     blocking(move || Ok(Store::open_reader(&path)?.hits_for(id, &ids)?)).await
 }

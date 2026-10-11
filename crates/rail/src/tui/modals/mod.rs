@@ -1,5 +1,5 @@
 //! The one optional modal over the mail screen: confirmations, the link number prompt, the
-//! attachment list, the filter line, the palette, help and `:errors`.
+//! attachment list, the filter line, the palette, the label pickers, help and `:errors`.
 //! Modal keys are fixed (Enter, Esc, `y`/`n`, arrows): they are not keymap actions.
 
 pub mod confirm;
@@ -7,6 +7,7 @@ pub mod errors;
 pub mod filter;
 pub mod help;
 pub mod palette;
+pub mod picker;
 mod scroll;
 #[cfg(test)]
 mod tests;
@@ -18,10 +19,11 @@ use ratatui::widgets::{Block, Borders, Clear};
 use url::Url;
 
 pub use confirm::{AttachmentList, AttachmentRow, Confirm, LinkPrompt};
-pub use errors::ErrorList;
+pub use errors::{ErrorList, ErrorRow};
 pub use filter::FilterLine;
 pub use help::Help;
 pub use palette::{Palette, PaletteEntry, Target};
+pub use picker::{Picker, PickerItem, PickerMode};
 
 use crate::tui::theme::Theme;
 
@@ -40,6 +42,17 @@ pub enum Command {
     ClearFilter,
     /// Run what a palette entry stands for.
     Palette(Target),
+    /// The trash confirmation was answered yes.
+    Trash,
+    /// Send this failed outbox row again.
+    Retry(rail_core::ops::OutboxId),
+    /// The label picker's answer: labels to add and to remove.
+    Labels {
+        add: Vec<i64>,
+        remove: Vec<i64>,
+    },
+    /// The move picker's answer: the label folder to move to.
+    MoveTo(i64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +70,7 @@ pub enum Modal {
     Attachments(AttachmentList),
     Filter(FilterLine),
     Palette(Palette),
+    Picker(Picker),
     Help(Help),
     Errors(ErrorList),
 }
@@ -69,6 +83,7 @@ impl Modal {
             Self::Attachments(list) => list.key(key),
             Self::Filter(line) => line.key(key),
             Self::Palette(palette) => palette.key(key),
+            Self::Picker(picker) => picker.key(key),
             Self::Help(help) => help.key(key),
             Self::Errors(list) => list.key(key),
         }
@@ -78,7 +93,7 @@ impl Modal {
     pub fn captures_text(&self) -> bool {
         matches!(
             self,
-            Self::LinkNumber(_) | Self::Filter(_) | Self::Palette(_)
+            Self::LinkNumber(_) | Self::Filter(_) | Self::Palette(_) | Self::Picker(_)
         )
     }
 
@@ -89,6 +104,7 @@ impl Modal {
             Self::Attachments(list) => list.render(frame, area, theme),
             Self::Filter(line) => line.render(frame, area, theme),
             Self::Palette(palette) => palette.render(frame, area, theme),
+            Self::Picker(picker) => picker.render(frame, area, theme),
             Self::Help(help) => help.render(frame, area, theme),
             Self::Errors(list) => list.render(frame, area, theme),
         }

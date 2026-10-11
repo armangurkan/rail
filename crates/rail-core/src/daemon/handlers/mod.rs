@@ -1,5 +1,6 @@
 //! Every operation the daemon serves.
 
+mod actions;
 mod body;
 mod guide;
 mod login;
@@ -35,5 +36,8 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::SyncNow, _, _>(sync::now);
     registry.register::<op::Search, _, _>(sync::search);
     registry.register::<op::BodyFetch, _, _>(body::fetch);
+    registry.register::<op::ActionApply, _, _>(actions::apply);
+    registry.register::<op::ActionUndo, _, _>(actions::undo);
+    registry.register::<op::ActionRetry, _, _>(actions::retry);
     registry
 }

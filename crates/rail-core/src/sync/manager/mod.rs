@@ -6,6 +6,7 @@
 //! `op read`) runs without it, so `sync.now`, `search`, the writer checks and shutdown never
 //! wait behind a locked 1Password.
 
+mod outbox;
 mod parts;
 mod supervise;
 
@@ -16,14 +17,16 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-pub(crate) use self::parts::unobserved;
+pub use self::outbox::ActionTarget;
 use self::parts::{
     ConfigStamp, Engines, PlannedAccount, Prepared, Running, failed_status, finish_writer,
     initial_status, key, named, needs_login, not_running, not_syncing, read_config, retry_observer,
     shutting_down, stop_engine, stop_engine_within, unsupported, writer_gone,
 };
+pub(crate) use self::parts::{retry_delay, unobserved};
 use super::batch::{Batch, StateUpdate};
 use super::engine::{Engine, EngineParts};
+use super::outbox::{Worker, WorkerParts};
 use super::status::{StatusBoard, Subscriber};
 use super::writer::{WriterHandle, spawn_writer};
 use crate::auth::{ItemIdCache, unix_now};
@@ -333,11 +336,16 @@ impl SyncManager {
         account: &AccountConfig,
     ) -> Result<Prepared, OpError> {
         let (db, row) = (ctx.paths.db_file(), account.clone());
-        let (account_id, state, reader) = ctx
+        let (account_id, state, reader, outbox_reader) = ctx
             .blocking(move || {
                 let store = Store::open(&db)?;
                 let id = store.upsert_account(&row)?;
-                Ok((id, store.sync_state(id)?, Store::open_reader(&db)?))
+                Ok((
+                    id,
+                    store.sync_state(id)?,
+                    Store::open_reader(&db)?,
+                    Store::open_reader(&db)?,
+                ))
             })
             .await?;
         let provider = self.provider_for(ctx, config, account).await?;
@@ -345,6 +353,7 @@ impl SyncManager {
             account_id,
             state,
             reader,
+            outbox_reader,
             provider,
         })
     }
@@ -435,14 +444,27 @@ impl SyncManager {
             account_id: prepared.account_id,
             settings: planned.settings,
             provider: prepared.provider.clone(),
-            writer,
+            writer: writer.clone(),
             reader: prepared.reader,
             board: self.board.clone(),
             wake: Arc::new(tokio::sync::Notify::new()),
             clock: Arc::new(unix_now),
         });
         let wake = engine.wake_handle();
+        let outbox_signal = Arc::new(tokio::sync::Notify::new());
+        let worker = Worker::new(WorkerParts {
+            name: account.name.clone(),
+            address: account.address.to_ascii_lowercase(),
+            account_id: prepared.account_id,
+            provider: prepared.provider.clone(),
+            writer,
+            reader: prepared.outbox_reader,
+            board: self.board.clone(),
+            signal: outbox_signal.clone(),
+            clock: Arc::new(unix_now),
+        });
         let (stop, stopped) = watch::channel(false);
+        let outbox_task = tokio::spawn(worker.run(stopped.clone()));
         Running {
             key: planned.key.clone(),
             name: account.name.clone(),
@@ -450,6 +472,8 @@ impl SyncManager {
             wake,
             stop,
             task: tokio::spawn(engine.run(stopped)),
+            outbox_signal,
+            outbox_task,
             provider: prepared.provider,
         }
     }
@@ -488,9 +512,9 @@ impl SyncManager {
             engines
                 .running
                 .get(&key)
-                .map(|r| (r.account_id, r.wake.clone()))
+                .map(|r| (r.account_id, r.wake.clone(), r.outbox_signal.clone()))
         };
-        let Some((account_id, wake)) = running else {
+        let Some((account_id, wake, outbox_signal)) = running else {
             return self.reconcile_now(ctx, &key).await;
         };
         self.board.update(&key, |s| {
@@ -514,6 +538,7 @@ impl SyncManager {
             tracing::warn!(error = %error.message, "could not clear needs_auth");
         }
         wake.notify_one();
+        outbox_signal.notify_one();
     }
 
     /// Wake the named account's engine (or every engine) and say which pass to wait for.
@@ -686,5 +711,7 @@ impl SyncManager {
     }
 }
 
+#[cfg(test)]
+mod outbox_tests;
 #[cfg(test)]
 mod tests;

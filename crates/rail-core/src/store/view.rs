@@ -15,6 +15,8 @@ use crate::provider::Mailbox;
 use crate::provider::links::MAX_LINKS;
 use crate::sync::UNREADABLE_BODY;
 
+pub use super::view_labels::{LabelChoices, LabelOption};
+
 /// Threads one page holds.
 pub const PAGE: usize = 100;
 /// Messages of one thread the reader gets: the newest ones.

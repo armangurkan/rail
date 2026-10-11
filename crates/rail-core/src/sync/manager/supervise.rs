@@ -55,24 +55,20 @@ impl SyncManager {
         let ended: Vec<String> = engines
             .running
             .iter()
-            .filter(|(_, running)| running.task.is_finished())
+            .filter(|(_, r)| r.task.is_finished() || r.outbox_task.is_finished())
             .map(|(address, _)| address.clone())
             .collect();
         for address in ended {
             let Some(running) = engines.running.remove(&address) else {
                 continue;
             };
-            if let Err(error) = running.task.await
-                && error.is_panic()
-            {
-                tracing::error!(account = %running.name, "a sync engine panicked");
-            } else {
-                tracing::error!(account = %running.name, "a sync engine ended on its own");
-            }
+            let (name, key) = (running.name.clone(), running.key.clone());
+            tracing::error!(account = %name, "a sync engine or its outbox worker ended on its own");
+            stop_engine(running).await;
             let error = engine_ended();
             self.board
                 .update(&address, |s| stopped_by(s, "engine", &error));
-            engines.record_failure(&address, running.key, error);
+            engines.record_failure(&address, key, error);
         }
     }
 

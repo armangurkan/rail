@@ -4,15 +4,19 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use crate::ops::AccountSyncStatus;
+use crate::ops::{AccountSyncStatus, ActionFailed};
 
 /// Told of every change; returns false once its client is gone, and is then dropped.
 pub type Subscriber = Box<dyn Fn(&AccountSyncStatus) -> bool + Send>;
+
+/// Told of every action Gmail refused for good; returns false once its client is gone.
+pub type FailureSubscriber = Box<dyn Fn(&ActionFailed) -> bool + Send>;
 
 #[derive(Default)]
 struct Inner {
     accounts: BTreeMap<String, AccountSyncStatus>,
     subscribers: Vec<Subscriber>,
+    failure_subscribers: Vec<FailureSubscriber>,
 }
 
 #[derive(Clone, Default)]
@@ -59,5 +63,14 @@ impl StatusBoard {
 
     pub fn subscribe(&self, subscriber: Subscriber) {
         self.lock().subscribers.push(subscriber);
+    }
+
+    pub fn subscribe_failures(&self, subscriber: FailureSubscriber) {
+        self.lock().failure_subscribers.push(subscriber);
+    }
+
+    /// Tell every failure subscriber; ones whose client is gone are dropped.
+    pub fn report_failure(&self, failure: &ActionFailed) {
+        self.lock().failure_subscribers.retain(|tell| tell(failure));
     }
 }

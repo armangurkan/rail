@@ -3,6 +3,7 @@
 //! these definitions. Operations execute only in the daemon.
 
 pub mod accounts;
+pub mod actions;
 pub mod body;
 pub mod confirm;
 pub mod daemon;
@@ -23,6 +24,12 @@ pub use accounts::{
     AccountAddRequest, AccountRemoveRequest, AccountRemoveResponse, AgentAccountAdd,
     AgentAccountRemove, BeginResponse, ClientSecretInput, ConsentBeginRequest, LoginBeginRequest,
     NO_SECRETS_FROM_AGENTS, OP_REFERENCE_PREFIX, SavedAccount,
+};
+pub use actions::{
+    Action, ActionApplyRequest, ActionApplyResponse, ActionFailed, ActionRetryRequest,
+    ActionRetryResponse, ActionUndoRequest, ActionUndoResponse, MAX_ACTION_LABELS,
+    MAX_ACTION_THREADS, MAX_CLIENT_TOKEN_CHARS, MAX_UNDO_ROWS, OutboxDepth, OutboxId, UNDO_GRACE,
+    client_token,
 };
 pub use body::{
     BodyFetchRequest, BodyFetchResponse, BodyFetchResult, BodyOutcome, MAX_BODY_FETCH,

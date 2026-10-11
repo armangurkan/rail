@@ -17,6 +17,8 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
   src/store/             SQLite open, migrations, repositories
     store/view.rs        Read-only queries the mail screen runs: thread pages, the sidebar, one thread, a message's HTML
     store/filter.rs      The filter line's syntax as SQL conditions
+    store/outbox.rs      The outbox queue the action operations and the worker share
+    store/apply_local.rs Local changes of actions and their exact reverse, and the conflict rule
   src/auth/              Secret stores (keyring, file, 1Password), OAuth endpoints, loopback listener, login and admin consent, token refresh
   src/onboarding/        Presets and the setup wizard's pure state machine
   src/ops/               The operation layer: every request and response type, OpError, Untrusted
@@ -26,6 +28,7 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
   src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries) and the Gmail provider with its HTML-to-text scanner
   src/sync/              Per-account sync engines, backfill and history passes, the single store writer, search
     sync/body_fetch.rs   Fetches bodies the store does not hold yet (the `body.fetch` operation)
+    sync/outbox/         The per-account outbox worker that sends actions to Gmail
   src/doctor.rs          The `rail doctor` checks
 crates/rail/             Binary: clap CLI, logging, and the account, daemon, doctor, mcp, search, secrets, setup and sync commands
   src/cmd/mcp/           The MCP server: tools, the setup prompt, confirmation through elicitation, summaries
@@ -35,7 +38,7 @@ crates/rail/             Binary: clap CLI, logging, and the account, daemon, doc
     tui/data             The mail screen's read side (the store reader) and its link to the daemon
     tui/screens/mail     The mail screen: thread list, sidebar, status bar
     tui/screens/reader   The reader: messages, folded quotes, numbered links
-    tui/modals           The palette, filter line, help, confirmations and the error list
+    tui/modals           The palette, filter line, help, confirmations, label pickers and the error list
   tests/                 End-to-end tests against the built binary, in a pseudo-terminal, and over MCP
 assets/brand/            Logos and the app icon
 deny.toml                Licence and advisory policy for `cargo deny`

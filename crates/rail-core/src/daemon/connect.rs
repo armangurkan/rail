@@ -23,8 +23,9 @@ use crate::paths::{Paths, canonical_dir, create_private_dir};
 
 /// The operations a client may send again after the connection closed under them: they only
 /// read, or (`pending.cancel`, `sync.now`, `search`, `body.fetch`) have the same effect however often they
-/// run.
-const RETRY_SAFE: [&str; 12] = [
+/// run, or are `action.apply` (its client token finds the row a first try made), `action.undo`
+/// and `action.retry`.
+const RETRY_SAFE: [&str; 15] = [
     names::STATUS,
     names::ACCOUNTS_LIST,
     names::PRESETS_LIST,
@@ -37,6 +38,9 @@ const RETRY_SAFE: [&str; 12] = [
     names::SYNC_NOW,
     names::SEARCH,
     names::BODY_FETCH,
+    names::ACTION_APPLY,
+    names::ACTION_UNDO,
+    names::ACTION_RETRY,
 ];
 
 /// True when `operation` may be sent again on a fresh connection.

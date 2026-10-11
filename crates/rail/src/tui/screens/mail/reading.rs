@@ -9,8 +9,8 @@ use crate::tui::app::Effect;
 use crate::tui::data::{FILTER_DEBOUNCE, ReadError, Timer, timer};
 use crate::tui::keys::{Action, View};
 use crate::tui::modals::{
-    AttachmentList, AttachmentRow, Command, Confirm, ErrorList, LinkPrompt, Modal, ModalOutcome,
-    Target,
+    AttachmentList, AttachmentRow, Command, Confirm, ErrorList, ErrorRow, LinkPrompt, Modal,
+    ModalOutcome, Target,
 };
 use crate::tui::screens::reader::{Reader, ReaderOutcome};
 use crate::tui::text::{escape, fit, link_lines, safe_link};
@@ -57,17 +57,20 @@ impl MailScreen {
         result: Result<Option<ThreadDetail>, ReadError>,
     ) -> Vec<Effect> {
         match result {
-            Ok(Some(detail)) => {
+            Ok(Some(mut detail)) => {
+                let mut marked = Vec::new();
                 match self.reader.as_mut().filter(|r| r.thread_id() == thread_id) {
                     // A re-read after a store change: the focus stays where it is.
                     Some(reader) => reader.refresh(detail),
                     None => {
                         let glyphs = Glyphs::of(self.ctx.icons);
+                        marked = self.mark_read_on_open(&mut detail);
                         self.reader = Some(Reader::new(detail, self.ctx.clock.clone(), glyphs));
                         self.focus = Focus::Reader;
                     }
                 }
                 let mut effects = self.fetch_wanted();
+                effects.extend(marked);
                 effects.extend(self.resume_open());
                 effects
             }
@@ -427,7 +430,10 @@ impl MailScreen {
     pub(super) fn modal_outcome(&mut self, outcome: ModalOutcome) -> Vec<Effect> {
         match outcome {
             ModalOutcome::Stay => {}
-            ModalOutcome::Close => self.modal = None,
+            ModalOutcome::Close => {
+                self.modal = None;
+                self.actions.picking = None;
+            }
             ModalOutcome::Typed(text) => {
                 self.filter_text = text;
                 self.filter_token += 1;
@@ -463,6 +469,10 @@ impl MailScreen {
                     self.status.error(text, self.ctx.clock.now(), self.tick);
                 }
             }
+            ModalOutcome::Run(command) => {
+                self.modal = None;
+                return self.action_command(command);
+            }
         }
         Vec::new()
     }
@@ -491,9 +501,12 @@ impl MailScreen {
                     .status
                     .errors()
                     .rev()
-                    .map(|e| format!("{}  {}", self.ctx.clock.short(e.at), e.text))
+                    .map(|e| ErrorRow {
+                        text: format!("{}  {}", self.ctx.clock.short(e.at), e.text),
+                        retry: e.retry,
+                    })
                     .collect();
-                self.modal = Some(Modal::Errors(ErrorList::new(rows, self.ctx.icons)));
+                self.modal = Some(Modal::Errors(ErrorList::with_retries(rows, self.ctx.icons)));
                 Vec::new()
             }
             Target::Scope(scope) => {

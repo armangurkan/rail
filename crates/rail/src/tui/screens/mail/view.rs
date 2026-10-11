@@ -27,6 +27,8 @@ const COUNT_COLS: usize = 5;
 pub struct Glyphs {
     pub bar: &'static str,
     pub account: &'static str,
+    /// Replaces the account dot on a selected row.
+    pub marked: &'static str,
     pub star: &'static str,
     /// Two columns wide in both sets.
     pub attachment: &'static str,
@@ -45,6 +47,7 @@ impl Glyphs {
             Icons::Unicode => Self {
                 bar: "▍",
                 account: "●",
+                marked: "▸",
                 star: "★",
                 attachment: "📎",
                 ok: "✓",
@@ -56,6 +59,7 @@ impl Glyphs {
             Icons::Ascii => Self {
                 bar: "|",
                 account: "*",
+                marked: ">",
                 star: "+",
                 attachment: "@ ",
                 ok: "ok",
@@ -322,11 +326,20 @@ impl MailScreen {
             "  "
         };
         let used = 2 + DATE_COLS + 2 + people_cols + COUNT_COLS + 1 + 1 + 2 + 1;
-        let subject = fit(&row.subject, usize::from(cols).saturating_sub(used));
+        let room = usize::from(cols).saturating_sub(used);
+        let (subject, subject_style) = match self.actions.failures.get(&row.key.thread_id) {
+            Some((_, text)) => (fit(text, room), theme.error),
+            None => (fit(&row.subject, room), style),
+        };
+        let lead = if self.actions.selection.contains(row.key.thread_id) {
+            glyphs.marked
+        } else {
+            glyphs.account
+        };
         Line::from(vec![
-            Span::styled(format!("{} ", glyphs.account), style.fg(color)),
+            Span::styled(format!("{lead} "), style.fg(color)),
             Span::styled(format!("{date}  {people}{count} {star}{clip} "), style),
-            Span::styled(subject, style),
+            Span::styled(subject, subject_style),
         ])
     }
 

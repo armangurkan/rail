@@ -68,6 +68,9 @@ impl Store {
             relabel(&tx, account, change, &mut touched)?;
         }
         outcome.deleted = delete(&tx, account, &batch.deletes, &mut touched)?;
+        // What the server said about these threads settles their failed actions (a body
+        // fetched for the reader, a sweep or a prune does not).
+        outcome.failed_cleared = super::outbox::clear_failed(&tx, account, &touched)?;
         for (id, body) in &batch.bodies {
             store_body(&tx, account, id, body, now, &mut touched)?;
         }
@@ -78,7 +81,11 @@ impl Store {
         if let Some(prune) = batch.prune {
             outcome.pruned = prune_old(&tx, account, prune, &mut touched)?;
         }
+        // The conflict rule: actions still waiting for Gmail stay on top of what it said.
+        super::apply_local::reapply_live(&tx, account, &touched)?;
         rollup::refresh(&tx, &touched)?;
+        // A thread the rollup deleted leaves the outbox before its rowid can be reused.
+        super::apply_local::forget_threads(&tx, &touched)?;
         update_state(&tx, account, &batch.state)?;
         #[cfg(test)]
         if batch.poison {

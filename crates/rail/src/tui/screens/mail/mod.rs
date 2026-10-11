@@ -2,11 +2,14 @@
 //! and the status bar (the reader and the modals join in later tasks). Keys go through the
 //! keymap; every read and daemon call is a job whose answer comes back as a `MailEvent`.
 
+mod actions;
+mod actions_pick;
 mod layout;
 mod list;
 #[cfg(test)]
 mod modal_tests;
 mod reading;
+mod selection;
 mod sidebar;
 mod status;
 #[cfg(test)]
@@ -27,6 +30,8 @@ use rail_core::store::view::PageAt;
 use ratatui::Frame;
 use ratatui::style::Color;
 
+#[cfg(test)]
+pub(crate) use actions::UNDO_TICKS;
 #[cfg(test)]
 pub use list::MAX_WINDOW;
 pub use list::{ListWindow, Place};
@@ -151,6 +156,7 @@ pub struct MailScreen {
     /// The open thread, drawn in the pane or full screen.
     reader: Option<Reader>,
     modal: Option<Modal>,
+    pub(crate) actions: actions::ActionState,
     /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
     open_files: OpenFiles,
     /// The browser confirmation was answered yes this session.
@@ -196,6 +202,7 @@ impl MailScreen {
             navigating: None,
             reader: None,
             modal: None,
+            actions: actions::ActionState::default(),
             open_files,
             html_confirmed: false,
             pending_open: None,
@@ -366,6 +373,9 @@ impl MailScreen {
             }
             _ => {}
         }
+        if let Some(effects) = self.mail_action(action) {
+            return effects;
+        }
         if let Some(effects) = self.shared_action(action) {
             return effects;
         }
@@ -496,7 +506,7 @@ impl MailScreen {
                 token,
                 kind: Timer::Filter,
             } if token == self.filter_token => self.apply_filter(),
-            _ => Vec::new(),
+            other => self.action_event(other),
         }
     }
 
@@ -512,6 +522,7 @@ impl MailScreen {
                 let height = self.height();
                 self.list
                     .apply(outcome.page, outcome.at, self.place, height);
+                self.actions.selection.refresh(self.list.rows());
                 self.place = Place::Keep;
             }
             Err(error) => {
@@ -570,11 +581,14 @@ impl MailScreen {
     /// The status bar's text, for tests and the view; led by the filter's operators while a
     /// filter is set.
     pub(crate) fn status_line(&self) -> String {
-        let line = self.status.line(
+        let mut line = self.status.line(
             &self.accounts,
             &Glyphs::of(self.ctx.icons),
             &self.ctx.keymap,
         );
+        if !self.actions.selection.is_empty() {
+            line = format!("{} selected  ·  {line}", self.actions.selection.len());
+        }
         if self.filter.is_empty() {
             return line;
         }

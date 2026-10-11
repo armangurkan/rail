@@ -25,19 +25,19 @@ expression: text
                                    │  PgUp, Ctrl-u         One page up                                            │
                                    │  Home, g g            Newest thread                                          │
                                    │  End, G               Oldest thread                                          │
+                                   │  e                    Archive the thread or the selection                    │
+                                   │  d                    Move to Gmail's Trash (asks first)                     │
+                                   │  s                    Star or unstar                                         │
+                                   │  u                    Mark read or unread                                    │
+                                   │  l                    Add or remove labels                                   │
+                                   │  m                    Move to a label (archives)                             │
+                                   │  Space                Select or unselect the thread                          │
+                                   │  Esc                  Clear the selection                                    │
                                    │  Tab                  Move between the sidebar and the list                  │
                                    │                                                                              │
                                    │Everywhere                                                                    │
                                    │  q                    Quit Rail                                              │
                                    │  :                    Open the command palette                               │
                                    │  ?                    Show the keys for this view                            │
-                                   │                                                                              │
-                                   │In the palette, the filter line and questions: Enter, Esc, ↑ and ↓.           │
-                                   │                                                                              │
-                                   │                                                                              │
-                                   │                                                                              │
-                                   │                                                                              │
-                                   │                                                                              │
-                                   │                                                                              │
-                                   │                                                                              │
+                                   │↓ more                                                                        │
                                    └──────────────────────────────────────────────────────────────────────────────┘

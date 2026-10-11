@@ -8,9 +8,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (3, include_str!("migrations/0003_backfill_token.sql")),
     (4, include_str!("migrations/0004_view.sql")),
     (5, include_str!("migrations/0005_search_text.sql")),
+    (6, include_str!("migrations/0006_actions.sql")),
 ];
 
-pub const LATEST_VERSION: i64 = 5;
+pub const LATEST_VERSION: i64 = 6;
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {

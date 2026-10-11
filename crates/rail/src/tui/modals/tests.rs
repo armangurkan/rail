@@ -439,3 +439,28 @@ fn the_palette_and_the_filter_line_draw_the_cursor_where_it_is() {
     line.key(key(KeyCode::End));
     assert_eq!(cursor_after(&line), Some(Position::new(9, 23)));
 }
+
+#[test]
+fn errors_with_a_retry_move_a_highlight_and_enter_retries_it() {
+    let rows = vec![
+        ErrorRow {
+            text: "Could not archive: gone".into(),
+            retry: Some(7),
+        },
+        ErrorRow {
+            text: "The store could not be read".into(),
+            retry: None,
+        },
+    ];
+    let mut list = ErrorList::with_retries(rows, Icons::Ascii);
+    assert_eq!(
+        list.key(key(KeyCode::Enter)),
+        ModalOutcome::Run(Command::Retry(7))
+    );
+    assert_eq!(list.key(key(KeyCode::Char('j'))), ModalOutcome::Stay);
+    assert_eq!(
+        list.key(key(KeyCode::Enter)),
+        ModalOutcome::Close,
+        "not retryable"
+    );
+}
