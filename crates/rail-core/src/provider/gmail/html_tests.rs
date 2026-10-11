@@ -287,8 +287,17 @@ fn link_floods_stay_linear_and_short() {
         "<a href=\"https://example.com/a\">x</a>",
         true,
     );
-    both_sizes("bare anchors", "", "<a href=http:>", true);
-    both_sizes("unclosed anchors", "", "<a href=\"https://e.com/\">", true);
+    // An anchor never closed keeps its marker for the end of the text, after the tail; every
+    // anchor shares the one address, hence the one number.
+    for (name, pattern) in [
+        ("bare anchors", "<a href=http:>"),
+        ("unclosed anchors", "<a href=\"https://e.com/\">"),
+    ] {
+        for (size, limit) in [(SMALL, SMALL_LIMIT), (LARGE, LARGE_LIMIT)] {
+            let text = bounded(&format!("{name} @{size}"), &build("", pattern, size), limit);
+            assert!(text.ends_with("zzend\n[1]"), "{name}: {:?}", tail(&text));
+        }
+    }
     // Many attributes before href, still within one tag's byte cap.
     let attributes: String = (0..300).map(|i| format!(" x{i}=\"v\"")).collect();
     both_sizes(
@@ -296,5 +305,22 @@ fn link_floods_stay_linear_and_short() {
         "",
         &format!("<a{attributes} href=\"https://e.com/\">y</a>"),
         true,
+    );
+}
+
+#[test]
+fn a_marker_follows_everything_inside_its_link() {
+    let marked = |html: &str| html_render(html).text;
+    assert_eq!(
+        marked("<a href=\"https://a.example\"><div>Text</div></a>"),
+        "Text\n[1]"
+    );
+    assert_eq!(
+        marked("<a href=\"https://a.example\"><table><tr><td>Button</td></tr></table></a>"),
+        "Button\n\n[1]"
+    );
+    assert_eq!(
+        marked("<a href=\"https://a.example\">Line one<br>line two</a>"),
+        "Line one\nline two[1]"
     );
 }

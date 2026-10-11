@@ -7,7 +7,8 @@
 //! - text is copied, white space collapsed to one space;
 //! - an `<a>` with an `href` Rail keeps (`provider::links::allowed`) becomes a `[n]` marker
 //!   after its text, numbered by first appearance; the addresses come back with the text
-//!   (`html_render`); a link left open is marked where the next link or block begins. The
+//!   (`html_render`); a link closes only at the next `<a>`, at `</a>` or at the end of the
+//!   text, so its marker always follows everything inside it, blocks included. The
 //!   `<a>` tag is read once more, within its byte cap, to find `href`;
 //! - tags are read only for their first few name bytes (block tags make line breaks, cells a
 //!   space); attributes are skipped, quotes honoured only to find the tag's end, and a tag
@@ -324,9 +325,6 @@ impl Scanner<'_> {
             return end;
         }
         if name.is_in(BLOCK) {
-            // A link ends where a block begins, so a link left open cannot carry its marker
-            // past the paragraphs after it.
-            self.close_link();
             self.newline();
         } else if name.is_in(CELL) {
             self.space = true;
