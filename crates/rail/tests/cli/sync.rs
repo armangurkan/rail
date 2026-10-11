@@ -302,6 +302,36 @@ async fn ctrl_c_stops_watching_and_the_sync_carries_on() {
     }
 }
 
+/// Review minor 9: a daemon that stops during a watch is followed: `rail sync` connects to a
+/// new one, asks it to sync again and waits for the passes it names.
+#[tokio::test]
+async fn a_watch_follows_the_daemon_through_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    store_tokens(&dir);
+    let server = gmail_with(Duration::from_secs(2), search_hits()).await;
+    let mut running = KillsChild(Some(
+        rail_at(&dir, &server)
+            .arg("sync")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
+    ));
+    let reader = wait_for_line(running.0.as_mut().unwrap(), "work: reading labels");
+    let stopped = bounded(rail_at(&dir, &server).args(["daemon", "stop"]));
+    assert!(stopped.status.success(), "{stopped:?}");
+    let out = finish_within(running.0.take().unwrap(), Duration::from_secs(30));
+    let printed = reader.join().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?} {printed}");
+    assert!(
+        stderr_of(&out).contains("the daemon restarted; asking the new one to sync"),
+        "{out:?}"
+    );
+    assert!(printed.contains("work: up to date (1 message"), "{printed}");
+}
+
 /// With no Gmail account there is nothing to sync: a message and exit 0.
 #[test]
 fn rail_sync_without_accounts_says_so_and_exits_0() {

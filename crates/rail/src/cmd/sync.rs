@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use rail_core::daemon::DaemonClient;
 use rail_core::daemon::wire::Notification;
+use rail_core::daemon::{Connector, DaemonClient};
 use rail_core::ops::op::{SyncNow, SyncStatus};
 use rail_core::ops::{
     AccountSyncStatus, OpError, SyncNowRequest, SyncPhase, SyncStatusRequest, SyncTarget,
@@ -30,6 +30,9 @@ const POLL: Duration = Duration::from_secs(1);
 const INTERRUPTED: u8 = 130;
 /// What a watch that saw no change for `STALL` says.
 const STALLED: &str = "still syncing in the daemon; `rail doctor` shows progress";
+/// How often one watch follows the daemon to a new one (it stopped, or was replaced) before it
+/// gives up.
+const MAX_REJOINS: u32 = 3;
 
 /// How a watch ended; each carries the accounts' statuses then.
 enum Ended {
@@ -45,35 +48,115 @@ pub async fn run(
     account: Option<String>,
     no_wait: bool,
 ) -> color_eyre::Result<ExitCode> {
-    let client = daemon_link::connector(paths)
-        .client()
-        .await
-        .map_err(report)?;
-    let mut notes = client.notifications();
+    let link = daemon_link::connector(paths);
     let request = SyncNowRequest {
         account,
         watch: !no_wait,
     };
-    let targets = client
-        .call::<SyncNow>(&request)
-        .await
-        .map_err(report)?
-        .targets;
-    if targets.is_empty() {
-        return nothing_to_follow(&client).await;
+    let mut session = Session::start(&link, request).await.map_err(report)?;
+    if session.targets.is_empty() {
+        return nothing_to_follow(&session.client).await;
     }
     if no_wait {
-        for target in &targets {
+        for target in &session.targets {
             println!("{}: syncing in the background", escaped(&target.name));
         }
         return Ok(ExitCode::SUCCESS);
     }
     let mut interrupt = signal(SignalKind::interrupt())?;
     let stall = crate::test_hooks::sync_stall().unwrap_or(STALL);
-    let ended = follow(&client, &mut notes, &targets, &mut interrupt, stall)
+    let ended = follow(&mut session, &mut interrupt, stall)
         .await
         .map_err(report)?;
     Ok(finish(ended))
+}
+
+/// One watch: the connection, its notifications, the passes to wait for, and each account's
+/// last pass count (a count that goes down means a new daemon).
+struct Session<'a> {
+    link: &'a Connector,
+    request: SyncNowRequest,
+    client: DaemonClient,
+    notes: broadcast::Receiver<Notification>,
+    targets: Vec<SyncTarget>,
+    seen: HashMap<String, u64>,
+    rejoins: u32,
+}
+
+impl<'a> Session<'a> {
+    /// Connect (starting the daemon if needed) and send `sync.now`.
+    async fn start(link: &'a Connector, request: SyncNowRequest) -> Result<Self, OpError> {
+        let client = link.client().await?;
+        let notes = client.notifications();
+        let targets = client.call::<SyncNow>(&request).await?.targets;
+        Ok(Self {
+            link,
+            request,
+            client,
+            notes,
+            targets,
+            seen: HashMap::new(),
+            rejoins: 0,
+        })
+    }
+
+    /// The targets' statuses. When the daemon went away (the connection closed) or was
+    /// replaced (a pass count went down), connect to the new one, send `sync.now` again and
+    /// wait for the passes it names instead: the old daemon's pass numbers mean nothing there.
+    async fn statuses(&mut self) -> Result<Vec<AccountSyncStatus>, OpError> {
+        match statuses(&self.client, &self.targets).await {
+            Ok(mine) if !went_back(&self.seen, &mine) => {
+                self.seen = passes(&mine);
+                return Ok(mine);
+            }
+            Ok(_) => {}
+            Err(_) if self.client.is_closed() => {}
+            Err(error) => return Err(error),
+        }
+        self.rejoin().await?;
+        let mine = statuses(&self.client, &self.targets).await?;
+        self.seen = passes(&mine);
+        Ok(mine)
+    }
+
+    async fn rejoin(&mut self) -> Result<(), OpError> {
+        self.rejoins += 1;
+        if self.rejoins > MAX_REJOINS {
+            return Err(OpError::internal(
+                "the daemon kept stopping during `rail sync`",
+            ));
+        }
+        eprintln!("the daemon restarted; asking the new one to sync");
+        self.client = self.link.client().await?;
+        self.notes = self.client.notifications();
+        let fresh = self.client.call::<SyncNow>(&self.request).await?.targets;
+        self.targets = rebase(&self.targets, fresh);
+        Ok(())
+    }
+}
+
+/// Each account's completed passes.
+fn passes(mine: &[AccountSyncStatus]) -> HashMap<String, u64> {
+    mine.iter()
+        .map(|s| (s.address.clone(), s.passes_completed))
+        .collect()
+}
+
+/// True when an account's pass count went down: the daemon is a new one.
+fn went_back(seen: &HashMap<String, u64>, mine: &[AccountSyncStatus]) -> bool {
+    mine.iter().any(|s| {
+        seen.get(&s.address)
+            .is_some_and(|&was| s.passes_completed < was)
+    })
+}
+
+/// The targets after a rejoin: the accounts watched before, with the passes the new daemon
+/// named for them (an account it no longer syncs drops out).
+fn rebase(old: &[SyncTarget], fresh: Vec<SyncTarget>) -> Vec<SyncTarget> {
+    fresh
+        .into_iter()
+        .filter(|t| old.iter().any(|o| o.address == t.address))
+        .collect()
 }
 
 /// Print how the watch ended; the exit code.
@@ -126,14 +209,12 @@ fn print_finals(finals: &[AccountSyncStatus]) -> ExitCode {
 
 /// Watch until every target is reached, nothing changes for `stall`, or Ctrl-C.
 async fn follow(
-    client: &DaemonClient,
-    notes: &mut broadcast::Receiver<Notification>,
-    targets: &[SyncTarget],
+    session: &mut Session<'_>,
     interrupt: &mut Signal,
     stall: Duration,
 ) -> Result<Ended, OpError> {
     tokio::select! {
-        watched = watch(client, notes, targets, stall) => watched,
+        watched = watch(session, stall) => watched,
         _ = interrupt.recv() => Ok(Ended::Interrupted),
     }
 }
@@ -167,17 +248,12 @@ impl Stall {
 
 /// Print each account's progress line when it changes, until every target is reached or no
 /// status changed for `stall`. Woken by each progress notification and at least every `POLL`.
-async fn watch(
-    client: &DaemonClient,
-    notes: &mut broadcast::Receiver<Notification>,
-    targets: &[SyncTarget],
-    stall: Duration,
-) -> Result<Ended, OpError> {
+async fn watch(session: &mut Session<'_>, stall: Duration) -> Result<Ended, OpError> {
     let mut shown: HashMap<String, String> = HashMap::new();
     let mut tick = tokio::time::interval(POLL);
     let mut quiet = Stall::new(stall, Instant::now());
     loop {
-        let mine = statuses(client, targets).await?;
+        let mine = session.statuses().await?;
         for status in &mine {
             let line = progress_line(status, rail_core::auth::unix_now());
             if shown.get(&status.address) != Some(&line) {
@@ -185,7 +261,7 @@ async fn watch(
                 shown.insert(status.address.clone(), line);
             }
         }
-        if reached(targets, &mine) {
+        if reached(&session.targets, &mine) {
             return Ok(Ended::Done(mine));
         }
         if quiet.stalled(&mine, Instant::now()) {
@@ -193,11 +269,11 @@ async fn watch(
         }
         tokio::select! {
             _ = tick.tick() => {}
-            note = notes.recv() => {
+            note = session.notes.recv() => {
                 if matches!(note, Err(broadcast::error::RecvError::Closed)) {
                     tick.tick().await;
                 }
-                drain(notes);
+                drain(&mut session.notes);
             }
         }
     }
@@ -402,6 +478,42 @@ mod tests {
         );
         assert!(!quiet.stalled(std::slice::from_ref(&s), later + Duration::from_secs(599)));
         assert!(quiet.stalled(std::slice::from_ref(&s), later + limit));
+    }
+
+    fn target(name: &str, pass: u64) -> SyncTarget {
+        SyncTarget {
+            name: name.into(),
+            address: format!("{name}@example.com"),
+            pass,
+        }
+    }
+
+    /// Review minor 9: a pass count that goes down means a new daemon, and the watch then
+    /// waits for the passes the new daemon names, for the accounts it watched before.
+    #[test]
+    fn a_new_daemon_is_noticed_and_the_targets_rebased() {
+        let mut before = status("work");
+        before.passes_completed = 7;
+        let seen = passes(std::slice::from_ref(&before));
+        let mut same = before.clone();
+        same.passes_completed = 8;
+        assert!(!went_back(&seen, std::slice::from_ref(&same)));
+        let mut restarted = before;
+        restarted.passes_completed = 0;
+        assert!(went_back(&seen, std::slice::from_ref(&restarted)));
+        assert!(!went_back(&HashMap::new(), &[restarted]));
+        let old = [target("work", 9)];
+        let fresh = vec![target("work", 1), target("home", 2)];
+        let rebased = rebase(&old, fresh);
+        assert_eq!(rebased.len(), 1);
+        assert_eq!((rebased[0].name.as_str(), rebased[0].pass), ("work", 1));
+        let mut caught_up = status("work");
+        caught_up.passes_completed = 1;
+        assert!(reached(&rebased, &[caught_up.clone()]));
+        assert!(
+            !reached(&old, &[caught_up]),
+            "the old target would never come"
+        );
     }
 
     /// Account names reach the terminal escaped, like every other field.
