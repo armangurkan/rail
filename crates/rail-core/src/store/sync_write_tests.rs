@@ -641,3 +641,33 @@ fn backfilled_ids_are_sync_rows_synced_since_the_backfill_began() {
     assert!(store.backfilled_ids(1, &[], None).unwrap().is_empty());
     assert!(store.backfilled_ids(2, &page, None).unwrap().is_empty());
 }
+
+/// Fix round 3: the count a pass sizes its page ceiling with: the same rows as
+/// `backfilled_ids`, inside the listing's receive times.
+#[test]
+fn backfilled_count_counts_sync_rows_inside_the_listing() {
+    let mut store = store();
+    store
+        .apply(&upserts(vec![envelope("early", "t1", DAY_MS)]), NOW - 100)
+        .unwrap();
+    let recent = vec![
+        envelope("a", "t1", 5 * DAY_MS),
+        envelope("b", "t1", 9 * DAY_MS),
+    ];
+    store.apply(&upserts(recent), NOW).unwrap();
+    let hit = Batch {
+        upserts: vec![envelope("hit", "t2", 5 * DAY_MS)],
+        origin: Origin::Search,
+        ..Batch::new(1)
+    };
+    store.apply(&hit, NOW).unwrap();
+    let all = Window::default();
+    assert_eq!(store.backfilled_count(1, &all, None).unwrap(), 3);
+    assert_eq!(store.backfilled_count(1, &all, Some(NOW - 10)).unwrap(), 2);
+    let below = Window {
+        after_ms: Some(2 * DAY_MS),
+        before_ms: Some(9 * DAY_MS),
+    };
+    assert_eq!(store.backfilled_count(1, &below, None).unwrap(), 1);
+    assert_eq!(store.backfilled_count(2, &all, None).unwrap(), 0);
+}

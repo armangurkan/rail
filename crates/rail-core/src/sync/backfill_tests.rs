@@ -356,3 +356,43 @@ async fn a_pass_lists_at_most_the_hard_ceiling_of_pages() {
         assert!(state(&h).cursor.is_some());
     }
 }
+
+/// Fix round 3: if Gmail answered every resumed token with the first page, each pass would
+/// re-walk the stored prefix of the listing. With the ceiling fixed at
+/// `BACKFILL_MAX_PAGES_PER_PASS`, a prefix longer than that was a livelock (nothing lost,
+/// never done); the ceiling now grows with what is stored, so the backfill completes.
+#[tokio::test]
+async fn a_backfill_completes_when_every_resumed_token_restarts_the_listing() {
+    let h = harness(&["a@example.com"]);
+    let mock = MockProvider::new();
+    mock.with(|m| {
+        m.page_size = 1;
+        m.ignore_unknown_tokens = true;
+    });
+    seed_days(&mock, &[("recent", 1)]);
+    let old = BACKFILL_MAX_PAGES_PER_PASS + 2 * BACKFILL_PAGES_PER_PASS;
+    for n in 0..old {
+        let hours = i64::try_from(n).unwrap() * HOUR_MS;
+        mock.seed(envelope(&format!("old{n:03}"), "t-old", ago(20, 0) - hours));
+    }
+    engine(&h, &mock, 10).pass().await.unwrap();
+    let grown = engine(&h, &mock, 0);
+    let bound = old / BACKFILL_PAGES_PER_PASS + 2;
+    let mut passes = 0;
+    while passes < bound {
+        mock.expire_page_tokens();
+        grown.pass().await.unwrap();
+        passes += 1;
+        let s = state(&h);
+        if s.backfill_before.is_none() && s.backfill_resume.is_none() {
+            break;
+        }
+    }
+    assert_eq!(
+        state(&h).backfill_window,
+        Some(0),
+        "done in {passes} passes"
+    );
+    assert_eq!(stored(&h).len(), old + 1);
+    assert!(mock.metadata_refetches().is_empty());
+}

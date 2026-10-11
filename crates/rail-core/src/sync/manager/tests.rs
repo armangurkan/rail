@@ -277,6 +277,9 @@ impl crate::provider::Provider for Panics {
     ) -> Result<Vec<crate::provider::RemoteFolder>, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
+    fn list_page_size(&self) -> usize {
+        1
+    }
     async fn profile(&self) -> Result<crate::provider::Profile, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
@@ -584,6 +587,9 @@ impl crate::provider::Provider for RetryingSearch {
         page: Option<&crate::provider::PageToken>,
     ) -> Answer<crate::provider::IdPage> {
         self.inner.list(window, page).await
+    }
+    fn list_page_size(&self) -> usize {
+        self.inner.list_page_size()
     }
     async fn changes(
         &self,

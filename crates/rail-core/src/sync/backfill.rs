@@ -52,6 +52,8 @@ struct Run {
     covered: Option<i64>,
     /// This pass already gave up on a page token once and listed from the top.
     relisted: bool,
+    /// Pages this pass may list (see `pass_is_over`).
+    ceiling: usize,
 }
 
 impl Run {
@@ -78,15 +80,22 @@ impl Run {
     /// Whether this pass has done enough work; the next pass goes on from the token stored
     /// with the last page, so this bounds work and never loses the place. A capped
     /// (grown-window) backfill stops after `BACKFILL_PAGES_PER_PASS` pages with progress or
-    /// `BACKFILL_MAX_PAGES_PER_PASS` in all; the first full backfill after
-    /// `BACKFILL_MAX_PAGES_PER_PASS` pages without progress.
+    /// `ceiling` pages in all; the first full backfill after `ceiling` pages without progress.
     fn pass_is_over(&self, progressed: usize, listed: usize) -> bool {
         if self.full {
-            listed.saturating_sub(progressed) >= BACKFILL_MAX_PAGES_PER_PASS
+            listed.saturating_sub(progressed) >= self.ceiling
         } else {
-            progressed >= BACKFILL_PAGES_PER_PASS || listed >= BACKFILL_MAX_PAGES_PER_PASS
+            progressed >= BACKFILL_PAGES_PER_PASS || listed >= self.ceiling
         }
     }
+}
+
+/// `BACKFILL_MAX_PAGES_PER_PASS` plus the pages the mail already stored in the listing can
+/// fill: even when Gmail answers every resumed token with the first page, a pass always walks
+/// past what is stored (no livelock), while an endless listing stays bounded.
+fn ceiling(stored: u64, page_size: usize) -> usize {
+    let stored = usize::try_from(stored).unwrap_or(usize::MAX);
+    BACKFILL_MAX_PAGES_PER_PASS.saturating_add(stored.div_ceil(page_size.max(1)))
 }
 
 /// The stored listing, when the backfill can go on with its token: issued within
@@ -141,9 +150,11 @@ impl Engine {
             window,
             covered: state.backfill_window.filter(|_| !full),
             relisted: false,
+            ceiling: BACKFILL_MAX_PAGES_PER_PASS,
         };
         let mut listing =
             resumable(state, window, (self.clock)()).unwrap_or_else(|| run.top_listing());
+        run.ceiling = self.ceiling(&run, &listing).await?;
         let (mut progressed, mut listed) = (0, 0);
         loop {
             listed += 1;
@@ -226,6 +237,15 @@ impl Engine {
         Ok(count > 0)
     }
 
+    /// The page ceiling for this pass: one store count of what the listing holds already.
+    async fn ceiling(&self, run: &Run, listing: &Listing) -> Result<usize, SyncError> {
+        let (account, window, since) = (self.account_id, listing.window, run.since());
+        let stored = self
+            .read(move |store| store.backfilled_count(account, &window, since))
+            .await?;
+        Ok(ceiling(stored, self.provider.list_page_size()))
+    }
+
     /// `ids` without those this backfill already stored (one store query).
     async fn unstored(
         &self,
@@ -277,5 +297,19 @@ impl Engine {
         };
         self.write(batch).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_ceiling_grows_with_the_pages_already_stored() {
+        assert_eq!(ceiling(0, 100), BACKFILL_MAX_PAGES_PER_PASS);
+        assert_eq!(ceiling(1, 100), BACKFILL_MAX_PAGES_PER_PASS + 1);
+        assert_eq!(ceiling(250, 100), BACKFILL_MAX_PAGES_PER_PASS + 3);
+        assert_eq!(ceiling(250, 0), BACKFILL_MAX_PAGES_PER_PASS + 250);
+        assert_eq!(ceiling(u64::MAX, 1), usize::MAX);
     }
 }

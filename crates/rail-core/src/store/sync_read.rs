@@ -141,6 +141,26 @@ impl Store {
         )?)
     }
 
+    /// How many messages `backfilled_ids` would match inside `listing`'s receive times (in
+    /// milliseconds; Gmail compares whole seconds, so this may count a few more): the most
+    /// pages of stored mail a re-walked listing can hold. One indexed query.
+    pub fn backfilled_count(
+        &self,
+        account_id: i64,
+        listing: &Window,
+        since: Option<i64>,
+    ) -> Result<u64, StoreError> {
+        let n: i64 = self.conn.query_row(
+            "SELECT count(*) FROM messages
+             WHERE account_id = ?1 AND origin = 'sync'
+               AND (?2 IS NULL OR internal_date >= ?2) AND (?3 IS NULL OR internal_date < ?3)
+               AND (?4 IS NULL OR synced_at >= ?4)",
+            params![account_id, listing.after_ms, listing.before_ms, since],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
     /// Which of `ids` (one listing page) a running backfill already stored for the account:
     /// `origin = sync` rows synced at or after `since` (any time when `None`). One query.
     pub fn backfilled_ids(

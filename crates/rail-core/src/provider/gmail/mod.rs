@@ -151,6 +151,10 @@ impl super::Provider for GmailProvider {
         self.list_page(window, page).await
     }
 
+    fn list_page_size(&self) -> usize {
+        BACKFILL_PAGE as usize
+    }
+
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {
         self.history(cursor).await
     }

@@ -39,9 +39,11 @@ pub const UNREADABLE_BODY: &str = "[Rail could not read this message's body.]";
 /// also catches up new mail within one poll interval.
 /// Only pages that made progress (stored a message) count; the others go on by page token.
 pub const BACKFILL_PAGES_PER_PASS: usize = 20;
-/// Listing pages one pass asks for at most, so a pathological listing cannot hold a pass: in
-/// all for a capped backfill (a grown window), and pages without progress for the first full
-/// backfill (its pages with progress each store new mail, so the mailbox bounds them).
+/// Listing pages one pass asks for at most, beyond the pages the mail it already stored in the
+/// listing fills (counted at the start of the pass), so a pathological listing cannot hold a
+/// pass: in all for a capped backfill (a grown window), and pages without progress for the
+/// first full backfill (its pages with progress each store new mail, so the mailbox bounds
+/// them).
 pub const BACKFILL_MAX_PAGES_PER_PASS: usize = 200;
 /// A stored page token older than this (seconds, 7 days) is not used: the backfill lists the
 /// window from the top instead, skipping what it stored. Correctness no longer depends on a

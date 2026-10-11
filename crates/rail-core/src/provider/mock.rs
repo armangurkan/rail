@@ -350,6 +350,10 @@ impl Provider for MockProvider {
         Ok(IdPage { ids, next })
     }
 
+    fn list_page_size(&self) -> usize {
+        self.lock().page_size.max(1)
+    }
+
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {
         self.enter(Call::Changes, None)?;
         let m = self.lock();

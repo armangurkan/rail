@@ -34,6 +34,8 @@ pub trait Provider: Send + Sync {
         window: &Window,
         page: Option<&PageToken>,
     ) -> Result<IdPage, ProviderError>;
+    /// How many ids one `list` page holds at most.
+    fn list_page_size(&self) -> usize;
     /// What changed since `cursor`. `ProviderError::CursorExpired` means a full resync.
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError>;
     /// One message's body, rendered to text.
