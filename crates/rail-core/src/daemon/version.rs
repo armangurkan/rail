@@ -64,6 +64,13 @@ fn compare_pre(ours: &str, theirs: &str) -> Ordering {
 
 /// How version `a` compares with version `b` in semver precedence; `None` when either does
 /// not parse, which callers treat as "different, order unknown".
+/// The `MAJOR.MINOR.PATCH` of `text`, or `None` when it does not parse. The only part of a
+/// version string from another process that Rail repeats: digits and dots, nothing else.
+pub(crate) fn core(text: &str) -> Option<String> {
+    let [major, minor, patch] = parse(text)?.core;
+    Some(format!("{major}.{minor}.{patch}"))
+}
+
 pub(crate) fn compare(a: &str, b: &str) -> Option<Ordering> {
     let (a, b) = (parse(a)?, parse(b)?);
     let order = a.core.cmp(&b.core).then_with(|| match (a.pre, b.pre) {
@@ -78,6 +85,17 @@ pub(crate) fn compare(a: &str, b: &str) -> Option<Ordering> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_is_the_version_without_pre_release_or_build() {
+        assert_eq!(core("1.2.3").as_deref(), Some("1.2.3"));
+        assert_eq!(core("1.2.3-rc.1").as_deref(), Some("1.2.3"));
+        assert_eq!(
+            core("9.9.9+\u{1b}]52;c;ZXZpbA==\u{7}").as_deref(),
+            Some("9.9.9")
+        );
+        assert_eq!(core("not a version\u{1b}[2J"), None);
+    }
 
     #[test]
     fn numeric_parts_compare_as_numbers() {

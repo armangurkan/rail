@@ -69,6 +69,14 @@ fn open_guarded(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 /// The whole of the regular file at `path`, at most `cap` bytes.
+///
+/// A race remains between the path check and the open: a co-user who can write to a
+/// directory on `path` could swap a symlink in between, and the handle check then only proves
+/// that what was opened is a regular file, not that it is the file that was checked. Rail runs
+/// as the user and these paths come from that user's own clients, so only a hostile process
+/// of the same user could exploit it, and such a process can read the user's files anyway.
+/// Closing it fully needs an `openat2(RESOLVE_NO_SYMLINKS)` or per-component `O_NOFOLLOW`
+/// walk, left for later.
 pub(crate) fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>, GuardedReadError> {
     // By path first, so nothing that is not a regular file (a device, a FIFO) is ever opened.
     if !std::fs::metadata(path)

@@ -39,14 +39,34 @@ pub(crate) fn report(error: OpError) -> color_eyre::Report {
 /// Rail's message, then the outside text (`detail`: a provider's, the system's or a parser's
 /// words) escaped and quoted on a line of its own that says where it came from, then the hint.
 pub(crate) fn error_text(error: &OpError) -> String {
-    let mut lines = vec![error.message.clone()];
+    let mut lines = vec![escaped(&error.message)];
     if let Some(detail) = &error.detail {
         lines.push(outside(detail.get()));
     }
     if let Some(hint) = &error.hint {
-        lines.push(format!("hint: {hint}"));
+        lines.push(format!("hint: {}", escaped(hint)));
     }
     lines.join("\n")
+}
+
+/// Rail's own text with any control character escaped, so even a value that slipped into a
+/// message can neither break the line nor reach the terminal as an escape sequence.
+pub(crate) fn escaped(text: &str) -> String {
+    escape_chars(text, char::is_control)
+}
+
+/// `text` with every character `needs_escape` accepts written as its `escape_debug` form
+/// (`\n`, `\u{1b}`), the rest unchanged. The one loop behind each escaping helper.
+pub(crate) fn escape_chars(text: &str, needs_escape: impl Fn(char) -> bool) -> String {
+    text.chars()
+        .map(|c| {
+            if needs_escape(c) {
+                c.escape_debug().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
 }
 
 /// Text Rail did not write, labelled as such and quoted.
@@ -484,6 +504,19 @@ mod tests {
         let error = OpError::invalid_input("bad").with_hint("do this");
         assert_eq!(report(error).to_string(), "bad\nhint: do this");
     }
+    /// Parked item 1: Rail's own message and hint are escaped too, as defence in depth.
+    #[test]
+    fn control_characters_in_message_and_hint_are_escaped() {
+        let error = OpError::invalid_input("bad \u{1b}[2J message").with_hint("run\n\u{7}this");
+        let text = error_text(&error);
+        assert!(
+            !text.contains('\u{1b}') && !text.contains('\u{7}'),
+            "{text:?}"
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines, ["bad \\u{1b}[2J message", "hint: run\\n\\u{7}this"]);
+    }
+
     #[test]
     fn outside_detail_is_quoted_escaped_and_on_its_own_line() {
         let error = OpError::invalid_input("the provider refused")

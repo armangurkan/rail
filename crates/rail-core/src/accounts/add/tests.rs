@@ -55,6 +55,19 @@ fn prepare_refuses_a_configured_address() {
     assert!(err.message.contains("config.toml"), "{err}");
 }
 
+/// Parked item 3, at add.
+#[test]
+fn an_address_with_a_format_character_is_refused_at_add() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = paths_with(&tmp, WORK);
+    let err = prepare_add(&paths, &request("me\u{200B}@example.com"), value("s"))
+        .err()
+        .unwrap();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert!(err.message.contains("format characters"), "{err}");
+    assert!(!err.message.contains('\u{200B}'), "{err:?}");
+}
+
 #[test]
 fn prepare_refuses_a_duplicate_name_with_the_config_error() {
     let tmp = tempfile::tempdir().unwrap();

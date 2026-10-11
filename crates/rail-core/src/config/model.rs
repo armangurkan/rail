@@ -115,16 +115,27 @@ pub struct AccountConfig {
     pub ai_send: Option<AiSend>,
 }
 
-/// True when `text` holds no whitespace and no control character. An account's address,
-/// colour and tenant are shown on the terminal and in confirmations; neither a space nor an
-/// escape sequence belongs in any of them.
+/// True when `text` holds no whitespace, no control character and no Unicode format
+/// character (general category Cf: bidi overrides such as U+202E, zero-width joiners and
+/// spaces, the byte-order mark). An account's address, colour and tenant are shown on the
+/// terminal and in confirmations; none of these belongs in any of them.
 pub fn is_plain(text: &str) -> bool {
-    !text.chars().any(|c| c.is_whitespace() || c.is_control())
+    !text
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || is_format_char(c))
+}
+
+/// True for a Unicode format character (general category Cf): invisible, and able to reorder
+/// or hide what is shown around it.
+pub fn is_format_char(c: char) -> bool {
+    use icu_properties::CodePointMapData;
+    use icu_properties::props::GeneralCategory;
+    CodePointMapData::<GeneralCategory>::new().get(c) == GeneralCategory::Format
 }
 
 /// Why a value that is not `is_plain` is refused. Never quotes the value.
 pub fn not_plain(field: &str) -> String {
-    format!("the {field} must not contain spaces or control characters")
+    format!("the {field} must not contain spaces, control characters or format characters")
 }
 
 /// A plain string, or a deserialization error naming `field` (the parser adds the position).
@@ -228,6 +239,23 @@ impl AccountKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parked item 3: bidi overrides and zero-width characters are Unicode format (Cf)
+    /// characters; an address holding one could display as another.
+    #[test]
+    fn format_characters_are_not_plain() {
+        for c in [
+            '\u{202E}',
+            '\u{200B}',
+            '\u{200D}',
+            '\u{2066}',
+            '\u{FEFF}',
+            '\u{E0001}',
+        ] {
+            assert!(!is_plain(&format!("me{c}@example.com")), "{:?}", c);
+        }
+        assert!(is_plain("ünïcödé@example.com"));
+    }
 
     #[test]
     fn account_debug_hides_the_client_secret() {

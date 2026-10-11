@@ -197,7 +197,7 @@ It talks to the background daemon like every other command.
 | `rail account login <name-or-address>` | Logs in again to an account already in `config.toml` and replaces its tokens. Use it when tokens were revoked, expired or deleted from the keyring. |
 | `rail account list` | Lists configured accounts and whether their tokens are stored, in columns as wide as the longest name and address. It asks the store whether tokens exist without reading them, so a 1Password backend never reveals a token to list accounts. |
 | `rail account remove <name-or-address>` | Removes an account's entry in `config.toml` and its stored tokens; its mail stays in the store. Interactive only: it shows what goes (the daemon's text, with the name and address quoted) and asks `Remove? [y/N]`, and only `y` or `yes` removes; if the account changed while you answered, it says so, removes nothing, and asks you to run the command again. When stdin or stdout is not a terminal it removes nothing and exits with status 1; there is no flag to skip the question, so a script cannot answer it through a pipe. An agent that can run shell commands could still drive it as you; see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp). |
-| `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves every account's tokens there (with `--no-migrate`, only the setting changes and each account then needs `rail account login`). `--vault` and `--account` are the 1Password vault and account. Interactive only, like `rail account remove`: it shows the daemon's description of the change and asks `Change? [y/N]`; only `y` or `yes` changes anything. If the settings changed while you answered, it says so and changes nothing; if the setting is already in place it says nothing needed changing. When stdin or stdout is not a terminal it changes nothing and exits with status 1. |
+| `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves every account's tokens there (with `--no-migrate`, only the setting changes and each account then needs `rail account login`). `--vault` and `--account` are the 1Password vault and account; they must not contain control or format characters, and the daemon refuses them for every front end. Interactive only, like `rail account remove`: it shows the daemon's description of the change and asks `Change? [y/N]`; only `y` or `yes` changes anything. If the settings changed while you answered, it says so and changes nothing; if the setting is already in place it says nothing needed changing. When stdin or stdout is not a terminal it changes nothing and exits with status 1. |
 | `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
@@ -460,7 +460,7 @@ color = "blue"
 Tokens are never written to `config.toml`.
 
 An account's `address` must contain `@` and be at most 254 characters, and `address`, `color`
-and `tenant` must not contain spaces or control characters: they are shown on the terminal and
+and `tenant` must not contain spaces, control characters or Unicode format characters (such as the right-to-left override U+202E or zero-width spaces): they are shown on the terminal and
 in confirmations, where an escape sequence could otherwise act. `rail account add` refuses such a
 value, and a hand-edited `config.toml` holding one fails to load with its path and line.
 
@@ -546,7 +546,7 @@ inherited. Set `op_path` under `[onepassword]` to pin it to one program.
 After an upgrade, the first command of the new version stops the older daemon and starts its
 own. A program of the older version that is still running (an open `rail mcp`, the setup
 wizard) does not stop the newer daemon in turn: its next request fails with "Rail was upgraded;
-restart this program", and the hint names the running daemon's version. A daemon whose version
+restart this program", and the hint names the running daemon's version (its `MAJOR.MINOR.PATCH` only). A daemon whose version
 Rail cannot read is refused and left running; stop it with `rail daemon stop`.
 
 It also works on the directories of the command that started it, made absolute (a relative

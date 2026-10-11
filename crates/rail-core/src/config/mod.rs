@@ -8,5 +8,5 @@ pub use edit::{append_account, default_account_name, remove_account, set_secrets
 pub use load::{ConfigError, MAX_ADDRESS_CHARS, load, load_text_or_empty, parse};
 pub use model::{
     AccountConfig, AccountKind, AiSend, Config, General, Layout, OnePasswordConfig, SecretsBackend,
-    is_plain, not_plain,
+    is_format_char, is_plain, not_plain,
 };

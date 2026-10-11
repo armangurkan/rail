@@ -140,16 +140,24 @@ impl Plan {
 }
 
 fn validate_request(request: &SecretsConfigureRequest) -> Result<(), OpError> {
-    // The confirmation shows these whole, so their length is limited here. The value itself is
-    // never echoed.
     for (field, value) in [
         ("vault", &request.vault),
         ("op_account", &request.op_account),
     ] {
+        let Some(value) = value.as_deref() else {
+            continue;
+        };
+        // The confirmation shows these whole: a line break could fake another line and a
+        // format character could reorder it. The value itself is never echoed.
         if value
-            .as_deref()
-            .is_some_and(|v| v.chars().count() > MAX_NAME_CHARS)
+            .chars()
+            .any(|c| c.is_control() || crate::config::is_format_char(c))
         {
+            return Err(OpError::invalid_input(format!(
+                "{field} must not contain control or format characters"
+            )));
+        }
+        if value.chars().count() > MAX_NAME_CHARS {
             return Err(OpError::invalid_input(format!(
                 "{field} must be at most {MAX_NAME_CHARS} characters"
             )));

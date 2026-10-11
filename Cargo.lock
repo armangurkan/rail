@@ -2421,6 +2421,7 @@ dependencies = [
  "directories",
  "fs4",
  "humantime-serde",
+ "icu_properties",
  "keyring",
  "oauth2",
  "reqwest",
