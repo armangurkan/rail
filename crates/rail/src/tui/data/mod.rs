@@ -95,6 +95,11 @@ pub enum MailEvent {
         seq: u64,
         result: Result<LabelChoices, ReadError>,
     },
+    /// `config.toml` was written for `:theme` or `:accent`; the error is a config or IO
+    /// error's text, never mail.
+    ThemeSaved {
+        result: Result<(), String>,
+    },
     /// The refresh with this sequence number gave its last answer, or its job panicked.
     RefreshEnded {
         seq: u64,
@@ -162,6 +167,10 @@ impl fmt::Debug for MailEvent {
             Self::Labels { seq, result } => f
                 .debug_struct("Labels")
                 .field("seq", seq)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::ThemeSaved { result } => f
+                .debug_struct("ThemeSaved")
                 .field("ok", &result.is_ok())
                 .finish(),
             Self::RefreshEnded { seq } => f.debug_struct("RefreshEnded").field("seq", seq).finish(),

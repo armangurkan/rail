@@ -3,7 +3,7 @@
 //! refresh and reconnect, and an override in the keymap.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crossterm::event::KeyCode;
 use rail_core::ops::{OpError, SyncPhase};
@@ -18,22 +18,37 @@ use crate::tui::data::{DaemonEvent, FakeCall, FakeDaemon, MailEvent, Timer};
 use crate::tui::keys::Keymap;
 use crate::tui::screen::Screen;
 use crate::tui::test_util::{
-    BASE_MS, inbox_threads, key, mail_ctx, mail_envelope, seed_store, settle, status, work_and_home,
+    BASE_MS, inbox_threads, key, mail_ctx, mail_envelope, seed_store, settle, settle_capturing,
+    status, work_and_home,
 };
+use crate::tui::theme::choice::{ColorDepth, ThemeChoice};
 
 mod actions;
 mod pickers;
 mod state;
+mod themes;
 
 struct Fixture {
     _tmp: tempfile::TempDir,
     paths: Paths,
     fake: Arc<FakeDaemon>,
     screen: MailScreen,
+    /// The last theme an effect applied.
+    last_theme: Arc<Mutex<Option<Theme>>>,
 }
 
 /// `work` with `n` inbox threads and `home` with two, the screen started and settled.
 async fn fixture(n: usize) -> Fixture {
+    fixture_with_depth(n, ColorDepth::TrueColor).await
+}
+
+/// `fixture` on a terminal of `depth`.
+async fn fixture_with_depth(n: usize, depth: ColorDepth) -> Fixture {
+    fixture_with(n, depth, ThemeChoice::default()).await
+}
+
+/// `fixture` on a terminal of `depth` with `choice` configured.
+async fn fixture_with(n: usize, depth: ColorDepth, choice: ThemeChoice) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let paths = Paths::all_in(tmp.path());
     let mut envelopes: Vec<_> = inbox_threads("w", n).into_iter().map(|e| (0, e)).collect();
@@ -48,20 +63,27 @@ async fn fixture(n: usize) -> Fixture {
         status("work", "w@example.com", SyncPhase::Idle),
         status("home", "h@example.com", SyncPhase::Idle),
     ];
-    let mut screen = MailScreen::new(mail_ctx(&paths, fake.clone()), work_and_home());
+    let ctx = MailContext {
+        depth,
+        theme_choice: choice,
+        ..mail_ctx(&paths, fake.clone())
+    };
+    let mut screen = MailScreen::new(ctx, work_and_home());
+    let last_theme = Arc::new(Mutex::new(None));
     let effects = screen.start();
-    settle(&mut screen, effects).await;
+    settle_capturing(&mut screen, effects, &last_theme).await;
     Fixture {
         _tmp: tmp,
         paths,
         fake,
         screen,
+        last_theme,
     }
 }
 
 async fn press(f: &mut Fixture, code: KeyCode) {
     let effects = f.screen.update(Msg::Key(key(code)));
-    settle(&mut f.screen, effects).await;
+    settle_capturing(&mut f.screen, effects, &f.last_theme).await;
 }
 
 async fn press_n(f: &mut Fixture, code: KeyCode, times: usize) {

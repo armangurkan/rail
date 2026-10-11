@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::layout::{self, areas};
-use super::{AccountEntry, Focus, MailScreen, StoreState};
+use super::{Focus, MailScreen, StoreState};
 use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
 use crate::tui::text::{escape, fit, outside, pad, pad_left, width};
@@ -214,8 +214,7 @@ impl MailScreen {
                 };
                 let color = item
                     .account
-                    .and_then(|i| self.accounts.get(i))
-                    .map_or(Color::Reset, |a| a.color);
+                    .map_or(Color::Reset, |i| self.account_color(i, theme));
                 let label_cols = cols.saturating_sub(width(&dot) + indent.len() + count.len() + 1);
                 Line::from(vec![
                     Span::styled(dot, style.fg(color)),
@@ -299,8 +298,8 @@ impl MailScreen {
         glyphs: &Glyphs,
     ) -> Line<'static> {
         let color = self
-            .account_of(row.account_id)
-            .map_or(Color::Reset, |a| a.color);
+            .account_index(row.account_id)
+            .map_or(Color::Reset, |i| self.account_color(i, theme));
         let base = if selected && self.focus != Focus::Sidebar {
             theme.selected
         } else {
@@ -343,12 +342,10 @@ impl MailScreen {
         ])
     }
 
-    fn account_of(&self, account_id: i64) -> Option<&AccountEntry> {
-        let index = self
-            .account_ids
+    fn account_index(&self, account_id: i64) -> Option<usize> {
+        self.account_ids
             .iter()
-            .position(|id| *id == Some(account_id))?;
-        self.accounts.get(index)
+            .position(|id| *id == Some(account_id))
     }
 
     /// The split layout's pane before a thread is open.

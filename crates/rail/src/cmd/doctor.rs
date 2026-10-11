@@ -82,6 +82,9 @@ fn render_config(out: &mut String, report: &DoctorReport) {
     if let Some(note) = &report.layout_note {
         let _ = writeln!(out, "{WARN} layout   {}", escaped(note));
     }
+    if let Some(theme) = &report.theme {
+        let _ = writeln!(out, "{} theme    {}", mark(true), escaped(theme));
+    }
 }
 
 fn accounts(n: usize) -> String {
@@ -289,6 +292,21 @@ mod tests {
             "{text}"
         );
         assert!(report.is_healthy());
+    }
+
+    #[test]
+    fn the_theme_is_a_line_only_when_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(dir.path());
+        write_config(
+            &paths,
+            "[general]\nsecrets = \"file\"\ntheme = \"Dracula\"\n",
+        );
+        let text = render(&gather(&paths, &ItemIdCache::default()));
+        assert!(text.contains("theme    Dracula"), "{text}");
+        write_config(&paths, "[general]\nsecrets = \"file\"\n");
+        let text = render(&gather(&paths, &ItemIdCache::default()));
+        assert!(!text.contains("theme"), "{text}");
     }
 
     #[test]

@@ -46,6 +46,10 @@ impl Help {
             false,
             "In the palette, the filter line and questions: Enter, Esc, ↑ and ↓.".to_string(),
         ));
+        rows.push((
+            false,
+            "In the palette: `:theme` and `:accent` change the colours.".to_string(),
+        ));
         let close = keymap
             .bindings(Action::GlobalHelp)
             .iter()

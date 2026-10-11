@@ -16,6 +16,7 @@ use crate::tui::effects::{EffectContext, Settled};
 use crate::tui::keys::Keymap;
 use crate::tui::run::{finish_run, run_app};
 use crate::tui::screens::wizard::WizardScreen;
+use crate::tui::theme::Theme;
 
 /// Printed instead of starting the wizard in a pipe.
 pub const PIPE_HINT: &str = "rail: the setup wizard needs an interactive terminal; use `rail account add <gmail|m365> --address <address> --client-id <id>` instead";
@@ -55,7 +56,7 @@ pub async fn wizard(paths: &Paths, kind_hint: Option<AccountKind>) -> color_eyre
         ctx.clone(),
         keymap.clone(),
     );
-    let screen = run_app(screen, keymap).await;
+    let screen = run_app(screen, keymap, Theme::default()).await;
     // Nothing of the wizard screen needs cleaning up: a signal may end Rail from here on.
     finish_run().await;
     // A quit mid-login leaves nothing waiting in the daemon.

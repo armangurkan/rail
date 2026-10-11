@@ -9,6 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
 use futures_util::future::BoxFuture;
 use ratatui::Frame;
+use ratatui::style::Style;
 use tokio::sync::mpsc;
 
 use super::keys::{Action, Chord, Keymap, Resolved, View};
@@ -78,6 +79,8 @@ pub enum Effect {
     Spawn(Job),
     /// Put text on the system clipboard, then report `TaskResult::Copied`.
     Copy(String),
+    /// Replace the theme (a picker's preview, choice or cancel).
+    Theme(Theme),
 }
 
 impl std::fmt::Debug for Effect {
@@ -87,6 +90,7 @@ impl std::fmt::Debug for Effect {
             Self::CancelAll => f.write_str("CancelAll"),
             Self::Spawn(_) => f.write_str("Spawn(..)"),
             Self::Copy(_) => f.write_str("Copy(..)"),
+            Self::Theme(_) => f.write_str("Theme(..)"),
         }
     }
 }
@@ -134,6 +138,12 @@ impl<S: Screen> App<S> {
         self.keymap = keymap;
         self
     }
+
+    /// The shell starting in `theme`.
+    pub fn with_theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
+        self
+    }
 }
 
 /// `Ctrl-C` always quits; the quit key (`global.quit`, `q` by default) quits unless the screen
@@ -167,6 +177,10 @@ fn quits<S: Screen>(keymap: &Keymap, key: KeyEvent, screen: &S) -> bool {
 
 /// Draw the active screen.
 pub fn view<S: Screen>(app: &App<S>, frame: &mut Frame) {
+    if let Some(background) = app.theme.background {
+        let fill = ratatui::widgets::Block::new().style(Style::new().bg(background));
+        frame.render_widget(fill, frame.area());
+    }
     app.screen.view(frame, &app.theme);
 }
 
@@ -174,6 +188,18 @@ pub fn view<S: Screen>(app: &App<S>, frame: &mut Frame) {
 mod tests {
     use super::*;
     use crate::tui::test_util::{Hello, RecordingClipboard, SIZES, ctrl, key, render_lines};
+    use ratatui::style::Color;
+
+    #[test]
+    fn view_fills_the_background_when_the_theme_has_one() {
+        let mut app = app(false);
+        app.theme.background = Some(Color::Rgb(1, 2, 3));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(20, 4)).unwrap();
+        terminal.draw(|frame| view(&app, frame)).unwrap();
+        let cell = &terminal.backend().buffer()[(19, 3)];
+        assert_eq!(cell.bg, Color::Rgb(1, 2, 3), "the last cell is painted");
+    }
 
     fn app(typing: bool) -> App<Hello> {
         let screen = Hello {

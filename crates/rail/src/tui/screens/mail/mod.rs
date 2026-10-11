@@ -14,6 +14,7 @@ mod sidebar;
 mod status;
 #[cfg(test)]
 mod tests;
+mod themes;
 mod view;
 #[cfg(test)]
 mod view_tests;
@@ -53,18 +54,10 @@ use crate::tui::open::OpenFiles;
 use crate::tui::screen::Screen;
 use crate::tui::screens::reader::Reader;
 use crate::tui::theme::Theme;
+use crate::tui::theme::choice::{ColorDepth, ThemeChoice};
 
 /// Rows the list is assumed to show before the first frame says.
 const FALLBACK_HEIGHT: usize = 20;
-/// Account colours for accounts without `color`, by position.
-const PALETTE: [Color; 6] = [
-    Color::Cyan,
-    Color::Magenta,
-    Color::Green,
-    Color::Yellow,
-    Color::Blue,
-    Color::Red,
-];
 
 /// What the mail screen needs from the outside world.
 #[derive(Clone)]
@@ -80,6 +73,10 @@ pub struct MailContext {
     pub split_threshold: u16,
     /// The terminal shows OSC 8 hyperlinks.
     pub hyperlinks: bool,
+    /// What the terminal can show; the theme picker needs it to preview.
+    pub depth: ColorDepth,
+    /// The scheme and accent in force, which the pickers change one at a time.
+    pub theme_choice: ThemeChoice,
 }
 
 /// One configured account, in `config.toml`'s order.
@@ -88,26 +85,25 @@ pub struct AccountEntry {
     pub name: String,
     pub address: String,
     pub kind: AccountKind,
-    pub color: Color,
+    /// `None` takes the theme's colour by position.
+    pub color: Option<Color>,
 }
 
 impl AccountEntry {
-    /// The configured accounts; `color` read as a ratatui colour name or `#rrggbb`, else the
-    /// palette by position.
+    /// The configured accounts; `color` read as a ratatui colour name or `#rrggbb`, else `None`
+    /// (the theme's colour by position).
     pub fn from_config(config: &Config) -> Vec<AccountEntry> {
         config
             .accounts
             .iter()
-            .enumerate()
-            .map(|(index, account)| AccountEntry {
+            .map(|account| AccountEntry {
                 name: account.name.clone(),
                 address: account.address.to_ascii_lowercase(),
                 kind: account.kind,
                 color: account
                     .color
                     .as_deref()
-                    .and_then(|c| c.parse::<Color>().ok())
-                    .unwrap_or(PALETTE[index % PALETTE.len()]),
+                    .and_then(|c| c.parse::<Color>().ok()),
             })
             .collect()
     }
@@ -157,6 +153,8 @@ pub struct MailScreen {
     reader: Option<Reader>,
     modal: Option<Modal>,
     pub(crate) actions: actions::ActionState,
+    /// The theme kept and, while `:theme` or `:accent` is open, the one to restore.
+    pub(crate) themes: themes::ThemeState,
     /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
     open_files: OpenFiles,
     /// The browser confirmation was answered yes this session.
@@ -181,8 +179,17 @@ pub struct MailScreen {
 }
 
 impl MailScreen {
+    /// The dot colour of account `index`: its own, or the theme's by position.
+    pub(super) fn account_color(&self, index: usize, theme: &Theme) -> Color {
+        self.accounts
+            .get(index)
+            .and_then(|a| a.color)
+            .unwrap_or_else(|| theme.account_color(index))
+    }
+
     pub fn new(ctx: MailContext, accounts: Vec<AccountEntry>) -> Self {
         let open_files = OpenFiles::new(&ctx.paths.cache_dir);
+        let themes = themes::ThemeState::new(ctx.theme_choice);
         Self {
             ctx,
             account_ids: vec![None; accounts.len()],
@@ -203,6 +210,7 @@ impl MailScreen {
             reader: None,
             modal: None,
             actions: actions::ActionState::default(),
+            themes,
             open_files,
             html_confirmed: false,
             pending_open: None,
@@ -602,7 +610,8 @@ impl MailScreen {
         vec![self.read_list(PageAt::First, Place::Top)]
     }
 
-    /// Every palette entry: each key action of the active view and the global ones with its key, `errors`, each account and label.
+    /// Every palette entry: each key action of the active view and the global ones with its
+    /// key, `errors`, `theme`, `accent`, each account and label.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let key = |a: Action| self.ctx.keymap.label(a);
         let views = self.views();
@@ -616,12 +625,17 @@ impl MailScreen {
                 target: Target::Action(a),
             })
             .collect();
-        entries.push(PaletteEntry {
-            text: "Show recent errors".into(),
-            search: "errors Show recent errors".into(),
+        let commands = [
+            ("Show recent errors", "errors", Target::Errors),
+            ("Change the colour theme", "theme", Target::Theme),
+            ("Change the accent colour", "accent", Target::Accent),
+        ];
+        entries.extend(commands.into_iter().map(|(text, id, target)| PaletteEntry {
+            text: text.into(),
+            search: format!("{id} {text}"),
             key: String::new(),
-            target: Target::Errors,
-        });
+            target,
+        }));
         entries.extend(self.accounts.iter().enumerate().map(|(i, a)| PaletteEntry {
             text: format!("Go to {}'s inbox", a.name),
             search: format!("Go to {}'s inbox account {} {}", a.name, a.name, a.address),
@@ -707,6 +721,9 @@ impl Screen for MailScreen {
             Err(error) => {
                 tracing::warn!(error = %error, "could not clean the opened-messages directory");
             }
+        }
+        if self.ctx.depth == ColorDepth::Ansi && self.themes.current.scheme.is_some() {
+            self.status.notify(themes::NEEDS_TRUECOLOR, self.tick);
         }
         vec![
             self.ctx.link.watch(),

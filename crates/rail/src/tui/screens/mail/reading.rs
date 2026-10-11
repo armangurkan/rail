@@ -75,10 +75,10 @@ impl MailScreen {
                 effects
             }
             Ok(None) => {
-                self.close_reader();
+                let effects = self.close_reader();
                 self.status
                     .notify("That thread is no longer in the store.", self.tick);
-                Vec::new()
+                effects
             }
             Err(error) => {
                 // The open thread's re-read: the reader says so until a read succeeds.
@@ -193,7 +193,7 @@ impl MailScreen {
         };
         match reader.act(action) {
             ReaderOutcome::Stay => {}
-            ReaderOutcome::Back => self.close_reader(),
+            ReaderOutcome::Back => return self.close_reader(),
             ReaderOutcome::FollowLink => self.follow_link(),
             ReaderOutcome::Attachments => self.attachments(),
             ReaderOutcome::OpenBrowser => return self.open_html(),
@@ -201,7 +201,10 @@ impl MailScreen {
         Vec::new()
     }
 
-    pub(super) fn close_reader(&mut self) {
+    /// Close the reader and any modal over it; a previewing picker puts the kept theme back,
+    /// whose effect this returns.
+    #[must_use]
+    pub(super) fn close_reader(&mut self) -> Vec<Effect> {
         self.reader = None;
         self.modal = None;
         self.open_files.remove_all();
@@ -209,6 +212,7 @@ impl MailScreen {
         // An answer to a read still in flight must not reopen the thread.
         self.latest_thread = self.next_seq();
         self.focus = Focus::List;
+        self.restore_theme()
     }
 
     /// `o` on the message at the cursor (or the latest).
@@ -433,7 +437,13 @@ impl MailScreen {
             ModalOutcome::Close => {
                 self.modal = None;
                 self.actions.picking = None;
+                return self.restore_theme();
             }
+            ModalOutcome::Preview(Command::Theme(index)) => return self.preview_theme(index),
+            ModalOutcome::Preview(Command::Accent(accent)) => return self.preview_accent(accent),
+            ModalOutcome::Preview(_) => {}
+            ModalOutcome::Run(Command::Theme(index)) => return self.keep_scheme(index),
+            ModalOutcome::Run(Command::Accent(answer)) => return self.keep_accent(answer),
             ModalOutcome::Typed(text) => {
                 self.filter_text = text;
                 self.filter_token += 1;
@@ -479,19 +489,22 @@ impl MailScreen {
 
     /// Run a palette action as if its own view had focus: global and reader actions leave the
     /// reader open; others close it and move focus to the list or the sidebar.
-    fn focus_for(&mut self, action: Action) {
+    fn focus_for(&mut self, action: Action) -> Vec<Effect> {
         let views = action.views();
         if views.contains(&View::Global) || views.contains(&self.views()[0]) {
-            return;
+            return Vec::new();
         }
-        if self.focus == Focus::Reader {
-            self.close_reader();
-        }
+        let effects = if self.focus == Focus::Reader {
+            self.close_reader()
+        } else {
+            Vec::new()
+        };
         self.focus = if views.contains(&View::List) {
             Focus::List
         } else {
             Focus::Sidebar
         };
+        effects
     }
 
     pub(super) fn run_palette(&mut self, target: Target) -> Vec<Effect> {
@@ -509,14 +522,18 @@ impl MailScreen {
                 self.modal = Some(Modal::Errors(ErrorList::with_retries(rows, self.ctx.icons)));
                 Vec::new()
             }
+            Target::Theme => self.open_theme_picker(),
+            Target::Accent => self.open_accent_picker(),
             Target::Scope(scope) => {
-                self.close_reader();
-                self.set_scope(scope)
+                let mut effects = self.close_reader();
+                effects.extend(self.set_scope(scope));
+                effects
             }
             Target::Action(Action::GlobalQuit) => vec![Effect::Quit],
             Target::Action(action) => {
-                self.focus_for(action);
-                self.act(action)
+                let mut effects = self.focus_for(action);
+                effects.extend(self.act(action));
+                effects
             }
         }
     }

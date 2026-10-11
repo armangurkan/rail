@@ -16,9 +16,6 @@ pub struct Config {
     /// TUI's keymap can name the line of a bad one.
     #[serde(default)]
     pub keys: BTreeMap<String, toml::Spanned<String>>,
-    /// Free-form until the TUI phase defines the theme schema.
-    #[serde(default)]
-    pub theme: BTreeMap<String, toml::Value>,
     /// Where `secrets = "1password"` keeps tokens, and how to run `op`.
     #[serde(default)]
     pub onepassword: Option<OnePasswordConfig>,
@@ -51,6 +48,11 @@ pub struct General {
     pub split_threshold: u16,
     pub icons: Icons,
     pub secrets: SecretsBackend,
+    /// `general.theme`: a scheme name as `:theme` lists it; absent is Rail's default look.
+    /// The TUI checks the name against its table at startup.
+    pub theme: Option<String>,
+    /// `general.accent`: a palette slot 0-15, a colour name, or `#rrggbb`; absent is cyan.
+    pub accent: Option<AccentSpec>,
 }
 
 impl Default for General {
@@ -64,6 +66,40 @@ impl Default for General {
             split_threshold: 140,
             icons: Icons::Unicode,
             secrets: SecretsBackend::Keyring,
+            theme: None,
+            accent: None,
+        }
+    }
+}
+
+/// `general.accent`: a slot of the scheme's palette, or a colour of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccentSpec {
+    Slot(u8),
+    /// A ratatui colour name or `#rrggbb`; the TUI parses it.
+    Color(String),
+}
+
+impl<'de> Deserialize<'de> for AccentSpec {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Slot(i64),
+            Color(String),
+        }
+        const ACCENT_HELP: &str = "accent must be 0 to 15, a colour name or \"#rrggbb\"";
+        match Raw::deserialize(d).map_err(|_| serde::de::Error::custom(ACCENT_HELP))? {
+            Raw::Slot(n) => u8::try_from(n)
+                .ok()
+                .filter(|n| *n <= 15)
+                .map(Self::Slot)
+                .ok_or_else(|| serde::de::Error::custom("accent must be 0 to 15")),
+            Raw::Color(text) if text.is_empty() => Err(serde::de::Error::custom(ACCENT_HELP)),
+            Raw::Color(text) => {
+                plain_text("accent", &text).map_err(serde::de::Error::custom)?;
+                Ok(Self::Color(text))
+            }
         }
     }
 }
@@ -161,10 +197,27 @@ pub fn not_plain(field: &str) -> String {
 /// A plain string, or a deserialization error naming `field` (the parser adds the position).
 fn plain<'de, D: serde::Deserializer<'de>>(field: &str, d: D) -> Result<String, D::Error> {
     let text = String::deserialize(d)?;
-    if is_plain(&text) {
-        Ok(text)
+    plain_text(field, &text).map_err(serde::de::Error::custom)?;
+    Ok(text)
+}
+
+/// `Ok` when `text` is a scheme name: ordinary spaces are allowed ("Catppuccin Mocha"), other
+/// whitespace, control characters and format characters are not. Never quotes the value.
+pub(super) fn plain_theme(text: &str) -> Result<(), String> {
+    let bad = |c: char| c != ' ' && (c.is_whitespace() || c.is_control() || is_format_char(c));
+    if text.chars().any(bad) {
+        Err("the theme must not contain control characters, format characters or whitespace other than spaces".to_string())
     } else {
-        Err(serde::de::Error::custom(not_plain(field)))
+        Ok(())
+    }
+}
+
+/// `Ok` when `text` is plain, else the refusal naming `field`.
+pub(super) fn plain_text(field: &str, text: &str) -> Result<(), String> {
+    if is_plain(text) {
+        Ok(())
+    } else {
+        Err(not_plain(field))
     }
 }
 

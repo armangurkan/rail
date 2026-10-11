@@ -39,9 +39,11 @@ crates/rail/             Binary: clap CLI, logging, and the account, daemon, doc
     tui/screens/mail     The mail screen: thread list, sidebar, status bar
     tui/screens/reader   The reader: messages, folded quotes, numbered links
     tui/modals           The palette, filter line, help, confirmations, label pickers and the error list
+    tui/theme            The default look, the vendored scheme table and the mapping from a scheme (scripts/update-schemes.sh regenerates schemes.txt; never edit it by hand)
   tests/                 End-to-end tests against the built binary, in a pseudo-terminal, and over MCP
 assets/brand/            Logos and the app icon
 deny.toml                Licence and advisory policy for `cargo deny`
+scripts/                 update-schemes.sh: regenerates the vendored colour-scheme table from a pinned commit of iTerm2-Color-Schemes
 ```
 
 ## Development loop

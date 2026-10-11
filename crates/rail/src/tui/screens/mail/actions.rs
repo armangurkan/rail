@@ -168,8 +168,8 @@ impl MailScreen {
                 let on = targets.iter().any(|(_, p)| p.unread);
                 self.send_action(MailAction::Read { on }, &targets, true)
             }
-            Action::ListLabels => self.open_picker(crate::tui::modals::PickerMode::Toggle, targets),
-            Action::ListMove => self.open_picker(crate::tui::modals::PickerMode::Move, targets),
+            Action::ListLabels => self.open_picker(crate::tui::modals::PickerKind::Labels, targets),
+            Action::ListMove => self.open_picker(crate::tui::modals::PickerKind::Move, targets),
             _ => Vec::new(),
         }
     }
@@ -210,9 +210,11 @@ impl MailScreen {
             action,
             MailAction::Archive {} | MailAction::Trash {} | MailAction::Move { .. }
         );
-        if grace && leaves && self.focus == Focus::Reader {
-            self.close_reader();
-        }
+        let closed = if grace && leaves && self.focus == Focus::Reader {
+            self.close_reader()
+        } else {
+            Vec::new()
+        };
         let effects = self.dispatch(seq, by_account, &action, grace);
         if grace {
             if effects.is_empty() {
@@ -221,7 +223,7 @@ impl MailScreen {
                 last.pending = effects.len();
             }
         }
-        effects
+        closed.into_iter().chain(effects).collect()
     }
 
     /// The targets' thread ids by account; their old failure lines go.
@@ -402,6 +404,7 @@ impl MailScreen {
             }
             MailEvent::ActionFailed(failure) => self.action_failed(*failure),
             MailEvent::Labels { seq, result } => self.labels_read(seq, result),
+            MailEvent::ThemeSaved { result } => self.theme_saved(result),
             _ => Vec::new(),
         }
     }

@@ -33,6 +33,7 @@ pub fn gather(paths: &Paths, ids: &ItemIdCache) -> DoctorReport {
         secrets_checked: false,
         accounts: Vec::new(),
         layout_note: None,
+        theme: config.general.theme.clone(),
     };
     report.layout_note = match config.general.layout {
         Layout::Auto => None,

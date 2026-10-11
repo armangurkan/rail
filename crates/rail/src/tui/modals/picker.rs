@@ -1,6 +1,7 @@
-//! The label pickers: `l` toggles any number of the account's labels (`Space` ticks, `Enter`
-//! applies the difference from what the threads carried), `m` moves to one (`Enter`). Typing
-//! filters with the palette's fuzzy matcher; label names are outside text, escaped when drawn.
+//! The pickers: `l` toggles any number of the account's labels (`Space` ticks, `Enter`
+//! applies the difference from what the threads carried), `m` moves to one (`Enter`), `:theme`
+//! and `:accent` preview the highlighted choice on every move (`Enter` keeps it, `Esc` restores).
+//! Typing filters with the palette's fuzzy matcher; names are outside text, escaped when drawn.
 
 use std::collections::BTreeSet;
 
@@ -9,40 +10,76 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
-use ratatui::text::Line;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::{Command, ModalOutcome, boxed};
-use crate::tui::text::{escape, input_row, pad};
+use crate::tui::text::{escape, input_row, pad, width};
 use crate::tui::theme::Theme;
+use crate::tui::theme::choice::Accent;
 use crate::tui::widgets::text_input::TextInput;
 
-/// Rows of labels shown.
+/// Rows of items shown.
 const SHOWN: usize = 12;
 /// The picker's width, its border included.
 const PICKER_WIDTH: u16 = 60;
+/// One swatch colour's cells.
+const SWATCH: &str = "██";
+/// The theme and accent pickers' hint while the highlight is previewed.
+const PREVIEW_HINT: &str = "Enter keeps · Esc restores · ↑↓ move";
+/// The theme picker's hint on a terminal that cannot show a scheme.
+pub(crate) const NO_PREVIEW_HINT: &str =
+    "Enter keeps · Esc cancels · ↑↓ move · no preview without truecolor";
 
-/// What a label picker does with its choice.
+/// `:accent`'s answer: the scheme's own accent or one of its sixteen slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickerMode {
-    Toggle,
+pub enum AccentAnswer {
+    SchemeDefault,
+    Slot(u8),
+}
+
+impl From<AccentAnswer> for Accent {
+    fn from(answer: AccentAnswer) -> Self {
+        match answer {
+            AccentAnswer::SchemeDefault => Accent::SchemeDefault,
+            AccentAnswer::Slot(n) => Accent::Slot(n),
+        }
+    }
+}
+
+/// What a picker chooses, and so what it does with its choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerKind {
+    /// Tick any number of labels.
+    Labels,
+    /// Move to one label.
     Move,
+    /// A colour scheme, previewed as the highlight moves.
+    Theme,
+    /// An accent slot, previewed as the highlight moves.
+    Accent,
 }
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct PickerItem {
-    pub folder_id: i64,
+    /// A label's folder id; a scheme's index or a slot (`-1` for the default).
+    pub id: i64,
     /// Outside text.
     pub name: String,
     pub checked: bool,
+    /// Colour cells drawn after the name (a scheme's background, foreground and accent; a
+    /// slot's colour).
+    pub swatch: Vec<Color>,
 }
 
-/// Ids and flags only: the label's name is mail content.
+/// Ids and flags only: a label's name is mail content.
 impl std::fmt::Debug for PickerItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PickerItem")
-            .field("folder_id", &self.folder_id)
+            .field("id", &self.id)
             .field("checked", &self.checked)
+            .field("swatch", &self.swatch.len())
             .finish_non_exhaustive()
     }
 }
@@ -59,7 +96,7 @@ impl AsRef<str> for Candidate<'_> {
 }
 
 pub struct Picker {
-    mode: PickerMode,
+    kind: PickerKind,
     items: Vec<PickerItem>,
     initial: BTreeSet<i64>,
     input: TextInput,
@@ -67,25 +104,46 @@ pub struct Picker {
     /// Indices of the matching items, best first.
     shown: Vec<usize>,
     selected: usize,
+    /// A `Theme` or `Accent` picker previews its highlight unless told not to.
+    preview: bool,
 }
 
 impl Picker {
-    pub fn new(mode: PickerMode, items: Vec<PickerItem>) -> Self {
-        let initial = items
-            .iter()
-            .filter(|i| i.checked)
-            .map(|i| i.folder_id)
-            .collect();
+    pub fn new(kind: PickerKind, items: Vec<PickerItem>) -> Self {
+        let initial = items.iter().filter(|i| i.checked).map(|i| i.id).collect();
         let shown = (0..items.len()).collect();
-        Self {
-            mode,
+        let mut picker = Self {
+            kind,
             items,
             initial,
             input: TextInput::default(),
             matcher: Matcher::new(Config::DEFAULT),
             shown,
             selected: 0,
+            preview: true,
+        };
+        if matches!(kind, PickerKind::Theme | PickerKind::Accent) {
+            // The active choice is highlighted.
+            picker.selected = picker.items.iter().position(|i| i.checked).unwrap_or(0);
         }
+        picker
+    }
+
+    /// The highlighted row's position among the shown items (tests).
+    #[cfg(test)]
+    pub(crate) fn selected_index(&self) -> usize {
+        self.selected
+    }
+
+    /// Moving the highlight shows nothing, and the hint says why (a theme on a terminal
+    /// without truecolor).
+    pub fn without_preview(mut self) -> Self {
+        self.preview = false;
+        self
+    }
+
+    fn previews(&self) -> bool {
+        self.preview && matches!(self.kind, PickerKind::Theme | PickerKind::Accent)
     }
 
     fn refilter(&mut self) {
@@ -107,36 +165,57 @@ impl Picker {
         self.selected = 0;
     }
 
-    fn enter(&self) -> ModalOutcome {
-        match self.mode {
-            PickerMode::Move => self
-                .shown
-                .get(self.selected)
-                .and_then(|&i| self.items.get(i))
-                .map_or(ModalOutcome::Stay, |item| {
-                    ModalOutcome::Run(Command::MoveTo(item.folder_id))
-                }),
-            PickerMode::Toggle => {
-                let now: BTreeSet<i64> = self
-                    .items
-                    .iter()
-                    .filter(|i| i.checked)
-                    .map(|i| i.folder_id)
-                    .collect();
-                ModalOutcome::Run(Command::Labels {
-                    add: now.difference(&self.initial).copied().collect(),
-                    remove: self.initial.difference(&now).copied().collect(),
-                })
-            }
+    /// The highlighted item's command, for the kinds that choose one item.
+    fn choice(&self) -> Option<Command> {
+        let item = self
+            .shown
+            .get(self.selected)
+            .and_then(|&i| self.items.get(i))?;
+        match self.kind {
+            PickerKind::Labels => None,
+            PickerKind::Move => Some(Command::MoveTo(item.id)),
+            PickerKind::Theme => Some(Command::Theme(usize::try_from(item.id).ok())),
+            PickerKind::Accent => Some(Command::Accent(
+                u8::try_from(item.id)
+                    .ok()
+                    .filter(|n| *n <= 15)
+                    .map_or(AccentAnswer::SchemeDefault, AccentAnswer::Slot),
+            )),
         }
     }
 
-    fn step(&mut self, down: bool) {
+    fn enter(&self) -> ModalOutcome {
+        if self.kind != PickerKind::Labels {
+            return self.choice().map_or(ModalOutcome::Stay, ModalOutcome::Run);
+        }
+        let now: BTreeSet<i64> = self
+            .items
+            .iter()
+            .filter(|i| i.checked)
+            .map(|i| i.id)
+            .collect();
+        ModalOutcome::Run(Command::Labels {
+            add: now.difference(&self.initial).copied().collect(),
+            remove: self.initial.difference(&now).copied().collect(),
+        })
+    }
+
+    /// After the highlight may have moved: a preview of it in the kinds that preview.
+    fn moved(&self) -> ModalOutcome {
+        if !self.previews() {
+            return ModalOutcome::Stay;
+        }
+        self.choice()
+            .map_or(ModalOutcome::Stay, ModalOutcome::Preview)
+    }
+
+    fn step(&mut self, down: bool) -> ModalOutcome {
         self.selected = if down {
             (self.selected + 1).min(self.shown.len().saturating_sub(1))
         } else {
             self.selected.saturating_sub(1)
         };
+        self.moved()
     }
 
     /// `Down`/`Up` and `Ctrl-n`/`Ctrl-p` move (typed letters filter, so `j` and `k` cannot).
@@ -145,23 +224,11 @@ impl Picker {
         match key.code {
             KeyCode::Esc => ModalOutcome::Close,
             KeyCode::Enter => self.enter(),
-            KeyCode::Down => {
-                self.step(true);
-                ModalOutcome::Stay
-            }
-            KeyCode::Up => {
-                self.step(false);
-                ModalOutcome::Stay
-            }
-            KeyCode::Char('n') if ctrl => {
-                self.step(true);
-                ModalOutcome::Stay
-            }
-            KeyCode::Char('p') if ctrl => {
-                self.step(false);
-                ModalOutcome::Stay
-            }
-            KeyCode::Char(' ') if self.mode == PickerMode::Toggle => {
+            KeyCode::Down => self.step(true),
+            KeyCode::Up => self.step(false),
+            KeyCode::Char('n') if ctrl => self.step(true),
+            KeyCode::Char('p') if ctrl => self.step(false),
+            KeyCode::Char(' ') if self.kind == PickerKind::Labels => {
                 if let Some(item) = self
                     .shown
                     .get(self.selected)
@@ -174,19 +241,72 @@ impl Picker {
             _ => {
                 if self.input.handle_key(key) {
                     self.refilter();
+                    return self.moved();
                 }
                 ModalOutcome::Stay
             }
         }
     }
 
-    pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let (title, hint) = match self.mode {
-            PickerMode::Toggle => ("Labels", "Space ticks · Enter applies · Esc cancels"),
-            PickerMode::Move => ("Move to", "Enter moves · Esc cancels"),
+    /// The title, the hint row and the line shown when nothing matches.
+    pub(crate) fn words(&self) -> (&'static str, &'static str, &'static str) {
+        let hint = if self.preview {
+            PREVIEW_HINT
+        } else {
+            NO_PREVIEW_HINT
         };
+        match self.kind {
+            PickerKind::Labels => (
+                "Labels",
+                "Space ticks · Enter applies · Esc cancels · ↑↓ move",
+                "No label matches.",
+            ),
+            PickerKind::Move => (
+                "Move to",
+                "Enter moves · Esc cancels · ↑↓ move",
+                "No label matches.",
+            ),
+            PickerKind::Theme => ("Theme", hint, "No theme matches."),
+            PickerKind::Accent => ("Accent", hint, "No accent matches."),
+        }
+    }
+
+    /// One item's row: the mark and the escaped name, padded, then the swatch cells.
+    fn row(&self, item: &PickerItem, style: Style, cols: usize) -> Line<'static> {
+        let mark = match (self.kind, item.checked) {
+            (PickerKind::Labels, true) => "[x] ",
+            (PickerKind::Labels, false) => "[ ] ",
+            _ => "",
+        };
+        let swatch_width = SWATCH.chars().count() * item.swatch.len();
+        let text = pad(
+            &format!("{mark}{}", escape(&item.name)),
+            cols.saturating_sub(swatch_width),
+        );
+        let mut spans = vec![Span::styled(text, style)];
+        if swatch_width <= cols {
+            spans.extend(
+                item.swatch
+                    .iter()
+                    .map(|&c| Span::styled(SWATCH, style.fg(c))),
+            );
+        }
+        Line::from(spans)
+    }
+
+    pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        let (title, hint, empty) = self.words();
         let height = u16::try_from(SHOWN + 5).unwrap_or(u16::MAX);
-        let inner = boxed(frame, area, PICKER_WIDTH, height, title, theme);
+        // Wide enough for the hint and its border.
+        let hint_width = u16::try_from(width(hint) + 2).unwrap_or(u16::MAX);
+        let inner = boxed(
+            frame,
+            area,
+            PICKER_WIDTH.max(hint_width),
+            height,
+            title,
+            theme,
+        );
         let cols = usize::from(inner.width);
         let (typed, column) = input_row("> ", self.input.value(), self.input.cursor(), cols);
         let mut lines = vec![Line::styled(typed, theme.accent), Line::default()];
@@ -200,20 +320,12 @@ impl Picker {
             } else {
                 theme.text
             };
-            let mark = match (self.mode, item.checked) {
-                (PickerMode::Move, _) => "",
-                (PickerMode::Toggle, true) => "[x] ",
-                (PickerMode::Toggle, false) => "[ ] ",
-            };
-            lines.push(Line::styled(
-                pad(&format!("{mark}{}", escape(&item.name)), cols),
-                style,
-            ));
+            lines.push(self.row(item, style, cols));
         }
         if self.shown.is_empty() {
-            lines.push(Line::styled("No label matches.", theme.muted));
+            lines.push(Line::styled(empty, theme.muted));
         }
-        // The hint stays on the last inside row however many labels there are.
+        // The hint stays on the last inside row however many items there are.
         let used = lines.len();
         let last = usize::from(inner.height).saturating_sub(1);
         lines.extend((used..last).map(|_| Line::default()));
@@ -241,7 +353,7 @@ mod tests {
         let shown = format!("{:?}", items()[0]);
         assert!(!shown.contains("Projects"), "{shown}");
         assert!(
-            shown.contains("folder_id: 1") && shown.contains("checked: true"),
+            shown.contains("id: 1") && shown.contains("checked: true"),
             "{shown}"
         );
     }
@@ -249,26 +361,29 @@ mod tests {
     fn items() -> Vec<PickerItem> {
         vec![
             PickerItem {
-                folder_id: 1,
+                id: 1,
                 name: "Projects".into(),
                 checked: true,
+                swatch: Vec::new(),
             },
             PickerItem {
-                folder_id: 2,
+                id: 2,
                 name: "Receipts".into(),
                 checked: false,
+                swatch: Vec::new(),
             },
             PickerItem {
-                folder_id: 3,
+                id: 3,
                 name: "Travel".into(),
                 checked: false,
+                swatch: Vec::new(),
             },
         ]
     }
 
     #[test]
     fn toggle_mode_applies_what_changed_relative_to_the_start() {
-        let mut p = Picker::new(PickerMode::Toggle, items());
+        let mut p = Picker::new(PickerKind::Labels, items());
         press(&mut p, KeyCode::Char(' ')); // Projects off
         for c in "rec".chars() {
             press(&mut p, KeyCode::Char(c));
@@ -285,14 +400,14 @@ mod tests {
 
     #[test]
     fn move_mode_moves_to_the_highlighted_label_and_esc_cancels() {
-        let mut p = Picker::new(PickerMode::Move, items());
+        let mut p = Picker::new(PickerKind::Move, items());
         press(&mut p, KeyCode::Down);
         assert_eq!(
             press(&mut p, KeyCode::Enter),
             ModalOutcome::Run(Command::MoveTo(2))
         );
         assert_eq!(press(&mut p, KeyCode::Esc), ModalOutcome::Close);
-        let mut none = Picker::new(PickerMode::Move, items());
+        let mut none = Picker::new(PickerKind::Move, items());
         for c in "zzz".chars() {
             press(&mut none, KeyCode::Char(c));
         }
@@ -305,7 +420,7 @@ mod tests {
 
     #[test]
     fn ctrl_n_and_ctrl_p_move_while_letters_filter() {
-        let mut p = Picker::new(PickerMode::Move, items());
+        let mut p = Picker::new(PickerKind::Move, items());
         p.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
         p.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
         assert_eq!(
@@ -319,5 +434,90 @@ mod tests {
         );
         press(&mut p, KeyCode::Char('j'));
         assert_eq!(p.input.value(), "j", "j is typed");
+    }
+
+    fn themes() -> Vec<PickerItem> {
+        ["Rail default", "Dracula", "Nord"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| PickerItem {
+                id: i64::try_from(i).unwrap() - 1,
+                name: (*name).into(),
+                checked: i == 1,
+                swatch: vec![Color::Black, Color::White, Color::Cyan],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn theme_kind_previews_on_every_move_and_enters_the_highlighted_one() {
+        let mut p = Picker::new(PickerKind::Theme, themes());
+        assert_eq!(p.selected_index(), 1, "opens on the checked item");
+        assert_eq!(
+            press(&mut p, KeyCode::Down),
+            ModalOutcome::Preview(Command::Theme(Some(1)))
+        );
+        assert_eq!(
+            press(&mut p, KeyCode::Up),
+            ModalOutcome::Preview(Command::Theme(Some(0)))
+        );
+        assert_eq!(
+            press(&mut p, KeyCode::Up),
+            ModalOutcome::Preview(Command::Theme(None))
+        );
+        for c in "nor".chars() {
+            press(&mut p, KeyCode::Char(c));
+        }
+        assert_eq!(
+            press(&mut p, KeyCode::Enter),
+            ModalOutcome::Run(Command::Theme(Some(1)))
+        );
+    }
+
+    #[test]
+    fn filtering_previews_the_new_top_match_and_esc_closes() {
+        let mut p = Picker::new(PickerKind::Theme, themes());
+        let outcome = press(&mut p, KeyCode::Char('n'));
+        assert_eq!(outcome, ModalOutcome::Preview(Command::Theme(Some(1))));
+        assert_eq!(press(&mut p, KeyCode::Esc), ModalOutcome::Close);
+    }
+
+    #[test]
+    fn accent_kind_carries_the_slot_and_the_default() {
+        let items: Vec<PickerItem> = (-1..16)
+            .map(|n| PickerItem {
+                id: n,
+                name: if n < 0 {
+                    "scheme default".into()
+                } else {
+                    format!("{n}")
+                },
+                checked: n == -1,
+                swatch: vec![],
+            })
+            .collect();
+        let mut p = Picker::new(PickerKind::Accent, items);
+        assert_eq!(
+            press(&mut p, KeyCode::Down),
+            ModalOutcome::Preview(Command::Accent(AccentAnswer::Slot(0)))
+        );
+        assert_eq!(
+            press(&mut p, KeyCode::Up),
+            ModalOutcome::Preview(Command::Accent(AccentAnswer::SchemeDefault))
+        );
+    }
+
+    #[test]
+    fn a_theme_picker_without_preview_only_moves_and_says_so() {
+        let mut p = Picker::new(PickerKind::Theme, themes()).without_preview();
+        assert_eq!(p.selected_index(), 1, "still opens on the checked item");
+        assert_eq!(press(&mut p, KeyCode::Down), ModalOutcome::Stay);
+        assert_eq!(press(&mut p, KeyCode::Char('d')), ModalOutcome::Stay);
+        assert_eq!(press(&mut p, KeyCode::Char('r')), ModalOutcome::Stay);
+        assert_eq!(p.words().1, NO_PREVIEW_HINT);
+        assert_eq!(
+            press(&mut p, KeyCode::Enter),
+            ModalOutcome::Run(Command::Theme(Some(0)))
+        );
     }
 }
