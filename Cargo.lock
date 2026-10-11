@@ -2418,7 +2418,9 @@ dependencies = [
 name = "rail-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "directories",
+ "fastrand",
  "fs4",
  "humantime-serde",
  "icu_properties",
@@ -2436,6 +2438,7 @@ dependencies = [
  "toml",
  "toml_edit",
  "tracing",
+ "tracing-subscriber",
  "url",
  "wiremock",
 ]
@@ -2674,6 +2677,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "http-body-util",

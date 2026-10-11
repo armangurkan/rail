@@ -23,7 +23,9 @@ toml_edit = "0.25"
 directories = "6.0"
 keyring = "4.2"
 oauth2 = "5.0"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "http2"] }
+async-trait = "0.1.92"
+fastrand = "2.5"
 url = "2.5"
 icu_properties = "2.2"
 humantime-serde = "1.1"

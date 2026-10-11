@@ -11,6 +11,7 @@ pub mod guide;
 pub mod onboarding;
 pub mod ops;
 pub mod paths;
+pub mod provider;
 pub mod store;
 
 #[cfg(test)]

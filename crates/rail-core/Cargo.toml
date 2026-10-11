@@ -32,10 +32,13 @@ humantime-serde.workspace = true
 schemars.workspace = true
 fs4.workspace = true
 sha2.workspace = true
+async-trait.workspace = true
+fastrand.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 wiremock.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

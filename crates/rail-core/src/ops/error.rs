@@ -39,6 +39,8 @@ pub enum ErrorCode {
     ConsentRequired,
     /// Network trouble talking to a provider or a preset URL.
     Network,
+    /// The mail provider refused a request or sent something Rail could not read.
+    Provider,
     /// A preset could not be read, fetched or parsed.
     Preset,
     /// The operation was cancelled.
