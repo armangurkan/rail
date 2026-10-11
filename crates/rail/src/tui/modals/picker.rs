@@ -29,12 +29,22 @@ pub enum PickerMode {
     Move,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PickerItem {
     pub folder_id: i64,
     /// Outside text.
     pub name: String,
     pub checked: bool,
+}
+
+/// Ids and flags only: the label's name is mail content.
+impl std::fmt::Debug for PickerItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PickerItem")
+            .field("folder_id", &self.folder_id)
+            .field("checked", &self.checked)
+            .finish_non_exhaustive()
+    }
 }
 
 struct Candidate<'a> {
@@ -224,6 +234,16 @@ mod tests {
 
     fn press(p: &mut Picker, code: KeyCode) -> ModalOutcome {
         p.key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn debug_shows_ids_and_flags_not_the_label_name() {
+        let shown = format!("{:?}", items()[0]);
+        assert!(!shown.contains("Projects"), "{shown}");
+        assert!(
+            shown.contains("folder_id: 1") && shown.contains("checked: true"),
+            "{shown}"
+        );
     }
 
     fn items() -> Vec<PickerItem> {

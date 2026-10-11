@@ -112,7 +112,6 @@ impl DaemonLink {
     }
 
     /// Apply `call`'s action; a fresh client token per press, so a resend finds its row.
-    #[allow(dead_code, reason = "used by the mail screen in the next task")]
     pub fn apply(&self, call: ApplyCall) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
@@ -132,7 +131,6 @@ impl DaemonLink {
     }
 
     /// Take back the rows of the action with this `seq`.
-    #[allow(dead_code, reason = "used by the mail screen in the next task")]
     pub fn undo(&self, seq: u64, rows: Vec<OutboxId>) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
@@ -147,7 +145,6 @@ impl DaemonLink {
     }
 
     /// Send a failed row again.
-    #[allow(dead_code, reason = "used by the mail screen in the next task")]
     pub fn retry(&self, row: OutboxId) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
