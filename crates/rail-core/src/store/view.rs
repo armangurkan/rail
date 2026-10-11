@@ -284,13 +284,13 @@ fn thread_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadRow> {
 }
 
 /// The scope, account and filter conditions over threads `t`, with their parameters in order.
-fn where_clause(query: &ListQuery) -> (String, Vec<Value>) {
+pub(super) fn where_clause(query: &ListQuery) -> (String, Vec<Value>) {
     let mut conds = Vec::new();
     let mut params = Vec::new();
     match &query.scope {
         Scope::Unified { accounts } => {
             conds.push(format!(
-                "t.account_id IN (SELECT value FROM json_each(?)) AND {IN_INBOX}"
+                "+t.account_id IN (SELECT value FROM json_each(?)) AND {IN_INBOX}"
             ));
             params.push(Value::Text(ids_json(accounts)));
         }
@@ -318,7 +318,7 @@ fn where_clause(query: &ListQuery) -> (String, Vec<Value>) {
 }
 
 /// How a `PageAt` reads: the keyset condition, its key, and the direction.
-fn direction(at: PageAt) -> (Option<(&'static str, ThreadKey)>, bool) {
+pub(super) fn direction(at: PageAt) -> (Option<(&'static str, ThreadKey)>, bool) {
     match at {
         PageAt::First => (None, true),
         PageAt::Last => (None, false),
@@ -326,6 +326,28 @@ fn direction(at: PageAt) -> (Option<(&'static str, ThreadKey)>, bool) {
         PageAt::Newer(k) => (Some(("(t.last_date, t.id) > (?, ?)", k)), false),
         PageAt::From(k) => (Some(("(t.last_date, t.id) <= (?, ?)", k)), true),
     }
+}
+
+/// The page's `SELECT` over the `where_clause` text `base`, and its parameters in order.
+pub(super) fn rows_statement(
+    base: &str,
+    params: &[Value],
+    keyset: Option<(&str, ThreadKey)>,
+    descending: bool,
+) -> (String, Vec<Value>) {
+    let order = if descending { "DESC" } else { "ASC" };
+    let mut values = params.to_vec();
+    let mut condition = base.to_string();
+    if let Some((sql, key)) = keyset {
+        condition = format!("{condition} AND {sql}");
+        values.extend([Value::Integer(key.last_date), Value::Integer(key.thread_id)]);
+    }
+    values.push(int(PAGE + 1));
+    let sql = format!(
+        "SELECT {THREAD_COLUMNS} FROM threads t WHERE {condition}
+         ORDER BY t.last_date {order}, t.id {order} LIMIT ?"
+    );
+    (sql, values)
 }
 
 impl Store {
@@ -376,18 +398,7 @@ impl Store {
         keyset: Option<(&str, ThreadKey)>,
         descending: bool,
     ) -> Result<Vec<ThreadRow>, StoreError> {
-        let order = if descending { "DESC" } else { "ASC" };
-        let mut values = params.to_vec();
-        let mut condition = base.to_string();
-        if let Some((sql, key)) = keyset {
-            condition = format!("{condition} AND {sql}");
-            values.extend([Value::Integer(key.last_date), Value::Integer(key.thread_id)]);
-        }
-        values.push(int(PAGE + 1));
-        let sql = format!(
-            "SELECT {THREAD_COLUMNS} FROM threads t WHERE {condition}
-             ORDER BY t.last_date {order}, t.id {order} LIMIT ?"
-        );
+        let (sql, values) = rows_statement(base, params, keyset, descending);
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(values), thread_row)?;
         Ok(rows.collect::<Result<_, _>>()?)

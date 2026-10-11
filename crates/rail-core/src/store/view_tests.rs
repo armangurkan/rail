@@ -8,6 +8,7 @@ use rusqlite::params;
 use super::Store;
 use super::filter::{Day, parse};
 use super::view::*;
+use super::view::{direction, rows_statement, where_clause};
 use crate::provider::mock::envelope;
 use crate::provider::{AttachmentMeta, Body, Envelope, FolderKind, Mailbox, RemoteFolder};
 use crate::sync::UNREADABLE_BODY;
@@ -661,4 +662,116 @@ fn the_bottom_of_thousands_of_threads_is_quick() {
         started.elapsed()
     );
     assert_eq!(up.rows.len(), PAGE);
+}
+
+/// The plan lines SQLite gives the page statement of `query` at `at`.
+fn plan(store: &Store, query: &ListQuery, at: PageAt) -> String {
+    let (base, params) = where_clause(query);
+    let (keyset, descending) = direction(at);
+    let (sql, values) = rows_statement(&base, &params, keyset, descending);
+    let mut stmt = store
+        .conn()
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .unwrap();
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(values), |r| {
+            r.get::<_, String>(3)
+        })
+        .unwrap();
+    rows.map(Result::unwrap).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn the_unified_list_walks_the_date_index_and_never_sorts() {
+    let mut store = empty();
+    put(&mut store, 1, threads("w", 50));
+    let key = ThreadKey {
+        last_date: BASE_MS / 1000,
+        thread_id: 10,
+    };
+    let unified = query(Scope::Unified {
+        accounts: vec![1, 2],
+    });
+    for at in [
+        PageAt::First,
+        PageAt::Last,
+        PageAt::Older(key),
+        PageAt::Newer(key),
+        PageAt::From(key),
+    ] {
+        let plan = plan(&store, &unified, at);
+        assert!(plan.contains("threads_by_date"), "{at:?}: {plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "{at:?}: {plan}");
+    }
+    // The single-account scopes walk the per-account date index; SQLite only orders ties on
+    // the last term (the id), never the whole result.
+    let inbox = query(Scope::Inbox { account_id: 1 });
+    let folder = query(Scope::Folder {
+        account_id: 1,
+        folder_id: 2,
+    });
+    for q in [&inbox, &folder] {
+        for at in [PageAt::First, PageAt::Last] {
+            let plan = plan(&store, q, at);
+            assert!(
+                plan.contains("threads_by_last_date"),
+                "{q:?} {at:?}: {plan}"
+            );
+            assert!(
+                !plan.contains("TEMP B-TREE FOR ORDER BY"),
+                "{q:?} {at:?}: {plan}"
+            );
+        }
+    }
+}
+
+fn person(name: Option<&str>, address: &str) -> Vec<Mailbox> {
+    vec![Mailbox {
+        name: name.map(Into::into),
+        address: address.into(),
+    }]
+}
+
+#[test]
+fn from_and_to_match_names_and_addresses_never_the_json_around_them() {
+    let mut store = empty();
+    let mut a = envelope("m1", "t1", BASE_MS);
+    a.subject = "Alpha".into();
+    a.from = person(Some("Dana Reyes"), "dana@x.example");
+    a.to = person(None, "bob@y.example");
+    a.cc = person(Some("Carla"), "carla@z.example");
+    let mut b = envelope("m2", "t2", BASE_MS + 1);
+    b.subject = "Beta".into();
+    b.from = person(None, "eve@y.example");
+    b.to = person(Some("Dan"), "dan@w.example");
+    put(&mut store, 1, vec![a, b]);
+    for noise in [
+        "from:dre",
+        "from:me",
+        "from:null",
+        "from:address",
+        "from:name",
+        "from:\\\"",
+        "to:null",
+        "to:address",
+        "to:name",
+    ] {
+        assert!(matching(&store, noise).is_empty(), "{noise}");
+    }
+    assert_eq!(
+        matching(&store, "from:re"),
+        set(&["Alpha"]),
+        "Reyes only, not the JSON keys"
+    );
+    assert_eq!(matching(&store, "from:dana"), set(&["Alpha"]));
+    assert_eq!(matching(&store, "from:dana@x"), set(&["Alpha"]));
+    assert_eq!(matching(&store, "from:\"dana reyes\""), set(&["Alpha"]));
+    assert_eq!(
+        matching(&store, "to:a"),
+        set(&["Alpha", "Beta"]),
+        "carla (cc) and dan, not the JSON"
+    );
+    assert_eq!(matching(&store, "to:bob"), set(&["Alpha"]));
+    assert_eq!(matching(&store, "to:carla"), set(&["Alpha"]), "cc counts");
+    assert_eq!(matching(&store, "to:w.example"), set(&["Beta"]));
 }

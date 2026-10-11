@@ -214,15 +214,12 @@ impl Filter {
             params.push(Value::Text(query));
         }
         for value in &self.from {
-            conds.push(like("m.from_json"));
-            params.push(Value::Text(pattern(value)));
+            conds.push(mailbox_like(&["m.from_json"]));
+            params.extend(std::iter::repeat_n(Value::Text(pattern(value)), 2));
         }
         for value in &self.to {
-            let any = ["m.to_json", "m.cc_json", "m.bcc_json"]
-                .map(like)
-                .join(" OR ");
-            conds.push(format!("({any})"));
-            params.extend(std::iter::repeat_n(Value::Text(pattern(value)), 3));
+            conds.push(mailbox_like(&["m.to_json", "m.cc_json", "m.bcc_json"]));
+            params.extend(std::iter::repeat_n(Value::Text(pattern(value)), 6));
         }
         for value in &self.subject {
             conds.push(like("m.subject"));
@@ -260,6 +257,24 @@ impl Filter {
 /// `column LIKE ? ESCAPE '\'`.
 fn like(column: &str) -> String {
     format!("{column} LIKE ? ESCAPE '\\'")
+}
+
+/// A condition that some mailbox in one of the JSON `columns` has a name or an address
+/// matching a `LIKE` pattern (two `?` per column: name, then address). The JSON's keys and
+/// punctuation never match; a column that is not valid JSON reads as empty.
+fn mailbox_like(columns: &[&str]) -> String {
+    let any = columns
+        .iter()
+        .map(|c| {
+            format!(
+                "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid({c}) THEN {c} ELSE '[]' END) j \
+                 WHERE json_extract(j.value, '$.name') LIKE ? ESCAPE '\\' \
+                 OR json_extract(j.value, '$.address') LIKE ? ESCAPE '\\')"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    format!("({any})")
 }
 
 /// `value` as a `LIKE` pattern matching it anywhere, its own `%`, `_` and `\` escaped.
