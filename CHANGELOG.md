@@ -119,8 +119,8 @@ All notable changes to Rail are recorded here. The format follows
   change mail), the `action.failed` notification, and `outbox` counts in `sync.status`.
 - Themes: `:theme` picks one of the 769 iTerm2-Color-Schemes schemes with a live preview and
   saves it as `general.theme`; `:accent` picks the accent slot (`general.accent`). Rail paints
-  its own background on truecolor terminals and keeps the default look elsewhere. The free-form
-  `[theme]` table placeholder is gone.
+  its own background when a theme is chosen, on truecolor terminals, and keeps the default
+  look elsewhere. The free-form `[theme]` table placeholder is gone.
 
 ### Changed
 
