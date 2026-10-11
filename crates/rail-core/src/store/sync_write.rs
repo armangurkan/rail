@@ -6,13 +6,15 @@ use rusqlite::types::ToSql;
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
 use super::{Store, StoreError, rollup};
-use crate::provider::{Body, Envelope, Relabel, RemoteFolder, RemoteId};
+use crate::provider::{Body, Envelope, Mailbox, Relabel, RemoteFolder, RemoteId};
 use crate::sync::batch::{Batch, BatchOutcome, Origin, Prune, ResumeToken, StateUpdate, Sweep};
 
 const UPSERT: &str = "INSERT INTO messages (account_id, thread_id, remote_id, message_id,
     in_reply_to, references_ids, subject, from_json, to_json, cc_json, bcc_json, date, snippet,
-    is_read, is_starred, is_draft, size, internal_date, origin, searched_at, synced_at)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+    is_read, is_starred, is_draft, size, internal_date, origin, searched_at, synced_at,
+    from_text, to_text)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
+    ?20, ?21, ?22, ?23)
   ON CONFLICT(account_id, remote_id) DO UPDATE SET
     thread_id = excluded.thread_id, message_id = excluded.message_id,
     in_reply_to = excluded.in_reply_to, references_ids = excluded.references_ids,
@@ -22,11 +24,27 @@ const UPSERT: &str = "INSERT INTO messages (account_id, thread_id, remote_id, me
     is_draft = excluded.is_draft, size = excluded.size, internal_date = excluded.internal_date,
     origin = CASE WHEN excluded.origin = 'sync' THEN 'sync' ELSE messages.origin END,
     searched_at = COALESCE(excluded.searched_at, messages.searched_at),
-    synced_at = COALESCE(excluded.synced_at, messages.synced_at)";
+    synced_at = COALESCE(excluded.synced_at, messages.synced_at),
+    from_text = excluded.from_text, to_text = excluded.to_text";
 
 /// `[]`-style JSON of Rail's own types; serialising them cannot fail.
 fn json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Mailboxes as the full-text index holds them: `Name address` for each, separated by single
+/// spaces; only the address when the name is missing or empty. Nothing is escaped (the FTS
+/// tokenizer splits on controls and punctuation). Migration 0005 computes the same text in
+/// SQL for rows written before it; the two must stay byte for byte equal.
+pub(crate) fn address_text<'a>(mailboxes: impl IntoIterator<Item = &'a Mailbox>) -> String {
+    let parts: Vec<String> = mailboxes
+        .into_iter()
+        .map(|m| match m.name.as_deref() {
+            None | Some("") => m.address.clone(),
+            Some(name) => format!("{name} {}", m.address),
+        })
+        .collect();
+    parts.join(" ")
 }
 
 impl Store {
@@ -203,7 +221,9 @@ fn write_envelope(
             env.internal_date,
             origin.as_str(),
             searched,
-            synced
+            synced,
+            address_text(&env.from),
+            address_text(env.to.iter().chain(&env.cc).chain(&env.bcc))
         ],
     )?;
     Ok(())

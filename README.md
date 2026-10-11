@@ -78,7 +78,9 @@ cargo install --locked --path crates/rail
 ```
 
 This puts `rail` in `~/.cargo/bin`. To upgrade, pull and run the same command; the first command
-of the new version replaces any older daemon still running.
+of the new version replaces any older daemon still running. When an upgrade changes the store,
+the new daemon migrates it the first time it starts (rebuilding the search index can take a
+moment on a large mailbox); until then the mail screen says the store is not set up.
 
 ## Quick start
 
@@ -258,14 +260,14 @@ Bodies of recent mail (`body_cache_days`) are already in the store. An older mes
 **fetching…** while the daemon fetches its body from Gmail; the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
 
-`/` filters the list as you type: plain words search subjects, senders, recipients and stored
-bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`, `is:unread`, `is:starred`,
-`before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
-`account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread matches when
-one of its messages matches all of them. Anything else is searched as words, and the status bar
-shows how Rail read your filter, so a typo such as `form:dana` shows up as a word. `Enter` keeps
-the filter; `Esc` clears it. The filter searches the local store only (`rail search` also asks
-Gmail).
+`/` filters the list as you type: plain words search subjects, the names and addresses of senders
+and recipients (To, Cc and Bcc) and stored bodies; `from:`, `to:` (also Cc and Bcc), `subject:`,
+`has:attachment`, `is:unread`, `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates,
+by when the mail arrived) and `account:<name>` narrow it; quote values with spaces
+(`from:"Dana Reyes"`). A thread matches when one of its messages matches all of them. Anything else
+is searched as words, and the status bar shows how Rail read your filter, so a typo such as
+`form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
+local store only (`rail search` also asks Gmail).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account
 or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
