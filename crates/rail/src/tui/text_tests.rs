@@ -265,23 +265,23 @@ fn the_confirmation_names_the_host_warns_about_userinfo_and_names_a_mail_recipie
     let lines = |address: &str| link_lines(&safe_link(address).unwrap());
     assert_eq!(
         lines("https://docs.example/plan"),
-        ["https://docs.example/plan", "Host: docs.example"]
+        ["Host: docs.example", "https://docs.example/plan"]
     );
     let warning =
         "Warning: the part before \"@\" is not where this link goes. It goes to evil.example.";
     assert_eq!(
         lines("https://bank.com@evil.example/x"),
         [
-            "https://bank.com@evil.example/x",
             "Host: evil.example",
-            warning
+            warning,
+            "https://bank.com@evil.example/x"
         ]
     );
-    assert_eq!(lines("https://user:pw@evil.example/")[2], warning);
-    assert_eq!(lines("https://:pw@evil.example/")[2], warning);
+    assert_eq!(lines("https://user:pw@evil.example/")[1], warning);
+    assert_eq!(lines("https://:pw@evil.example/")[1], warning);
     assert_eq!(
         lines("mailto:dana@example.com"),
-        ["mailto:dana@example.com", "To: dana@example.com"]
+        ["To: dana@example.com", "mailto:dana@example.com"]
     );
     let url = Url::parse("https://docs.example/").unwrap();
     assert!(link_lines(&url).iter().all(|l| !l.contains("Warning")));
@@ -296,11 +296,78 @@ fn an_idn_or_lookalike_host_is_shown_in_ascii_and_a_long_punycode_host_is_refuse
         ("https://\u{430}pple.com/", "xn--pple-43d.com"),
     ] {
         let url = safe_link(written).unwrap();
-        assert_eq!(link_lines(&url)[1], format!("Host: {host}"), "{written}");
+        assert_eq!(link_lines(&url)[0], format!("Host: {host}"), "{written}");
         assert!(link_lines(&url).iter().all(|l| l.is_ascii()), "{written}");
     }
     // 1,516 bytes as written, 2,716 once every label is punycode (`xn--80ac`).
     let long = format!("https://{}example/", "\u{430}\u{431}.".repeat(300));
     assert!(long.len() <= MAX_LINK_BYTES);
     assert!(safe_link(&long).is_none());
+}
+
+fn mail(address: &str) -> Vec<String> {
+    link_lines(&safe_link(address).unwrap())
+}
+
+#[test]
+fn a_mailto_link_lists_every_recipient_and_warns_when_the_query_adds_some() {
+    let warning = "Warning: this link adds recipients beyond the address in its path.";
+    assert_eq!(
+        mail(
+            "mailto:boss@company.com?bcc=evil@x.example&CC=a@b.example,c@d.example&to=e@f.example"
+        ),
+        [
+            "To: boss@company.com",
+            "To: e@f.example",
+            "Cc: a@b.example",
+            "Cc: c@d.example",
+            "Bcc: evil@x.example",
+            warning,
+            "mailto:boss@company.com?bcc=evil@x.example&CC=a@b.example,c@d.example&to=e@f.example",
+        ]
+    );
+    // A subject is not a recipient.
+    assert!(
+        mail("mailto:a@b.example?subject=hi")
+            .iter()
+            .all(|l| !l.contains("Warning"))
+    );
+}
+
+#[test]
+fn a_mailto_path_is_decoded_and_an_empty_one_says_so() {
+    assert_eq!(
+        mail("mailto:ceo%40bank.com@evil.example")[0],
+        "To: ceo@bank.com@evil.example"
+    );
+    assert_eq!(
+        mail("mailto:a@b.example,c@d.example")[..2],
+        ["To: a@b.example", "To: c@d.example"]
+    );
+    assert_eq!(mail("mailto:?subject=hi")[0], "To: (no recipient)");
+    assert_eq!(
+        mail("mailto:?bcc=x@y.example")[..2],
+        ["To: (no recipient)", "Bcc: x@y.example"]
+    );
+}
+
+#[test]
+fn a_decoded_recipient_is_escaped_and_bad_utf8_never_panics() {
+    let lines = mail("mailto:a%1B%5B2J%E2%80%AEb@x.example,%FF@y.example");
+    assert_eq!(lines[0], "To: a\\u{1b}[2J\\u{202e}b@x.example");
+    assert_eq!(lines[1], "To: \u{fffd}@y.example");
+    let lines = mail("mailto:x@y.example?bcc=%0Aevil@z.example%E2%80%AE");
+    assert!(lines.iter().all(|l| !l.contains(['\n', '\u{202e}'])));
+}
+
+#[test]
+fn a_long_address_is_cut_after_the_lines_that_say_where_it_goes() {
+    let url = safe_link(&format!(
+        "https://bank.com@evil.example/{}",
+        "a".repeat(1_300)
+    ))
+    .unwrap();
+    let lines = link_lines(&url);
+    assert_eq!(lines.len(), 3);
+    assert!(lines[2].ends_with('…') && width(&lines[2]) <= 150);
 }

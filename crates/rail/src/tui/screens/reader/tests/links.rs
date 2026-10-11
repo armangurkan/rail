@@ -89,3 +89,27 @@ async fn markers_are_plain_while_a_modal_is_open() {
     press(&mut f, KeyCode::Esc).await;
     assert_eq!(linked_cells(&f), 2, "hyperlinks again once it closes");
 }
+
+/// Review: a near-maximum address must not push the host, the warning or the answer hint off a
+/// small screen.
+#[tokio::test]
+async fn a_long_address_cannot_hide_the_host_the_warning_or_the_hint_at_80x24() {
+    let mut f = fixture(false).await;
+    store_bodies_on_fetch(&f);
+    let long = format!("https://bank.com@evil.example/{}", "a".repeat(1_900));
+    set_links(&f, &[&long, "mailto:boss@company.com?bcc=evil@x.example"]);
+    open_on_the_link_line(&mut f).await;
+    keys(&mut f, "gx1").await;
+    press(&mut f, KeyCode::Enter).await;
+    let text = draw(&f, 80, 24);
+    assert!(text.contains("Host: evil.example"), "{text}");
+    assert!(text.contains("is not where this link goes"), "{text}");
+    assert!(text.contains("y yes"), "{text}");
+    press(&mut f, KeyCode::Esc).await;
+    keys(&mut f, "gx2").await;
+    press(&mut f, KeyCode::Enter).await;
+    let text = draw(&f, 80, 24);
+    assert!(text.contains("Bcc: evil@x.example"), "{text}");
+    assert!(text.contains("adds recipients"), "{text}");
+    assert!(text.contains("y yes"), "{text}");
+}

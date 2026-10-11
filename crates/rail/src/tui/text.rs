@@ -254,25 +254,101 @@ pub fn safe_link(address: &str) -> Option<Url> {
     (scheme && printable && fits).then_some(url)
 }
 
-/// What the `g x` confirmation shows for `url` (from `safe_link`), each line escaped: the
-/// address; then where it goes: the recipients of a `mailto:` link, or the host of any other,
-/// as the URL serialises it (an IDN or lookalike host shows in its ASCII `xn--` form); and a
-/// warning when the address has a user name or password, which reads like a host before `@`.
+/// The longest address the `g x` confirmation shows, in columns: about three rows of the box.
+/// Longer ones are cut with `…`; the lines that say where the link goes come first.
+const SHOWN_ADDRESS_COLS: usize = 150;
+
+/// What the `g x` confirmation shows for `url` (from `safe_link`), each line escaped: first where
+/// it goes (the recipients of a `mailto:` link, or the host of any other, as the URL serialises
+/// it, so an IDN or lookalike host shows in its ASCII `xn--` form) and a warning when that is
+/// not what the address looks like (a user name or password, which reads like a host before `@`;
+/// recipients added by a `mailto:` query); then the address, cut to about three rows so a long
+/// one cannot push the rest off the screen.
 pub fn link_lines(url: &Url) -> Vec<String> {
-    let address = escape(url.as_str());
-    if url.scheme() == "mailto" {
-        return vec![address, format!("To: {}", escape(url.path()))];
-    }
-    let Some(host) = url.host_str().map(escape) else {
-        return vec![address];
+    let mut lines = if url.scheme() == "mailto" {
+        mail_lines(url)
+    } else {
+        host_lines(url)
     };
-    let mut lines = vec![address, format!("Host: {host}")];
+    lines.push(fit(url.as_str(), SHOWN_ADDRESS_COLS));
+    lines
+}
+
+fn host_lines(url: &Url) -> Vec<String> {
+    let Some(host) = url.host_str().map(escape) else {
+        return Vec::new();
+    };
+    let mut lines = vec![format!("Host: {host}")];
     if !url.username().is_empty() || url.password().is_some() {
         lines.push(format!(
             "Warning: the part before \"@\" is not where this link goes. It goes to {host}."
         ));
     }
     lines
+}
+
+/// `To:`, `Cc:` and `Bcc:` lines for every recipient of a `mailto:` link (its path and its `to`,
+/// `cc` and `bcc` parameters, decoded), and a warning when the parameters add any.
+fn mail_lines(url: &Url) -> Vec<String> {
+    let mut to = recipients(&percent_decode(url.path()));
+    let (mut cc, mut bcc) = (Vec::new(), Vec::new());
+    let mut added = false;
+    for (name, value) in url.query_pairs() {
+        let list = match name.to_ascii_lowercase().as_str() {
+            "to" => &mut to,
+            "cc" => &mut cc,
+            "bcc" => &mut bcc,
+            _ => continue,
+        };
+        let found = recipients(&value);
+        added |= !found.is_empty();
+        list.extend(found);
+    }
+    let mut lines = Vec::new();
+    if to.is_empty() {
+        lines.push("To: (no recipient)".to_string());
+    }
+    for (label, list) in [("To", &to), ("Cc", &cc), ("Bcc", &bcc)] {
+        lines.extend(list.iter().map(|r| format!("{label}: {}", escape(r))));
+    }
+    if added {
+        lines
+            .push("Warning: this link adds recipients beyond the address in its path.".to_string());
+    }
+    lines
+}
+
+/// The non-empty, comma-separated entries of `list`.
+fn recipients(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// `text` with `%XX` escapes decoded; bytes that are not UTF-8 become U+FFFD.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let hex = bytes
+            .get(at + 1..at + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[at], hex) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                at += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// `text` as an OSC 8 hyperlink to `url`. `url` must come from `safe_link` and `text` from
