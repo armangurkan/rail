@@ -106,6 +106,17 @@ All notable changes to Rail are recorded here. The format follows
 - `body.fetch`, a daemon operation that fetches bodies the store does not hold yet; the reader
   shows "fetching…" meanwhile. It answers outcomes, never bodies, and is not an MCP tool.
 - Link footnotes in stored bodies (`messages.links`, store version 4).
+- Actions on Gmail threads from the thread list and the reader: `e` archive, `d` trash (asks
+  first), `s` star, `u` read or unread, `l` labels, `m` move to a label, alone or on a selection
+  (`Space`, `Esc` clears). Each applies to the store at once, can be undone with `z` for ten
+  seconds, and is sent to Gmail by the daemon's per-account outbox worker, surviving restarts.
+  Opening a thread marks it read. The status bar shows queued and failed actions; an action Gmail
+  refuses is undone locally, shown on the thread's row and kept in `:errors`, where `Enter`
+  retries it.
+- Store schema v6: the outbox's scheduling columns (`not_before`, `thread_ids`, `inflight_at`,
+  `reversal`).
+- `action.apply`, `action.undo` and `action.retry` operations (terminal only; no MCP tool can
+  change mail), the `action.failed` notification, and `outbox` counts in `sync.status`.
 
 ### Changed
 

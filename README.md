@@ -195,8 +195,8 @@ are in, with `*` after the ones set in `config.toml`.
 | `list.trash` | list, reader | `d` | Move to Gmail's Trash (asks first). |
 | `list.star` | list, reader | `s` | Star or unstar. |
 | `list.read` | list, reader | `u` | Mark read or unread. |
-| `list.labels` | list, reader | `l` | Add or remove labels (the picker is not built yet). |
-| `list.move` | list, reader | `m` | Move to a label (archives; the picker is not built yet). |
+| `list.labels` | list, reader | `l` | Add or remove labels. |
+| `list.move` | list, reader | `m` | Move to a label (archives). |
 | `list.select` | list | `space` | Select or unselect the thread. |
 | `list.clear_selection` | list | `esc` | Clear the selection. |
 | `sidebar.focus` | list, sidebar | `tab` | Move between the sidebar and the list. |
@@ -299,52 +299,65 @@ local store only (`rail search` also asks Gmail).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account
 or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
-the session's recent errors; `Enter` on an action Gmail refused sends it again. `?` shows the keys of the view you are in, marking with `*` the ones
-set in `config.toml`; `?` again (or whatever `global.help` is bound to), `Esc` or `q` closes it.
-Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more` line (`v more` and
-`^ more` with `icons = "ascii"`) says there is more beyond the box.
+the session's recent errors; while one of them is an action Gmail refused, `j`/`k` or `↓`/`↑`
+highlight an entry and `Enter` sends that action again. `?` shows the keys of the view you are in,
+marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.help` is bound to),
+`Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more`
+line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond the box.
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`
-for Microsoft 365 accounts; after the state, `2 queued` for actions on their way to Gmail and
-`1 failed` for actions Gmail refused, see [Doing things to mail](#doing-things-to-mail)), whether the daemon can be reached (`connecting to the daemon…`,
-`daemon unreachable`, or `daemon reachable again` once a message fetch gets through after the
-connection was lost), and notices. When the daemon cannot be reached the list still reads from
-the store; `Ctrl-r` reconnects (and starts a sync) and resumes live updates. A store read that
-fails says so where it was shown (the list, the top of the sidebar, or the reader's title) and in
-the status bar; `:errors` keeps it.
+for Microsoft 365 accounts). After the state come `2 queued` for actions on their way to Gmail
+and `1 failed` for actions Gmail refused; see [Doing things to mail](#doing-things-to-mail).
+With threads selected, `3 selected` leads the bar. Next to the accounts it shows whether the
+daemon can be reached (`connecting to the daemon…`, `daemon unreachable`, or
+`daemon reachable again` once a message fetch gets through after the connection was lost), and
+notices. When the daemon cannot be reached the list still reads from the store; `Ctrl-r`
+reconnects (and starts a sync) and resumes live updates. A store read that fails says so where it
+was shown (the list, the top of the sidebar, or the reader's title) and in the status bar;
+`:errors` keeps it.
 
 ## Doing things to mail
 
-From the thread list or the reader: `e` archives, `d` moves to Gmail's Trash (Rail asks first;
-Gmail keeps trashed mail there for 30 days, and Rail never deletes mail for good), `s` stars or
-unstars, `u` marks read or unread. An action applies to the whole thread, as in Gmail. The list
-changes at once; the daemon sends the change to Gmail in the background, so it also goes through
-if you quit Rail.
+From the thread list or the reader: `e` archives, `d` moves to Gmail's Trash (Rail asks first,
+`Trash "subject"?` or `Trash 3 threads?`, and Gmail keeps trashed mail there for 30 days; Rail
+never deletes mail for good), `s` stars or unstars (it stars unless every thread is already
+starred), `u` marks read or unread (it marks read if any thread is unread). An action applies to
+the whole thread, as in Gmail. The list changes at once; the daemon sends the change to Gmail in
+the background, so it also goes through if you quit Rail.
 
 `l` opens the account's labels: type to filter, `Space` ticks or unticks, `Enter` applies (labels
 you ticked are added, labels you unticked are removed; for a selection, the ticks start from every
 label any selected thread carries), `Esc` cancels. `Down`/`Up` (or `Ctrl-n`/`Ctrl-p`) move,
-because letters filter. `m` opens the same list to move: `Enter` adds the label and archives the
-thread. Gmail's system folders (Inbox, Sent, Trash and the like) are not in the list, and Rail
-does not create labels. A selection from two accounts cannot be labelled at once (Rail asks you to
-select threads from one account).
+because letters filter. `m` opens the same list to move: `Enter` adds the highlighted label and
+archives the thread. Gmail's system folders (Inbox, Sent, Trash and the like) are not in the list,
+and Rail does not create labels. A selection that spans two accounts cannot be labelled or moved
+at once; Rail says `Labels belong to one account: select threads from one account.`
 
 `Space` selects the thread under the cursor (a `▸` replaces its dot, `>` with `icons = "ascii"`)
-and moves down; the status bar counts the selection. With a selection, an action applies to every
-selected thread, then the selection clears; `Esc` clears it. The selection stays while you change
-the filter or the mailbox. In the reader, the keys act on the open thread (`Space` still pages
-down); archive and trash close the reader.
+and moves down; the status bar counts the selection (`3 selected`). With a selection, an action
+applies to every selected thread, then the selection clears; `Esc` clears it. The selection stays
+while you change the filter or the mailbox. In the reader, the keys act on the open thread, not on
+the selection, which stays as it was (`Space` still pages down, and selecting is for the list);
+archive, trash and move close the reader.
 
-After an action the status bar says what happened, for example `archived 3 · z undoes`: for ten
-seconds `z` takes it back. Only the last action can be undone, and only while it has not been sent
-yet ("too late to undo" otherwise). Opening a thread marks it read; `u` marks it unread again.
+After an action the status bar says what happened, for example `archived 3 · z undoes`. For ten
+seconds `z` takes it back; afterwards it says `Too late to undo.`, and with nothing done,
+`Nothing to undo.` If the daemon has not answered yet, `z` says `undoing…` and finishes when it
+does. Only the most recent action can be undone, and marking a thread read by opening it has no
+undo. `z` works anywhere in the mail screen.
+
+Opening an unread thread marks it read at once in the reader; the list row and the unread counts
+follow a moment later. `u` marks it unread again.
 
 Each account in the status bar shows actions on their way to Gmail (`2 queued`) and actions Gmail
-refused (`1 failed`). While an account needs a login, its actions wait and are sent after the
-login. When Gmail refuses an action for good (the thread or the label no longer exists), Rail
-undoes it in the list, shows "Could not archive: …" on the thread's row, and keeps the error in
-`:errors`, where `Enter` on it sends the action again. Microsoft 365 accounts cannot be changed yet.
+refused (`1 failed`). The daemon sends them one thread at a time in the order you made them. When
+Gmail cannot be reached it tries again after 1, then 5, then 15 minutes, then every 15 minutes,
+and gives up on an action after 20 attempts. While an account needs a login, its actions wait and
+are sent after the login, and an action still waiting when Rail starts again is sent. When Gmail
+refuses an action for good (the thread or the label no longer exists), Rail undoes it in the
+list, shows "Could not archive: …" on the thread's row, and keeps the error in `:errors`, where
+`Enter` on it sends the action again. Microsoft 365 accounts cannot be changed yet.
 
 ## Account setup
 
@@ -534,7 +547,7 @@ login), and finishes with `rail_account_add` and `rail_wait`.
 | `rail_account_remove` | Removes an account's config entry and tokens; its mail stays. Needs your confirmation. |
 
 **What the tools cannot do.** No tool returns mail content (subjects, senders, snippets or bodies)
-and none sends mail. No secret passes through the agent: `rail_account_add` takes the absolute path
+and none sends mail. No MCP tool archives, trashes, labels or otherwise changes mail. No secret passes through the agent: `rail_account_add` takes the absolute path
 of the client-secret JSON you downloaded, an `op://` reference or a preset, never the secret itself,
 and a `client_secret` sent by an agent is refused. Tokens stay in the daemon. Tools refuse unknown
 arguments and relative file paths.
