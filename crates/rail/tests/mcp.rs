@@ -181,8 +181,21 @@ impl Session {
 
 /// Start `rail mcp` confined to `dir`, with the test hooks pointing at `token_url`.
 async fn start(dir: &tempfile::TempDir, host: Host, token_url: Option<String>) -> Session {
+    start_with_gmail(dir, host, token_url, None).await
+}
+
+/// `start`, with the daemon's Gmail at `gmail_url` (a fake) when given.
+async fn start_with_gmail(
+    dir: &tempfile::TempDir,
+    host: Host,
+    token_url: Option<String>,
+    gmail_url: Option<String>,
+) -> Session {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_rail"));
     rail_env(command.arg("mcp"), dir);
+    if let Some(gmail_url) = gmail_url {
+        command.env("RAIL_TEST_GMAIL_URL", gmail_url);
+    }
     if let Some(token_url) = token_url {
         command.env("RAIL_TEST_TOKEN_URL", token_url);
     }

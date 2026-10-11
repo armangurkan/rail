@@ -230,7 +230,7 @@ fn sync_lines(text: &mut Text, s: &AccountSyncStatus) {
 pub fn sync_now(response: &SyncNowResponse) -> String {
     let mut text = Text::default();
     if response.targets.is_empty() {
-        text.line("No Gmail account is configured, so nothing was woken.");
+        text.line("No Gmail account is configured, so nothing was woken (Microsoft 365 sync is not available yet). rail_sync_status shows each account.");
     } else {
         let names: Vec<String> = response.targets.iter().map(|t| name_of(&t.name)).collect();
         text.line(format!(
