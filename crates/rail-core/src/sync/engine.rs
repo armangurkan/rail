@@ -222,7 +222,13 @@ impl Engine {
             tracing::warn!(account = %self.account.name, error = %error.message(), "could not record the sync state");
         }
         let id = self.account_id;
-        let counts = self.read(move |store| store.counts(id)).await.ok();
+        let counts = match self.read(move |store| store.counts(id)).await {
+            Ok(counts) => Some(counts),
+            Err(error) => {
+                tracing::warn!(account = %self.account.name, code = %error.code(), error = %error.message(), "could not read the account's counts; the status keeps the last ones");
+                None
+            }
+        };
         let next =
             now + i64::try_from(self.settings.poll_interval.as_secs()).unwrap_or(i64::MAX / 2);
         let paused = outcome.as_ref().err().is_some_and(SyncError::needs_auth);

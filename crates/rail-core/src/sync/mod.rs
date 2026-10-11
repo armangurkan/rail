@@ -32,3 +32,6 @@ pub const BODY_BATCH: usize = 16;
 pub const BODIES_PER_PASS: usize = 500;
 /// Stored for a body Rail could not read, so it is not fetched again every pass.
 pub const UNREADABLE_BODY: &str = "[Rail could not read this message's body.]";
+/// Backfill pages one pass lists at most while a cursor exists (a grown window), so each pass
+/// also catches up new mail within one poll interval.
+pub const BACKFILL_PAGES_PER_PASS: usize = 20;

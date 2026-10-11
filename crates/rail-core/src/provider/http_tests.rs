@@ -4,6 +4,7 @@ use super::*;
 use crate::error::ErrorClass;
 use crate::ops::{ErrorCode, OpError};
 use crate::provider::tokens::FixedTokens;
+use crate::test_support::logged;
 use std::sync::Mutex;
 use wiremock::matchers::{bearer_token, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -338,44 +339,6 @@ fn a_logged_request_line_never_carries_the_query() {
         assert!(line.contains("/gmail/v1/users/me/messages"), "{line}");
         assert!(line.contains("status=200"), "{line}");
         assert!(!line.contains("secret") && !line.contains('?'), "{line}");
-    }
-}
-
-/// Run `work` on a fresh runtime with `rail_core` debug logs captured; return its output
-/// and the log text.
-///
-/// While only one dispatcher is alive, tracing-core decides a callsite's interest from the
-/// default of whichever thread hits it first, and a parallel test thread without a
-/// subscriber caches `never` for the request line. A second dispatcher kept alive for the
-/// whole test process makes every callsite's interest consider all live subscribers.
-fn logged<R>(work: impl std::future::Future<Output = R>) -> (R, String) {
-    static KEEP_TWO: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
-    KEEP_TWO.get_or_init(|| tracing::Dispatch::new(tracing_subscriber::registry()));
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let sink = buffer.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new("rail_core=debug"))
-        .with_ansi(false)
-        .with_writer(move || Capture(sink.clone()))
-        .finish();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let out = tracing::subscriber::with_default(subscriber, || runtime.block_on(work));
-    let log = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
-    (out, log)
-}
-
-struct Capture(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Capture {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 

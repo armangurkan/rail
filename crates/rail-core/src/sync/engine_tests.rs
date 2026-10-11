@@ -655,3 +655,6 @@ async fn a_login_failure_while_fetching_bodies_ends_the_pass() {
         SyncPhase::NeedsAuth
     );
 }
+
+#[path = "pass_tests.rs"]
+mod pass_tests;

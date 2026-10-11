@@ -502,7 +502,9 @@ body_cache_days = 7     # optional: this account's own body cache
 
 A `body_cache_days` larger than a non-zero `history_days` is treated as `history_days`.
 Shrinking `history_days` removes the local copies of older mail on the next pass (the mail on
-Gmail is never touched); growing it fetches further back on the next pass.
+Gmail is never touched); growing it fetches further back from the next pass on, at most 2,000
+messages a pass, each pass first fetching new mail, so new mail still arrives within one
+`poll_interval` while the older mail fills in.
 
 **What the store keeps.** For each Gmail account: every label, the envelope (sender,
 recipients, subject, date, flags, labels, snippet) of every message inside `history_days` (the
@@ -519,7 +521,11 @@ mailbox takes hours: Gmail charges 20 quota units for each message read and Rail
 5,000 units a minute (under Gmail's per-user limit), which is about 250 messages a minute, so
 100,000 messages take about seven hours. The newest mail is fetched first, so the inbox is usable
 within seconds while the rest fills in; set `history_days` (for example 90) to fetch only recent
-mail and finish in minutes. Microsoft 365 accounts do
+mail and finish in minutes. Mail that arrives during that first sync appears once it finishes
+(Rail notes where the mailbox stood when it began, so none is missed). A sync stopped part way
+(the daemon stopped, the network lost) resumes below the oldest message it stored, which relies
+on Gmail listing mail newest first, as it does; if it ever did not, the next full resync (when
+Gmail's history for the account expires) fetches what was missed. Microsoft 365 accounts do
 not sync yet.
 
 ### What an AI agent may do with your mail: `ai_send`

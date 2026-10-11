@@ -4,7 +4,10 @@ use futures_util::{StreamExt, stream};
 
 use super::batch::{Batch, Prune, StateUpdate, Sweep};
 use super::engine::{Engine, SyncError};
-use super::{BODIES_PER_PASS, BODY_BATCH, BODY_CONCURRENCY, SEARCH_KEEP_DAYS, UNREADABLE_BODY};
+use super::{
+    BACKFILL_PAGES_PER_PASS, BODIES_PER_PASS, BODY_BATCH, BODY_CONCURRENCY, SEARCH_KEEP_DAYS,
+    UNREADABLE_BODY,
+};
 use crate::config::DAY_SECS;
 use crate::ops::SyncPhase;
 use crate::provider::{Body, PageToken, ProviderError, RemoteId, SyncCursor, Window};
@@ -26,6 +29,11 @@ fn needs_backfill(state: &SyncStateRow, window: Option<i64>) -> bool {
 
 /// The listing a backfill resumes or starts: below the marker (the whole oldest second
 /// again), below the old window when it grew, or from the top.
+///
+/// Resuming below the marker relies on the provider listing newest first (Gmail does): every
+/// message newer than the oldest one stored was then on an earlier page. Were a listing ever
+/// out of order, a message above the marker could be missed until the next `CursorExpired`
+/// resync, whose full backfill and sweep fetch it at worst.
 fn listing(state: &SyncStateRow, window: Option<i64>) -> Window {
     let before = match (
         state.backfill_before,
@@ -52,20 +60,43 @@ impl Engine {
         let now = (self.clock)();
         let window = self.settings.window_start_ms(now);
         self.labels().await?;
+        self.envelopes(window).await?;
+        self.bodies(now).await?;
+        self.prune(now, window).await
+    }
+
+    /// Backfill and delta. With a cursor (a grown window, or such a backfill resumed), the
+    /// delta runs first and the backfill lists at most `BACKFILL_PAGES_PER_PASS` pages, so new
+    /// mail arrives within one poll interval however long the backfill takes. Without one (the
+    /// first full backfill), the delta can only follow it.
+    async fn envelopes(&self, window: Option<i64>) -> Result<(), SyncError> {
         let state = self.state().await?;
-        if needs_backfill(&state, window) {
+        let backfill = needs_backfill(&state, window);
+        if let Some(cursor) = state.cursor.clone() {
+            let resynced = self.catch_up(cursor, window).await?;
+            if backfill && !resynced {
+                self.backfill(&state, window).await?;
+            }
+            return Ok(());
+        }
+        if backfill {
             self.backfill(&state, window).await?;
         }
         if let Some(cursor) = self.state().await?.cursor {
-            match self.delta(cursor).await {
-                Err(SyncError::Provider(ProviderError::CursorExpired)) => {
-                    self.resync(window).await?
-                }
-                other => other?,
-            }
+            self.catch_up(cursor, window).await?;
         }
-        self.bodies(now).await?;
-        self.prune(now, window).await
+        Ok(())
+    }
+
+    /// The delta from `cursor`; an expired one resyncs in full. True when it resynced.
+    async fn catch_up(&self, cursor: String, window: Option<i64>) -> Result<bool, SyncError> {
+        match self.delta(cursor).await {
+            Err(SyncError::Provider(ProviderError::CursorExpired)) => {
+                self.resync(window).await?;
+                Ok(true)
+            }
+            other => other.map(|()| false),
+        }
     }
 
     async fn state(&self) -> Result<SyncStateRow, SyncError> {
@@ -100,8 +131,13 @@ impl Engine {
             (None, (self.clock)())
         };
         let listing = listing(state, window);
+        let max_pages = if full {
+            usize::MAX
+        } else {
+            BACKFILL_PAGES_PER_PASS
+        };
         let mut page: Option<PageToken> = None;
-        loop {
+        for listed in 1.. {
             let fetched = self
                 .call(
                     SyncPhase::Backfill,
@@ -125,8 +161,12 @@ impl Engine {
             self.write(batch).await?;
             self.status(|s| s.backfill_fetched += count);
             match fetched.next {
-                Some(next) => page = Some(next),
                 None => break,
+                Some(_) if listed >= max_pages => {
+                    tracing::info!(account = %self.account.name, pages = listed, "the backfill goes on next pass");
+                    return Ok(());
+                }
+                Some(next) => page = Some(next),
             }
         }
         self.end_backfill(full, cursor, started, window).await
@@ -275,7 +315,7 @@ impl Engine {
         fetched: Vec<(RemoteId, Result<Body, ProviderError>)>,
     ) -> (Vec<(RemoteId, Body)>, Option<ProviderError>) {
         let mut bodies = Vec::new();
-        let mut failure = None;
+        let mut failures = Vec::new();
         for (id, result) in fetched {
             match result {
                 Ok(body) => bodies.push((id, body)),
@@ -288,12 +328,28 @@ impl Engine {
                     };
                     bodies.push((id, marker));
                 }
-                Err(error) => {
-                    failure.get_or_insert(error);
-                }
+                Err(error) => failures.push(error),
             }
         }
-        (bodies, failure)
+        (bodies, self.chunk_failure(failures))
+    }
+
+    /// The failure that ends the bodies step: a login failure before any other (it pauses the
+    /// account); the codes of the rest are logged, never their detail.
+    fn chunk_failure(&self, mut failures: Vec<ProviderError>) -> Option<ProviderError> {
+        if failures.is_empty() {
+            return None;
+        }
+        let first = failures
+            .iter()
+            .position(|e| matches!(e, ProviderError::NeedsAuth { .. }))
+            .unwrap_or(0);
+        let chosen = failures.remove(first);
+        if !failures.is_empty() {
+            let codes: Vec<&str> = failures.iter().map(ProviderError::code).collect();
+            tracing::warn!(account = %self.account.name, chosen = chosen.code(), codes = %codes.join(","), "more body fetches failed in the same batch");
+        }
+        Some(chosen)
     }
 
     async fn prune(&self, now: i64, window: Option<i64>) -> Result<(), SyncError> {
