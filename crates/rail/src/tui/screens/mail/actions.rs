@@ -186,14 +186,7 @@ impl MailScreen {
         targets: &[(i64, Picked)],
         grace: bool,
     ) -> Vec<Effect> {
-        let mut by_account: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
-        for (thread, picked) in targets {
-            by_account
-                .entry(picked.account_id)
-                .or_default()
-                .push(*thread);
-            self.actions.failures.remove(thread);
-        }
+        let by_account = self.group_by_account(targets);
         self.actions.seq += 1;
         let seq = self.actions.seq;
         if grace {
@@ -216,6 +209,38 @@ impl MailScreen {
         if grace && leaves && self.focus == Focus::Reader {
             self.close_reader();
         }
+        let effects = self.dispatch(seq, by_account, &action, grace);
+        if grace {
+            if effects.is_empty() {
+                self.actions.last = None;
+            } else if let Some(last) = self.actions.last.as_mut() {
+                last.pending = effects.len();
+            }
+        }
+        effects
+    }
+
+    /// The targets' thread ids by account; their old failure lines go.
+    fn group_by_account(&mut self, targets: &[(i64, Picked)]) -> BTreeMap<i64, Vec<i64>> {
+        let mut by_account: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
+        for (thread, picked) in targets {
+            by_account
+                .entry(picked.account_id)
+                .or_default()
+                .push(*thread);
+            self.actions.failures.remove(thread);
+        }
+        by_account
+    }
+
+    /// One `action.apply` per account.
+    fn dispatch(
+        &mut self,
+        seq: u64,
+        by_account: BTreeMap<i64, Vec<i64>>,
+        action: &MailAction,
+        grace: bool,
+    ) -> Vec<Effect> {
         let mut effects = Vec::new();
         for (account_id, threads) in by_account {
             let Some(account) = self.account_name(account_id) else {
@@ -230,13 +255,6 @@ impl MailScreen {
                 action: action.clone(),
                 grace,
             }));
-        }
-        if grace {
-            if effects.is_empty() {
-                self.actions.last = None;
-            } else if let Some(last) = self.actions.last.as_mut() {
-                last.pending = effects.len();
-            }
         }
         effects
     }
