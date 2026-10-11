@@ -3,13 +3,14 @@
 
 use std::time::{Duration, Instant};
 
+use super::SLOWDOWN;
 use super::html::{MAX_TAG_BYTES, html_render, html_text};
 
 const SMALL: usize = 256 * 1024;
 const LARGE: usize = 10 * 1024 * 1024;
 /// Generous for a debug build on a loaded CI machine.
-const SMALL_LIMIT: Duration = Duration::from_secs(1);
-const LARGE_LIMIT: Duration = Duration::from_secs(5);
+const SMALL_LIMIT: Duration = Duration::from_secs(1).saturating_mul(SLOWDOWN);
+const LARGE_LIMIT: Duration = Duration::from_secs(5).saturating_mul(SLOWDOWN);
 const TAIL: &str = "<p>zzend</p>";
 
 /// `prefix`, then `pattern` repeated to about `size` bytes, then `TAIL`.
