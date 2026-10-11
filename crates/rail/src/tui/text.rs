@@ -233,9 +233,11 @@ pub fn markers(row: &str, links: usize) -> Vec<Marker> {
     found
 }
 
-/// `address` as a URL Rail may show as a hyperlink or open: at most `MAX_LINK_BYTES`, no space
-/// or control byte (ASCII or Unicode), no format character or line separator, a scheme in `SCHEMES`, and a serialisation of printable ASCII only (so it
-/// can stand inside an OSC 8 sequence).
+/// `address` as a URL Rail may show as a hyperlink or open: at most `MAX_LINK_BYTES` both as
+/// written and once normalised (percent-encoding and punycode can make it longer), no space or
+/// control byte (ASCII or Unicode), no format character or line separator, a scheme in
+/// `SCHEMES`, and a serialisation of printable ASCII only (so it can stand inside an OSC 8
+/// sequence).
 pub fn safe_link(address: &str) -> Option<Url> {
     let clean =
         address.bytes().all(|b| b > b' ' && b != 0x7f) && !address.chars().any(hides_or_breaks);
@@ -246,8 +248,31 @@ pub fn safe_link(address: &str) -> Option<Url> {
     let scheme = SCHEMES
         .iter()
         .any(|s| s.trim_end_matches(':') == url.scheme());
-    let printable = url.as_str().bytes().all(|b| (0x21..0x7f).contains(&b));
-    (scheme && printable).then_some(url)
+    let serialised = url.as_str();
+    let printable = serialised.bytes().all(|b| (0x21..0x7f).contains(&b));
+    let fits = serialised.len() <= MAX_LINK_BYTES;
+    (scheme && printable && fits).then_some(url)
+}
+
+/// What the `g x` confirmation shows for `url` (from `safe_link`), each line escaped: the
+/// address; then where it goes: the recipients of a `mailto:` link, or the host of any other,
+/// as the URL serialises it (an IDN or lookalike host shows in its ASCII `xn--` form); and a
+/// warning when the address has a user name or password, which reads like a host before `@`.
+pub fn link_lines(url: &Url) -> Vec<String> {
+    let address = escape(url.as_str());
+    if url.scheme() == "mailto" {
+        return vec![address, format!("To: {}", escape(url.path()))];
+    }
+    let Some(host) = url.host_str().map(escape) else {
+        return vec![address];
+    };
+    let mut lines = vec![address, format!("Host: {host}")];
+    if !url.username().is_empty() || url.password().is_some() {
+        lines.push(format!(
+            "Warning: the part before \"@\" is not where this link goes. It goes to {host}."
+        ));
+    }
+    lines
 }
 
 /// `text` as an OSC 8 hyperlink to `url`. `url` must come from `safe_link` and `text` from

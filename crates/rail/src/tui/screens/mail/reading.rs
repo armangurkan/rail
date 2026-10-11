@@ -13,7 +13,7 @@ use crate::tui::modals::{
     Target,
 };
 use crate::tui::screens::reader::{Reader, ReaderOutcome};
-use crate::tui::text::{escape, fit, safe_link};
+use crate::tui::text::{escape, fit, link_lines, safe_link};
 
 /// How much of a refused address the status bar repeats.
 const SHOWN_LINK_CHARS: usize = 120;
@@ -347,10 +347,9 @@ impl MailScreen {
         };
         match safe_link(address) {
             Some(url) => {
-                let lines = vec![url.as_str().to_string()];
                 self.modal = Some(Modal::Confirm(Confirm::new(
                     "Open this link?",
-                    lines,
+                    link_lines(&url),
                     Command::OpenLink(url),
                 )));
             }

@@ -1,6 +1,9 @@
 //! Escaping, width, cutting, wrapping, tabs, quote folding, link markers, link validation and
 //! OSC 8, with the hostile inputs the spec names.
 
+use rail_core::provider::links::MAX_LINK_BYTES;
+use url::Url;
+
 use super::text::*;
 
 #[test]
@@ -244,4 +247,60 @@ fn outside_text_is_labelled_and_escaped() {
         outside("bad\u{1b}[2J \u{202e}x"),
         "from outside Rail (the provider or the system): \"bad\\u{1b}[2J \\u{202e}x\""
     );
+}
+
+#[test]
+fn a_link_is_measured_after_it_is_normalised() {
+    // 1,414 bytes as written, 4,214 once each `ü` is percent-encoded.
+    let grows = format!("https://e.com/{}", "ü".repeat(700));
+    assert!(grows.len() <= MAX_LINK_BYTES);
+    assert!(safe_link(&grows).is_none());
+    // 1,814 bytes as written, 1,814 serialised: still fine.
+    let fits = format!("https://e.com/{}", "a".repeat(1_800));
+    assert!(safe_link(&fits).is_some());
+}
+
+#[test]
+fn the_confirmation_names_the_host_warns_about_userinfo_and_names_a_mail_recipient() {
+    let lines = |address: &str| link_lines(&safe_link(address).unwrap());
+    assert_eq!(
+        lines("https://docs.example/plan"),
+        ["https://docs.example/plan", "Host: docs.example"]
+    );
+    let warning =
+        "Warning: the part before \"@\" is not where this link goes. It goes to evil.example.";
+    assert_eq!(
+        lines("https://bank.com@evil.example/x"),
+        [
+            "https://bank.com@evil.example/x",
+            "Host: evil.example",
+            warning
+        ]
+    );
+    assert_eq!(lines("https://user:pw@evil.example/")[2], warning);
+    assert_eq!(lines("https://:pw@evil.example/")[2], warning);
+    assert_eq!(
+        lines("mailto:dana@example.com"),
+        ["mailto:dana@example.com", "To: dana@example.com"]
+    );
+    let url = Url::parse("https://docs.example/").unwrap();
+    assert!(link_lines(&url).iter().all(|l| !l.contains("Warning")));
+}
+
+/// Review Focus 5.
+#[test]
+fn an_idn_or_lookalike_host_is_shown_in_ascii_and_a_long_punycode_host_is_refused() {
+    for (written, host) in [
+        ("https://bücher.example/", "xn--bcher-kva.example"),
+        ("https://xn--bcher-kva.example/", "xn--bcher-kva.example"),
+        ("https://\u{430}pple.com/", "xn--pple-43d.com"),
+    ] {
+        let url = safe_link(written).unwrap();
+        assert_eq!(link_lines(&url)[1], format!("Host: {host}"), "{written}");
+        assert!(link_lines(&url).iter().all(|l| l.is_ascii()), "{written}");
+    }
+    // 1,516 bytes as written, 2,716 once every label is punycode (`xn--80ac`).
+    let long = format!("https://{}example/", "\u{430}\u{431}.".repeat(300));
+    assert!(long.len() <= MAX_LINK_BYTES);
+    assert!(safe_link(&long).is_none());
 }

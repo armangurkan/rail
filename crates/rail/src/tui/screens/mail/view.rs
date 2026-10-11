@@ -102,16 +102,19 @@ impl MailScreen {
         let pane = layout::is_split(area.width, self.ctx.split_threshold);
         let parts = areas(area, sidebar, pane);
         self.size.set((parts.list.height, area.width));
+        // An OSC 8 cell claims the cells after it, so the diff skips them; a modal drawn over
+        // them could lose its border. While a modal is open the markers are plain `[n]`.
+        let hyperlinks = self.ctx.hyperlinks && self.modal.is_none();
         match (self.reader.as_ref(), parts.reader) {
             (Some(reader), Some(pane)) => {
                 self.render_browse(frame, &parts, theme, &glyphs);
                 let focused = self.focus == Focus::Reader;
-                reader.render(frame, pane, theme, self.ctx.hyperlinks, focused);
+                reader.render(frame, pane, theme, hyperlinks, focused);
             }
             (Some(reader), None) => {
                 let [body, _] =
                     Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
-                reader.render(frame, body, theme, self.ctx.hyperlinks, true);
+                reader.render(frame, body, theme, hyperlinks, true);
             }
             (None, pane) => {
                 self.render_browse(frame, &parts, theme, &glyphs);

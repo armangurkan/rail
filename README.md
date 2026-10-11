@@ -241,9 +241,13 @@ messages, `Tab` expands or collapses one, and `Enter` on `[n quoted lines]` show
 HTML mail is shown as Rail's plain-text rendering, with each link as a numbered marker such as
 `[1]`; in terminals that support hyperlinks (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows
 Terminal, Hyper, foot, Alacritty, GNOME Terminal and other VTE terminals; not inside tmux or
-screen) the marker is clickable. `g x` opens a link: the marker on the cursor line, or the number
-you type when the line has none or several. Rail shows the address first and opens only `http`,
-`https` and `mailto` links. `a` lists the thread's attachments (name, type, size); opening and
+screen) the marker is clickable; while a box such as help or a confirmation is open the markers
+are plain text. `g x` opens a link: the marker on the cursor line, or the number you type when the
+line has none or several. Rail shows the address first, with the host it goes to (an
+international or look-alike host in its ASCII `xn--` form) or, for `mailto`, the recipient, and
+warns when the address has text before an `@` that could pass for a host
+(`https://bank.com@evil.example` goes to `evil.example`). Rail opens only `http`, `https` and
+`mailto` links of at most 2,048 bytes. `a` lists the thread's attachments (name, type, size); opening and
 saving them is not possible in this version.
 
 `o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file in
