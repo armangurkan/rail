@@ -165,7 +165,7 @@ mod tests {
         let report = gather(&paths, &ItemIdCache::default());
         assert!(report.is_healthy(), "{report:?}");
         assert_eq!(report.config_accounts, Some(1));
-        assert_eq!(report.schema_version, Some(1));
+        assert_eq!(report.schema_version, Some(2));
         assert_eq!(report.secrets_backend, "file");
         assert_eq!(report.secrets_file, Some(paths.secrets_file()));
         assert!(report.secrets_checked);

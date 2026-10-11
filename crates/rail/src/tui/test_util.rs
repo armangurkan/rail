@@ -128,6 +128,8 @@ pub fn existing_config() -> Config {
             tenant: None,
             signature: None,
             ai_send: None,
+            history_days: None,
+            body_cache_days: None,
         }],
         ..Config::default()
     }

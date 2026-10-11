@@ -464,6 +464,25 @@ and `tenant` must not contain spaces, control characters or Unicode format chara
 in confirmations, where an escape sequence could otherwise act. `rail account add` refuses such a
 value, and a hand-edited `config.toml` holding one fails to load with its path and line.
 
+### Sync settings
+
+```toml
+[general]
+poll_interval = "60s"   # how often each account is checked for new mail; at least 5s
+history_days = 0        # how much mail the store keeps; 0 is the whole mailbox
+body_cache_days = 30    # bodies of threads with mail this recent are fetched ahead of time
+
+[[accounts]]
+name = "work"
+# ...
+history_days = 90       # optional: this account's own window
+body_cache_days = 7     # optional: this account's own body cache
+```
+
+A `body_cache_days` larger than a non-zero `history_days` is treated as `history_days`.
+Shrinking `history_days` removes the local copies of older mail on the next pass (the mail on
+Gmail is never touched); growing it fetches further back on the next pass.
+
 ### What an AI agent may do with your mail: `ai_send`
 
 Each account may set what a coding agent connected over MCP may do with its mail:

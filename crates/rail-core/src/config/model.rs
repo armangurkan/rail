@@ -113,6 +113,12 @@ pub struct AccountConfig {
     /// What an AI agent may do with this account's mail over MCP. Unset means `confirm`.
     #[serde(default)]
     pub ai_send: Option<AiSend>,
+    /// This account's `history_days`, instead of `[general]`'s. 0 is the whole mailbox.
+    #[serde(default)]
+    pub history_days: Option<u32>,
+    /// This account's `body_cache_days`, instead of `[general]`'s.
+    #[serde(default)]
+    pub body_cache_days: Option<u32>,
 }
 
 /// True when `text` holds no whitespace, no control character and no Unicode format
@@ -167,6 +173,46 @@ impl AccountConfig {
     }
 }
 
+/// Seconds in a day.
+pub const DAY_SECS: i64 = 86_400;
+
+/// What one account's sync uses: `[general]` with the account's overrides, and
+/// `body_cache_days` clamped to a non-zero `history_days` (bodies are only kept for mail the
+/// store keeps).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SyncSettings {
+    /// 0 means the whole mailbox.
+    pub history_days: u32,
+    pub body_cache_days: u32,
+    pub poll_interval: Duration,
+}
+
+impl SyncSettings {
+    pub fn for_account(general: &General, account: &AccountConfig) -> Self {
+        let history_days = account.history_days.unwrap_or(general.history_days);
+        let mut body_cache_days = account.body_cache_days.unwrap_or(general.body_cache_days);
+        if history_days != 0 {
+            body_cache_days = body_cache_days.min(history_days);
+        }
+        Self {
+            history_days,
+            body_cache_days,
+            poll_interval: general.poll_interval,
+        }
+    }
+
+    /// The oldest `internalDate` (milliseconds) inside the window at `now` (Unix seconds),
+    /// or `None` when the window is the whole mailbox.
+    pub fn window_start_ms(&self, now: i64) -> Option<i64> {
+        (self.history_days != 0).then(|| (now - i64::from(self.history_days) * DAY_SECS) * 1000)
+    }
+
+    /// The oldest `internalDate` (milliseconds) whose thread gets bodies prefetched.
+    pub fn body_since_ms(&self, now: i64) -> i64 {
+        (now - i64::from(self.body_cache_days) * DAY_SECS) * 1000
+    }
+}
+
 /// What an agent may do through MCP with an account's mail: send, reply, forward and delete.
 /// Parsed and reported now; enforced when the send tools arrive.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -208,6 +254,8 @@ impl std::fmt::Debug for AccountConfig {
             .field("tenant", &self.tenant)
             .field("signature", &self.signature)
             .field("ai_send", &self.ai_send)
+            .field("history_days", &self.history_days)
+            .field("body_cache_days", &self.body_cache_days)
             .finish()
     }
 }
@@ -239,6 +287,54 @@ impl AccountKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with_account(general: &str, account: &str) -> crate::config::Config {
+        let text = format!(
+            "[general]\n{general}\n[[accounts]]\nname = \"w\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"c\"\n{account}"
+        );
+        crate::config::parse(&text, std::path::Path::new("c.toml")).unwrap()
+    }
+
+    #[test]
+    fn sync_settings_apply_overrides_and_the_clamp() {
+        let cases = [
+            ("", "", (0, 30)),
+            ("history_days = 2", "", (2, 2)),
+            ("history_days = 10\nbody_cache_days = 5", "", (10, 5)),
+            ("history_days = 10", "history_days = 0", (0, 30)),
+            ("", "history_days = 7\nbody_cache_days = 9", (7, 7)),
+            ("body_cache_days = 3", "body_cache_days = 40", (0, 40)),
+        ];
+        for (general, account, (history, body)) in cases {
+            let config = with_account(general, account);
+            let settings = SyncSettings::for_account(&config.general, &config.accounts[0]);
+            assert_eq!(
+                (settings.history_days, settings.body_cache_days),
+                (history, body),
+                "{general:?} / {account:?}"
+            );
+            assert_eq!(settings.poll_interval, Duration::from_secs(60));
+        }
+    }
+
+    #[test]
+    fn the_window_starts_history_days_ago_in_milliseconds() {
+        let config = with_account("history_days = 2", "");
+        let settings = SyncSettings::for_account(&config.general, &config.accounts[0]);
+        let now = 10 * DAY_SECS;
+        assert_eq!(settings.window_start_ms(now), Some(8 * DAY_SECS * 1000));
+        assert_eq!(settings.body_since_ms(now), 8 * DAY_SECS * 1000);
+        let whole = with_account("", "");
+        let whole = SyncSettings::for_account(&whole.general, &whole.accounts[0]);
+        assert_eq!(whole.window_start_ms(now), None);
+    }
+
+    #[test]
+    fn account_overrides_debug_print() {
+        let config = with_account("", "history_days = 3");
+        let debug = format!("{:?}", config.accounts[0]);
+        assert!(debug.contains("history_days: Some(3)"), "{debug}");
+    }
 
     /// Parked item 3: bidi overrides and zero-width characters are Unicode format (Cf)
     /// characters; an address holding one could display as another.

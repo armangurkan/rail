@@ -2,9 +2,12 @@ use rusqlite::{Connection, TransactionBehavior};
 
 use super::StoreError;
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("migrations/0001_init.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("migrations/0001_init.sql")),
+    (2, include_str!("migrations/0002_sync.sql")),
+];
 
-pub const LATEST_VERSION: i64 = 1;
+pub const LATEST_VERSION: i64 = 2;
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {
