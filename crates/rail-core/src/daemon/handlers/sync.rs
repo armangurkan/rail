@@ -21,7 +21,8 @@ pub(super) async fn status(
 }
 
 /// Subscribe first (when asked), so no progress of the woken pass is missed; a wake that
-/// fails takes the subscription back.
+/// fails takes the subscription back. A connection's first watch is sent every failed action
+/// it could not have seen (they happened while it was away), after the live ones start.
 pub(super) async fn now(call: Call, request: SyncNowRequest) -> Result<SyncNowResponse, OpError> {
     let watch = request
         .watch
@@ -32,9 +33,14 @@ pub(super) async fn now(call: Call, request: SyncNowRequest) -> Result<SyncNowRe
         .wake(&call.ctx, request.account.as_deref())
         .await
     {
-        Ok(targets) => Ok(SyncNowResponse { targets }),
+        Ok(targets) => {
+            if let Some((_, true)) = watch {
+                replay_failures(&call).await;
+            }
+            Ok(SyncNowResponse { targets })
+        }
         Err(error) => {
-            if let Some(id) = watch {
+            if let Some((id, _)) = watch {
                 stop_watch(&call.caller, id);
             }
             Err(error)
@@ -42,11 +48,20 @@ pub(super) async fn now(call: Call, request: SyncNowRequest) -> Result<SyncNowRe
     }
 }
 
+/// One `action.failed` per stored failed row. A live failure sent since the watch began may
+/// come again here: the front end lists a row once.
+async fn replay_failures(call: &Call) {
+    for failure in call.ctx.sync.failed_actions(&call.ctx).await {
+        call.caller.notify(names::ACTION_FAILED, &failure);
+    }
+}
+
 /// Hold the connection's `sync.progress` watch, subscribing when it has none; the watch's
 /// id. The subscriber runs under the status board's lock: it only queues a frame on the
 /// connection's unbounded channel, never blocks and never calls back into the board (or takes
-/// the watch's lock). It drops itself once the connection goes or the watch ended.
-fn start_watch(sync: &SyncManager, caller: &Caller) -> u64 {
+/// the watch's lock). It drops itself once the connection goes or the watch ended. True with
+/// the id when this call subscribed.
+fn start_watch(sync: &SyncManager, caller: &Caller) -> (u64, bool) {
     let (id, subscribe) = caller
         .watching()
         .join(NEXT_WATCH.fetch_add(1, Ordering::SeqCst));
@@ -68,7 +83,7 @@ fn start_watch(sync: &SyncManager, caller: &Caller) -> u64 {
             true
         }));
     }
-    id
+    (id, subscribe)
 }
 
 /// A request whose wake failed lets go of the watch it held; another request's hold stays.
@@ -114,10 +129,11 @@ mod tests {
     #[test]
     fn one_connection_has_one_progress_watch() {
         let (sync, caller, _frames, mut sent) = setup();
-        let first = start_watch(&sync, &caller);
+        let (first, subscribed) = start_watch(&sync, &caller);
+        assert!(subscribed);
         assert_eq!(
             start_watch(&sync, &caller.clone()),
-            first,
+            (first, false),
             "joined, not subscribed"
         );
         change(&sync, 1);
@@ -127,13 +143,17 @@ mod tests {
         stop_watch(&caller, first);
         change(&sync, 2);
         assert!(sent.try_recv().is_err(), "a watch nobody holds is silent");
-        assert_ne!(start_watch(&sync, &caller), first, "and can be asked again");
+        assert_ne!(
+            start_watch(&sync, &caller).0,
+            first,
+            "and can be asked again"
+        );
     }
 
     #[test]
     fn a_watch_also_carries_action_failures() {
         let (sync, caller, _frames, mut sent) = setup();
-        let id = start_watch(&sync, &caller);
+        let (id, _) = start_watch(&sync, &caller);
         let failure = crate::ops::ActionFailed {
             account: "w".into(),
             row: 1,
@@ -153,8 +173,8 @@ mod tests {
     #[test]
     fn a_failed_wake_does_not_cancel_another_requests_watch() {
         let (sync, caller, _frames, mut sent) = setup();
-        let a = start_watch(&sync, &caller);
-        let b = start_watch(&sync, &caller);
+        let (a, _) = start_watch(&sync, &caller);
+        let (b, _) = start_watch(&sync, &caller);
         assert_eq!(a, b);
         stop_watch(&caller, a);
         change(&sync, 1);

@@ -533,8 +533,12 @@ impl MailScreen {
                 .failures
                 .insert(*thread, (failure.row, text.clone()));
         }
-        self.status
-            .error_with_retry(text, self.ctx.clock.now(), self.tick, failure.row);
+        // The daemon sends the failed rows again on every connect: a row still offered for a
+        // retry is listed once.
+        if !self.status.offers_retry(failure.row) {
+            self.status
+                .error_with_retry(text, self.ctx.clock.now(), self.tick, failure.row);
+        }
         self.dirty()
     }
 }

@@ -68,6 +68,9 @@ impl Store {
             relabel(&tx, account, change, &mut touched)?;
         }
         outcome.deleted = delete(&tx, account, &batch.deletes, &mut touched)?;
+        // What the server said about these threads settles their failed actions (a body
+        // fetched for the reader, a sweep or a prune does not).
+        outcome.failed_cleared = super::outbox::clear_failed(&tx, account, &touched)?;
         for (id, body) in &batch.bodies {
             store_body(&tx, account, id, body, now, &mut touched)?;
         }

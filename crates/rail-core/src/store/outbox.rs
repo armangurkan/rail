@@ -12,6 +12,8 @@ use crate::ops::{Action, OutboxId};
 
 /// Attempts after which a transiently failing row gives up.
 pub const MAX_ATTEMPTS: u32 = 20;
+/// Failed rows `failed_rows` reads at most (one account's, listed again on a connect).
+pub const MAX_FAILED_ROWS: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutboxState {
@@ -369,6 +371,24 @@ pub(crate) fn retry(tx: &Transaction, id: OutboxId, now: i64) -> Result<bool, St
     Ok(true)
 }
 
+/// Spec §3: a failed row is kept until it is retried or a sync writes server state for one of
+/// its threads. Deletes the account's failed rows on `threads`; how many.
+pub(super) fn clear_failed(
+    tx: &Transaction,
+    account: i64,
+    threads: &BTreeSet<i64>,
+) -> Result<usize, StoreError> {
+    if threads.is_empty() {
+        return Ok(0);
+    }
+    Ok(tx.execute(
+        "DELETE FROM outbox WHERE account_id = ?1 AND state = 'failed'
+           AND EXISTS (SELECT 1 FROM json_each(outbox.thread_ids) t
+                       WHERE t.value IN (SELECT value FROM json_each(?2)))",
+        params![account, json(threads)],
+    )?)
+}
+
 /// The restart rule: inflight rows of `account` are sent again.
 pub(crate) fn recover(tx: &Transaction, account: i64) -> Result<usize, StoreError> {
     Ok(tx.execute(
@@ -468,11 +488,14 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// The account's failed rows, oldest first, at most `MAX_FAILED_ROWS`.
     pub fn failed_rows(&self, account_id: i64) -> Result<Vec<OutboxRow>, StoreError> {
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {COLUMNS} FROM outbox WHERE account_id = ?1 AND state = 'failed' ORDER BY id"
+            "SELECT {COLUMNS} FROM outbox WHERE account_id = ?1 AND state = 'failed'
+             ORDER BY id LIMIT ?2"
         ))?;
-        let rows = stmt.query_map([account_id], read_row)?;
+        let limit = i64::try_from(MAX_FAILED_ROWS).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(params![account_id, limit], read_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

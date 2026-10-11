@@ -1,6 +1,7 @@
 //! The three action operations through a real daemon over the fake Gmail: apply with and
 //! without grace, undo, retry, client-token replay, validation, Microsoft 365, the
-//! `action.failed` notification and the outbox depth in `sync.status`.
+//! `action.failed` notification (live, and again for a later watcher), the outbox depth in
+//! `sync.status`, and a sync clearing a failed action.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -351,4 +352,101 @@ async fn a_refused_action_is_reverted_notified_and_can_be_retried() {
         .await
         .unwrap();
     assert!(!again.retried, "no longer failed");
+}
+
+impl Daemon {
+    /// Archive t1 with Gmail refusing it, while no connection watches; the failed row.
+    async fn refused_unwatched(&self) -> i64 {
+        let t1 = self.thread("t1");
+        self.mock.fail_next(Call::Modify, ProviderError::NotFound);
+        let answer = self
+            .apply(vec![t1], Action::Archive {}, false, "a")
+            .await
+            .unwrap();
+        tokio::time::timeout(BOUND, async {
+            while self.depth().await.failed != 1 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("failed");
+        answer.rows[0]
+    }
+}
+
+/// A failure nobody watched is sent to the next connection that watches, and retries.
+#[tokio::test]
+async fn a_failure_while_nobody_watched_is_sent_on_the_next_watch() {
+    let d = daemon(WORK).await;
+    let row = d.refused_unwatched().await;
+    let later = Connector::new(d.paths.clone(), Arc::new(|| Ok(())))
+        .connect()
+        .await
+        .unwrap();
+    let mut notes = later.notifications();
+    let watch = SyncNowRequest {
+        account: None,
+        watch: true,
+    };
+    later.call::<SyncNow>(&watch).await.unwrap();
+    let failed = tokio::time::timeout(BOUND, async {
+        loop {
+            let note = notes.recv().await.unwrap();
+            if note.method == names::ACTION_FAILED {
+                return note.params;
+            }
+        }
+    })
+    .await
+    .expect("replayed");
+    let failed: crate::ops::ActionFailed = serde_json::from_value(failed).unwrap();
+    assert_eq!(
+        (failed.row, failed.threads, failed.action),
+        (row, vec![d.thread("t1")], Action::Archive {})
+    );
+    assert_eq!(failed.error.class, crate::error::ErrorClass::Permanent);
+    later.call::<SyncNow>(&watch).await.unwrap();
+    let retried = later
+        .call::<ActionRetry>(&ActionRetryRequest { row: failed.row })
+        .await
+        .unwrap();
+    assert!(retried.retried);
+    d.until("sent on retry", |d| d.mock.with(|m| m.modifies.len() == 1))
+        .await;
+    while let Ok(note) = notes.try_recv() {
+        assert_ne!(
+            note.method,
+            names::ACTION_FAILED,
+            "a watch the connection already holds is not sent the failures again"
+        );
+    }
+}
+
+/// Spec §3: the next sync of the thread clears its failed action, and the depth follows.
+#[tokio::test]
+async fn a_sync_of_the_thread_clears_its_failed_action() {
+    let d = daemon(WORK).await;
+    d.refused_unwatched().await;
+    let now = crate::auth::unix_now() * 1000;
+    d.mock.add(envelope("m3", "t1", now));
+    d.client
+        .call::<SyncNow>(&SyncNowRequest {
+            account: None,
+            watch: false,
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(BOUND, async {
+        while d.depth().await.failed != 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("cleared");
+    let failed: i64 = Store::open_reader(&d.paths.db_file())
+        .unwrap()
+        .conn()
+        .query_row("SELECT count(*) FROM outbox", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(failed, 0);
 }

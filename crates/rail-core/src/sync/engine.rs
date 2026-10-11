@@ -207,10 +207,28 @@ impl Engine {
     }
 
     /// Hand `batch` to the writer, stamped with this engine's clock, and wait for its commit.
+    /// A batch that settled failed actions publishes the account's outbox depth.
     pub(super) async fn write(&self, mut batch: Batch) -> Result<BatchOutcome, SyncError> {
         batch.account_id = self.account_id;
         batch.at = Some((self.clock)());
-        Ok(self.writer.write(batch).await?)
+        let outcome = self.writer.write(batch).await?;
+        if outcome.failed_cleared > 0 {
+            let (board, address, id) = (
+                self.board.clone(),
+                self.account.address.clone(),
+                self.account_id,
+            );
+            let published = self
+                .read(move |store| {
+                    super::outbox::publish_depth(&board, &address, store, id);
+                    Ok(())
+                })
+                .await;
+            if let Err(error) = published {
+                tracing::warn!(account = %self.account.name, code = %error.code(), "could not publish the outbox depth");
+            }
+        }
+        Ok(outcome)
     }
 
     /// Record how a pass ended in the store and the status. True when the engine must pause

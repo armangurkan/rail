@@ -311,3 +311,64 @@ fn the_local_change_touches_only_the_accounts_threads() {
     assert!(priors.is_empty());
     assert!(!starred(&store, foreign));
 }
+
+fn fail_for_good(store: &mut super::Store, id: i64) {
+    claim(store, NOW + 10).unwrap();
+    let fail = OutboxWrite::Fail {
+        id,
+        failure: Failure::Permanent("Gmail says not found".into()),
+    };
+    store.outbox_write(&fail, NOW + 10).unwrap();
+}
+
+/// Spec §3: a failed row stays until the server's state of one of its threads arrives; a
+/// body fetched for the reader is not that, and other threads' rows stay.
+#[test]
+fn a_sync_of_the_thread_clears_its_failed_row() {
+    use crate::sync::batch::Batch;
+    let mut store = seeded();
+    let (t1, t2) = (thread(&store, "t1"), thread(&store, "t2"));
+    let a = enqueue(&mut store, Action::Archive {}, vec![t1], "a");
+    fail_for_good(&mut store, a);
+    let b = enqueue(&mut store, Action::Archive {}, vec![t2], "b");
+    fail_for_good(&mut store, b);
+    assert_eq!(store.outbox_depth(1).unwrap(), (0, 2));
+    let body = Batch {
+        bodies: vec![("m1".into(), crate::provider::Body::default())],
+        ..Batch::new(1)
+    };
+    assert_eq!(store.apply(&body, NOW).unwrap().failed_cleared, 0);
+    assert_eq!(
+        store.outbox_depth(1).unwrap(),
+        (0, 2),
+        "a body is not a sync"
+    );
+    let synced = Batch {
+        upserts: vec![crate::provider::mock::envelope("m1", "t1", 1_000)],
+        ..Batch::new(1)
+    };
+    assert_eq!(store.apply(&synced, NOW).unwrap().failed_cleared, 1);
+    assert_eq!(store.outbox_depth(1).unwrap(), (0, 1));
+    let left = store.failed_rows(1).unwrap();
+    assert_eq!(left.iter().map(|r| r.id).collect::<Vec<_>>(), vec![b]);
+}
+
+#[test]
+fn failed_rows_are_bounded() {
+    use super::outbox::MAX_FAILED_ROWS;
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    for i in 0..=MAX_FAILED_ROWS {
+        enqueue(
+            &mut store,
+            Action::Star { on: true },
+            vec![t1],
+            &format!("k{i}"),
+        );
+    }
+    store
+        .conn()
+        .execute("UPDATE outbox SET state = 'failed'", [])
+        .unwrap();
+    assert_eq!(store.failed_rows(1).unwrap().len(), MAX_FAILED_ROWS);
+}

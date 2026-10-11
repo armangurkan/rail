@@ -358,7 +358,10 @@ and gives up on an action after 20 attempts. While an account needs a login, its
 are sent after the login, and an action still waiting when Rail starts again is sent. When Gmail
 refuses an action for good (the thread or the label no longer exists), Rail undoes it in the
 list, shows "Could not archive: …" on the thread's row, and keeps the error in `:errors`, where
-`Enter` on it sends the action again. Microsoft 365 accounts cannot be changed yet.
+`Enter` on it sends the action again. Refusals are listed in `:errors` again whenever Rail
+connects to the daemon, so one that happened while Rail was closed or disconnected is not lost.
+A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed`.
+Microsoft 365 accounts cannot be changed yet.
 
 ## Account setup
 

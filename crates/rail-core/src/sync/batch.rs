@@ -103,4 +103,6 @@ pub struct BatchOutcome {
     pub deleted: usize,
     pub swept: usize,
     pub pruned: usize,
+    /// Failed outbox rows the batch's server state settled (the outbox depth changed).
+    pub failed_cleared: usize,
 }

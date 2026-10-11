@@ -149,6 +149,11 @@ impl StatusBar {
         }
     }
 
+    /// Some `:errors` line still offers to retry `row`.
+    pub fn offers_retry(&self, row: rail_core::ops::OutboxId) -> bool {
+        self.errors.iter().any(|e| e.retry == Some(row))
+    }
+
     /// A retried row's `:errors` lines no longer offer a retry.
     pub fn retried(&mut self, row: rail_core::ops::OutboxId) {
         for entry in self.errors.iter_mut().filter(|e| e.retry == Some(row)) {

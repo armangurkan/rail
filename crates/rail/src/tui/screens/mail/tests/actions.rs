@@ -340,6 +340,49 @@ async fn a_failure_shows_on_the_row_and_in_errors_where_enter_retries() {
     );
 }
 
+/// A failure the daemon sends again on a reconnect is listed once in `:errors`, and the
+/// retry still works; once retried, a new failure of the row is listed again.
+#[tokio::test]
+async fn a_failure_sent_again_on_a_reconnect_is_listed_once() {
+    let mut f = fixture(3).await;
+    let top = f.screen.list.selected().unwrap().key.thread_id;
+    let failure = || {
+        MailEvent::ActionFailed(Box::new(ActionFailed {
+            account: "work".into(),
+            row: 7,
+            threads: vec![top],
+            action: MailAction::Archive {},
+            error: OpError::not_found("the mail provider no longer has it"),
+        }))
+    };
+    let retries = |f: &Fixture| {
+        f.screen
+            .status
+            .errors()
+            .filter(|e| e.retry == Some(7))
+            .count()
+    };
+    feed(&mut f, failure()).await;
+    feed(&mut f, failure()).await;
+    assert_eq!(retries(&f), 1);
+    let effects = f.screen.run_palette(Target::Errors);
+    settle(&mut f.screen, effects).await;
+    press(&mut f, KeyCode::Enter).await;
+    assert!(
+        f.fake
+            .calls
+            .lock()
+            .unwrap()
+            .contains(&FakeCall::Retry { row: 7 })
+    );
+    feed(&mut f, failure()).await;
+    assert_eq!(
+        retries(&f),
+        1,
+        "failed again after the retry: offered again"
+    );
+}
+
 async fn feed(f: &mut Fixture, event: MailEvent) {
     let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
     settle(&mut f.screen, effects).await;
