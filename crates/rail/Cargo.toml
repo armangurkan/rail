@@ -34,6 +34,11 @@ serde_json.workspace = true
 jiff.workspace = true
 nucleo-matcher.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# Already in the tree through crossterm; its safe `flag` API restores SIGHUP/SIGTERM's
+# default action outside the run loop, which tokio's handlers cannot.
+signal-hook.workspace = true
+
 [dev-dependencies]
 rail-core = { workspace = true, features = ["test-gates"] }
 tempfile.workspace = true

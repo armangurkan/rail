@@ -5,6 +5,10 @@
 use std::collections::VecDeque;
 use std::io;
 use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::Mutex;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
@@ -34,6 +38,9 @@ pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>) -> io::Result<S>
     let events = Box::pin(EventStream::new());
     let result = run_loop(&mut tui.terminal, &mut app, events).await;
     drop(tui);
+    if let Some(linger) = crate::test_hooks::linger_after_loop() {
+        tokio::time::sleep(linger).await;
+    }
     result.map(|()| app.screen)
 }
 
@@ -89,20 +96,26 @@ where
 }
 
 /// SIGHUP (the terminal window closed) and SIGTERM. Either ends the loop as `q` does, so the
-/// screen is dropped (and the files `o` wrote removed) and the terminal restored.
+/// screen is dropped (and the files `o` wrote removed) and the terminal restored. Tokio never
+/// removes its handlers, so dropping this re-arms the signals' default action: after the loop
+/// (the wizard's settle, the final report) they end the process as they would any program.
 #[cfg(unix)]
 struct QuitSignals {
     hangup: tokio::signal::unix::Signal,
     terminate: tokio::signal::unix::Signal,
+    default_action: Arc<AtomicBool>,
 }
 
 #[cfg(unix)]
 impl QuitSignals {
     fn new() -> io::Result<Self> {
         use tokio::signal::unix::{SignalKind, signal};
+        let default_action = default_action_flag()?;
+        default_action.store(false, Ordering::SeqCst);
         Ok(Self {
             hangup: signal(SignalKind::hangup())?,
             terminate: signal(SignalKind::terminate())?,
+            default_action,
         })
     }
 
@@ -112,6 +125,34 @@ impl QuitSignals {
             _ = self.terminate.recv() => {}
         }
     }
+}
+
+#[cfg(unix)]
+impl Drop for QuitSignals {
+    fn drop(&mut self) {
+        self.default_action.store(true, Ordering::SeqCst);
+    }
+}
+
+/// The process-wide flag that, while true, makes SIGHUP and SIGTERM take their default action
+/// (terminate). Registered once; a run loop holds it false while it listens. One loop runs at
+/// a time in the binary; parallel unit-test loops only flip it in a process nobody signals.
+#[cfg(unix)]
+fn default_action_flag() -> io::Result<Arc<AtomicBool>> {
+    use signal_hook::consts::{SIGHUP, SIGTERM};
+    static FLAG: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+    let mut slot = FLAG
+        .lock()
+        .map_err(|_| io::Error::other("the signal flag lock is poisoned"))?;
+    if let Some(flag) = slot.as_ref() {
+        return Ok(flag.clone());
+    }
+    let flag = Arc::new(AtomicBool::new(false));
+    for signal in [SIGHUP, SIGTERM] {
+        signal_hook::flag::register_conditional_default(signal, flag.clone())?;
+    }
+    *slot = Some(flag.clone());
+    Ok(flag)
 }
 
 /// No such signals here: never fires.

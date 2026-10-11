@@ -48,6 +48,7 @@ sha2 = "0.11"
 insta = { version = "1.49.0", default-features = false }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 nucleo-matcher = "0.3.1"
+signal-hook = { version = "0.3.18", default-features = false }
 rmcp = { version = "3.5.1", default-features = false, features = ["server", "macros", "transport-io", "elicitation", "schemars"] }
 
 [workspace.lints.rust]
