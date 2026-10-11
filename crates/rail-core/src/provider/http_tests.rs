@@ -377,3 +377,282 @@ fn delays_double_up_to_the_cap_with_jitter_below_the_base() {
         Duration::from_secs(120)
     );
 }
+
+/// 2026-10-11 12:00:00 UTC, a Sunday.
+fn noon() -> std::time::SystemTime {
+    httpdate::parse_http_date("Sun, 11 Oct 2026 12:00:00 GMT").unwrap()
+}
+
+/// RFC 9110 §10.2.3: delay-seconds, or an HTTP-date in any of its three forms.
+#[test]
+fn retry_after_reads_seconds_and_all_three_http_date_forms() {
+    let now = noon();
+    let secs = Duration::from_secs;
+    assert_eq!(parse_retry_after("7", now), Some(secs(7)));
+    assert_eq!(parse_retry_after(" 7 ", now), Some(secs(7)));
+    assert_eq!(
+        parse_retry_after("Sun, 11 Oct 2026 12:00:05 GMT", now),
+        Some(secs(5))
+    );
+    assert_eq!(
+        parse_retry_after("Sunday, 11-Oct-26 12:00:09 GMT", now),
+        Some(secs(9))
+    );
+    assert_eq!(
+        parse_retry_after("Sun Oct 11 12:00:07 2026", now),
+        Some(secs(7))
+    );
+}
+
+/// Review Focus 3: a `Retry-After` far in the future or malformed. Far dates and huge numbers
+/// are capped (never an overflow or an endless wait); a past date retries now; a negative
+/// number, garbage or a date with the wrong weekday fall back to the backoff.
+#[test]
+fn a_far_future_huge_negative_or_garbage_retry_after_is_capped_or_ignored() {
+    let now = noon();
+    let policy = RetryPolicy::default();
+    for capped in [
+        "Fri, 31 Dec 9999 23:59:59 GMT",
+        "99999999999",
+        "999999999999999999999999",
+    ] {
+        let after = parse_retry_after(capped, now);
+        assert!(after.is_some(), "{capped}");
+        assert_eq!(policy.delay(0, after), policy.max_retry_after, "{capped}");
+    }
+    // A two-digit year in the past (1994) and an IMF date in the past: retry now.
+    for past in [
+        "Sunday, 06-Nov-94 08:49:37 GMT",
+        "Sun, 06 Nov 1994 08:49:37 GMT",
+    ] {
+        assert_eq!(parse_retry_after(past, now), Some(Duration::ZERO), "{past}");
+        assert_eq!(
+            policy.delay(0, parse_retry_after(past, now)),
+            Duration::ZERO
+        );
+    }
+    for garbage in [
+        "-5",
+        "+5",
+        "soon",
+        "",
+        "7.5",
+        "Mon, 11 Oct 2026 12:00:05 GMT", // 11 October 2026 is a Sunday
+        "Sun, 11 Oct 2026 12:00:05 UTC",
+        "Sun, 11 Oct 2026 12:00:05 GMT\u{202e}",
+    ] {
+        assert_eq!(parse_retry_after(garbage, now), None, "{garbage:?}");
+        let wait = policy.delay(0, None);
+        assert!(wait >= policy.base && wait < policy.base * 2, "{wait:?}");
+    }
+}
+
+/// End to end: a date an hour ahead waits the cap; a date in the past retries at once.
+#[tokio::test]
+async fn a_retry_after_date_is_honoured_and_a_past_one_retries_now() {
+    let ahead = httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(3600));
+    for (value, expected) in [
+        (ahead.as_str(), Duration::from_millis(30)),
+        ("Sun, 06 Nov 1994 08:49:37 GMT", Duration::ZERO),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(503).insert_header("Retry-After", value))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ok())
+            .mount(&server)
+            .await;
+        let (api, waits) = client(&server, FixedTokens::new(["t"]));
+        assert!(get(&api).await.unwrap().ok);
+        assert_eq!(*waits.lock().unwrap(), [expected], "{value}");
+    }
+}
+
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+/// Tokens for one account whose refresh takes 50 ms and counts its calls. `old` until a
+/// refresh succeeds, `new` after; with `fail`, every refresh fails (transient).
+struct SlowTokens {
+    old: &'static str,
+    new: &'static str,
+    fail: bool,
+    refreshes: AtomicUsize,
+    renewed: AtomicBool,
+}
+
+impl SlowTokens {
+    fn new(old: &'static str, new: &'static str, fail: bool) -> Arc<Self> {
+        Arc::new(Self {
+            old,
+            new,
+            fail,
+            refreshes: AtomicUsize::new(0),
+            renewed: AtomicBool::new(false),
+        })
+    }
+
+    fn refreshes(&self) -> usize {
+        self.refreshes.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl AccessTokens for SlowTokens {
+    async fn token(&self) -> Result<String, ProviderError> {
+        let renewed = self.renewed.load(Ordering::SeqCst);
+        Ok(if renewed { self.new } else { self.old }.to_string())
+    }
+
+    async fn refresh(&self) -> Result<String, ProviderError> {
+        self.refreshes.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if self.fail {
+            return Err(ProviderError::transient(
+                "could not reach the token endpoint",
+            ));
+        }
+        self.renewed.store(true, Ordering::SeqCst);
+        Ok(self.new.to_string())
+    }
+}
+
+/// A client for the account whose API lives under `/{root}/gmail/v1/users/me/`.
+fn client_under(server: &MockServer, root: &str, tokens: Arc<dyn AccessTokens>) -> ApiClient {
+    let base = Url::parse(&format!("{}/{root}/gmail/v1/users/me/", server.uri())).unwrap();
+    ApiClient::new(api_http_client().unwrap(), base, tokens)
+        .with_policy(RetryPolicy::quick())
+        .with_quota(Quota::unlimited())
+}
+
+/// The account's API refuses `old` (slowly, so both requests hold it before either refreshes)
+/// and accepts `new`.
+async fn refuse_then_accept(server: &MockServer, root: &str, old: &str, new: &str) {
+    Mock::given(path(format!("/{root}/gmail/v1/users/me/labels")))
+        .and(bearer_token(old))
+        .respond_with(
+            google_error(401, "authError", "Invalid Credentials")
+                .set_delay(Duration::from_millis(20)),
+        )
+        .mount(server)
+        .await;
+    Mock::given(path(format!("/{root}/gmail/v1/users/me/labels")))
+        .and(bearer_token(new))
+        .respond_with(ok())
+        .mount(server)
+        .await;
+}
+
+/// Two requests refused with the same token share one refresh and retry with its token.
+#[tokio::test]
+async fn concurrent_401s_share_one_refresh() {
+    let server = MockServer::start().await;
+    refuse_then_accept(&server, "a", "old", "new").await;
+    let tokens = SlowTokens::new("old", "new", false);
+    let api = client_under(&server, "a", tokens.clone());
+    let (one, two) = tokio::join!(get(&api), get(&api));
+    assert!(one.unwrap().ok && two.unwrap().ok);
+    assert_eq!(tokens.refreshes(), 1, "one refresh for the burst");
+    let sent = server.received_requests().await.unwrap();
+    assert_eq!(sent.len(), 4, "two refused, two retried");
+}
+
+/// A failed refresh fails every request that waited for it, with the same error; a later
+/// refusal tries a new refresh instead of reusing the failure.
+#[tokio::test]
+async fn a_failed_shared_refresh_fails_every_waiter_alike() {
+    let server = MockServer::start().await;
+    refuse_then_accept(&server, "a", "old", "new").await;
+    let tokens = SlowTokens::new("old", "new", true);
+    let api = client_under(&server, "a", tokens.clone());
+    let (one, two) = tokio::join!(get(&api), get(&api));
+    let (one, two) = (one.unwrap_err(), two.unwrap_err());
+    assert_eq!(one, two);
+    assert_eq!(one.class(), ErrorClass::Transient, "{one:?}");
+    assert_eq!(tokens.refreshes(), 1);
+    assert!(get(&api).await.is_err());
+    assert_eq!(
+        tokens.refreshes(),
+        2,
+        "a failure is not remembered past its burst"
+    );
+}
+
+/// Review Focus 4: a 401 storm across two accounts. One refresh per account; account A's
+/// failing refresh does not fail account B's requests; no request carries the other
+/// account's token.
+#[tokio::test]
+async fn a_401_storm_across_two_accounts_refreshes_once_per_account() {
+    let server = MockServer::start().await;
+    refuse_then_accept(&server, "a", "a-old", "a-new").await;
+    refuse_then_accept(&server, "b", "b-old", "b-new").await;
+    let (ta, tb) = (
+        SlowTokens::new("a-old", "a-new", true),
+        SlowTokens::new("b-old", "b-new", false),
+    );
+    let a = client_under(&server, "a", ta.clone());
+    let b = client_under(&server, "b", tb.clone());
+    let (a1, a2, b1, b2) = tokio::join!(get(&a), get(&a), get(&b), get(&b));
+    let (a1, a2) = (a1.unwrap_err(), a2.unwrap_err());
+    assert_eq!(a1, a2);
+    assert!(b1.unwrap().ok && b2.unwrap().ok);
+    assert_eq!((ta.refreshes(), tb.refreshes()), (1, 1));
+    for request in server.received_requests().await.unwrap() {
+        let root = &request.url.path()[1..2];
+        let auth = request
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            auth.starts_with(&format!("Bearer {root}-")),
+            "{} {auth}",
+            request.url.path()
+        );
+    }
+}
+
+/// One retry, and no wait over 2 s: a dead Gmail fails a search in seconds.
+#[test]
+fn the_interactive_policy_retries_once_and_waits_at_most_two_seconds() {
+    let policy = RetryPolicy::interactive();
+    assert_eq!(policy.attempts, 2);
+    for _ in 0..100 {
+        assert!(policy.delay(0, None) < Duration::from_secs(1));
+    }
+    assert_eq!(policy.delay(0, Some(Duration::MAX)), Duration::from_secs(2));
+}
+
+/// Work inside `with_retry_policy` runs on that policy; the same client outside keeps its own.
+#[tokio::test]
+async fn a_scoped_policy_replaces_the_clients_own_for_that_work_only() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&server)
+        .await;
+    let (api, waits) = client(&server, FixedTokens::new(["t"])); // quick(): three tries
+    let short = RetryPolicy {
+        attempts: 2,
+        ..RetryPolicy::quick()
+    };
+    assert_eq!(retry_policy_override(), None);
+    let err = with_retry_policy(short, async {
+        assert_eq!(retry_policy_override(), Some(short));
+        get(&api).await
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(err.class(), ErrorClass::Transient, "{err:?}");
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    assert_eq!(waits.lock().unwrap().len(), 1);
+    assert!(get(&api).await.is_err());
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        5,
+        "outside: three tries"
+    );
+}

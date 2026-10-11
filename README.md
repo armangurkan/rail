@@ -105,7 +105,9 @@ rail daemon install        # keep syncing after you log out and back in
    Gmail's quota). Set [`history_days`](#sync-settings) to sync only recent mail. Ctrl-C stops
    watching, not the sync.
 4. **`rail search <query>`** prints date, account, sender and subject for each matching thread,
-   newest first. Gmail's search syntax works for the Gmail part.
+   newest first. Gmail's search syntax works for the Gmail part. When Gmail is busy or
+   unreachable, the Gmail part is retried once and gives up within a few seconds; the local
+   results still print.
 5. **`rail doctor`** reports on the config, store, token backend, each account's tokens and sync,
    the daemon and the login unit.
 6. **`rail daemon install`** writes a systemd user unit (Linux) or a launchd agent (macOS) so the

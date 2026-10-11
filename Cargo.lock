@@ -2594,6 +2594,7 @@ dependencies = [
  "fastrand",
  "fs4",
  "futures-util",
+ "httpdate",
  "humantime-serde",
  "icu_properties",
  "keyring",

@@ -2,6 +2,11 @@
 //! stored refresh token and the secret store), behind a trait the HTTP layer and tests share.
 //! Tokens never leave this module except as the bearer header.
 
+use std::sync::{Arc, Mutex, PoisonError};
+
+use futures_util::future::{BoxFuture, FutureExt, Shared};
+use sha2::{Digest, Sha256};
+
 use crate::auth::{AuthError, TokenSource};
 use crate::error::ErrorClass;
 
@@ -33,6 +38,52 @@ impl AccessTokens for OAuthTokens {
 
     async fn refresh(&self) -> Result<String, ProviderError> {
         self.source.force_refresh().await.map_err(from_auth)
+    }
+}
+
+/// One refresh in flight, shared by every request it answers.
+type Flight = Shared<BoxFuture<'static, Result<String, ProviderError>>>;
+
+/// One account's tokens with a single-flight refresh: requests the API refused with the same
+/// access token share one refresh and its outcome, error included. The refused token is kept
+/// only as a SHA-256, never as text.
+pub(crate) struct RefreshFlight {
+    tokens: Arc<dyn AccessTokens>,
+    current: Mutex<Option<(Vec<u8>, Flight)>>,
+}
+
+impl RefreshFlight {
+    pub(crate) fn new(tokens: Arc<dyn AccessTokens>) -> Self {
+        Self {
+            tokens,
+            current: Mutex::new(None),
+        }
+    }
+
+    pub(crate) async fn token(&self) -> Result<String, ProviderError> {
+        self.tokens.token().await
+    }
+
+    /// A new token after the API refused `rejected`. The first request refused with it starts
+    /// the refresh; the others await the same one. A finished refresh answers later refusals
+    /// of the same token with its token; a failed one does not (they refresh again).
+    pub(crate) async fn refresh_after(&self, rejected: &str) -> Result<String, ProviderError> {
+        let flight = self.join(Sha256::digest(rejected.as_bytes()).to_vec());
+        flight.await
+    }
+
+    fn join(&self, key: Vec<u8>) -> Flight {
+        let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((held, flight)) = current.as_ref()
+            && *held == key
+            && !matches!(flight.peek(), Some(Err(_)))
+        {
+            return flight.clone();
+        }
+        let tokens = self.tokens.clone();
+        let flight = async move { tokens.refresh().await }.boxed().shared();
+        *current = Some((key, flight.clone()));
+        flight
     }
 }
 

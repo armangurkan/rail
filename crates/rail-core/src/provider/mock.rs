@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use super::http::{RetryPolicy, retry_policy_override};
 use super::{
     Body, ChangeSet, Envelope, EnvelopePage, IdPage, PageToken, Profile, Provider, ProviderError,
     Relabel, RemoteFolder, RemoteId, SyncCursor, Window,
@@ -74,6 +75,8 @@ pub(crate) struct Mailbox {
     pub list_tokens: Vec<Option<String>>,
     /// Every id whose metadata was asked for (`envelopes`), in order: Gmail's `messages.get`.
     pub metadata_gets: Vec<String>,
+    /// The scoped retry policy each call ran under (`None`: the client's own), in order.
+    pub policies: Vec<(Call, Option<RetryPolicy>)>,
 }
 
 impl Default for Mailbox {
@@ -108,6 +111,7 @@ impl Default for Mailbox {
             list_first: Vec::new(),
             list_tokens: Vec::new(),
             metadata_gets: Vec::new(),
+            policies: Vec::new(),
         }
     }
 }
@@ -216,6 +220,7 @@ impl MockProvider {
     fn enter(&self, call: Call, window: Option<Window>) -> Result<(), ProviderError> {
         let mut m = self.lock();
         m.calls.push((call, window));
+        m.policies.push((call, retry_policy_override()));
         let Some(index) = m.failures.iter().position(|(c, _, _)| *c == call) else {
             return Ok(());
         };

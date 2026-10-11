@@ -19,6 +19,7 @@ use crate::ops::{
     HitSource, MAX_QUERY_CHARS, MAX_SEARCH_LIMIT, OpError, SearchFailure, SearchHit, SearchRequest,
     SearchResponse, Untrusted,
 };
+use crate::provider::http::{RetryPolicy, with_retry_policy};
 use crate::provider::{EnvelopePage, Mailbox, RemoteId};
 use crate::store::{Store, StoredHit};
 
@@ -39,12 +40,16 @@ pub async fn run(ctx: &DaemonContext, request: SearchRequest) -> Result<SearchRe
     // Accounts the server is not asked for (no engine, Microsoft 365, the writer gone) are
     // failures, so the front end can say whose mail was searched only locally.
     let (targets, mut failures) = ctx.sync.search_plan(address.as_deref()).await;
-    // A search's retries are not a sync's: they leave each account's phase alone.
-    let servers = super::manager::unobserved(join_all(
-        targets
-            .iter()
-            .map(|t| server_hits(ctx, &db, t, &query, limit)),
-    ))
+    // A search's retries are not a sync's: they leave each account's phase alone, and a
+    // person is waiting, so one short retry (spec §7) instead of the sync's backoff.
+    let servers = with_retry_policy(
+        RetryPolicy::interactive(),
+        super::manager::unobserved(join_all(
+            targets
+                .iter()
+                .map(|t| server_hits(ctx, &db, t, &query, limit)),
+        )),
+    )
     .await;
     let mut found = Vec::new();
     for (target, outcome) in targets.iter().zip(servers) {

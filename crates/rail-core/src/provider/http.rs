@@ -1,10 +1,12 @@
 //! The HTTP layer providers share: bearer tokens, a quota pacer, retries on 429, 5xx and
-//! rate-limit 403s with capped exponential backoff and jitter (honouring `Retry-After`), one
-//! token refresh and one retry on 401, and capped response reads. Requests are logged with
-//! method, path, status and duration at debug: never the query string, a body or a token.
+//! rate-limit 403s with capped exponential backoff and jitter (honouring `Retry-After` in
+//! seconds or as an HTTP-date), one token refresh per request on 401 (shared by every request
+//! refused with the same token), a shorter retry policy for interactive work, and capped
+//! response reads. Requests are logged with method, path, status and duration at debug: never
+//! the query string, a body or a token.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use reqwest::StatusCode;
 use reqwest::header::RETRY_AFTER;
@@ -13,7 +15,7 @@ use serde::de::DeserializeOwned;
 use url::Url;
 
 use super::ProviderError;
-use super::tokens::AccessTokens;
+use super::tokens::{AccessTokens, RefreshFlight};
 
 /// The largest answer Rail reads; a `format=full` message of Gmail's 25 MB limit in base64
 /// JSON fits.
@@ -62,6 +64,16 @@ impl RetryPolicy {
         }
     }
 
+    /// For a person waiting on the answer (`rail search`): one retry, at most 2 s away.
+    pub fn interactive() -> Self {
+        Self {
+            attempts: 2,
+            base: Duration::from_millis(500),
+            cap: Duration::from_secs(1),
+            max_retry_after: Duration::from_secs(2),
+        }
+    }
+
     /// The wait before retry number `retry` (0 for the first): `Retry-After` when the server
     /// sent one (capped), else `base · 2^retry` capped, plus up to `base` of jitter.
     pub fn delay(&self, retry: u32, retry_after: Option<Duration>) -> Duration {
@@ -75,6 +87,26 @@ impl RetryPolicy {
         let jitter_cap = u64::try_from(self.base.as_millis()).unwrap_or(1_000).max(1);
         doubled + Duration::from_millis(fastrand::u64(0..jitter_cap))
     }
+}
+
+tokio::task_local! {
+    /// Set by `with_retry_policy`: the policy that replaces each client's own.
+    static SCOPED_POLICY: RetryPolicy;
+}
+
+/// Run `work` with every request inside it retried on `policy` instead of its client's own.
+/// The engine shares its client with interactive work, so the policy follows the work, not
+/// the client.
+pub(crate) async fn with_retry_policy<F: std::future::Future>(
+    policy: RetryPolicy,
+    work: F,
+) -> F::Output {
+    SCOPED_POLICY.scope(policy, work).await
+}
+
+/// The policy `with_retry_policy` set for the current work, if any.
+pub(crate) fn retry_policy_override() -> Option<RetryPolicy> {
+    SCOPED_POLICY.try_with(|policy| *policy).ok()
 }
 
 /// A token bucket in quota units: `burst` at once, then `per_minute` spread evenly.
@@ -123,7 +155,7 @@ impl Quota {
 pub struct ApiClient {
     http: reqwest::Client,
     base: Url,
-    tokens: Arc<dyn AccessTokens>,
+    tokens: RefreshFlight,
     policy: RetryPolicy,
     quota: Quota,
     observer: Option<RetryObserver>,
@@ -164,7 +196,7 @@ impl ApiClient {
         Self {
             http,
             base,
-            tokens,
+            tokens: RefreshFlight::new(tokens),
             policy: RetryPolicy::default(),
             quota: Quota::new(QUOTA_PER_MINUTE, QUOTA_BURST),
             observer: None,
@@ -249,23 +281,29 @@ impl ApiClient {
         query: &[(&str, String)],
         cost: u32,
     ) -> Result<Option<Vec<u8>>, ProviderError> {
+        let policy = retry_policy_override().unwrap_or(self.policy);
+        // The token this request's one refresh returned: the retry uses it, not a re-read.
+        let mut renewed: Option<String> = None;
         let mut refreshed = false;
         let mut retry = 0;
         loop {
             self.quota.take(cost).await;
-            let token = self.tokens.token().await?;
+            let token = match renewed.take() {
+                Some(token) => token,
+                None => self.tokens.token().await?,
+            };
             match self.attempt(url, query, &token).await {
                 Attempt::Done(bytes) => return Ok(Some(bytes)),
                 Attempt::TooLarge => return Ok(None),
                 Attempt::Unauthorized(_) if !refreshed => {
                     refreshed = true;
-                    self.tokens.refresh().await?;
+                    renewed = Some(self.tokens.refresh_after(&token).await?);
                 }
                 Attempt::Unauthorized(detail) => return Err(ProviderError::NeedsAuth { detail }),
                 Attempt::Failed(ProviderError::Transient { retry_after, .. })
-                    if retry + 1 < self.policy.attempts =>
+                    if retry + 1 < policy.attempts =>
                 {
-                    let wait = self.policy.delay(retry, retry_after);
+                    let wait = policy.delay(retry, retry_after);
                     if let Some(observer) = &self.observer {
                         observer(wait);
                     }
@@ -321,7 +359,24 @@ fn transport(error: reqwest::Error) -> ProviderError {
 
 fn retry_after(response: &reqwest::Response) -> Option<Duration> {
     let value = response.headers().get(RETRY_AFTER)?.to_str().ok()?;
-    value.trim().parse::<u64>().ok().map(Duration::from_secs)
+    parse_retry_after(value, SystemTime::now())
+}
+
+/// `Retry-After` as a wait from `now` (RFC 9110 §10.2.3): delay-seconds (ASCII digits only; a
+/// number past `u64` saturates), or an HTTP-date in any of its three forms (IMF-fixdate,
+/// RFC 850, asctime). A date already past is no wait. Anything else is `None`, so the backoff
+/// applies. `RetryPolicy::delay` caps the result.
+pub(crate) fn parse_retry_after(value: &str, now: SystemTime) -> Option<Duration> {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
+        return Some(
+            value
+                .parse::<u64>()
+                .map_or(Duration::MAX, Duration::from_secs),
+        );
+    }
+    let at = httpdate::parse_http_date(value).ok()?;
+    Some(at.duration_since(now).unwrap_or(Duration::ZERO))
 }
 
 /// The whole body, or `None` once it passes `cap` (the rest is never read).
