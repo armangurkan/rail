@@ -191,3 +191,18 @@ pub(super) fn checked_id(id: &str) -> Option<&str> {
 fn unsafe_id(id: &str) -> bool {
     checked_id(id).is_none()
 }
+
+/// Timing bounds in this provider's tests are generous for a debug build; an instrumented
+/// (`cargo llvm-cov`) build runs several times slower, so they scale by this factor.
+#[cfg(test)]
+pub(crate) const SLOWDOWN: u32 = if cfg!(coverage) { 4 } else { 1 };
+
+#[cfg(test)]
+mod slowdown_tests {
+    #[test]
+    fn the_slowdown_factor_follows_the_coverage_cfg() {
+        let expected = if cfg!(coverage) { 4 } else { 1 };
+        eprintln!("SLOWDOWN = {}", super::SLOWDOWN);
+        assert_eq!(super::SLOWDOWN, expected);
+    }
+}

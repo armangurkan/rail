@@ -320,7 +320,7 @@ fn deeply_nested_html_renders_quickly_and_keeps_its_text() {
         );
         assert!(!body.text.contains("steal"));
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(30),
+            started.elapsed() < std::time::Duration::from_secs(30) * super::SLOWDOWN,
             "{:?}",
             started.elapsed()
         );

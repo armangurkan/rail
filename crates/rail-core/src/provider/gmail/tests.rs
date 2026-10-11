@@ -504,7 +504,7 @@ async fn metadata_requests_run_at_most_eight_at_a_time() {
         "16 at 8 at a time is two rounds: {took:?}"
     );
     assert!(
-        took < Duration::from_millis(1500),
+        took < Duration::from_millis(1500) * crate::provider::gmail::SLOWDOWN,
         "they ran concurrently: {took:?}"
     );
 }
@@ -542,7 +542,10 @@ fn a_snippet_of_bare_ampersands_is_linear() {
     let started = std::time::Instant::now();
     assert_eq!(unescape_snippet(&hostile), hostile);
     let took = started.elapsed();
-    assert!(took < std::time::Duration::from_secs(5), "{took:?}");
+    assert!(
+        took < std::time::Duration::from_secs(5) * crate::provider::gmail::SLOWDOWN,
+        "{took:?}"
+    );
     assert_eq!(unescape_snippet("&amp;&&amp;"), "&&&");
 }
 
