@@ -26,8 +26,10 @@ pub use writer::{WRITER_QUEUE, WriterHandle, WriterTask, spawn_writer};
 pub const SEARCH_KEEP_DAYS: i64 = 14;
 /// Bodies fetched at once.
 pub const BODY_CONCURRENCY: usize = 4;
-/// Bodies per writer batch.
+/// Bodies per writer batch at most.
 pub const BODY_BATCH: usize = 16;
+/// Text and HTML bytes after which a body batch goes to the writer, however few bodies it has.
+pub const BODY_BATCH_BYTES: usize = 32 * 1024 * 1024;
 /// Bodies one pass fetches at most; the rest wait for the next pass.
 pub const BODIES_PER_PASS: usize = 500;
 /// Stored for a body Rail could not read, so it is not fetched again every pass.

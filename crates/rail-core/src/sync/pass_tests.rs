@@ -115,3 +115,27 @@ fn a_failed_counts_read_is_logged() {
         "{log}"
     );
 }
+
+/// Review minor 3: a body batch is full at `BODY_BATCH` bodies or at `BODY_BATCH_BYTES` of text
+/// and HTML, whichever comes first.
+#[test]
+fn a_body_batch_is_full_by_count_or_by_bytes() {
+    use super::super::pass::BodyBatch;
+    use crate::provider::Body;
+    use crate::sync::{BODY_BATCH, BODY_BATCH_BYTES};
+    let small = |n: usize| (format!("m{n}"), Ok(Body::default()));
+    let mut by_count = BodyBatch::default();
+    for n in 1..BODY_BATCH {
+        assert!(!by_count.push(small(n)));
+    }
+    assert!(by_count.push(small(BODY_BATCH)));
+    let big = Body {
+        text: "t".repeat(BODY_BATCH_BYTES / 4),
+        html: Some("h".repeat(BODY_BATCH_BYTES / 4)),
+        ..Body::default()
+    };
+    let mut by_bytes = BodyBatch::default();
+    assert!(!by_bytes.push(("a".into(), Ok(big.clone()))));
+    assert!(!by_bytes.push(("b".into(), Err(ProviderError::transient("x")))));
+    assert!(by_bytes.push(("c".into(), Ok(big))), "two halves fill it");
+}

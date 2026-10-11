@@ -5,8 +5,8 @@ use futures_util::{StreamExt, stream};
 use super::batch::{Batch, Prune, StateUpdate, Sweep};
 use super::engine::{Engine, SyncError};
 use super::{
-    BACKFILL_PAGES_PER_PASS, BODIES_PER_PASS, BODY_BATCH, BODY_CONCURRENCY, SEARCH_KEEP_DAYS,
-    UNREADABLE_BODY,
+    BACKFILL_PAGES_PER_PASS, BODIES_PER_PASS, BODY_BATCH, BODY_BATCH_BYTES, BODY_CONCURRENCY,
+    SEARCH_KEEP_DAYS, UNREADABLE_BODY,
 };
 use crate::config::DAY_SECS;
 use crate::ops::SyncPhase;
@@ -281,26 +281,35 @@ impl Engine {
         let wanted = self
             .read(move |store| store.messages_wanting_bodies(id, since, BODIES_PER_PASS))
             .await?;
-        for chunk in wanted.chunks(BODY_BATCH) {
-            let fetched: Vec<(RemoteId, Result<Body, ProviderError>)> =
-                stream::iter(chunk.iter().cloned())
-                    .map(|id| self.fetch_body(id))
-                    .buffer_unordered(BODY_CONCURRENCY)
-                    .collect()
-                    .await;
-            let (bodies, failure) = self.sort_bodies(fetched);
-            let count = bodies.len() as u64;
-            self.write(Batch {
-                bodies,
-                ..Batch::new(self.account_id)
-            })
-            .await?;
-            self.status(|s| s.bodies_fetched += count);
-            if let Some(error) = failure {
-                return Err(error.into());
+        let mut fetches = stream::iter(wanted)
+            .map(|id| self.fetch_body(id))
+            .buffer_unordered(BODY_CONCURRENCY);
+        let mut pending = BodyBatch::default();
+        while let Some(fetched) = fetches.next().await {
+            if pending.push(fetched) {
+                self.flush_bodies(std::mem::take(&mut pending)).await?;
             }
         }
-        Ok(())
+        self.flush_bodies(pending).await
+    }
+
+    /// Write one batch of fetched bodies; then end the step if any fetch in it failed.
+    async fn flush_bodies(&self, pending: BodyBatch) -> Result<(), SyncError> {
+        if pending.fetched.is_empty() {
+            return Ok(());
+        }
+        let (bodies, failure) = self.sort_bodies(pending.fetched);
+        let count = bodies.len() as u64;
+        self.write(Batch {
+            bodies,
+            ..Batch::new(self.account_id)
+        })
+        .await?;
+        self.status(|s| s.bodies_fetched += count);
+        match failure {
+            Some(error) => Err(error.into()),
+            None => Ok(()),
+        }
     }
 
     async fn fetch_body(&self, id: RemoteId) -> (RemoteId, Result<Body, ProviderError>) {
@@ -370,6 +379,28 @@ impl Engine {
         }
         self.write(batch).await?;
         Ok(())
+    }
+}
+
+/// Fetched bodies waiting for the writer: full at `BODY_BATCH` of them or at
+/// `BODY_BATCH_BYTES` of text and HTML, so one batch never holds hundreds of MiB of mail.
+#[derive(Default)]
+pub(super) struct BodyBatch {
+    fetched: Vec<(RemoteId, Result<Body, ProviderError>)>,
+    bytes: usize,
+}
+
+impl BodyBatch {
+    /// Add one fetch; true when the batch is now full.
+    pub(super) fn push(&mut self, fetched: (RemoteId, Result<Body, ProviderError>)) -> bool {
+        if let Ok(body) = &fetched.1 {
+            self.bytes = self
+                .bytes
+                .saturating_add(body.text.len())
+                .saturating_add(body.html.as_ref().map_or(0, String::len));
+        }
+        self.fetched.push(fetched);
+        self.fetched.len() >= BODY_BATCH || self.bytes >= BODY_BATCH_BYTES
     }
 }
 
