@@ -44,14 +44,22 @@ pub(crate) fn from_auth(error: AuthError) -> ProviderError {
         AuthError::Network(text) => {
             ProviderError::transient("could not reach the token endpoint").with_detail(text)
         }
-        other => {
-            let text = other.to_string();
-            let fixed = "the token request or the token store failed";
-            match other.class() {
-                ErrorClass::Transient => ProviderError::transient(fixed).with_detail(text),
-                ErrorClass::Permanent => ProviderError::permanent(fixed).with_detail(text),
-            }
+        // A keyring or 1Password hiccup may clear up; the store's own class says which.
+        AuthError::Secret(secret) => {
+            classed(secret.class(), "the token store failed", secret.to_string())
         }
+        other => classed(
+            other.class(),
+            "the token request or the token store failed",
+            other.to_string(),
+        ),
+    }
+}
+
+fn classed(class: ErrorClass, fixed: &str, detail: String) -> ProviderError {
+    match class {
+        ErrorClass::Transient => ProviderError::transient(fixed).with_detail(detail),
+        ErrorClass::Permanent => ProviderError::permanent(fixed).with_detail(detail),
     }
 }
 
@@ -93,5 +101,49 @@ impl AccessTokens for FixedTokens {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
             + 1;
         Ok(self.at(next))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::SecretError;
+
+    /// T3-C(b): a keyring or 1Password hiccup stays transient; a corrupt store does not.
+    #[test]
+    fn secret_store_hiccups_stay_transient() {
+        let transient = [
+            SecretError::Keyring("busy".into()),
+            SecretError::Io {
+                path: "secrets.json".into(),
+                source: std::io::Error::other("disk"),
+            },
+            SecretError::OnePasswordTimeout,
+            SecretError::OnePasswordIo {
+                what: "read from",
+                message: "pipe".into(),
+            },
+        ];
+        for secret in transient {
+            let error = from_auth(AuthError::Secret(secret));
+            assert_eq!(error.class(), ErrorClass::Transient, "{error:?}");
+        }
+        let permanent = [
+            SecretError::Encoding("bad".into()),
+            SecretError::OnePasswordLocked("locked".into()),
+        ];
+        for secret in permanent {
+            let error = from_auth(AuthError::Secret(secret));
+            assert_eq!(error.class(), ErrorClass::Permanent, "{error:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_grant_needs_auth_and_network_is_transient() {
+        let auth = from_auth(AuthError::NeedsAuth("revoked".into()));
+        assert!(matches!(auth, ProviderError::NeedsAuth { .. }));
+        let net = from_auth(AuthError::Network("down".into()));
+        assert_eq!(net.class(), ErrorClass::Transient);
+        assert_eq!(net.detail(), Some("down"));
     }
 }
