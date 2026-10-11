@@ -34,6 +34,12 @@ pub enum TaskResult {
     JobPanicked(String),
     /// The outcome of an `Effect::Copy`: `Err` holds the reason it could not copy.
     Copied(Result<(), String>),
+    /// A mail-screen query or daemon call answered (see `tui::data`).
+    #[allow(
+        dead_code,
+        reason = "the mail screen reads it in the next Phase 5 task"
+    )]
+    Mail(crate::tui::data::MailEvent),
 }
 
 /// A result tagged with the generation of the job that sent it (see `Tasks`).

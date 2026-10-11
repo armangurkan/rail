@@ -14,6 +14,9 @@ use rail_core::daemon::{
 use rail_core::onboarding::{Event, Wizard};
 use rail_core::ops::{BrowserEnv, OpError};
 use rail_core::paths::Paths;
+use rail_core::provider::{Envelope, FolderKind, Mailbox, RemoteFolder};
+use rail_core::store::Store;
+use rail_core::sync::Batch;
 use ratatui::backend::TestBackend;
 use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
@@ -300,4 +303,87 @@ pub fn gmail_own_app_keys(address: &str) -> Vec<KeyEvent> {
     keys.extend("sec".chars().map(|c| key(KeyCode::Char(c))));
     keys.push(key(KeyCode::Enter));
     keys
+}
+
+/// Receive times in fixtures start here (2025-10-09, a fixed point: no test reads the clock).
+pub const BASE_MS: i64 = 1_760_000_000_000;
+
+/// A one-message fixture in the inbox, unread, from Sender <sender@example.com>, with
+/// subject `subject <id>`.
+pub fn mail_envelope(id: &str, thread: &str, ms: i64) -> Envelope {
+    Envelope {
+        remote_id: id.to_string(),
+        thread_id: thread.to_string(),
+        subject: format!("subject {id}"),
+        from: vec![Mailbox {
+            name: Some("Sender".into()),
+            address: "sender@example.com".into(),
+        }],
+        date: ms / 1000,
+        internal_date: ms,
+        snippet: format!("snippet {id}"),
+        folders: vec!["INBOX".into()],
+        ..Envelope::default()
+    }
+}
+
+/// `n` one-message inbox threads `{prefix}t0`.., a minute apart, the last the newest.
+pub fn inbox_threads(prefix: &str, n: usize) -> Vec<Envelope> {
+    (0..n)
+        .map(|i| {
+            let ms = BASE_MS + i64::try_from(i).unwrap() * 60_000;
+            mail_envelope(&format!("{prefix}m{i}"), &format!("{prefix}t{i}"), ms)
+        })
+        .collect()
+}
+
+/// A migrated store at `paths` with these accounts (name, address) and their Inbox,
+/// Projects and Sent folders, holding `envelopes` (each for the account at its index).
+pub fn seed_store(
+    paths: &Paths,
+    accounts: &[(&str, &str)],
+    envelopes: &[(usize, Envelope)],
+) -> Store {
+    let mut store = Store::open(&paths.db_file()).expect("open the store");
+    for (name, address) in accounts {
+        store
+            .conn()
+            .execute(
+                "INSERT INTO accounts (name, kind, address) VALUES (?1, 'gmail', ?2)",
+                [name, address],
+            )
+            .expect("insert an account");
+    }
+    let folders = vec![
+        RemoteFolder {
+            remote_id: "INBOX".into(),
+            name: "Inbox".into(),
+            kind: FolderKind::Inbox,
+        },
+        RemoteFolder {
+            remote_id: "Label_1".into(),
+            name: "Projects".into(),
+            kind: FolderKind::User,
+        },
+        RemoteFolder {
+            remote_id: "SENT".into(),
+            name: "Sent".into(),
+            kind: FolderKind::Sent,
+        },
+    ];
+    for index in 0..accounts.len() {
+        let id = i64::try_from(index).unwrap() + 1;
+        let upserts = envelopes
+            .iter()
+            .filter(|(i, _)| *i == index)
+            .map(|(_, e)| e.clone())
+            .collect();
+        let batch = Batch {
+            folders: Some(folders.clone()),
+            upserts,
+            ..Batch::new(id)
+        };
+        store.apply(&batch, BASE_MS / 1000).expect("seed the store");
+    }
+    store
 }

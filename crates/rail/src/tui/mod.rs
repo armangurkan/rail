@@ -3,6 +3,7 @@
 //! screen is up.
 
 pub mod app;
+pub mod data;
 pub mod effects;
 pub mod keys;
 pub mod run;
