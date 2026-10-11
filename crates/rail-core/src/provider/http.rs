@@ -285,6 +285,7 @@ impl ApiClient {
         // The token this request's one refresh returned: the retry uses it, not a re-read.
         let mut renewed: Option<String> = None;
         let mut refreshed = false;
+        let mut reused_once = false;
         let mut retry = 0;
         loop {
             self.quota.take(cost).await;
@@ -296,9 +297,11 @@ impl ApiClient {
                 Attempt::Done(bytes) => return Ok(Some(bytes)),
                 Attempt::TooLarge => return Ok(None),
                 Attempt::Unauthorized(_) if !refreshed => {
-                    let (fresh, reused) = self.tokens.refresh_after(&token).await?;
+                    let (fresh, reused) = self.tokens.refresh_after(&token, !reused_once).await?;
                     // A reused result is not a refresh made for this request: if its token is
-                    // refused too, the request still gets its one real refresh.
+                    // refused too, the request gets its one real refresh. Reuse happens at most
+                    // once, so a request makes at most three authorised attempts.
+                    reused_once |= reused;
                     refreshed = !reused;
                     renewed = Some(fresh);
                 }

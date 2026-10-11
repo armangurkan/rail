@@ -73,24 +73,29 @@ impl RefreshFlight {
     /// token reused rather than a refresh this request started or joined in flight. The first
     /// request refused with a token starts the refresh; the others await the same one. A
     /// finished successful refresh answers later refusals of the same token with its token
-    /// (reused: it is not a refresh made for that request); a failed one does not (they
-    /// refresh again).
+    /// (reused: it is not a refresh made for that request) when `allow_reuse`; a failed one, or
+    /// one a request may not reuse again, starts a new refresh.
     pub(crate) async fn refresh_after(
         &self,
         rejected: &str,
+        allow_reuse: bool,
     ) -> Result<(String, bool), ProviderError> {
         #[cfg(test)]
         self.arrivals
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let (flight, reused) = self.join(Sha256::digest(rejected.as_bytes()).to_vec());
+        let (flight, reused) = self.join(Sha256::digest(rejected.as_bytes()).to_vec(), allow_reuse);
         flight.await.map(|token| (token, reused))
     }
 
-    fn join(&self, key: Vec<u8>) -> (Flight, bool) {
+    fn join(&self, key: Vec<u8>, allow_reuse: bool) -> (Flight, bool) {
         let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((held, flight)) = current.as_ref()
             && *held == key
-            && !matches!(flight.peek(), Some(Err(_)))
+            && match flight.peek() {
+                None => true,
+                Some(Ok(_)) => allow_reuse,
+                Some(Err(_)) => false,
+            }
         {
             return (flight.clone(), flight.peek().is_some());
         }

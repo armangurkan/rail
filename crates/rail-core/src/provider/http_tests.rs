@@ -758,3 +758,52 @@ async fn a_scoped_policy_replaces_the_clients_own_for_that_work_only() {
         "outside: three tries"
     );
 }
+
+/// `StaleTokens` against an API that refuses everything: one request does the setup (a real
+/// refresh whose result stays cached), a second one is measured. Returns the refusal, the
+/// refreshes in all, and the authorised attempts the second request made.
+async fn refused_twice_over(fresh: Vec<&'static str>) -> (ProviderError, usize, usize) {
+    let server = MockServer::start().await;
+    Mock::given(path("/a/gmail/v1/users/me/labels"))
+        .respond_with(google_error(401, "authError", "Invalid Credentials"))
+        .mount(&server)
+        .await;
+    let tokens = Arc::new(StaleTokens {
+        fresh,
+        refreshes: AtomicUsize::new(0),
+    });
+    let api = client_under(&server, "a", tokens.clone());
+    assert!(get(&api).await.is_err());
+    let before = server.received_requests().await.unwrap().len();
+    let err = get(&api).await.unwrap_err();
+    let attempts = server.received_requests().await.unwrap().len() - before;
+    (err, tokens.refreshes.load(Ordering::SeqCst), attempts)
+}
+
+/// Reused result refused, then this request's own real refresh refused: `NeedsAuth` after
+/// exactly one real refresh by this request and three authorised attempts.
+#[tokio::test]
+async fn a_reused_then_a_real_refresh_both_refused_is_needs_auth() {
+    tokio::time::timeout(BOUND, async {
+        let (err, refreshes, attempts) = refused_twice_over(vec!["new1", "new2"]).await;
+        assert!(matches!(err, ProviderError::NeedsAuth { .. }), "{err:?}");
+        assert_eq!(refreshes, 2, "the setup's refresh and this request's one");
+        assert_eq!(attempts, 3, "original, one reused, one refreshed");
+    })
+    .await
+    .expect("deadlocked");
+}
+
+/// The chain case: the finished refresh keeps answering with the refused token itself, so
+/// every reuse would be refused again. A request reuses at most once, then refreshes for real.
+#[tokio::test]
+async fn a_request_reuses_a_finished_refresh_at_most_once() {
+    tokio::time::timeout(BOUND, async {
+        let (err, refreshes, attempts) = refused_twice_over(vec!["old", "old", "old"]).await;
+        assert!(matches!(err, ProviderError::NeedsAuth { .. }), "{err:?}");
+        assert_eq!(refreshes, 2, "one reuse, then one real refresh");
+        assert_eq!(attempts, 3, "never more than three authorised attempts");
+    })
+    .await
+    .expect("deadlocked");
+}
