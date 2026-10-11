@@ -60,8 +60,25 @@ fn wrapping_breaks_at_spaces_splits_long_words_and_keeps_indentation() {
 }
 
 #[test]
+fn wrapping_never_emits_blank_rows_and_keeps_leading_and_trailing_spaces() {
+    assert_eq!(wrap("aaaa   bbbb", 4), ["aaaa", "bbbb"]);
+    assert_eq!(wrap(" abcdefgh", 4), [" abc", "defg", "h"]);
+    assert_eq!(wrap("  abcdefgh", 4), ["  ab", "cdef", "gh"]);
+    assert_eq!(wrap("ab  ", 2), ["ab"]);
+    assert_eq!(wrap("ab  ", 40), ["ab  "]);
+    assert_eq!(wrap("   ", 40), ["   "]);
+    assert_eq!(wrap("    x", 2), [" x"]);
+}
+
+#[test]
+fn width_sums_graphemes_as_ratatui_draws_them() {
+    assert_eq!(width("\u{644}\u{627}"), 2);
+    assert_eq!(width("e\u{301}日"), 3);
+}
+
+#[test]
 fn no_wrapped_row_is_wider_than_the_pane() {
-    let line = escape(&"Grüße 日本語 😀 \u{1b}[31m a-very-long-word-without-breaks ".repeat(50));
+    let line = escape(&"Grüße 日本語 😀 \u{1b}[31m a-very-long-word-without-breaks \u{645}\u{644}\u{627}\u{644}\u{627} ".repeat(50));
     for cols in [1, 2, 3, 7, 20, 79, 80, 150] {
         for row in wrap(&line, cols) {
             assert!(width(&row) <= cols.max(2), "{cols}: {row:?}");

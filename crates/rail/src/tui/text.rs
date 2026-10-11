@@ -29,9 +29,11 @@ pub fn escape(text: &str) -> String {
     escape_chars(text, hides_or_breaks)
 }
 
-/// Columns `text` takes on screen, as ratatui counts them. Only for escaped text.
+/// Columns `text` takes on screen, as ratatui draws it: the sum of each grapheme's width (not
+/// the sequence width of the whole string, which is narrower for joined scripts such as
+/// Arabic). Only for escaped text.
 pub fn width(text: &str) -> usize {
-    UnicodeWidthStr::width(text)
+    text.graphemes(true).map(UnicodeWidthStr::width).sum()
 }
 
 /// `text` escaped and cut to at most `cols` columns, ending in `…` when it was cut.
@@ -103,44 +105,51 @@ pub fn expand_tabs(line: &str) -> String {
 }
 
 /// One escaped line as rows of at most `cols` columns (at least 1): broken at spaces, words
-/// longer than a row split between graphemes, spaces kept (indentation stays). A grapheme
-/// wider than `cols` gets a row of its own.
+/// longer than a row split between graphemes. Leading spaces stay on the first row (cut to
+/// leave room for a character), spaces between words stay within a row and are dropped at a
+/// break, so no row is empty or only spaces unless the line is. A grapheme wider than `cols`
+/// gets a row of its own.
 pub fn wrap(row: &str, cols: usize) -> Vec<String> {
     let cols = cols.max(1);
+    let rest = row.trim_start_matches(' ');
+    let indent = (row.len() - rest.len()).min(cols - 1);
     let mut rows = Vec::new();
-    let mut current = String::new();
-    let (mut used, mut fresh) = (0, true);
-    for word in row.split(' ') {
-        let w = width(word);
-        let gap = usize::from(!fresh);
-        if used + gap + w <= cols {
-            if gap == 1 {
-                current.push(' ');
-            }
-            current.push_str(word);
-            (used, fresh) = (used + gap + w, false);
+    let mut current = " ".repeat(indent);
+    let mut used = indent;
+    if rest.is_empty() {
+        return vec![current];
+    }
+    let (mut has_word, mut gap) = (false, 0);
+    for piece in rest.split(' ') {
+        if piece.is_empty() {
+            gap += 1;
             continue;
         }
-        if !fresh {
-            rows.push(std::mem::take(&mut current));
-            used = 0;
-            if word.is_empty() {
-                // A space at the break: the new row starts with the next word.
-                fresh = true;
-                continue;
-            }
-        }
-        fresh = false;
-        for grapheme in word.graphemes(true) {
-            let gw = width(grapheme);
-            if used + gw > cols && used > 0 {
+        let sep = if has_word { gap + 1 } else { 0 };
+        gap = 0;
+        let w = width(piece);
+        if used + sep + w <= cols {
+            current.extend(std::iter::repeat_n(' ', sep));
+            current.push_str(piece);
+            used += sep + w;
+        } else {
+            if has_word {
                 rows.push(std::mem::take(&mut current));
                 used = 0;
             }
-            current.push_str(grapheme);
-            used += gw;
+            for grapheme in piece.graphemes(true) {
+                let gw = width(grapheme);
+                if used + gw > cols && used > 0 {
+                    rows.push(std::mem::take(&mut current));
+                    used = 0;
+                }
+                current.push_str(grapheme);
+                used += gw;
+            }
         }
+        has_word = true;
     }
+    current.extend(std::iter::repeat_n(' ', gap.min(cols - used)));
     rows.push(current);
     rows
 }
