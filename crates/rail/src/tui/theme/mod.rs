@@ -1,5 +1,11 @@
 //! Named styles. One default theme; theme configuration is out of scope until Phase 7.
 
+// Nothing outside the tests reads the table until the theme picker lands; drop this then.
+#[allow(dead_code)]
+pub mod scheme;
+#[cfg(test)]
+mod scheme_tests;
+
 use ratatui::style::{Color, Modifier, Style};
 
 /// The styles every screen draws with.
