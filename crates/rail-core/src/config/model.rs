@@ -88,14 +88,14 @@ impl<'de> Deserialize<'de> for AccentSpec {
             Slot(i64),
             Color(String),
         }
-        match Raw::deserialize(d).map_err(|_| {
-            serde::de::Error::custom("accent must be 0 to 15, a colour name or \"#rrggbb\"")
-        })? {
+        const ACCENT_HELP: &str = "accent must be 0 to 15, a colour name or \"#rrggbb\"";
+        match Raw::deserialize(d).map_err(|_| serde::de::Error::custom(ACCENT_HELP))? {
             Raw::Slot(n) => u8::try_from(n)
                 .ok()
                 .filter(|n| *n <= 15)
                 .map(Self::Slot)
                 .ok_or_else(|| serde::de::Error::custom("accent must be 0 to 15")),
+            Raw::Color(text) if text.is_empty() => Err(serde::de::Error::custom(ACCENT_HELP)),
             Raw::Color(text) => {
                 plain_text("accent", &text).map_err(serde::de::Error::custom)?;
                 Ok(Self::Color(text))
@@ -199,6 +199,17 @@ fn plain<'de, D: serde::Deserializer<'de>>(field: &str, d: D) -> Result<String, 
     let text = String::deserialize(d)?;
     plain_text(field, &text).map_err(serde::de::Error::custom)?;
     Ok(text)
+}
+
+/// `Ok` when `text` is a scheme name: ordinary spaces are allowed ("Catppuccin Mocha"), other
+/// whitespace, control characters and format characters are not. Never quotes the value.
+pub(super) fn plain_theme(text: &str) -> Result<(), String> {
+    let bad = |c: char| c != ' ' && (c.is_whitespace() || c.is_control() || is_format_char(c));
+    if text.chars().any(bad) {
+        Err("the theme must not contain control characters, format characters or whitespace other than spaces".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 /// `Ok` when `text` is plain, else the refusal naming `field`.

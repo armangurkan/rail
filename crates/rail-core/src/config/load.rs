@@ -106,7 +106,7 @@ fn validate(config: &Config) -> Result<(), String> {
         if theme.is_empty() {
             return Err("general.theme must not be empty".to_string());
         }
-        super::model::plain_text("theme", theme)?;
+        super::model::plain_theme(theme)?;
     }
     let mut names = HashSet::new();
     let mut addresses = HashSet::new();
@@ -466,5 +466,33 @@ client_id = "2"
             .unwrap_err()
             .to_string();
         assert!(err.contains("theme"), "{err}");
+    }
+
+    #[test]
+    fn a_theme_name_may_hold_spaces_but_not_control_or_format_characters() {
+        for name in ["Catppuccin Mocha", "iTerm2 Solarized Dark"] {
+            let c = p(&format!("[general]\ntheme = \"{name}\"\n")).unwrap();
+            assert_eq!(c.general.theme.as_deref(), Some(name));
+        }
+        let err = p("[general]\ntheme = \"a\\tb\"\n").unwrap_err().to_string();
+        assert!(err.contains("theme"), "{err}");
+        let err = p("[general]\ntheme = \"a\u{202E}b\"\n")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("theme") && !err.contains('\u{202E}'),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_or_non_integer_accent_gets_the_accent_message() {
+        for text in ["accent = \"\"", "accent = 5.0"] {
+            let err = p(&format!("[general]\n{text}\n")).unwrap_err().to_string();
+            assert!(
+                err.contains("accent must be 0 to 15, a colour name or \"#rrggbb\""),
+                "{err}"
+            );
+        }
     }
 }
