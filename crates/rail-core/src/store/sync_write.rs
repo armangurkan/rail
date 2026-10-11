@@ -54,10 +54,6 @@ impl Store {
             store_body(&tx, account, id, body, now, &mut touched)?;
         }
         mark_searched(&tx, account, &batch.searched, now)?;
-        #[cfg(test)]
-        if batch.poison {
-            return Err(StoreError::Sqlite(rusqlite::Error::InvalidQuery));
-        }
         if let Some(sweep) = batch.sweep {
             outcome.swept = sweep_unseen(&tx, account, sweep, &mut touched)?;
         }
@@ -66,6 +62,10 @@ impl Store {
         }
         rollup::refresh(&tx, &touched)?;
         update_state(&tx, account, &batch.state)?;
+        #[cfg(test)]
+        if batch.poison {
+            return Err(StoreError::Sqlite(rusqlite::Error::InvalidQuery));
+        }
         tx.commit()?;
         Ok(outcome)
     }
@@ -153,6 +153,29 @@ fn upsert(
         touched.insert(old_thread);
     }
     let thread = thread_row(tx, account, &env.thread_id)?;
+    write_envelope(tx, account, thread, env, origin, now)?;
+    let (message, _) = message_row(tx, account, &env.remote_id)?
+        .ok_or(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
+    tx.execute(
+        "DELETE FROM message_folders WHERE message_id = ?1",
+        params![message],
+    )?;
+    for remote in &env.folders {
+        add_folder(tx, account, message, remote)?;
+    }
+    touched.insert(thread);
+    Ok(())
+}
+
+/// Insert or update the `messages` row of `env` in `thread`.
+fn write_envelope(
+    tx: &Transaction,
+    account: i64,
+    thread: i64,
+    env: &Envelope,
+    origin: Origin,
+    now: i64,
+) -> Result<(), StoreError> {
     let (searched, synced) = match origin {
         Origin::Search => (Some(now), None),
         Origin::Sync => (None, Some(now)),
@@ -183,16 +206,6 @@ fn upsert(
             synced
         ],
     )?;
-    let (message, _) = message_row(tx, account, &env.remote_id)?
-        .ok_or(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
-    tx.execute(
-        "DELETE FROM message_folders WHERE message_id = ?1",
-        params![message],
-    )?;
-    for remote in &env.folders {
-        add_folder(tx, account, message, remote)?;
-    }
-    touched.insert(thread);
     Ok(())
 }
 
@@ -361,7 +374,7 @@ fn prune_old(
         tx,
         "account_id = ?1 AND origin = 'search' AND COALESCE(searched_at, 0) < ?2 AND is_starred = 0
          AND NOT EXISTS (SELECT 1 FROM messages k WHERE k.thread_id = messages.thread_id
-                         AND k.origin = 'sync' AND k.internal_date >= ?3)",
+                         AND k.internal_date >= ?3)",
         &[&account, &prune.search_before, &start],
         touched,
     )?;

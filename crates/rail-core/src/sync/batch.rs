@@ -69,9 +69,12 @@ pub struct Batch {
     /// When the batch happened (Unix seconds): `synced_at`, `searched_at` and
     /// `body_fetched_at` use it. The writer's clock when `None`.
     pub at: Option<i64>,
-    /// Tests: fail after the upserts, before commit.
+    /// Tests: fail after every step, just before commit.
     #[cfg(test)]
     pub poison: bool,
+    /// Tests: make the writer thread panic on this batch.
+    #[cfg(test)]
+    pub panic_writer: bool,
 }
 
 impl Batch {

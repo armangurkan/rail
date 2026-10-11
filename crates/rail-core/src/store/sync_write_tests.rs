@@ -280,6 +280,19 @@ fn search_rows_never_downgrade_sync_rows_and_sync_promotes_search_rows() {
     };
     store.apply(&found, NOW + 5).unwrap();
     assert_eq!(origin(&store, "m1").0, "sync");
+    let synced: Option<i64> = store
+        .conn()
+        .query_row(
+            "SELECT synced_at FROM messages WHERE remote_id = 'm1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        synced,
+        Some(NOW),
+        "a search hit keeps a sync row's synced_at for the sweep"
+    );
     assert_eq!(origin(&store, "old"), ("search".into(), Some(NOW + 5)));
     store
         .apply(
@@ -439,22 +452,66 @@ fn state_updates_set_and_clear_columns() {
     );
 }
 
-/// Spec §4: a crash or failure loses at most the batch in flight, and loses all of it.
+/// Spec §4: a crash or failure loses at most the batch in flight, and loses all of it: the
+/// poison fires after every step (sweep, prune, rollups, state), just before commit.
 #[test]
 fn a_failing_batch_changes_nothing() {
     let mut store = store();
+    store
+        .apply(
+            &upserts(vec![
+                envelope("a", "ta", DAY_MS),
+                envelope("b", "tb", 150 * DAY_MS),
+            ]),
+            NOW,
+        )
+        .unwrap();
+    let before = (
+        thread(&store, "ta"),
+        thread(&store, "tb"),
+        store.sync_state(1).unwrap(),
+    );
     let poisoned = Batch {
-        upserts: vec![envelope("m1", "t1", DAY_MS)],
+        upserts: vec![envelope("c", "tc", 160 * DAY_MS)],
+        relabels: vec![Relabel {
+            remote_id: "b".into(),
+            read: Some(true),
+            starred: Some(true),
+            ..Relabel::default()
+        }],
+        sweep: Some(Sweep {
+            started_at: NOW + 1,
+            window_start_ms: Some(100 * DAY_MS),
+        }),
+        prune: Some(Prune {
+            window_start_ms: Some(100 * DAY_MS),
+            search_before: NOW,
+        }),
         state: StateUpdate {
             cursor: Some(Some("9".into())),
+            backfill_before: Some(Some(5)),
+            phase: Some("backfill".into()),
             ..StateUpdate::default()
         },
         poison: true,
         ..Batch::new(1)
     };
-    assert!(store.apply(&poisoned, NOW).is_err());
-    assert!(ids(&store).is_empty());
-    assert_eq!(store.sync_state(1).unwrap().cursor, None);
+    assert!(store.apply(&poisoned, NOW + 2).is_err());
+    assert_eq!(
+        ids(&store),
+        ["a", "b"],
+        "prune, sweep and upserts rolled back"
+    );
+    let after = (
+        thread(&store, "ta"),
+        thread(&store, "tb"),
+        store.sync_state(1).unwrap(),
+    );
+    assert_eq!(
+        after, before,
+        "rollups and the cursor, marker and phase rolled back"
+    );
+    assert_eq!(thread(&store, "tc"), None);
 }
 
 #[test]
@@ -492,4 +549,31 @@ fn bodies_record_attachments_for_the_thread_rollup() {
         )
         .unwrap();
     assert_eq!((has, fetched), (1, Some(NOW)));
+}
+
+/// Spec §4 step 5: any message inside the window keeps its thread, a search hit included.
+#[test]
+fn prune_keeps_stale_search_hits_in_a_thread_with_any_message_inside_the_window() {
+    let mut store = store();
+    let hits = Batch {
+        upserts: vec![
+            envelope("stale-old", "t1", DAY_MS),
+            envelope("stale-recent", "t1", 150 * DAY_MS),
+            envelope("stale-alone", "t2", DAY_MS),
+        ],
+        origin: Origin::Search,
+        ..Batch::new(1)
+    };
+    store.apply(&hits, NOW - 20 * 86_400).unwrap();
+    let prune = Batch {
+        prune: Some(Prune {
+            window_start_ms: Some(100 * DAY_MS),
+            search_before: NOW - 14 * 86_400,
+        }),
+        ..Batch::new(1)
+    };
+    let outcome = store.apply(&prune, NOW).unwrap();
+    assert_eq!(outcome.pruned, 1);
+    assert_eq!(ids(&store), ["stale-old", "stale-recent"]);
+    assert_eq!(thread(&store, "t2"), None);
 }

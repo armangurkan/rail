@@ -29,10 +29,11 @@ pub struct WriterTask {
     done: oneshot::Receiver<()>,
 }
 
+/// The writer thread is gone (ended or panicked): retrying cannot help, so it is permanent.
 fn stopped() -> OpError {
     OpError::new(
         ErrorCode::Store,
-        ErrorClass::Transient,
+        ErrorClass::Permanent,
         "the store writer has stopped",
     )
 }
@@ -51,8 +52,9 @@ impl WriterHandle {
 
 impl WriterTask {
     /// After every handle is dropped, wait at most `grace` for the batch in hand to commit.
+    /// False when the grace ran out or the writer thread died (panicked) instead of ending.
     pub async fn finish(self, grace: Duration) -> bool {
-        tokio::time::timeout(grace, self.done).await.is_ok()
+        matches!(tokio::time::timeout(grace, self.done).await, Ok(Ok(())))
     }
 }
 
@@ -78,6 +80,10 @@ fn spawn(
                 {
                     break;
                 }
+                #[cfg(test)]
+                if batch.panic_writer {
+                    panic!("test: the writer thread panics");
+                }
                 let now = batch.at.unwrap_or_else(unix_now);
                 let outcome = store.apply(&batch, now).map_err(OpError::from);
                 if let Err(error) = &outcome {
@@ -90,6 +96,7 @@ fn spawn(
         .map_err(|e| OpError::io(ErrorCode::Store, "starting the store writer", &e))?;
     Ok((WriterHandle { jobs }, WriterTask { done }))
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,37 +123,110 @@ mod tests {
         }
     }
 
+    fn count(db: &Path) -> i64 {
+        Store::open_reader(db)
+            .unwrap()
+            .conn()
+            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    const WAIT: Duration = Duration::from_secs(5);
+
     /// Spec §8: readers on their own connections see a batch whole or not at all.
     #[tokio::test]
     async fn readers_never_see_half_a_batch() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+        const ROUNDS: usize = 5;
+        const PAGE: usize = 400;
         let tmp = tempfile::tempdir().unwrap();
         let db = tmp.path().join("rail.db");
         account(&db);
         let (writer, _task) = spawn_writer(&db).unwrap();
-        let reader_db = db.clone();
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let stopped = stop.clone();
-        let reader = std::thread::spawn(move || {
-            let reader = Store::open_reader(&reader_db).unwrap();
-            let mut seen = std::collections::BTreeSet::new();
-            while !stopped.load(std::sync::atomic::Ordering::SeqCst) {
-                let n: i64 = reader
-                    .conn()
-                    .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
-                    .unwrap();
-                seen.insert(n);
+        let stop = Arc::new(AtomicBool::new(false));
+        let seen = Arc::new(Mutex::new(std::collections::BTreeSet::new()));
+        let reader = std::thread::spawn({
+            let (db, stop, seen) = (db.clone(), stop.clone(), seen.clone());
+            move || {
+                let reader = Store::open_reader(&db).unwrap();
+                while !stop.load(Ordering::SeqCst) {
+                    let n: i64 = reader
+                        .conn()
+                        .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+                        .unwrap();
+                    seen.lock().unwrap().insert(n);
+                }
             }
-            seen
         });
-        for round in 0..5 {
-            writer.write(page(round * 400, 400)).await.unwrap();
+        for round in 0..ROUNDS {
+            writer.write(page(round * PAGE, PAGE)).await.unwrap();
+            // The count stays put until the next write: wait for the reader to see it.
+            let committed = ((round + 1) * PAGE) as i64;
+            tokio::time::timeout(WAIT, async {
+                while !seen.lock().unwrap().contains(&committed) {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
         }
-        stop.store(true, std::sync::atomic::Ordering::SeqCst);
-        let seen = reader.join().unwrap();
+        stop.store(true, Ordering::SeqCst);
+        reader.join().unwrap();
+        let seen = seen.lock().unwrap().clone();
+        let total = (ROUNDS * PAGE) as i64;
         assert!(
-            seen.iter().all(|n| n % 400 == 0),
+            seen.iter().any(|n| 0 < *n && *n < total),
+            "the reader read between batches: {seen:?}"
+        );
+        assert!(
+            seen.iter().all(|n| *n % PAGE as i64 == 0),
             "a reader saw part of a batch: {seen:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_failed_batch_does_not_stop_the_writer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("rail.db");
+        account(&db);
+        let (writer, task) = spawn_writer(&db).unwrap();
+        let poisoned = Batch {
+            poison: true,
+            ..page(0, 3)
+        };
+        assert!(writer.write(poisoned).await.is_err());
+        assert_eq!(count(&db), 0);
+        let outcome = writer.write(page(10, 2)).await.unwrap();
+        assert_eq!(outcome.upserted, 2);
+        assert_eq!(count(&db), 2);
+        drop(writer);
+        assert!(task.finish(WAIT).await);
+    }
+
+    #[tokio::test]
+    async fn a_dead_writer_is_permanent_and_finish_reports_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("rail.db");
+        account(&db);
+        let (writer, task) = spawn_writer(&db).unwrap();
+        let fatal = Batch {
+            panic_writer: true,
+            ..page(0, 1)
+        };
+        let error = writer.write(fatal).await.unwrap_err();
+        assert_eq!(error.class, ErrorClass::Permanent);
+        let after = writer.write(page(1, 1)).await.unwrap_err();
+        assert_eq!(
+            (after.code, after.class),
+            (ErrorCode::Store, ErrorClass::Permanent)
+        );
+        drop(writer);
+        assert!(
+            !task.finish(WAIT).await,
+            "a panicked writer must not look healthy"
+        );
+        assert_eq!(count(&db), 0);
     }
 
     #[tokio::test]
@@ -187,19 +267,55 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = tmp.path().join("rail.db");
         account(&db);
-        let (writer, task) = spawn_writer(&db).unwrap();
+        let (permits, held) = std::sync::mpsc::channel::<()>();
+        let (writer, task) = spawn(&db, Some(held)).unwrap();
         let sent = tokio::spawn({
             let writer = writer.clone();
             async move { writer.write(page(0, 50)).await }
         });
         drop(writer);
-        sent.await.unwrap().unwrap();
-        assert!(task.finish(std::time::Duration::from_secs(5)).await);
-        let n: i64 = Store::open_reader(&db)
+        // The writer holds the batch (waiting for a permit) while `finish` waits.
+        let finishing = tokio::spawn(task.finish(WAIT));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !finishing.is_finished(),
+            "finish waits for the batch in hand"
+        );
+        permits.send(()).unwrap();
+        tokio::time::timeout(WAIT, sent)
+            .await
             .unwrap()
-            .conn()
-            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+            .unwrap()
             .unwrap();
-        assert_eq!(n, 50);
+        assert!(
+            tokio::time::timeout(WAIT, finishing)
+                .await
+                .unwrap()
+                .unwrap()
+        );
+        assert_eq!(count(&db), 50);
+    }
+
+    #[tokio::test]
+    async fn finish_is_false_when_the_grace_runs_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("rail.db");
+        account(&db);
+        let (permits, held) = std::sync::mpsc::channel::<()>();
+        let (writer, task) = spawn(&db, Some(held)).unwrap();
+        let sent = tokio::spawn({
+            let writer = writer.clone();
+            async move { writer.write(page(0, 5)).await }
+        });
+        drop(writer);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!task.finish(Duration::from_millis(50)).await);
+        permits.send(()).unwrap();
+        tokio::time::timeout(WAIT, sent)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(count(&db), 5);
     }
 }
