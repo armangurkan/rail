@@ -473,6 +473,18 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// True when every id of `labels` is one of the account's labels (kind `label` or `user`).
+    pub fn user_labels(&self, account_id: i64, labels: &[i64]) -> Result<bool, StoreError> {
+        let n: i64 = self.conn.query_row(
+            "SELECT count(*) FROM folders WHERE account_id = ?1 AND kind IN ('label', 'user')
+             AND id IN (SELECT value FROM json_each(?2))",
+            params![account_id, json(&labels)],
+            |r| r.get(0),
+        )?;
+        let distinct: BTreeSet<i64> = labels.iter().copied().collect();
+        Ok(usize::try_from(n).unwrap_or(0) == distinct.len())
+    }
+
     /// The provider id of one of the account's folders.
     pub fn folder_remote(
         &self,

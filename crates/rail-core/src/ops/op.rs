@@ -8,6 +8,10 @@ use super::accounts::{
     AccountAddRequest, AccountRemoveRequest, AccountRemoveResponse, BeginResponse,
     ConsentBeginRequest, LoginBeginRequest,
 };
+use super::actions::{
+    ActionApplyRequest, ActionApplyResponse, ActionRetryRequest, ActionRetryResponse,
+    ActionUndoRequest, ActionUndoResponse,
+};
 use super::body::{BodyFetchRequest, BodyFetchResponse};
 use super::daemon::{
     DaemonInfo, DaemonInfoRequest, DaemonStopRequest, DaemonStopResponse, HelloRequest,
@@ -43,9 +47,12 @@ pub mod names {
     pub const SYNC_NOW: &str = "sync.now";
     pub const SEARCH: &str = "search";
     pub const BODY_FETCH: &str = "body.fetch";
+    pub const ACTION_APPLY: &str = "action.apply";
+    pub const ACTION_UNDO: &str = "action.undo";
+    pub const ACTION_RETRY: &str = "action.retry";
 
     /// Every user operation, in the order of the specs' tables.
-    pub const ALL: [&str; 16] = [
+    pub const ALL: [&str; 19] = [
         STATUS,
         ACCOUNTS_LIST,
         PRESETS_LIST,
@@ -62,6 +69,9 @@ pub mod names {
         SYNC_NOW,
         SEARCH,
         BODY_FETCH,
+        ACTION_APPLY,
+        ACTION_UNDO,
+        ACTION_RETRY,
     ];
 
     /// The daemon's own methods: the handshake and its lifecycle. Not user operations.
@@ -74,6 +84,9 @@ pub mod names {
 
     /// Sent, to connections that asked with `sync.now { watch: true }`, on every status change.
     pub const SYNC_PROGRESS: &str = "sync.progress";
+
+    /// Sent, on the same watch as `sync.progress`, when Gmail refused an action for good.
+    pub const ACTION_FAILED: &str = "action.failed";
 }
 
 /// One operation: its wire name and the types it takes and returns.
@@ -159,6 +172,18 @@ operation!(
 operation!(
     /// Fetch bodies the store does not hold yet; one outcome per message, never a body.
     BodyFetch, names::BODY_FETCH, BodyFetchRequest, BodyFetchResponse
+);
+operation!(
+    /// Change threads now in the store and queue the change for Gmail. Terminal-only.
+    ActionApply, names::ACTION_APPLY, ActionApplyRequest, ActionApplyResponse
+);
+operation!(
+    /// Take back queued changes that have not been sent. Terminal-only.
+    ActionUndo, names::ACTION_UNDO, ActionUndoRequest, ActionUndoResponse
+);
+operation!(
+    /// Send a refused change again. Terminal-only.
+    ActionRetry, names::ACTION_RETRY, ActionRetryRequest, ActionRetryResponse
 );
 operation!(
     /// The handshake: protocol and Rail versions.

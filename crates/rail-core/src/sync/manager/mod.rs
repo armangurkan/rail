@@ -6,6 +6,7 @@
 //! `op read`) runs without it, so `sync.now`, `search`, the writer checks and shutdown never
 //! wait behind a locked 1Password.
 
+mod outbox;
 mod parts;
 mod supervise;
 
@@ -16,6 +17,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
+pub use self::outbox::ActionTarget;
 use self::parts::{
     ConfigStamp, Engines, PlannedAccount, Prepared, Running, failed_status, finish_writer,
     initial_status, key, named, needs_login, not_running, not_syncing, read_config, retry_observer,

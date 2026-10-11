@@ -51,12 +51,20 @@ fn start_watch(sync: &SyncManager, caller: &Caller) -> u64 {
         .watching()
         .join(NEXT_WATCH.fetch_add(1, Ordering::SeqCst));
     if subscribe {
-        let caller = caller.clone();
+        let (status_caller, failures) = (caller.clone(), caller.clone());
         sync.subscribe(Box::new(move |status| {
-            if !caller.is_open() || !caller.watching().is_live(id) {
+            if !status_caller.is_open() || !status_caller.watching().is_live(id) {
                 return false;
             }
-            caller.notify(names::SYNC_PROGRESS, status);
+            status_caller.notify(names::SYNC_PROGRESS, status);
+            true
+        }));
+        // Under the board's lock too: it only queues a frame, never calls the board.
+        sync.subscribe_failures(Box::new(move |failure| {
+            if !failures.is_open() || !failures.watching().is_live(id) {
+                return false;
+            }
+            failures.notify(names::ACTION_FAILED, failure);
             true
         }));
     }
@@ -120,6 +128,25 @@ mod tests {
         change(&sync, 2);
         assert!(sent.try_recv().is_err(), "a watch nobody holds is silent");
         assert_ne!(start_watch(&sync, &caller), first, "and can be asked again");
+    }
+
+    #[test]
+    fn a_watch_also_carries_action_failures() {
+        let (sync, caller, _frames, mut sent) = setup();
+        let id = start_watch(&sync, &caller);
+        let failure = crate::ops::ActionFailed {
+            account: "w".into(),
+            row: 1,
+            threads: vec![2],
+            action: crate::ops::Action::Archive {},
+            error: OpError::not_found("gone"),
+        };
+        sync.board().report_failure(&failure);
+        let frame = String::from_utf8(sent.try_recv().unwrap()).unwrap();
+        assert!(frame.contains("\"action.failed\""), "{frame}");
+        stop_watch(&caller, id);
+        sync.board().report_failure(&failure);
+        assert!(sent.try_recv().is_err());
     }
 
     /// Request A's failed wake cannot end the watch request B joined.

@@ -2,6 +2,7 @@
 //! row ids those operations speak. Terminal-only: no MCP tool reaches them, so agents cannot
 //! change mail. Every value here is an id, a flag or a count: never mail content.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use schemars::JsonSchema;
@@ -81,6 +82,139 @@ impl Action {
     }
 }
 
+/// Threads one `action.apply` takes at most.
+pub const MAX_ACTION_THREADS: usize = 200;
+/// Label ids one `labels` action adds, or removes, at most (Gmail's limit per change).
+pub const MAX_ACTION_LABELS: usize = 100;
+/// Rows one `action.undo` takes at most.
+pub const MAX_UNDO_ROWS: usize = 64;
+/// Characters a client token has at most.
+pub const MAX_CLIENT_TOKEN_CHARS: usize = 64;
+
+/// `action.apply`: one account's threads (the TUI sends one call per account).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionApplyRequest {
+    /// An account's name or address.
+    pub account: String,
+    /// Local thread ids (the store's), 1 to 200.
+    pub threads: Vec<i64>,
+    pub action: Action,
+    /// Wait `UNDO_GRACE` before sending (false: mark-read on open).
+    #[serde(default)]
+    pub grace: bool,
+    /// Made by the client; a replay finds the row it made.
+    pub client_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionApplyResponse {
+    pub rows: Vec<OutboxId>,
+    /// How many of the threads the change applied to.
+    pub applied: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionUndoRequest {
+    pub rows: Vec<OutboxId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionUndoResponse {
+    pub undone: Vec<OutboxId>,
+    /// Already sent, being sent, failed, or unknown.
+    pub too_late: Vec<OutboxId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionRetryRequest {
+    pub row: OutboxId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionRetryResponse {
+    /// False when the row is not a failed one.
+    pub retried: bool,
+}
+
+/// A fresh client token: 24 random letters and digits.
+pub fn client_token() -> String {
+    (0..24).map(|_| fastrand::alphanumeric()).collect()
+}
+
+fn safe_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= MAX_CLIENT_TOKEN_CHARS
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// True when no id appears twice in `ids`.
+fn all_distinct(ids: &[i64]) -> bool {
+    let mut seen = HashSet::new();
+    ids.iter().all(|id| seen.insert(*id))
+}
+
+fn check_labels(action: &Action) -> Result<(), OpError> {
+    if action.label_ids().iter().any(|id| *id <= 0) {
+        return Err(OpError::invalid_input("a label id is a positive number"));
+    }
+    let Action::Labels { add, remove } = action else {
+        return Ok(());
+    };
+    if add.is_empty() && remove.is_empty() {
+        return Err(OpError::invalid_input(
+            "a labels action adds or removes at least one label",
+        ));
+    }
+    if add.len() > MAX_ACTION_LABELS || remove.len() > MAX_ACTION_LABELS {
+        return Err(OpError::invalid_input(format!(
+            "a labels action adds or removes at most {MAX_ACTION_LABELS} labels"
+        )));
+    }
+    // Refused, not deduplicated: a repeated id is a client bug worth surfacing.
+    if !all_distinct(add) || !all_distinct(remove) {
+        return Err(OpError::invalid_input("a label is listed twice"));
+    }
+    if add.iter().any(|id| remove.contains(id)) {
+        return Err(OpError::invalid_input(
+            "a label cannot be both added and removed",
+        ));
+    }
+    Ok(())
+}
+
+impl ActionApplyRequest {
+    /// The thread ids, each once, in order; refused (never quoting an id) unless 1 to
+    /// `MAX_ACTION_THREADS` positive ids, a safe client token and sound label ids.
+    pub fn checked(&self) -> Result<Vec<i64>, OpError> {
+        if self.threads.is_empty() || self.threads.len() > MAX_ACTION_THREADS {
+            return Err(OpError::invalid_input(format!(
+                "an action takes 1 to {MAX_ACTION_THREADS} threads"
+            )));
+        }
+        if self.threads.iter().any(|id| *id <= 0) {
+            return Err(OpError::invalid_input("a thread id is a positive number"));
+        }
+        if !safe_token(&self.client_token) {
+            return Err(OpError::invalid_input(format!(
+                "a client token is 1 to {MAX_CLIENT_TOKEN_CHARS} letters, digits, '-' or '_'"
+            )));
+        }
+        check_labels(&self.action)?;
+        let mut seen = HashSet::new();
+        Ok(self
+            .threads
+            .iter()
+            .copied()
+            .filter(|id| seen.insert(*id))
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +259,88 @@ mod tests {
         };
         assert_eq!(labels.label_ids(), [1, 2, 3]);
         assert_eq!(Action::Move { to: 9 }.label_ids(), [9]);
+    }
+
+    fn request(threads: Vec<i64>, action: Action) -> ActionApplyRequest {
+        ActionApplyRequest {
+            account: "work".into(),
+            threads,
+            action,
+            grace: true,
+            client_token: "tok_1".into(),
+        }
+    }
+
+    #[test]
+    fn apply_checks_bounds_dedupes_and_never_quotes_input() {
+        assert_eq!(
+            request(vec![3, 1, 3], Action::Archive {})
+                .checked()
+                .unwrap(),
+            [3, 1]
+        );
+        for bad in [vec![], vec![0], vec![-4], (1..=201).collect::<Vec<i64>>()] {
+            let error = request(bad.clone(), Action::Archive {})
+                .checked()
+                .unwrap_err();
+            assert!(!error.message.contains("-4"), "{}", error.message);
+        }
+        let mut token = request(vec![1], Action::Archive {});
+        for bad in ["", "a b", &"x".repeat(65), "tok\n"] {
+            token.client_token = bad.to_string();
+            assert!(token.checked().is_err(), "{bad:?}");
+        }
+        let both = Action::Labels {
+            add: vec![2],
+            remove: vec![2],
+        };
+        assert!(request(vec![1], both).checked().is_err());
+        let none = Action::Labels {
+            add: vec![],
+            remove: vec![],
+        };
+        assert!(request(vec![1], none).checked().is_err());
+        let many = Action::Labels {
+            add: (1..=101).collect(),
+            remove: vec![],
+        };
+        assert!(request(vec![1], many).checked().is_err());
+        assert!(request(vec![1], Action::Move { to: 0 }).checked().is_err());
+    }
+
+    /// A repeated label id inside one list is refused (not silently deduplicated).
+    #[test]
+    fn a_label_listed_twice_is_refused() {
+        for action in [
+            Action::Labels {
+                add: vec![5, 5],
+                remove: vec![],
+            },
+            Action::Labels {
+                add: vec![],
+                remove: vec![6, 7, 6],
+            },
+        ] {
+            let error = request(vec![1], action).checked().unwrap_err();
+            assert!(!error.message.contains('5'), "{}", error.message);
+        }
+        let fine = Action::Labels {
+            add: vec![5],
+            remove: vec![6],
+        };
+        assert!(request(vec![1], fine).checked().is_ok());
+    }
+
+    #[test]
+    fn requests_refuse_unknown_fields_and_a_token_looks_right() {
+        let json =
+            r#"{"account":"w","threads":[1],"action":{"kind":"archive"},"client_token":"t","x":1}"#;
+        assert!(serde_json::from_str::<ActionApplyRequest>(json).is_err());
+        assert!(serde_json::from_str::<ActionUndoRequest>(r#"{"rows":[1],"x":1}"#).is_err());
+        assert!(serde_json::from_str::<ActionRetryRequest>(r#"{"row":1,"x":1}"#).is_err());
+        let token = client_token();
+        assert_eq!(token.len(), 24);
+        assert!(token.bytes().all(|b| b.is_ascii_alphanumeric()));
+        assert_ne!(client_token(), token);
     }
 }

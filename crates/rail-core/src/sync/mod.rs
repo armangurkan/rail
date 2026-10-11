@@ -19,8 +19,8 @@ mod engine_tests;
 pub use batch::{Batch, BatchOutcome, Origin, Prune, ResumeToken, StateUpdate, Sweep};
 pub use engine::{Clock, Engine, EngineParts, SyncError};
 pub use manager::{
-    CONFIG_CHECK, ENGINE_STOP, MAX_WRITER_RESTARTS, ProviderFactory, ProviderRequest, Reach,
-    SETTLE_WAIT, SearchTarget, SyncManager, WRITER_HEALTHY,
+    ActionTarget, CONFIG_CHECK, ENGINE_STOP, MAX_WRITER_RESTARTS, ProviderFactory, ProviderRequest,
+    Reach, SETTLE_WAIT, SearchTarget, SyncManager, WRITER_HEALTHY,
 };
 pub use status::{FailureSubscriber, StatusBoard, Subscriber};
 pub use writer::{WRITER_QUEUE, WriterHandle, WriterTask, spawn_writer};
