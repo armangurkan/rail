@@ -51,7 +51,7 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
             query,
             account,
             limit,
-        }) => cmd::search::run(&paths, query.join(" "), account, limit).await,
+        }) => cmd::search::run(&paths, query.join(" "), account, usize::from(limit)).await,
         Some(Command::Doctor) => cmd::doctor::run(&paths).await,
         Some(Command::Mcp) => cmd::mcp::run(&paths).await,
         Some(Command::Daemon { command }) => match command {

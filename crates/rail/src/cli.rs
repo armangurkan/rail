@@ -11,6 +11,11 @@ pub struct Cli {
     pub panic_test: bool,
 }
 
+/// `rail search`'s default `--limit`: the daemon's.
+const DEFAULT_LIMIT: u8 = 20;
+/// `rail search`'s largest `--limit`: the daemon's.
+const MAX_LIMIT: i64 = 100;
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Add an account with the interactive setup wizard.
@@ -42,9 +47,13 @@ pub enum Command {
         /// Only this account (name or address).
         #[arg(long)]
         account: Option<String>,
-        /// At most this many threads (up to 100).
-        #[arg(long, default_value_t = rail_core::ops::DEFAULT_SEARCH_LIMIT)]
-        limit: usize,
+        /// At most this many threads, 1 to 100.
+        #[arg(
+            long,
+            default_value_t = DEFAULT_LIMIT,
+            value_parser = clap::value_parser!(u8).range(1..=MAX_LIMIT)
+        )]
+        limit: u8,
     },
     /// Check config, store, secrets, accounts, each account's sync and the daemon.
     Doctor,
@@ -152,4 +161,43 @@ pub struct AddArgs {
 pub enum KindArg {
     Gmail,
     M365,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The search limits here are the daemon's.
+    #[test]
+    fn the_search_limits_match_the_daemon() {
+        assert_eq!(
+            usize::from(DEFAULT_LIMIT),
+            rail_core::ops::DEFAULT_SEARCH_LIMIT
+        );
+        assert_eq!(
+            usize::try_from(MAX_LIMIT).unwrap(),
+            rail_core::ops::MAX_SEARCH_LIMIT
+        );
+    }
+
+    #[test]
+    fn a_search_limit_is_1_to_100() {
+        let parse = |limit: &str| Cli::try_parse_from(["rail", "search", "--limit", limit, "x"]);
+        assert!(parse("0").is_err());
+        assert!(parse("101").is_err());
+        assert!(parse("-1").is_err());
+        for ok in ["1", "100"] {
+            match parse(ok).unwrap().command {
+                Some(Command::Search { limit, .. }) => assert_eq!(limit.to_string(), ok),
+                other => panic!("{other:?}"),
+            }
+        }
+        match Cli::try_parse_from(["rail", "search", "x"])
+            .unwrap()
+            .command
+        {
+            Some(Command::Search { limit, .. }) => assert_eq!(limit, 20),
+            other => panic!("{other:?}"),
+        }
+    }
 }

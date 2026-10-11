@@ -189,7 +189,7 @@ pub fn render_sync(statuses: &[AccountSyncStatus]) -> (String, bool) {
 
 /// `status`'s lines; false when the account fails the check.
 fn sync_line(out: &mut String, s: &AccountSyncStatus) -> bool {
-    let name = &s.name;
+    let name = &escaped(&s.name);
     if s.phase == SyncPhase::Unsupported {
         let _ = writeln!(
             out,
@@ -218,16 +218,27 @@ fn sync_line(out: &mut String, s: &AccountSyncStatus) -> bool {
         );
         return true;
     };
+    let broken = broken(s);
     let _ = writeln!(
         out,
-        "{WARN} sync     {name}: {phase}, {success}; last error {}: {}",
+        "{} sync     {name}: {phase}, {success}; last error {}: {}",
+        if broken { mark(false) } else { WARN },
         utc_minute(error.at),
         escaped(&error.message)
     );
     if let Some(detail) = &error.detail {
         let _ = writeln!(out, "{TEXT_INDENT}{}", outside(detail.get()));
     }
-    true
+    !broken
+}
+
+/// True when the last pass failed for good (a permanent error) and no retry is under way: the
+/// sync will not mend by itself, so the check fails. Any other past error is a warning.
+fn broken(s: &AccountSyncStatus) -> bool {
+    s.last_pass_failed
+        && s.last_error.as_ref().is_some_and(|e| e.code == "permanent")
+        && s.phase != SyncPhase::Retrying
+        && !s.pass_running
 }
 
 #[cfg(test)]
@@ -286,6 +297,50 @@ mod tests {
             lines[4],
             "skip sync     corp: Microsoft 365 sync arrives in a later phase"
         );
+    }
+
+    /// T9-C: a pass that failed for good, with no retry under way, fails the check; the same
+    /// error while a pass runs again is a warning.
+    #[test]
+    fn a_permanent_failure_fails_the_check_unless_a_retry_runs() {
+        use rail_core::config::AccountKind;
+        use rail_core::ops::{AccountSyncStatus, SyncErrorInfo, SyncPhase};
+        let mut broken = AccountSyncStatus::new("work", "me@example.com", AccountKind::Gmail);
+        broken.last_pass_failed = true;
+        broken.last_error = Some(SyncErrorInfo {
+            code: "permanent".into(),
+            message: "Gmail refused the request (HTTP 400)".into(),
+            at: 1_700_000_000,
+            detail: None,
+        });
+        let (text, healthy) = render_sync(std::slice::from_ref(&broken));
+        assert!(!healthy, "{text}");
+        assert!(
+            text.starts_with("FAIL sync     work: idle, never synced; last error 2023-11-14 22:13 UTC: Gmail refused the request (HTTP 400)"),
+            "{text}"
+        );
+        let mut retrying = broken.clone();
+        retrying.phase = SyncPhase::Retrying;
+        assert!(render_sync(&[retrying]).1);
+        let mut running = broken.clone();
+        running.pass_running = true;
+        assert!(render_sync(&[running]).1);
+        let mut transient = broken;
+        if let Some(error) = transient.last_error.as_mut() {
+            error.code = "transient".into();
+        }
+        let (text, healthy) = render_sync(&[transient]);
+        assert!(healthy && text.starts_with("warn sync"), "{text}");
+    }
+
+    #[test]
+    fn a_name_in_a_sync_line_is_escaped() {
+        use rail_core::config::AccountKind;
+        use rail_core::ops::AccountSyncStatus;
+        let odd = AccountSyncStatus::new("w\u{1b}[2J", "me@example.com", AccountKind::Gmail);
+        let (text, _) = render_sync(&[odd]);
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+        assert!(text.contains("w\\u{1b}[2J: idle"), "{text}");
     }
 
     #[test]

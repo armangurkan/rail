@@ -15,23 +15,28 @@ use rail_core::ops::{
 use rail_core::paths::Paths;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::broadcast::{self, error::TryRecvError};
+use tokio::time::Instant;
 
 use crate::cmd::account::{escaped, outside, report};
 use crate::cmd::text::stored;
 use crate::daemon_link;
 
-/// The longest `rail sync` watches; the sync itself carries on past it.
-const WATCH_LIMIT: Duration = Duration::from_secs(60 * 60);
+/// How long `rail sync` keeps watching while no watched account's status changes; it then
+/// leaves the sync to the daemon. A sync that keeps making progress is watched to the end.
+const STALL: Duration = Duration::from_secs(10 * 60);
 /// How often the status is asked for between progress notifications.
 const POLL: Duration = Duration::from_secs(1);
 /// The exit code after Ctrl-C, as a shell reports a command SIGINT ended.
 const INTERRUPTED: u8 = 130;
+/// What a watch that saw no change for `STALL` says.
+const STALLED: &str = "still syncing in the daemon; `rail doctor` shows progress";
 
-/// How a watch ended.
+/// How a watch ended; each carries the accounts' statuses then.
 enum Ended {
-    /// Every target was reached: each account's status then.
+    /// Every target was reached.
     Done(Vec<AccountSyncStatus>),
-    TimedOut,
+    /// Nothing changed for the stall interval.
+    Stalled(Vec<AccountSyncStatus>),
     Interrupted,
 }
 
@@ -59,25 +64,36 @@ pub async fn run(
     }
     if no_wait {
         for target in &targets {
-            println!("{}: syncing in the background", target.name);
+            println!("{}: syncing in the background", escaped(&target.name));
         }
         return Ok(ExitCode::SUCCESS);
     }
     let mut interrupt = signal(SignalKind::interrupt())?;
-    let ended = follow(&client, &mut notes, &targets, &mut interrupt)
+    let stall = crate::test_hooks::sync_stall().unwrap_or(STALL);
+    let ended = follow(&client, &mut notes, &targets, &mut interrupt, stall)
         .await
         .map_err(report)?;
-    Ok(match ended {
+    Ok(finish(ended))
+}
+
+/// Print how the watch ended; the exit code.
+fn finish(ended: Ended) -> ExitCode {
+    match ended {
         Ended::Done(finals) => print_finals(&finals),
-        Ended::TimedOut => {
-            eprintln!("{}", gave_up(WATCH_LIMIT));
-            ExitCode::from(1)
+        Ended::Stalled(now) => {
+            let failed: Vec<AccountSyncStatus> = now
+                .into_iter()
+                .filter(|s| s.needs_auth || s.last_pass_failed)
+                .collect();
+            let code = print_finals(&failed);
+            eprintln!("{STALLED}");
+            code
         }
         Ended::Interrupted => {
             eprintln!("stopped watching; the sync carries on in the daemon (see `rail doctor`)");
             ExitCode::from(INTERRUPTED)
         }
-    })
+    }
 }
 
 /// No engine to wake: say why for each Gmail account (a sync that could not start shows its
@@ -108,41 +124,58 @@ fn print_finals(finals: &[AccountSyncStatus]) -> ExitCode {
     ExitCode::from(exit_code(finals))
 }
 
-/// What a watch that ran out says.
-fn gave_up(waited: Duration) -> String {
-    format!(
-        "still syncing after {} minutes; stopped watching, and the sync carries on in the daemon\nhint: run `rail sync` again to keep watching, or `rail doctor` to see where it is",
-        waited.as_secs() / 60
-    )
-}
-
-/// Watch until every target is reached, `WATCH_LIMIT` passes or Ctrl-C.
+/// Watch until every target is reached, nothing changes for `stall`, or Ctrl-C.
 async fn follow(
     client: &DaemonClient,
     notes: &mut broadcast::Receiver<Notification>,
     targets: &[SyncTarget],
     interrupt: &mut Signal,
+    stall: Duration,
 ) -> Result<Ended, OpError> {
     tokio::select! {
-        watched = tokio::time::timeout(WATCH_LIMIT, watch(client, notes, targets)) => {
-            match watched {
-                Ok(finals) => finals.map(Ended::Done),
-                Err(_) => Ok(Ended::TimedOut),
-            }
-        }
+        watched = watch(client, notes, targets, stall) => watched,
         _ = interrupt.recv() => Ok(Ended::Interrupted),
     }
 }
 
-/// Print each account's progress line when it changes, until every target is reached. Woken
-/// by each progress notification and at least every `POLL`.
+/// When the watched statuses last changed.
+struct Stall {
+    limit: Duration,
+    last: Vec<AccountSyncStatus>,
+    since: Instant,
+}
+
+impl Stall {
+    fn new(limit: Duration, now: Instant) -> Self {
+        Self {
+            limit,
+            last: Vec::new(),
+            since: now,
+        }
+    }
+
+    /// True once `mine` has stayed the same for the limit.
+    fn stalled(&mut self, mine: &[AccountSyncStatus], now: Instant) -> bool {
+        if self.last != mine {
+            self.last = mine.to_vec();
+            self.since = now;
+            return false;
+        }
+        now.duration_since(self.since) >= self.limit
+    }
+}
+
+/// Print each account's progress line when it changes, until every target is reached or no
+/// status changed for `stall`. Woken by each progress notification and at least every `POLL`.
 async fn watch(
     client: &DaemonClient,
     notes: &mut broadcast::Receiver<Notification>,
     targets: &[SyncTarget],
-) -> Result<Vec<AccountSyncStatus>, OpError> {
+    stall: Duration,
+) -> Result<Ended, OpError> {
     let mut shown: HashMap<String, String> = HashMap::new();
     let mut tick = tokio::time::interval(POLL);
+    let mut quiet = Stall::new(stall, Instant::now());
     loop {
         let mine = statuses(client, targets).await?;
         for status in &mine {
@@ -153,7 +186,10 @@ async fn watch(
             }
         }
         if reached(targets, &mine) {
-            return Ok(mine);
+            return Ok(Ended::Done(mine));
+        }
+        if quiet.stalled(&mine, Instant::now()) {
+            return Ok(Ended::Stalled(mine));
         }
         tokio::select! {
             _ = tick.tick() => {}
@@ -233,13 +269,13 @@ pub fn progress_line(status: &AccountSyncStatus, now: i64) -> String {
             status.phase.as_str().to_string()
         }
     };
-    format!("{}: {what}", status.name)
+    format!("{}: {what}", escaped(&status.name))
 }
 
 /// How an account ended: up to date, needing a login, or failed with Rail's message and the
 /// outside text quoted on a line of its own.
 pub fn final_lines(status: &AccountSyncStatus) -> Vec<String> {
-    let name = &status.name;
+    let name = &escaped(&status.name);
     if status.needs_auth {
         return vec![format!(
             "{name}: needs a login; run `rail account login {name}`"
@@ -348,10 +384,34 @@ mod tests {
         );
     }
 
+    /// T9-A: a watch ends only after the stall interval with no change at all.
     #[test]
-    fn a_watch_that_runs_out_says_the_sync_carries_on() {
-        let text = gave_up(Duration::from_secs(3_600));
-        assert!(text.starts_with("still syncing after 60 minutes"), "{text}");
-        assert!(text.contains("the sync carries on in the daemon"), "{text}");
+    fn a_watch_stalls_only_after_the_interval_without_change() {
+        let start = Instant::now();
+        let limit = Duration::from_secs(600);
+        let mut quiet = Stall::new(limit, start);
+        let mut s = status("work");
+        assert!(!quiet.stalled(std::slice::from_ref(&s), start));
+        let later = start + Duration::from_secs(599);
+        assert!(!quiet.stalled(std::slice::from_ref(&s), later));
+        s.backfill_fetched = 10;
+        assert!(
+            !quiet.stalled(std::slice::from_ref(&s), later),
+            "progress resets it"
+        );
+        assert!(!quiet.stalled(std::slice::from_ref(&s), later + Duration::from_secs(599)));
+        assert!(quiet.stalled(std::slice::from_ref(&s), later + limit));
+    }
+
+    /// Account names reach the terminal escaped, like every other field.
+    #[test]
+    fn account_names_are_escaped() {
+        let s = status("w\u{1b}[2J");
+        assert_eq!(progress_line(&s, 0), "w\\u{1b}[2J: idle");
+        assert!(
+            !final_lines(&needs_login("w\u{1b}"))
+                .join("")
+                .contains('\u{1b}')
+        );
     }
 }
