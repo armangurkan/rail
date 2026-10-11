@@ -186,10 +186,15 @@ fn a_failed_apply_leaves_no_row() {
     let t1 = thread(&store, "t1");
     enqueue(&mut store, Action::Archive {}, vec![t1], "same");
     let before = state(&store);
-    // Account 99 does not exist: the local change runs, then the row's foreign key refuses the
-    // insert and the whole transaction rolls back.
+    // The local change runs, then the insert is refused and the whole transaction rolls back.
+    store
+        .conn()
+        .execute_batch(
+            "CREATE TEMP TRIGGER refuse BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT, 'test'); END;",
+        )
+        .unwrap();
     let write = OutboxWrite::Enqueue(NewAction {
-        account_id: 99,
+        account_id: 1,
         action: Action::Star { on: true },
         threads: vec![t1],
         not_before: 0,

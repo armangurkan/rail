@@ -83,17 +83,19 @@ fn change_for(tx: &Transaction, account: i64, action: &Action) -> Result<Change,
     })
 }
 
-/// `(message, thread, is_read, is_starred)` of every message of `threads`.
+/// `(message, thread, is_read, is_starred)` of every message of `threads` that are `account`'s.
 fn messages_of(
     tx: &Transaction,
+    account: i64,
     threads: &[i64],
 ) -> Result<Vec<(i64, i64, bool, bool)>, StoreError> {
     let ids = serde_json::to_string(threads).unwrap_or_else(|_| "[]".into());
     let mut stmt = tx.prepare(
-        "SELECT id, thread_id, is_read, is_starred FROM messages
-         WHERE thread_id IN (SELECT value FROM json_each(?1)) ORDER BY id",
+        "SELECT m.id, m.thread_id, m.is_read, m.is_starred FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+         WHERE t.account_id = ?1 AND m.thread_id IN (SELECT value FROM json_each(?2)) ORDER BY m.id",
     )?;
-    let rows = stmt.query_map(params![ids], |r| {
+    let rows = stmt.query_map(params![account, ids], |r| {
         Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -162,7 +164,7 @@ pub(crate) fn apply(
 ) -> Result<Vec<Prior>, StoreError> {
     let change = change_for(tx, account, action)?;
     let mut priors = Vec::new();
-    for (message, thread, read, starred) in messages_of(tx, threads)? {
+    for (message, thread, read, starred) in messages_of(tx, account, threads)? {
         let mut prior = Prior {
             message,
             thread,

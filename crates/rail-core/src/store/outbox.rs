@@ -48,7 +48,8 @@ pub struct OutboxRow {
 pub struct NewAction {
     pub account_id: i64,
     pub action: Action,
-    /// Checked by the caller: this account's threads, deduplicated.
+    /// Checked by the caller: this account's threads, deduplicated. The enqueue keeps only
+    /// those the store still holds for the account when it writes.
     pub threads: Vec<i64>,
     pub not_before: i64,
     pub client_token: String,
@@ -94,7 +95,7 @@ pub enum OutboxWrite {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutboxOutcome {
-    /// The row ids, and how many of the threads the store holds.
+    /// The row ids, and how many of the threads the store holds; no row when it holds none.
     Enqueued {
         rows: Vec<OutboxId>,
         applied: usize,
@@ -192,20 +193,30 @@ pub(super) fn save_threads_and_reversal(
     Ok(())
 }
 
-/// How many of `threads` the store holds for `account`.
-fn held(tx: &Transaction, account: i64, threads: &[i64]) -> Result<usize, StoreError> {
-    let n: i64 = tx.query_row(
-        "SELECT count(*) FROM threads WHERE account_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
-        params![account, json(&threads)],
-        |r| r.get(0),
+/// The ids of `threads` the store holds for `account`, in the order given.
+fn held(tx: &Transaction, account: i64, threads: &[i64]) -> Result<Vec<i64>, StoreError> {
+    let mut stmt = tx.prepare(
+        "SELECT id FROM threads WHERE account_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
     )?;
-    Ok(usize::try_from(n).unwrap_or(0))
+    let found: BTreeSet<i64> = stmt
+        .query_map(params![account, json(&threads)], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(threads
+        .iter()
+        .copied()
+        .filter(|t| found.contains(t))
+        .collect())
 }
 
-/// Add the row and apply its change locally, in the caller's transaction. A token already in
-/// the outbox answers with that row and changes nothing.
-pub(crate) fn enqueue(tx: &Transaction, new: &NewAction) -> Result<(OutboxId, usize), StoreError> {
-    let applied = held(tx, new.account_id, &new.threads)?;
+/// Add the row and apply its change locally, in the caller's transaction, for the threads the
+/// store still holds for the account (a sync batch may have deleted one since the operation
+/// checked them). A token already in the outbox answers with that row and changes nothing.
+/// `None` when none of the threads is held any more: nothing is written.
+pub(crate) fn enqueue(
+    tx: &Transaction,
+    new: &NewAction,
+) -> Result<Option<(OutboxId, usize)>, StoreError> {
+    let threads = held(tx, new.account_id, &new.threads)?;
     let known: Option<OutboxId> = tx
         .query_row(
             "SELECT id FROM outbox WHERE client_token = ?1",
@@ -214,9 +225,12 @@ pub(crate) fn enqueue(tx: &Transaction, new: &NewAction) -> Result<(OutboxId, us
         )
         .optional()?;
     if let Some(id) = known {
-        return Ok((id, applied));
+        return Ok(Some((id, threads.len())));
     }
-    let reversal = apply_local::apply(tx, new.account_id, &new.action, &new.threads)?;
+    if threads.is_empty() {
+        return Ok(None);
+    }
+    let reversal = apply_local::apply(tx, new.account_id, &new.action, &threads)?;
     tx.execute(
         "INSERT INTO outbox (account_id, kind, payload, state, client_token, not_before, thread_ids, reversal)
          VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6, ?7)",
@@ -226,13 +240,13 @@ pub(crate) fn enqueue(tx: &Transaction, new: &NewAction) -> Result<(OutboxId, us
             json(&new.action),
             new.client_token,
             new.not_before,
-            json(&new.threads),
+            json(&threads),
             json(&reversal)
         ],
     )?;
     let id = tx.last_insert_rowid();
-    rollup::refresh(tx, &new.threads.iter().copied().collect())?;
-    Ok((id, applied))
+    rollup::refresh(tx, &threads.iter().copied().collect())?;
+    Ok(Some((id, threads.len())))
 }
 
 /// The oldest due pending row of `account`, now inflight. Per-thread FIFO: a row waits (even
@@ -374,13 +388,16 @@ impl Store {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let outcome = match write {
-            OutboxWrite::Enqueue(new) => {
-                let (id, applied) = enqueue(&tx, new)?;
-                OutboxOutcome::Enqueued {
+            OutboxWrite::Enqueue(new) => match enqueue(&tx, new)? {
+                Some((id, applied)) => OutboxOutcome::Enqueued {
                     rows: vec![id],
                     applied,
-                }
-            }
+                },
+                None => OutboxOutcome::Enqueued {
+                    rows: Vec::new(),
+                    applied: 0,
+                },
+            },
             OutboxWrite::Claim { account_id } => {
                 OutboxOutcome::Claimed(claim_next(&tx, *account_id, now)?)
             }

@@ -80,6 +80,11 @@ pub(super) async fn apply(
     let OutboxOutcome::Enqueued { rows, applied } = outcome else {
         return Err(unexpected());
     };
+    if rows.is_empty() {
+        // A sync deleted every thread after the check: nothing was written.
+        return Err(OpError::not_found("the threads are no longer in the store")
+            .with_hint("the list will refresh; act on what it shows"));
+    }
     tracing::info!(account = %target.name, rows = rows.len(), threads = applied, "an action was queued");
     call.ctx.sync.outbox_changed(&call.ctx).await;
     Ok(ActionApplyResponse { rows, applied })
