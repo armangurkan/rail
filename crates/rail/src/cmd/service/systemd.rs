@@ -62,25 +62,10 @@ fn exec_path(setup: &Setup) -> color_eyre::Result<String> {
 
 pub fn unit(setup: &Setup) -> color_eyre::Result<Unit> {
     let dir = setup.config_home.join("systemd").join("user");
-    let mut text = String::from(
-        "# Written by `rail daemon install`; `rail daemon uninstall` removes it.\n\
-         [Unit]\nDescription=Rail mail daemon: keeps the local mail store in sync\n\
-         StartLimitIntervalSec=300\nStartLimitBurst=5\n\n[Service]\nType=simple\n",
-    );
-    text.push_str(&format!("ExecStart={} daemon run\n", exec_path(setup)?));
-    text.push_str("Restart=on-failure\nRestartSec=5\n");
-    for (key, value) in environment(setup)? {
-        text.push_str(&format!(
-            "Environment={}\n",
-            quote(&format!("{key}={value}"))?
-        ));
-    }
-    text.push_str(&format!("UnsetEnvironment={}\n", UNSET.join(" ")));
-    text.push_str("\n[Install]\nWantedBy=default.target\n");
     Ok(Unit {
         name: UNIT_NAME.to_string(),
         path: dir.join(UNIT_NAME),
-        text,
+        text: unit_text(setup)?,
         enabled_marker: Some(dir.join("default.target.wants").join(UNIT_NAME)),
         probe: Some(cmd(&["systemctl", "--user", "show", "--property=Version"])),
         before_install: Vec::new(),
@@ -109,6 +94,26 @@ pub fn unit(setup: &Setup) -> color_eyre::Result<Unit> {
             "`journalctl --user -u {UNIT_NAME}` and `rail doctor` say why; `systemctl --user restart {UNIT_NAME}` tries again"
         ),
     })
+}
+
+/// The unit file's text.
+fn unit_text(setup: &Setup) -> color_eyre::Result<String> {
+    let mut text = String::from(
+        "# Written by `rail daemon install`; `rail daemon uninstall` removes it.\n\
+         [Unit]\nDescription=Rail mail daemon: keeps the local mail store in sync\n\
+         StartLimitIntervalSec=300\nStartLimitBurst=5\n\n[Service]\nType=simple\n",
+    );
+    text.push_str(&format!("ExecStart={} daemon run\n", exec_path(setup)?));
+    text.push_str("Restart=on-failure\nRestartSec=5\n");
+    for (key, value) in environment(setup)? {
+        text.push_str(&format!(
+            "Environment={}\n",
+            quote(&format!("{key}={value}"))?
+        ));
+    }
+    text.push_str(&format!("UnsetEnvironment={}\n", UNSET.join(" ")));
+    text.push_str("\n[Install]\nWantedBy=default.target\n");
+    Ok(text)
 }
 
 #[cfg(test)]
