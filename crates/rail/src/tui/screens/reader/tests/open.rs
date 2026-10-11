@@ -3,14 +3,14 @@
 use std::sync::{Arc, Mutex};
 
 use crossterm::event::KeyCode;
-use rail_core::ops::{BodyFetchResponse, BodyFetchResult, BodyOutcome};
+use rail_core::ops::{BodyFetchResponse, BodyFetchResult, BodyOutcome, OpError};
 use rail_core::paths::Paths;
 use rail_core::provider::Body;
 use rail_core::store::Store;
 use rail_core::sync::Batch;
 use url::Url;
 
-use super::{draw, fixture, keys, press, store_bodies_on_fetch};
+use super::{Fixture, draw, fixture, keys, press, store_bodies_on_fetch};
 use crate::tui::app::{Msg, TaskResult};
 use crate::tui::data::{FakeDaemon, MailEvent};
 use crate::tui::screen::Screen;
@@ -176,4 +176,95 @@ async fn starting_the_screen_sweeps_a_crashs_old_files() {
     let mut screen = MailScreen::new(mail_ctx(&paths, fake), work_and_home()[..1].to_vec());
     let _ = screen.start();
     assert!(!old.exists());
+}
+
+/// Open the thread, ask for m3's HTML while its fetch is out, and answer that fetch with a
+/// failure for m3.
+async fn open_then_fail_m3(f: &mut Fixture) {
+    *f.fake.answer.lock().unwrap() = Some(Ok(BodyFetchResponse {
+        results: Vec::new(),
+    }));
+    press(f, KeyCode::Enter).await;
+    press(f, KeyCode::End).await;
+    keys(f, "o").await;
+    assert!(f.screen.pending_open().is_some(), "waiting for the fetch");
+    let failed = BodyFetchResponse {
+        results: vec![BodyFetchResult {
+            message_id: "m3".into(),
+            outcome: BodyOutcome::Failed(OpError::internal("boom")),
+        }],
+    };
+    let event = MailEvent::Bodies {
+        thread_id: 1,
+        result: Ok(failed),
+    };
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+    settle(&mut f.screen, effects).await;
+}
+
+#[tokio::test]
+async fn a_failed_fetch_ends_the_wait_so_a_later_landing_opens_nothing() {
+    let mut f = fixture(false).await;
+    open_then_fail_m3(&mut f).await;
+    assert_eq!(f.screen.pending_open(), None);
+    let html = Body {
+        text: "late".into(),
+        html: Some("<p>late</p>".into()),
+        ..Body::default()
+    };
+    Store::open(&f.paths.db_file())
+        .unwrap()
+        .apply(
+            &Batch {
+                bodies: vec![("m3".into(), html)],
+                ..Batch::new(1)
+            },
+            BASE_MS / 1000,
+        )
+        .unwrap();
+    let landed = BodyFetchResponse {
+        results: vec![BodyFetchResult {
+            message_id: "m3".into(),
+            outcome: BodyOutcome::Fetched,
+        }],
+    };
+    let event = MailEvent::Bodies {
+        thread_id: 1,
+        result: Ok(landed),
+    };
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+    settle(&mut f.screen, effects).await;
+    let text = draw(&f, 90, 24);
+    assert!(!text.contains("Open in the browser?"), "{text}");
+    assert!(f.opened.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn o_after_a_failed_fetch_says_why_instead_of_waiting() {
+    let mut f = fixture(false).await;
+    open_then_fail_m3(&mut f).await;
+    let calls = f.fake.calls.lock().unwrap().len();
+    keys(&mut f, "o").await;
+    let line = f.screen.status_line();
+    assert!(line.contains("Cannot open this message"), "{line}");
+    assert!(!line.contains("fetching"), "{line}");
+    assert_eq!(f.screen.pending_open(), None);
+    assert_eq!(f.fake.calls.lock().unwrap().len(), calls, "no new fetch");
+}
+
+#[tokio::test]
+async fn an_html_answer_after_the_reader_closed_is_dropped() {
+    let mut f = fixture(false).await;
+    store_bodies_on_fetch(&f);
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Home).await;
+    keys(&mut f, "o").await;
+    let confirm = f
+        .screen
+        .update(Msg::Key(crate::tui::test_util::key(KeyCode::Char('y'))));
+    press(&mut f, KeyCode::Char('q')).await;
+    settle(&mut f.screen, confirm).await;
+    assert!(f.opened.lock().unwrap().is_empty());
+    let dir = f.paths.cache_dir.join("open");
+    assert!(!dir.exists() || std::fs::read_dir(&dir).unwrap().next().is_none());
 }

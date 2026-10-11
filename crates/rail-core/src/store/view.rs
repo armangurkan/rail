@@ -203,12 +203,23 @@ impl fmt::Debug for MessageView {
 }
 
 /// One message's HTML, for `o`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum HtmlBody {
     NotFetched,
     /// Fetched; the message has no HTML part.
     Absent,
     Html(String),
+}
+
+/// Never prints the HTML: only its size.
+impl fmt::Debug for HtmlBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFetched => f.write_str("HtmlBody::NotFetched"),
+            Self::Absent => f.write_str("HtmlBody::Absent"),
+            Self::Html(html) => write!(f, "HtmlBody::Html({} bytes)", html.len()),
+        }
+    }
 }
 
 /// An account's inbox: its threads and how many have unread mail.

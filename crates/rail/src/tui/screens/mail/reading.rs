@@ -106,7 +106,17 @@ impl MailScreen {
         };
         match result {
             Ok(response) => {
-                for failure in reader.fetched(&response) {
+                let failures = reader.fetched(&response);
+                // A fetch that did not produce the body `o` waited for ends the wait.
+                if let Some(id) = self.pending_open
+                    && self
+                        .reader
+                        .as_ref()
+                        .is_some_and(|r| r.error_of(id).is_some())
+                {
+                    self.pending_open = None;
+                }
+                for failure in failures {
                     self.login_hint(&failure);
                 }
                 effects.push(self.read_thread(thread_id));
@@ -180,12 +190,7 @@ impl MailScreen {
         };
         let (id, body, has_html) = (message.id, message.body.clone(), message.has_html);
         match body {
-            BodyState::NotFetched => {
-                self.pending_open = Some(id);
-                self.status
-                    .notify("fetching the message for the browser…", self.tick);
-                self.fetch_wanted()
-            }
+            BodyState::NotFetched => self.open_after_fetch(id),
             _ if !has_html => {
                 self.status.notify(
                     "This message has no HTML part; the reader shows all of its text.",
@@ -195,6 +200,31 @@ impl MailScreen {
             }
             _ => self.confirm_open(id),
         }
+    }
+
+    /// `o` on a message with no body yet: wait for a fetch that is running or start one; say
+    /// so when none can happen (it failed before), instead of waiting for nothing.
+    fn open_after_fetch(&mut self, id: i64) -> Vec<Effect> {
+        let Some(reader) = self.reader.as_ref() else {
+            return Vec::new();
+        };
+        if let Some(error) = reader.error_of(id) {
+            let text = format!("Cannot open this message: {error}");
+            self.status.notify(text, self.tick);
+            return Vec::new();
+        }
+        let fetching = reader.is_fetching(id);
+        if !fetching && !reader.wanted().iter().any(|(wanted, _)| *wanted == id) {
+            self.status.notify(
+                "Cannot open this message: its body is not available.",
+                self.tick,
+            );
+            return Vec::new();
+        }
+        self.pending_open = Some(id);
+        self.status
+            .notify("fetching the message for the browser…", self.tick);
+        self.fetch_wanted()
     }
 
     /// Ask once per session, naming remote images; then read the HTML.
@@ -223,6 +253,12 @@ impl MailScreen {
         let Some(id) = self.pending_open else {
             return Vec::new();
         };
+        if let Some(error) = self.reader.as_ref().and_then(|r| r.error_of(id)) {
+            let text = format!("Cannot open this message: {error}");
+            self.pending_open = None;
+            self.status.notify(text, self.tick);
+            return Vec::new();
+        }
         let found = self
             .reader
             .as_ref()
@@ -248,6 +284,10 @@ impl MailScreen {
         message_id: i64,
         result: Result<Option<HtmlBody>, ReadError>,
     ) -> Vec<Effect> {
+        // The reader closed while the read was in flight: nobody asked for this any more.
+        if self.reader.is_none() {
+            return Vec::new();
+        }
         match result {
             Ok(Some(HtmlBody::Html(html))) => self.open_file(&html),
             Ok(Some(HtmlBody::NotFetched)) => {
@@ -373,6 +413,12 @@ impl MailScreen {
             }
         }
         Vec::new()
+    }
+
+    /// The message `o` waits on (tests).
+    #[cfg(test)]
+    pub(crate) fn pending_open(&self) -> Option<i64> {
+        self.pending_open
     }
 
     /// Replace the browser opener (tests).

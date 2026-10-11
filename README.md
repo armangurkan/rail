@@ -239,8 +239,8 @@ the line has none or several. Rail shows the address first and opens only `http`
 comes in a later version.
 
 `o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file
-under its cache directory (`~/.cache/rail/open/`, or `$XDG_CACHE_HOME/rail/open/`) with scripts
-blocked, and removes the file when you close the reader. The first time in a session Rail asks
+under its cache directory (`~/.cache/rail/open/`, or `$XDG_CACHE_HOME/rail/open/`) with scripts,
+frames and connections blocked, and removes the file when you close the reader. The first time in a session Rail asks
 first, because **remote images in the message load in the browser**, which can tell the sender
 you opened it; Rail itself never loads them. A message whose body is not stored yet is fetched
 first. A message with no HTML part says so: its text is all there is.

@@ -238,6 +238,15 @@ fn mail_events_print_no_mail_content() {
         result: Err(ReadError::NotSetUp),
     };
     assert_eq!(format!("{listed:?}"), "Listed { seq: 3, ok: false }");
+    let html = MailEvent::Html {
+        message_id: 7,
+        result: Ok(Some(rail_core::store::view::HtmlBody::Html(
+            "<p>secret body</p>".into(),
+        ))),
+    };
+    assert_eq!(format!("{html:?}"), "Html { message_id: 7 }");
+    let body = rail_core::store::view::HtmlBody::Html("<p>secret body</p>".into());
+    assert_eq!(format!("{body:?}"), "HtmlBody::Html(18 bytes)");
 }
 
 /// The real link: it subscribes, reports the configured accounts, fetches through the daemon

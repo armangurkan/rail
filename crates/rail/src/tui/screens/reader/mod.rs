@@ -157,6 +157,16 @@ impl Reader {
             .collect()
     }
 
+    /// The recorded fetch error for a message, if any.
+    pub fn error_of(&self, id: i64) -> Option<&str> {
+        self.errors.get(&id).map(String::as_str)
+    }
+
+    /// True while a `body.fetch` for the message is in flight.
+    pub fn is_fetching(&self, id: i64) -> bool {
+        self.fetching.contains(&id)
+    }
+
     pub fn mark_fetching(&mut self, ids: &[i64]) {
         self.fetching.extend(ids.iter().copied());
         self.asked.extend(ids.iter().copied());

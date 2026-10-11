@@ -15,8 +15,9 @@ use rail_core::paths::{create_private_dir, write_private_atomic};
 pub const OPEN_DIR: &str = "open";
 /// Files older than this at startup are a crash's leftovers.
 pub const STALE_AFTER: Duration = Duration::from_secs(86_400);
-/// What every file starts with: no scripts, plugins, forms or base URL.
-pub const CSP_PREAMBLE: &str = "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'\">\n";
+/// What every file starts with: nothing is allowed but styles, fonts, images and media (so
+/// no scripts, frames, connections, plugins, forms or base URL).
+pub const CSP_PREAMBLE: &str = "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src * data:; style-src 'unsafe-inline' *; font-src *; media-src *; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'\">\n";
 
 /// The files this session wrote.
 #[derive(Debug)]
@@ -119,7 +120,9 @@ mod tests {
         assert_eq!(mode(&tmp.path().join(OPEN_DIR)), 0o700);
         let text = std::fs::read_to_string(&a).unwrap();
         assert!(text.starts_with(CSP_PREAMBLE), "{text}");
+        assert!(text.contains("default-src 'none'"));
         assert!(text.contains("script-src 'none'"));
+        assert!(text.contains("img-src * data:"), "remote images still load");
         assert!(text.ends_with("<p>one</p>"));
         files.remove_all();
         assert!(!a.exists() && !b.exists());
