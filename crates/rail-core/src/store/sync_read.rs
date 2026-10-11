@@ -48,7 +48,7 @@ pub struct StoreCounts {
 /// a letter or digit are dropped. `None` when no word is left.
 pub fn fts_query(text: &str) -> Option<String> {
     let words: Vec<String> = text
-        .split_whitespace()
+        .split(|c: char| c.is_whitespace() || c.is_control())
         .filter(|w| w.chars().any(char::is_alphanumeric))
         .map(|w| format!("\"{}\"", w.replace('"', "\"\"")))
         .collect();
@@ -188,7 +188,7 @@ impl Store {
         let sql = format!(
             "SELECT {HIT_COLUMNS} JOIN messages_fts f ON f.rowid = m.id
              WHERE messages_fts MATCH ?1 AND (?2 IS NULL OR m.account_id = ?2)
-             ORDER BY m.internal_date DESC LIMIT ?3"
+             ORDER BY m.internal_date DESC, m.id DESC LIMIT ?3"
         );
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare(&sql)?;
@@ -279,6 +279,12 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn nul_and_control_characters_split_words() {
+        assert_eq!(fts_query("ab\0cd").as_deref(), Some("\"ab\" \"cd\""));
+        assert_eq!(fts_query("\0"), None);
     }
 
     #[test]

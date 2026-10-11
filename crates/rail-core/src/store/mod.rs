@@ -29,6 +29,10 @@ pub enum StoreError {
         "database schema version {found} is newer than this build supports ({supported}); upgrade rail"
     )]
     TooNew { found: i64, supported: i64 },
+    #[error(
+        "the store is at schema version {found}, not {expected}; start the daemon so it can set the store up"
+    )]
+    NotSetUp { found: i64, expected: i64 },
 }
 
 impl StoreError {
@@ -43,7 +47,10 @@ impl StoreError {
             {
                 ErrorClass::Transient
             }
-            Self::Sqlite(_) | Self::CreateDir { .. } | Self::TooNew { .. } => ErrorClass::Permanent,
+            Self::Sqlite(_)
+            | Self::CreateDir { .. }
+            | Self::TooNew { .. }
+            | Self::NotSetUp { .. } => ErrorClass::Permanent,
         }
     }
 }
@@ -119,6 +126,13 @@ impl Store {
         let conn = Connection::open_with_flags(path, flags)?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
         conn.pragma_update(None, "query_only", "ON")?;
+        let found: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if found != migrations::LATEST_VERSION {
+            return Err(StoreError::NotSetUp {
+                found,
+                expected: migrations::LATEST_VERSION,
+            });
+        }
         Ok(Self { conn })
     }
 
@@ -443,16 +457,19 @@ mod tests {
         conn.execute_batch(
             "INSERT INTO accounts (name, kind, address) VALUES ('a', 'gmail', 'a@example.com');
              INSERT INTO threads (account_id, remote_id) VALUES (1, 't1');
-             INSERT INTO messages (account_id, thread_id, remote_id, subject) VALUES (1, 1, 'm1', 'old');",
+             INSERT INTO messages (account_id, thread_id, remote_id, subject, date) VALUES (1, 1, 'm1', 'old', 1700000000);",
         )
         .unwrap();
         migrations::migrate(&mut conn).unwrap();
-        let (subject, origin): (String, String) = conn
-            .query_row("SELECT subject, origin FROM messages", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
+        let (subject, origin, internal): (String, String, i64) = conn
+            .query_row(
+                "SELECT subject, origin, internal_date FROM messages",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
             .unwrap();
         assert_eq!((subject.as_str(), origin.as_str()), ("old", "sync"));
+        assert_eq!(internal, 1_700_000_000_000, "seconds become milliseconds");
     }
 
     #[test]
@@ -473,6 +490,21 @@ mod tests {
             .unwrap();
         assert_eq!(only, 1);
         assert!(reader.conn().execute("DELETE FROM accounts", []).is_err());
+    }
+
+    #[test]
+    fn open_reader_refuses_an_unmigrated_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rail.db");
+        Connection::open(&path).unwrap();
+        let err = Store::open_reader(&path)
+            .err()
+            .expect("unmigrated is an error");
+        assert!(
+            matches!(err, StoreError::NotSetUp { found: 0, .. }),
+            "{err}"
+        );
+        assert!(err.to_string().contains("set the store up"), "{err}");
     }
 
     #[test]

@@ -20,6 +20,8 @@ ALTER TABLE messages ADD COLUMN origin TEXT NOT NULL DEFAULT 'sync'
   CHECK (origin IN ('sync', 'search'));
 ALTER TABLE messages ADD COLUMN searched_at INTEGER;
 ALTER TABLE messages ADD COLUMN internal_date INTEGER NOT NULL DEFAULT 0;
+-- Rows from before this migration: `date` is Unix seconds, so keep them out of the 'ancient' bucket.
+UPDATE messages SET internal_date = date * 1000 WHERE internal_date = 0;
 ALTER TABLE messages ADD COLUMN synced_at INTEGER;
 
 CREATE INDEX messages_by_origin_date ON messages(account_id, origin, internal_date);
@@ -27,3 +29,4 @@ CREATE INDEX messages_by_origin_searched ON messages(account_id, origin, searche
 CREATE INDEX messages_without_body ON messages(account_id, thread_id)
   WHERE body_fetched_at IS NULL;
 CREATE INDEX messages_by_thread_internal ON messages(thread_id, internal_date);
+CREATE INDEX messages_by_account_date ON messages(account_id, internal_date);

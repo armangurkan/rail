@@ -300,7 +300,9 @@ impl From<StoreError> for OpError {
                 format!("cannot create {}", path.display()),
             )
             .with_detail(source.to_string()),
-            StoreError::TooNew { .. } => Self::new(ErrorCode::Store, class, error.to_string()),
+            StoreError::TooNew { .. } | StoreError::NotSetUp { .. } => {
+                Self::new(ErrorCode::Store, class, error.to_string())
+            }
         }
     }
 }
