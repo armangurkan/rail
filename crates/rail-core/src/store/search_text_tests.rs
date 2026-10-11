@@ -292,3 +292,33 @@ fn the_upgrade_runs_on_an_empty_store() {
     assert!(hits(&store, "anything").is_empty());
     integrity_check(&store);
 }
+
+#[test]
+fn the_upgrade_survives_a_version_4_store_missing_a_trigger() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, old) = version_4(dir.path());
+    let id = old_message(
+        &old,
+        "m1",
+        "hello",
+        [&json(&[mailbox(None, "dana@x.example")]), "[]", "[]", "[]"],
+    );
+    old.conn()
+        .execute_batch("DROP TRIGGER messages_fts_update;")
+        .unwrap();
+    drop(old);
+
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
+    let triggers: i64 = store
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'messages_fts_%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(triggers, 3, "all three triggers exist again");
+    assert_eq!(hits(&store, "dana"), [id]);
+    integrity_check(&store);
+}

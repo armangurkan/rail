@@ -8,10 +8,10 @@
 ALTER TABLE messages ADD COLUMN from_text TEXT NOT NULL DEFAULT '';
 ALTER TABLE messages ADD COLUMN to_text TEXT NOT NULL DEFAULT '';
 
-DROP TRIGGER messages_fts_insert;
-DROP TRIGGER messages_fts_delete;
-DROP TRIGGER messages_fts_update;
-DROP TABLE messages_fts;
+DROP TRIGGER IF EXISTS messages_fts_insert;
+DROP TRIGGER IF EXISTS messages_fts_delete;
+DROP TRIGGER IF EXISTS messages_fts_update;
+DROP TABLE IF EXISTS messages_fts;
 
 UPDATE messages SET
   from_text = COALESCE((
