@@ -3,7 +3,8 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use rail_core::ops::{AccountSyncStatus, OpError, SyncPhase};
+use rail_core::error::ErrorClass;
+use rail_core::ops::{AccountSyncStatus, ErrorCode, OpError, SyncPhase};
 
 use super::AccountEntry;
 use super::view::Glyphs;
@@ -98,6 +99,15 @@ impl StatusBar {
     pub fn answered(&mut self) {
         if self.daemon == DaemonState::Unreachable {
             self.daemon = DaemonState::Reachable;
+        }
+    }
+
+    /// A request failed in the way a lost link does (the daemon closed the connection or is
+    /// not serving): after "reachable again", the daemon is unreachable once more.
+    pub fn failed(&mut self, error: &OpError) {
+        let link_down = error.code == ErrorCode::Daemon && error.class == ErrorClass::Transient;
+        if link_down && self.daemon == DaemonState::Reachable {
+            self.daemon = DaemonState::Unreachable;
         }
     }
 

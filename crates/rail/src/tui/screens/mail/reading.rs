@@ -127,8 +127,9 @@ impl MailScreen {
         thread_id: i64,
         result: Result<BodyFetchResponse, OpError>,
     ) -> Vec<Effect> {
-        if result.is_ok() {
-            self.status.answered();
+        match &result {
+            Ok(_) => self.status.answered(),
+            Err(error) => self.status.failed(error),
         }
         let mut effects = self.dirty();
         let Some(reader) = self.reader.as_mut().filter(|r| r.thread_id() == thread_id) else {

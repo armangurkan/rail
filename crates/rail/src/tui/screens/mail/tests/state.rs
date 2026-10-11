@@ -3,7 +3,8 @@
 //! focus on re-reads, and refresh gating when an unrelated job panics.
 
 use crossterm::event::KeyCode;
-use rail_core::ops::{OpError, SyncPhase};
+use rail_core::error::ErrorClass;
+use rail_core::ops::{ErrorCode, OpError, SyncPhase};
 use rail_core::provider::{FolderKind, RemoteFolder};
 use rail_core::store::view::HtmlBody;
 use rail_core::sync::Batch;
@@ -203,6 +204,31 @@ async fn a_fetch_that_gets_through_after_a_lost_watch_says_the_daemon_is_back() 
         "{}",
         f.screen.status_line()
     );
+}
+
+#[tokio::test]
+async fn a_fetch_that_finds_the_daemon_gone_again_after_reachable_says_unreachable() {
+    let mut f = fixture(3).await;
+    let lost = MailEvent::Daemon(DaemonEvent::Lost(OpError::internal("gone")));
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(lost)));
+    settle(&mut f.screen, effects).await;
+    press(&mut f, KeyCode::Enter).await;
+    assert!(f.screen.status_line().contains("daemon reachable again"));
+    // The next fetch fails the way a closed connection does.
+    let closed = OpError::new(
+        ErrorCode::Daemon,
+        ErrorClass::Transient,
+        "the daemon closed the connection",
+    );
+    let failed = MailEvent::Bodies {
+        thread_id: 0,
+        result: Err(closed),
+    };
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(failed)));
+    settle(&mut f.screen, effects).await;
+    let line = f.screen.status_line();
+    assert!(line.contains("daemon unreachable (Ctrl-r retries)"), "{line}");
+    assert!(!line.contains("reachable again"), "{line}");
 }
 
 #[tokio::test]
