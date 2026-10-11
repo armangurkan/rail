@@ -15,6 +15,8 @@ never let a secret reach a log or the terminal.
 crates/rail-core/        Library: paths, config, store, auth, onboarding, operations, daemon, sync. No terminal dependency.
   src/config/            TOML model, loading with line-numbered errors, comment-preserving edits
   src/store/             SQLite open, migrations, repositories
+    store/view.rs        Read-only queries the mail screen runs: thread pages, the sidebar, one thread, a message's HTML
+    store/filter.rs      The filter line's syntax as SQL conditions
   src/auth/              Secret stores (keyring, file, 1Password), OAuth endpoints, loopback listener, login and admin consent, token refresh
   src/onboarding/        Presets and the setup wizard's pure state machine
   src/ops/               The operation layer: every request and response type, OpError, Untrusted
@@ -23,10 +25,17 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
   src/guide/             Google and Microsoft setup steps as versioned data
   src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries) and the Gmail provider with its HTML-to-text scanner
   src/sync/              Per-account sync engines, backfill and history passes, the single store writer, search
+    sync/body_fetch.rs   Fetches bodies the store does not hold yet (the `body.fetch` operation)
   src/doctor.rs          The `rail doctor` checks
 crates/rail/             Binary: clap CLI, logging, and the account, daemon, doctor, mcp, search, secrets, setup and sync commands
   src/cmd/mcp/           The MCP server: tools, the setup prompt, confirmation through elicitation, summaries
   src/tui/               App shell: terminal guard, event loop, widgets, the wizard screen and its effects
+    tui/keys             Actions, their default keys and `[keys]` overrides: the keymap every screen reads
+    tui/text             Escaping, width, wrapping and hyperlinks for text that came from outside
+    tui/data             The mail screen's read side (the store reader) and its link to the daemon
+    tui/screens/mail     The mail screen: thread list, sidebar, status bar
+    tui/screens/reader   The reader: messages, folded quotes, numbered links
+    tui/modals           The palette, filter line, help, confirmations and the error list
   tests/                 End-to-end tests against the built binary, in a pseudo-terminal, and over MCP
 assets/brand/            Logos and the app icon
 deny.toml                Licence and advisory policy for `cargo deny`

@@ -88,6 +88,24 @@ All notable changes to Rail are recorded here. The format follows
 - MCP tools `rail_sync_status` and `rail_sync_now`, which return no mail content.
 - An ignored, read-only live test against a real Gmail account
   (`RAIL_GMAIL_LIVE_ACCOUNT=<name> cargo test -p rail-core -- --ignored gmail_live`).
+- The mail screen: `rail` with an account configured opens a thread list over the local store
+  (the unified inbox, one account's inbox with `1`-`9`, any label from the sidebar), keyset paged
+  so the bottom of a label with thousands of threads is a keypress away, kept current from the
+  daemon's progress notifications, with ASCII glyphs under `general.icons = "ascii"`.
+- The reader: messages oldest first with unread ones and the latest expanded, bodies wrapped to
+  the pane, quoted runs folded to `[n quoted lines]`, numbered link markers (OSC 8 hyperlinks
+  where the terminal supports them) and `g x` to open one after showing its address, a read-only
+  attachment list (`a`), and the pane-or-full-screen layout by `general.split_threshold`.
+- `o` opens a message's original HTML in the browser from a private temporary file, after a
+  once-per-session confirmation that remote images will load there.
+- Filter as you type (`/`) with `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`,
+  `is:starred`, `before:`, `after:` and `account:`; the command palette (`:`) with fuzzy matching
+  over commands, accounts and labels; `?` help generated from the keymap; `:errors`.
+- `[keys]` in `config.toml`: every key is a named action that can be rebound; bad entries are
+  refused with the file and line.
+- `body.fetch`, a daemon operation that fetches bodies the store does not hold yet; the reader
+  shows "fetching…" meanwhile. It answers outcomes, never bodies, and is not an MCP tool.
+- Link footnotes in stored bodies (`messages.links`, store version 4).
 
 ### Changed
 
@@ -114,6 +132,15 @@ All notable changes to Rail are recorded here. The format follows
 - The daemon stays up while any account is configured; the ten-minute idle exit now applies only
   with no accounts.
 - The roadmap marks Phase 4 done; display-quality HTML rendering moves to Phase 5.
+- `rail` with a config no longer exits 2 with "the TUI is not built yet": it opens the mail screen
+  (or the setup wizard when no account is configured). In a pipe it exits 2 with a hint.
+- Message text from HTML now carries `[n]` link markers, and plain-text bodies carry them after
+  bare addresses; bodies stored before this version show no markers until they are fetched again.
+- The setup wizard's keys are actions of the keymap (`wizard.*`); its behaviour is unchanged,
+  except that Ctrl and Alt combinations no longer act as the plain key.
+- `rail doctor` notes a `general.layout` of `split` or `stack`, which this version treats as
+  `auto`.
+- The roadmap marks Phase 5 done; actions and compose are next.
 
 ### Fixed
 
@@ -173,3 +200,8 @@ All notable changes to Rail are recorded here. The format follows
 - `rail search` and sync output escape control and invisible formatting characters.
 - The login unit keeps display, browser and 1Password variables out of the daemon where it can,
   and `rail daemon install` quotes paths for systemd and XML-escapes them for launchd.
+- Every string from mail, Gmail or config that reaches the mail screen is escaped (controls,
+  format characters, line separators), with width measured after escaping. Links are shown and
+  opened only for `http`, `https` and `mailto` addresses, and only after their address is shown.
+- `o` writes the HTML 0600 with a policy that blocks scripts, deletes it when the reader closes,
+  and Rail itself never loads remote content.

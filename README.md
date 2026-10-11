@@ -46,18 +46,21 @@ up without ever seeing your secrets.
 - Gmail sync into the local store: labels, message envelopes, and bodies of recent threads, kept
   current by a background daemon that can start at login (`rail daemon install`).
 - `rail search` over the local store and, through Gmail's own search, the whole mailbox.
+- Reading mail in the terminal: a unified inbox and per-account and per-label lists over the local
+  store, a sidebar with unread counts, a reader with folded quotes and numbered (clickable) links,
+  filter as you type, a command palette, keys you can change in `config.toml`, and `o` to open a
+  message's HTML in the browser. See [Reading mail](#reading-mail).
 - `rail doctor`, a single health check for config, store, tokens, sync and the daemon.
 - An MCP server (`rail mcp`) for setting up and inspecting Rail from an AI agent.
-- The mail screen (`rail`): thread list, sidebar, reader, filter, command palette and plain-text
-  HTML rendering. See [Reading mail](#reading-mail).
 
 **Coming**
 
-- Next: actions (archive, label, delete) and composing and sending, with agent sends governed by
-  the per-account `ai_send` policy.
+- Next: actions (archive, label, delete, mark read) and composing and sending, with agent sends
+  governed by the per-account `ai_send` policy.
 - Then: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
   sync and are searched locally only.
-- Later: search operators, layout and theme options, inline images.
+- Later: search operators, layout and theme options, inline images, display-quality HTML in the
+  terminal.
 
 **Pre-1.0 caveats.** Config keys, command output and the store's schema may change between
 releases. The store migrates forward on its own; there is no downgrade path. Rail is tested on
@@ -145,14 +148,15 @@ A key name is a character (`a`, `O`, `/`), a named key (`enter`, `esc`, `tab`, `
 `space`, `up`, `down`, `left`, `right`, `pageup`, `pagedown`, `home`, `end`, `f1` to `f12`),
 either with `ctrl-`, `alt-` or `shift-` in front (`ctrl-r`, `shift-tab`), or two keys with a
 space between them for a sequence (`g x`). A key you set replaces that action's default keys.
-`rail setup` refuses to start, naming the file and line, when `[keys]` names an action it does not know,
-a key it cannot read, `Ctrl-C` (which always quits), or a key another action of the same view
-already uses (a key that starts another action's sequence counts). A view's own key wins over a
-global one: `q` closes the reader but quits from the list.
+Both `rail` and `rail setup` refuse to start, naming the file and line and exiting 1, when `[keys]`
+names an action it does not know, a key it cannot read, `Ctrl-C` (which always quits), or a key
+another action of the same view already uses (a key that starts another action's sequence
+counts). They check before the terminal changes. A view's own key wins over a global one: `q`
+closes the reader but quits from the list.
 
-Both `rail` and `rail setup` read `[keys]`, so a bad entry stops them before the terminal changes.
-The `global.*`, `list.*`, `sidebar.*` and `reader.*` actions below take effect in the mail screen;
-`?` lists the keys of the view you are in there, marking the ones you changed.
+The `global.*`, `list.*`, `sidebar.*` and `reader.*` actions below take effect in the mail screen
+and the `wizard.*` ones in the setup wizard. In the mail screen `?` lists the keys of the view you
+are in, with `*` after the ones set in `config.toml`.
 
 | Action | Works in | Default keys | What it does |
 |---|---|---|---|
@@ -234,25 +238,28 @@ messages, `Tab` expands or collapses one, and `Enter` on `[n quoted lines]` show
 
 HTML mail is shown as Rail's plain-text rendering, with each link as a numbered marker such as
 `[1]`; in terminals that support hyperlinks (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows
-Terminal, foot, Alacritty, GNOME Terminal and other VTE terminals; not inside tmux or screen) the
+Terminal, Hyper, foot, Alacritty, GNOME Terminal and other VTE terminals; not inside tmux or
+screen) the
 marker is clickable. `g x` opens a link: the marker on the cursor line, or the number you type when
 the line has none or several. Rail shows the address first and opens only `http`, `https` and
 `mailto` links. `a` lists the thread's attachments (name, type, size); opening and saving them
-is not available yet.
+is not possible in this version.
 
-`o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file
-under its cache directory (`~/.cache/rail/open/`, or `$XDG_CACHE_HOME/rail/open/`) with scripts,
-frames and connections blocked, and removes the file when you close the reader. The first time in a session Rail asks
-first, because **remote images in the message load in the browser**, which can tell the sender
-you opened it; Rail itself never loads them. A message whose body is not stored yet is fetched
-first. A message with no HTML part says so: its text is all there is.
+`o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file in
+the `open` folder of its cache directory (`~/.cache/rail/open/` on Linux; `RAIL_CACHE_DIR`
+overrides the cache directory) with scripts, frames and connections blocked, and removes the file
+when you close the reader. Files a crashed session left behind are removed the next time the mail
+screen starts, once they are a day old. The first time in a session Rail asks first, because
+**remote images, styles, fonts and media in the message load in the browser**, which can tell the
+sender you opened it; Rail itself never loads them. A message whose body is not stored yet is
+fetched first. A message with no HTML part says so: its text is all there is.
 
 Bodies of recent mail (`body_cache_days`) are already in the store. An older message shows
 **fetching…** while the daemon fetches its body from Gmail; the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
 
 `/` filters the list as you type: plain words search subjects, senders, recipients and stored
-bodies; `from:`, `to:` (also Cc), `subject:`, `has:attachment`, `is:unread`, `is:starred`,
+bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`, `is:unread`, `is:starred`,
 `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
 `account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread matches when
 one of its messages matches all of them. Anything else is searched as words, and the status bar
@@ -260,14 +267,16 @@ shows how Rail read your filter, so a typo such as `form:dana` shows up as a wor
 the filter; `Esc` clears it. The filter searches the local store only (`rail search` also asks
 Gmail).
 
-`:` opens the command palette: type a few letters of a key action for the current view, an account or a label
-and press `Enter`; the key bound to each command is shown beside it. `:errors` lists the session's recent
-errors. `?` shows the keys of the view you are in, marking the ones you changed in `[keys]`.
+`:` opens the command palette: type a few letters of a key action for the current view, an account
+or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
+the session's recent errors. `?` shows the keys of the view you are in, marking with `*` the ones
+set in `config.toml`.
 
-The status bar shows each account's sync state (`✓` caught up, `⟳` syncing with a count during
-the first sync, `!` needs a login), whether the daemon can be reached, and notices. When the
-daemon cannot be reached the list still reads from the store; `Ctrl-r` reconnects (and starts a
-sync).
+The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
+the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`
+for Microsoft 365 accounts), whether the daemon can be reached (`connecting to the daemon…`,
+`daemon unreachable`), and notices. When the daemon cannot be reached the list still reads from
+the store; `Ctrl-r` reconnects (and starts a sync).
 
 ## Account setup
 
@@ -499,7 +508,9 @@ syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. M
 finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail does not
 change or delete mail on the server.
 
-Opening a message in the browser (`o`) is the one way remote content in mail is ever loaded, and only after you confirm; the reader shows text only.
+Remote content in mail is loaded only by your browser, never by Rail, and only when you ask for
+it: `o` opens a message's HTML there, after you confirm once per session, and `g x` opens a link
+there, after you have seen its address. The reader shows text only.
 
 **Mail and AI agents.** Through MCP, mail content never reaches an agent today. Text from outside
 Rail (preset files, provider and system error messages) comes back to the agent marked as
@@ -548,7 +559,7 @@ running syncs carry on unchanged.
 | `poll_interval` | `"60s"` | How often each account is checked for new mail. At least `5s`. |
 | `history_days` | `0` | How many days of mail the store keeps; `0` is the whole mailbox. |
 | `body_cache_days` | `30` | Bodies of threads with mail this recent are fetched ahead of time. |
-| `icons` | `"unicode"` | `"unicode"` or `"ascii"`. The mail screen's glyphs; `"ascii"` swaps them for `*`, `+`, `@`, `ok` and `~`, for fonts without them. |
+| `icons` | `"unicode"` | `"unicode"` or `"ascii"`. The mail screen's glyphs; `"ascii"` swaps them for `*`, `+`, `@`, `ok`, `~`, `|`, `v` and `>`, for fonts without them. |
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | Reserved for composing; accepted but no effect yet. |
