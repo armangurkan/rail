@@ -80,11 +80,17 @@ impl ThemeChoice {
             None => Accent::SchemeDefault,
             Some(AccentSpec::Slot(n)) => Accent::Slot(*n),
             Some(AccentSpec::Color(value)) => {
-                Accent::Color(value.parse::<Color>().map_err(|_| ThemeError::BadAccent {
+                let bad = || ThemeError::BadAccent {
                     path: shown.clone(),
                     line: key_line(text, "accent"),
                     value: value.clone(),
-                })?)
+                };
+                match value.parse::<Color>().map_err(|_| bad())? {
+                    // A slot typed as a string ("5").
+                    Color::Indexed(n) if n <= 15 => Accent::Slot(n),
+                    Color::Indexed(_) => return Err(bad()),
+                    color => Accent::Color(color),
+                }
             }
         };
         Ok(Self { scheme, accent })

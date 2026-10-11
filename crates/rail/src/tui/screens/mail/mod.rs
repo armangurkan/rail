@@ -73,10 +73,16 @@ pub struct MailContext {
     /// The terminal shows OSC 8 hyperlinks.
     pub hyperlinks: bool,
     /// What the terminal can show; the theme picker needs it to preview.
-    #[allow(dead_code)] // read by the pickers
+    #[expect(
+        dead_code,
+        reason = "used by the :theme and :accent pickers in the next task"
+    )]
     pub depth: ColorDepth,
     /// The scheme and accent in force, which the pickers change one at a time.
-    #[allow(dead_code)] // read by the pickers
+    #[expect(
+        dead_code,
+        reason = "used by the :theme and :accent pickers in the next task"
+    )]
     pub theme_choice: ThemeChoice,
 }
 

@@ -98,6 +98,8 @@ fn accent_color(choice: ThemeChoice, depth: ColorDepth) -> Option<Color> {
             Some(scheme.palette[usize::from(n) % 16].color())
         }
         (Accent::Slot(n), ..) => Some(Color::Indexed(n)),
+        // 24-bit colour is not safe on a terminal that did not say it has it.
+        (Accent::Color(Color::Rgb(..)), ColorDepth::Ansi, _) => None,
         (Accent::Color(c), ..) => Some(c),
     }
 }

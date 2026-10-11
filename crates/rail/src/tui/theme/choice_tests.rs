@@ -85,6 +85,18 @@ fn an_ansi_terminal_keeps_the_default_look_except_a_safe_accent() {
         ColorDepth::Ansi,
     );
     assert_eq!(named.accent.fg, Some(Color::Blue));
+    let rgb = Theme::from_choice(
+        ThemeChoice {
+            scheme: None,
+            accent: Accent::Color(Color::Rgb(1, 2, 3)),
+        },
+        ColorDepth::Ansi,
+    );
+    assert_eq!(
+        rgb.accent.fg,
+        Some(Color::Cyan),
+        "an RGB accent is not applied on Ansi"
+    );
 }
 
 #[test]
@@ -154,6 +166,19 @@ fn a_misspelt_theme_names_the_nearest_scheme_and_the_line() {
         .unwrap_err()
         .to_string();
     assert!(!shown.contains("did you mean"), "{shown}");
+}
+
+#[test]
+fn a_string_accent_that_is_a_slot_number_is_a_slot() {
+    let (g, text) = general("[general]\naccent = \"5\"\n");
+    let choice = ThemeChoice::from_config(&g, &text, Path::new("/c/config.toml")).unwrap();
+    assert_eq!(choice.accent, Accent::Slot(5));
+    let (g, text) = general("[general]\naccent = \"200\"\n");
+    let err = ThemeChoice::from_config(&g, &text, Path::new("/c/config.toml")).unwrap_err();
+    assert!(
+        matches!(err, ThemeError::BadAccent { line: 2, .. }),
+        "{err:?}"
+    );
 }
 
 #[test]

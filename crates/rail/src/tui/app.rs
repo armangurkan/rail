@@ -80,7 +80,13 @@ pub enum Effect {
     /// Put text on the system clipboard, then report `TaskResult::Copied`.
     Copy(String),
     /// Replace the theme (a picker's preview, choice or cancel).
-    #[allow(dead_code)] // the :theme and :accent pickers send it
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "used by the :theme and :accent pickers in the next task"
+        )
+    )]
     Theme(Theme),
 }
 

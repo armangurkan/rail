@@ -18,7 +18,7 @@ use crate::tui::run::{finish_run, run_app};
 use crate::tui::screens::mail::{AccountEntry, MailContext, MailScreen};
 use crate::tui::text::hyperlinks_supported;
 use crate::tui::theme::Theme;
-use crate::tui::theme::choice::{ColorDepth, ThemeChoice, color_depth};
+use crate::tui::theme::choice::{ColorDepth, ThemeChoice, ThemeError, color_depth};
 use crate::{browser, daemon_link, test_hooks};
 
 /// Printed instead of the mail screen in a pipe.
@@ -34,7 +34,9 @@ pub async fn run(paths: &Paths, text: &str, config: &Config) -> color_eyre::Resu
     let choice =
         ThemeChoice::from_config(&config.general, text, &paths.config_file()).map_err(|e| {
             color_eyre::eyre::eyre!(
-                "{e}\nhint: pick a theme with :theme inside Rail, or remove the key"
+                "{e}
+{}",
+                hint_for(&e)
             )
         })?;
     let depth = color_depth(|name| std::env::var(name).ok());
@@ -77,5 +79,33 @@ fn context(
         hyperlinks: hyperlinks_supported(|name| std::env::var(name).ok()),
         depth,
         theme_choice,
+    }
+}
+
+/// The `hint:` line printed under a theme error.
+fn hint_for(error: &ThemeError) -> &'static str {
+    match error {
+        ThemeError::UnknownTheme { .. } => {
+            "hint: pick a theme with :theme inside Rail, or remove the key"
+        }
+        ThemeError::BadAccent { .. } => {
+            "hint: accent takes a palette slot 0 to 15, a colour name such as \"blue\", or \"#rrggbb\"; :accent inside Rail picks one"
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn error(text: &str) -> ThemeError {
+        let config = rail_core::config::parse(text, std::path::Path::new("/c")).unwrap();
+        ThemeChoice::from_config(&config.general, text, std::path::Path::new("/c")).unwrap_err()
+    }
+
+    #[test]
+    fn each_theme_error_has_its_own_hint() {
+        assert!(hint_for(&error("[general]\ntheme = \"qqqqqqqqqq\"\n")).contains(":theme"));
+        assert!(hint_for(&error("[general]\naccent = \"nope\"\n")).contains("slot 0 to 15"));
     }
 }
