@@ -18,6 +18,8 @@ pub(crate) mod fixtures;
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
+mod live_tests;
+#[cfg(test)]
 mod tests;
 
 use super::http::ApiClient;

@@ -15,8 +15,10 @@ store, a thread view, a unified inbox, readable HTML and a command palette. Gmai
 first.
 
 **Status: pre-alpha.** The setup wizard, login, config, store, `rail doctor`, the background daemon,
-1Password storage and the MCP server for AI coding agents work. The mail views are not built yet:
-with an account configured, `rail` still prints that the TUI is not built and exits with status 2.
+1Password storage, the MCP server for AI coding agents, Gmail sync into the local store (`rail sync`),
+`rail search` and start at login (`rail daemon install`) work. The mail views are not built yet:
+with an account configured, `rail` still prints that the TUI is not built and exits with status 2,
+and mail can be searched but not yet read. Microsoft 365 accounts can log in but do not sync yet.
 
 ## Why Rail
 
@@ -35,15 +37,16 @@ with an account configured, `rail` still prints that the TUI is not built and ex
 | 1 | Workspace, config, store schema, secrets, OAuth login, `rail account`, `rail doctor` | Done |
 | 2 | App shell and onboarding: setup wizard, organisation presets, admin consent, `rail setup`, `rail account login` | Done |
 | 3 | Daemon, operation layer and MCP server: `rail daemon`, `rail mcp`, guided provider setup, 1Password, `ai_send` | Done |
-| 4 | Gmail provider and sync, inside the daemon: `rail sync` fills the store | Next |
-| 5 | TUI read path: thread list, sidebar, reader, palette, help, filter | Planned |
+| 4 | Gmail provider and sync, inside the daemon: `rail sync` fills the store, `rail search`, start at login | Done |
+| 5 | TUI read path: thread list, sidebar, reader, palette, help, filter, display-quality HTML rendering | Next |
 | 6 | Actions through the outbox and the compose round-trip; agent sends under `ai_send` | Planned |
 | 7 | Microsoft Graph provider and device-code flow | Planned |
 | 8 | Polish: search operators, auto layout, theme, inline images | Planned |
 
 The overall design is in [`docs/superpowers/specs/2026-10-09-rail-design.md`](docs/superpowers/specs/2026-10-09-rail-design.md);
 the shell and the wizard are in [`docs/superpowers/specs/2026-10-09-rail-onboarding-design.md`](docs/superpowers/specs/2026-10-09-rail-onboarding-design.md),
-and the daemon and the MCP server in [`docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md`](docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md).
+the daemon and the MCP server in [`docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md`](docs/superpowers/specs/2026-10-10-rail-daemon-mcp-design.md),
+and Gmail sync in [`docs/superpowers/specs/2026-10-10-rail-gmail-sync-design.md`](docs/superpowers/specs/2026-10-10-rail-gmail-sync-design.md).
 
 ## Install
 
@@ -68,6 +71,10 @@ With no config file yet, Rail opens the setup wizard. It asks how you want to se
   [Tokens in 1Password](#tokens-in-1password)).
 
 The wizard ends with a report of where everything lives and offers to add another account.
+Then run `rail sync` to fill the store (the daemon keeps it current from then on) and
+`rail daemon install` to keep syncing after you log out and in (see [Start at login](#start-at-login)).
+The newest mail arrives first, so the inbox is usable within seconds, but a first sync of a large
+mailbox takes hours; see [Sync settings](#sync-settings) to shorten it.
 `rail setup` opens it any time. `rail account add` with no arguments opens it too, and
 `rail account add gmail` (or `m365`) opens it with that provider already chosen.
 
@@ -145,7 +152,7 @@ refused with "use an absolute path".
 | `rail_secrets_configure` | Moves tokens between the keyring, the file and 1Password (see below). Needs your confirmation. |
 | `rail_account_remove` | Removes an account's config entry and tokens; its mail stays. Destructive; needs your confirmation. |
 | `rail_sync_status` | Each account's sync: phase, counts of messages, threads and bodies stored, last success, last error (Gmail's words quoted as outside text) and next attempt. Read-only. No mail content. |
-| `rail_sync_now` | Wakes one account's sync, or all, instead of waiting for the next poll; returns at once. No mail content. |
+| `rail_sync_now` | Wakes one account's sync, or all, instead of waiting for the next poll; returns at once. With no Gmail account configured it says so and wakes nothing (Microsoft 365 sync is not available yet). No mail content. |
 
 No tool returns mail content (subjects, senders, snippets or bodies) yet, and none sends mail; `rail search` is a terminal command only, so agents still cannot read your mail.
 
@@ -206,7 +213,7 @@ It talks to the background daemon like every other command.
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
 | `rail daemon install` | Starts Rail's daemon at login, so mail keeps syncing without a command running: on Linux it writes `~/.config/systemd/user/rail.service` (under `$XDG_CONFIG_HOME` when set) and runs `systemctl --user daemon-reload` and `systemctl --user enable --now rail.service`; on macOS it writes `~/Library/LaunchAgents/io.github.vitosans.rail.plist` and loads it with `launchctl bootstrap`. A daemon already running is stopped first, so only one runs. Running it again rewrites the unit only if it changed (it says `already up to date` otherwise) and enables and starts it again. On Linux it first checks that a user service manager answers (`systemctl --user show --property=Version`); where none does (some containers), or `systemctl` cannot be run at all, it says which, changes nothing and exits 1. If enabling fails, the previous unit is put back (or, on a first install, the new one is disabled and removed), so nothing is left half-installed. It then waits up to 10 seconds for the unit's daemon to answer and exits 1, with the unit's state, if it does not. See [Start at login](#start-at-login). |
-| `rail daemon uninstall` | Stops and disables the login unit and removes its file. Says `not installed; nothing to remove` and exits 0 when none is installed. A `disable` that fails is reported with systemctl's words and the file is still removed. Where no user service manager answers, it still removes the file (and its enable link) and says why there was nothing to stop. |
+| `rail daemon uninstall` | Stops and disables the login unit and removes its file. Says `Rail's login unit is not installed; nothing to remove.` and exits 0 when none is installed. A `disable` that fails is reported with systemctl's words and the file is still removed. Where no user service manager answers, it still removes the file (and its enable link) and says why there was nothing to stop. |
 | `rail mcp` | Serves Rail's tools to an AI agent over MCP on standard input and output (see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp)). |
 | `rail doctor` | Checks the config file, the store (with its size), the secrets backend, every account's tokens and `ai_send` policy, and the daemon, plus each account's sync: its phase, last success, counts and last error (an account that needs a login, or whose last sync failed with a permanent error and is not being retried, fails the check; any other past error is a warning). The checks run in the daemon, so if it cannot start, `rail doctor` fails outright with the reason (for example a socket path too long for a Unix socket; set `RAIL_RUNTIME_DIR` to a shorter directory). Also says whether the login unit (`rail daemon install`) is installed, enabled and still runs this binary; that line never changes the exit status. Exits non-zero for config, store, secrets-backend and token-read errors and for a Gmail account that needs a login or whose sync failed for good; a Microsoft 365 account with no tokens shows as `missing` without failing the check (see [Check everything](#check-everything)). |
 
@@ -447,7 +454,7 @@ login, or whose last sync failed with a permanent error (Gmail refusing a reques
 being retried, fails the check; any other past error is a `warn` line. Text Rail did not write (a keyring's or SQLite's
 message, the config parser's) is marked `from outside Rail` and shown in quotes with control
 characters escaped. It exits non-zero for config, store, secrets-backend and token-read errors, and
-for a Gmail account whose sync needs a login. An account with no stored tokens is listed as
+for a Gmail account whose sync needs a login or failed for good. An account with no stored tokens is listed as
 `missing`, with the `rail account login` advice; for a Gmail account its sync line then says
 `needs a login` and the exit status is non-zero. A Microsoft 365 account with no tokens does not
 change the exit status yet, so scripts that care should grep for `missing`.
@@ -500,12 +507,19 @@ Gmail is never touched); growing it fetches further back on the next pass.
 **What the store keeps.** For each Gmail account: every label, the envelope (sender,
 recipients, subject, date, flags, labels, snippet) of every message inside `history_days` (the
 whole mailbox by default), and the rendered text of bodies for threads with mail newer than
-`body_cache_days`. HTML bodies are turned into text without running scripts or loading remote
-images, so a tracking pixel is never requested by a sync; a body over 10 MiB is cut and says so.
+`body_cache_days`. HTML bodies are turned into text by Rail's own scanner, without running scripts or loading anything
+remote, so a tracking pixel is never requested by a sync. Scripts and styles are dropped and
+character references decoded, but tables are not laid out, lists are not numbered and link
+addresses are not shown, so HTML mail reads plainer than it will in the reader (display-quality
+rendering comes with the mail views in a later phase). A body over 10 MiB is cut and says so.
 Attachments are recorded by name, type and size only. Mail a search finds on Gmail outside the
 window is kept for 14 days after it was last searched for; starred mail and threads with recent
-mail are never pruned. A first sync of a large mailbox takes a while (Gmail allows each account
-about 250 messages a minute); a smaller `history_days` makes it quick. Microsoft 365 accounts do
+mail are never pruned. A first sync of a large
+mailbox takes hours: Gmail charges 20 quota units for each message read and Rail paces itself to
+5,000 units a minute (under Gmail's per-user limit), which is about 250 messages a minute, so
+100,000 messages take about seven hours. The newest mail is fetched first, so the inbox is usable
+within seconds while the rest fills in; set `history_days` (for example 90) to fetch only recent
+mail and finish in minutes. Microsoft 365 accounts do
 not sync yet.
 
 ### What an AI agent may do with your mail: `ai_send`
@@ -748,8 +762,10 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
   src/daemon/            JSON-RPC wire format, client and connector, the socket server and its handlers
   src/accounts/          The add, login and remove pipeline the daemon runs
   src/guide/             Google and Microsoft setup steps as versioned data
+  src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries) and the Gmail provider with its own HTML-to-text scanner
+  src/sync/              The daemon's sync: per-account engines, backfill and history passes, the single store writer, search
   src/doctor.rs          The `rail doctor` checks
-crates/rail/             Binary: clap CLI, logging, `account`, `daemon`, `doctor`, `mcp` and `setup` commands
+crates/rail/             Binary: clap CLI, logging, `account`, `daemon`, `doctor`, `mcp`, `search`, `setup` and `sync` commands
   src/cmd/mcp/           The MCP server: tools, the setup prompt, confirmation through elicitation, summaries
   src/tui/               App shell: terminal guard, event loop, widgets, the wizard screen and its effects
   tests/cli.rs           End-to-end tests against the built binary in a temporary XDG layout
@@ -793,6 +809,10 @@ exercise the real keyring and a real 1Password vault are ignored by default:
 
     cargo test -p rail-core -- --ignored keyring_live
     RAIL_OP_LIVE_VAULT=<vault> cargo test -p rail-core -- --ignored onepassword_live
+    RAIL_GMAIL_LIVE_ACCOUNT=<account name> cargo test -p rail-core -- --ignored gmail_live
+
+The last one uses your real config and token store, sends only GET requests (it never changes the
+mailbox) and confirms the Gmail API shapes the sync relies on.
 
 Changes a user can see or type update this README in the same change; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
