@@ -397,11 +397,21 @@ fn classify(status: StatusCode, retry_after: Option<Duration>, body: Vec<u8>) ->
         429 | 500..=599 => busy(code, retry_after, message),
         403 if rate_limited => busy(code, retry_after, message),
         _ => ProviderError::Permanent {
-            message: format!("Gmail refused the request (HTTP {code})"),
+            message: refused_message(code),
             detail: message,
         },
     };
     Attempt::Failed(error)
+}
+
+/// Rail's words for a refusal with this HTTP status.
+fn refused_message(code: u16) -> String {
+    format!("Gmail refused the request (HTTP {code})")
+}
+
+/// Whether `error` is a refusal with HTTP 400 (Bad Request).
+pub(crate) fn is_bad_request(error: &ProviderError) -> bool {
+    matches!(error, ProviderError::Permanent { message, .. } if *message == refused_message(400))
 }
 
 fn busy(code: u16, retry_after: Option<Duration>, detail: Option<String>) -> ProviderError {

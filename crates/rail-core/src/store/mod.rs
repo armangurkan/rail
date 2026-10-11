@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn migration_0002_adds_the_sync_columns_with_their_defaults() {
         let store = Store::open_in_memory().unwrap();
-        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
         store
             .conn()
             .execute_batch(
@@ -474,6 +474,33 @@ mod tests {
             .unwrap();
         assert_eq!((subject.as_str(), origin.as_str()), ("old", "sync"));
         assert_eq!(internal, 1_700_000_000_000, "seconds become milliseconds");
+    }
+
+    /// P4-LIVE: 0003 adds the resume token columns to a version 2 database and keeps its
+    /// backfill state; the token columns start empty.
+    #[test]
+    fn a_version_2_database_upgrades_to_3_and_keeps_its_backfill_state() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("migrations/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("migrations/0002_sync.sql"))
+            .unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (name, kind, address, backfill_before, backfill_cursor)
+               VALUES ('a', 'gmail', 'a@example.com', 1700000000000, '42');",
+        )
+        .unwrap();
+        migrations::migrate(&mut conn).unwrap();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!((version, migrations::LATEST_VERSION), (3, 3));
+        let store = Store { conn };
+        let state = store.sync_state(1).unwrap();
+        assert_eq!(state.backfill_before, Some(1_700_000_000_000));
+        assert_eq!(state.backfill_cursor.as_deref(), Some("42"));
+        assert_eq!(state.backfill_resume, None);
     }
 
     #[test]

@@ -7,7 +7,12 @@
 //! content or Gmail's error text, so they are safe to paste. It confirms the Gmail shapes
 //! this phase assumed:
 //!
-//! - `after:` and `before:` take epoch seconds, and listings come newest first;
+//! - `after:` and `before:` take epoch seconds;
+//! - listings come only roughly newest first: the test reports the largest out-of-order spread
+//!   it saw (in hours, a number only) instead of asserting an order, since Rail no longer
+//!   relies on one (a backfill resumes from Gmail's page token);
+//! - a page token round-trips: the second page answers and repeats no id of the first; and a
+//!   made-up token is reported as Gmail answers it (Rail expects `PageTokenRejected`);
 //! - a listing with no match answers without a `messages` key and Rail reads it as empty;
 //! - subjects hold no raw encoded words and snippets no `&#39;`-style references;
 //! - bodies decode into text (base64url with or without padding is covered by the unit tests
@@ -26,7 +31,9 @@ use std::sync::Arc;
 use crate::auth::{ItemIdCache, unix_now};
 use crate::config::{self, DAY_SECS};
 use crate::paths::Paths;
-use crate::provider::{Envelope, FolderKind, Provider, ProviderError, SyncCursor, Window};
+use crate::provider::{
+    Envelope, FolderKind, PageToken, Provider, ProviderError, SyncCursor, Window,
+};
 use crate::sync::manager::ProviderRequest;
 use crate::sync::providers::gmail_for;
 
@@ -87,28 +94,77 @@ async fn check_labels_and_profile(gmail: &dyn Provider) -> SyncCursor {
     profile.cursor
 }
 
-/// Lists the last 30 days (ending a day ago, so both `after:` and `before:` are used) and
-/// checks the window and the order.
+/// The largest amount, in hours, by which a message listed later was newer than one listed
+/// before it (0 when the listing is newest first).
+fn out_of_order_hours(dates: &[i64]) -> f64 {
+    let mut oldest_so_far = i64::MAX;
+    let mut spread = 0_i64;
+    for &date in dates {
+        if oldest_so_far != i64::MAX {
+            spread = spread.max(date - oldest_so_far);
+        }
+        oldest_so_far = oldest_so_far.min(date);
+    }
+    spread as f64 / 3_600_000.0
+}
+
+/// Lists the last 30 days (ending a day ago, so both `after:` and `before:` are used), checks
+/// the window and reports how far out of order the listing is.
 async fn check_window_and_order(gmail: &dyn Provider) -> Vec<Envelope> {
     let now = unix_now();
     let window = Window {
         after_ms: Some((now - 30 * DAY_SECS) * 1000),
         before_ms: Some((now - DAY_SECS) * 1000),
     };
-    let page = ok(gmail.backfill(&window, None).await, "listing");
-    let dates: Vec<i64> = page.envelopes.iter().map(|e| e.internal_date).collect();
-    assert!(
-        dates.windows(2).all(|w| w[0] >= w[1]),
-        "listed newest first: {dates:?}"
+    let page = ok(gmail.list(&window, None).await, "listing");
+    let found = ok(gmail.envelopes(&page.ids).await, "metadata");
+    let dates: Vec<i64> = found.envelopes.iter().map(|e| e.internal_date).collect();
+    let outside = dates.iter().filter(|d| !window.contains(**d)).count();
+    assert_eq!(
+        outside,
+        0,
+        "epoch-second after:/before: bound the listing ({outside} of {} outside)",
+        dates.len()
     );
-    assert!(
-        dates.iter().all(|d| window.contains(*d)),
-        "epoch-second after:/before: bound the listing: {dates:?}"
+    eprintln!(
+        "listing order: {} messages, largest out-of-order spread {:.2} hours (Rail does not rely on order)",
+        dates.len(),
+        out_of_order_hours(&dates)
     );
     if dates.is_empty() {
-        eprintln!("NOT CONFIRMED: no mail 1 to 30 days old; window, order and text checks skipped");
+        eprintln!("NOT CONFIRMED: no mail 1 to 30 days old; window and text checks skipped");
     }
-    page.envelopes
+    found.envelopes
+}
+
+/// The whole mailbox's first page hands a token the second page answers to, with no id of the
+/// first again; a made-up token is reported as Gmail answers it.
+async fn check_page_tokens(gmail: &dyn Provider) {
+    let whole = Window::default();
+    let first = ok(gmail.list(&whole, None).await, "first page");
+    match &first.next {
+        Some(token) => {
+            let second = ok(gmail.list(&whole, Some(token)).await, "second page");
+            let repeated = second
+                .ids
+                .iter()
+                .filter(|id| first.ids.contains(id))
+                .count();
+            assert_eq!(repeated, 0, "the second page repeats {repeated} ids");
+            eprintln!(
+                "page tokens round-trip: yes ({} then {} ids)",
+                first.ids.len(),
+                second.ids.len()
+            );
+        }
+        None => eprintln!("NOT CONFIRMED: the mailbox has one page only; page tokens not tried"),
+    }
+    let made_up = PageToken("13371337133713371337".into());
+    let seen = match gmail.list(&whole, Some(&made_up)).await {
+        Ok(_) => "a page",
+        Err(e) => e.code(),
+    };
+    eprintln!("a made-up page token gives: {seen} (expected page_token_rejected)");
 }
 
 /// A window in the future lists nothing: the answer has no `messages` key.
@@ -117,9 +173,9 @@ async fn check_empty_listing(gmail: &dyn Provider) {
         after_ms: Some((unix_now() + DAY_SECS) * 1000),
         before_ms: None,
     };
-    let page = ok(gmail.backfill(&future, None).await, "empty listing");
+    let page = ok(gmail.list(&future, None).await, "empty listing");
     assert!(
-        page.envelopes.is_empty() && page.next.is_none(),
+        page.ids.is_empty() && page.next.is_none(),
         "empty list reads as empty"
     );
     let none = ok(
@@ -185,6 +241,7 @@ async fn check_history(gmail: &dyn Provider, current: &SyncCursor) {
         Err(ProviderError::NeedsAuth { .. }) => "NeedsAuth",
         Err(ProviderError::Transient { .. }) => "a transient error",
         Err(ProviderError::Permanent { .. }) => "a permanent error",
+        Err(ProviderError::PageTokenRejected) => "PageTokenRejected",
     };
     eprintln!("a very old historyId gives: {seen} (expected CursorExpired)");
     assert!(
@@ -201,6 +258,7 @@ async fn gmail_live_read_only() {
     };
     let cursor = check_labels_and_profile(gmail.as_ref()).await;
     let envelopes = check_window_and_order(gmail.as_ref()).await;
+    check_page_tokens(gmail.as_ref()).await;
     check_empty_listing(gmail.as_ref()).await;
     check_text(gmail.as_ref(), &envelopes).await;
     check_history(gmail.as_ref(), &cursor).await;
@@ -208,4 +266,15 @@ async fn gmail_live_read_only() {
     assert!(hits.len() <= 5);
     let found = ok(gmail.envelopes(&hits).await, "envelopes");
     assert!(found.envelopes.len() <= hits.len());
+}
+
+#[test]
+fn the_out_of_order_spread_is_the_largest_rise() {
+    assert_eq!(out_of_order_hours(&[]), 0.0);
+    assert_eq!(out_of_order_hours(&[9, 5, 1]), 0.0);
+    let hour = 3_600_000;
+    assert_eq!(
+        out_of_order_hours(&[10 * hour, 2 * hour, 5 * hour, 3 * hour]),
+        3.0
+    );
 }

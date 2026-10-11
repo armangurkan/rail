@@ -171,8 +171,10 @@ async fn a_backfill_then_deltas_keep_the_store_current() {
     );
 }
 
+/// P4-LIVE: a crash mid-backfill leaves Gmail's page token with the last committed page; a
+/// restarted engine goes on with it, exactly where the listing stood, with the first cursor.
 #[tokio::test]
-async fn a_crash_mid_backfill_resumes_below_the_marker_with_the_first_cursor() {
+async fn a_crash_mid_backfill_resumes_from_the_page_token_with_the_first_cursor() {
     let h = harness(&["a@example.com"]);
     let mock = MockProvider::new();
     mock.with(|m| m.page_size = 2);
@@ -181,15 +183,17 @@ async fn a_crash_mid_backfill_resumes_below_the_marker_with_the_first_cursor() {
         &[("m1", 5), ("m2", 4), ("m3", 3), ("m4", 2), ("m5", 1)],
     );
     mock.fail_after(Call::Backfill, 2, ProviderError::permanent("boom"));
-    let engine = engine(&h, &mock, 0);
-    assert!(engine.pass().await.is_err());
+    assert!(engine(&h, &mock, 0).pass().await.is_err());
     assert_eq!(stored(&h), ["m2", "m3", "m4", "m5"]);
     let crashed = state(&h);
     assert_eq!(crashed.cursor, None);
     assert_eq!(crashed.backfill_cursor.as_deref(), Some("1"));
     assert_eq!(crashed.backfill_before, Some(ago(4, 0)));
+    let resume = crashed.backfill_resume.expect("the token is stored");
+    assert_eq!(resume.listing, Window::default());
     mock.add(envelope("late", "t-late", ago(0, 0)));
-    engine.pass().await.unwrap();
+    let restarted = engine(&h, &mock, 0);
+    restarted.pass().await.unwrap();
     assert_eq!(
         stored(&h),
         ["late", "m1", "m2", "m3", "m4", "m5"],
@@ -199,8 +203,19 @@ async fn a_crash_mid_backfill_resumes_below_the_marker_with_the_first_cursor() {
         mock.calls().iter().filter(|c| **c == Call::Profile).count(),
         1
     );
-    let resumed = mock.backfill_windows()[3];
-    assert_eq!(resumed.before_ms, Some(ago(4, 1000)));
+    let tokens = mock.with(|m| m.list_tokens.clone());
+    assert_eq!(
+        tokens[3],
+        Some(resume.token.0),
+        "resumed with the stored token"
+    );
+    assert_eq!(
+        mock.backfill_windows()[3],
+        Window::default(),
+        "and its query"
+    );
+    assert!(mock.metadata_refetches().is_empty());
+    assert_eq!(state(&h).backfill_resume, None, "cleared at the end");
 }
 
 /// Review focus 1.
@@ -658,3 +673,6 @@ async fn a_login_failure_while_fetching_bodies_ends_the_pass() {
 
 #[path = "pass_tests.rs"]
 mod pass_tests;
+
+#[path = "backfill_tests.rs"]
+mod backfill_tests;

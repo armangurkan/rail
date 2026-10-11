@@ -280,11 +280,11 @@ impl crate::provider::Provider for Panics {
     async fn profile(&self) -> Result<crate::provider::Profile, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
-    async fn backfill(
+    async fn list(
         &self,
         _: &crate::provider::Window,
         _: Option<&crate::provider::PageToken>,
-    ) -> Result<crate::provider::EnvelopePage, crate::provider::ProviderError> {
+    ) -> Result<crate::provider::IdPage, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
     async fn changes(
@@ -578,12 +578,12 @@ impl crate::provider::Provider for RetryingSearch {
     async fn profile(&self) -> Answer<crate::provider::Profile> {
         self.inner.profile().await
     }
-    async fn backfill(
+    async fn list(
         &self,
         window: &crate::provider::Window,
         page: Option<&crate::provider::PageToken>,
-    ) -> Answer<crate::provider::EnvelopePage> {
-        self.inner.backfill(window, page).await
+    ) -> Answer<crate::provider::IdPage> {
+        self.inner.list(window, page).await
     }
     async fn changes(
         &self,

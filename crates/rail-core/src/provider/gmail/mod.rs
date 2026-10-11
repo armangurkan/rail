@@ -22,10 +22,10 @@ mod live_tests;
 #[cfg(test)]
 mod tests;
 
-use super::http::ApiClient;
+use super::http::{ApiClient, is_bad_request};
 use super::{
-    Body, ChangeSet, EnvelopePage, PageToken, Profile, ProviderError, RemoteFolder, RemoteId,
-    SyncCursor, Window,
+    Body, ChangeSet, EnvelopePage, IdPage, PageToken, Profile, ProviderError, RemoteFolder,
+    RemoteId, SyncCursor, Window,
 };
 
 pub use body::{MAX_BODY_BYTES, TRUNCATED_MARKER};
@@ -89,17 +89,28 @@ impl GmailProvider {
         })
     }
 
-    /// One page of the window, newest first, with each message's metadata.
-    pub(crate) async fn backfill_page(
+    /// One page of the window's ids in Gmail's order (roughly newest first, not strictly).
+    /// A 400 to a request carrying `page` is `PageTokenRejected`; a next-page token Rail would
+    /// not send back is a permanent error, never a silently shortened listing.
+    pub(crate) async fn list_page(
         &self,
         window: &Window,
         page: Option<&PageToken>,
-    ) -> Result<EnvelopePage, ProviderError> {
+    ) -> Result<IdPage, ProviderError> {
         let query = list::window_query(window);
-        let (ids, next) = self.list_ids(query, page, BACKFILL_PAGE, true).await?;
-        let mut fetched = self.metadata(&ids).await?;
-        fetched.next = next;
-        Ok(fetched)
+        let (ids, next) = match self.list_ids(query, page, BACKFILL_PAGE, true).await {
+            Err(error) if page.is_some() && is_bad_request(&error) => {
+                return Err(ProviderError::PageTokenRejected);
+            }
+            other => other?,
+        };
+        let next = match next {
+            Some(token) => Some(PageToken::checked(&token.0).ok_or_else(|| {
+                ProviderError::permanent("Gmail's next page token is not one Rail sends back")
+            })?),
+            None => None,
+        };
+        Ok(IdPage { ids, next })
     }
 
     /// Gmail's own search over the whole mailbox (spam and trash excluded, as in Gmail). Ids
@@ -132,12 +143,12 @@ impl super::Provider for GmailProvider {
         self.read_profile().await
     }
 
-    async fn backfill(
+    async fn list(
         &self,
         window: &Window,
         page: Option<&PageToken>,
-    ) -> Result<EnvelopePage, ProviderError> {
-        self.backfill_page(window, page).await
+    ) -> Result<IdPage, ProviderError> {
+        self.list_page(window, page).await
     }
 
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {

@@ -31,7 +31,7 @@ enum Fetched {
 }
 
 impl GmailProvider {
-    /// One page of message ids, newest first.
+    /// One page of message ids, in Gmail's order (roughly newest first, not strictly).
     pub(crate) async fn list_ids(
         &self,
         q: Option<String>,

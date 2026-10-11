@@ -27,6 +27,10 @@ pub enum ProviderError {
     /// The delta cursor is too old; the engine resyncs in full. An expected path.
     #[error("the sync cursor expired; a full resync is needed")]
     CursorExpired,
+    /// A listing's page token was refused (Gmail: HTTP 400 to a request carrying one); the
+    /// backfill lists again from its date marker. An expected path.
+    #[error("the mail provider refused the listing's page token")]
+    PageTokenRejected,
     /// The refresh token was refused or the API keeps refusing the access token.
     #[error("the account needs a new login")]
     NeedsAuth { detail: Option<String> },
@@ -54,7 +58,7 @@ impl ProviderError {
             Self::Transient { detail, .. }
             | Self::Permanent { detail, .. }
             | Self::NeedsAuth { detail } => *detail = Some(text),
-            Self::NotFound | Self::CursorExpired => {}
+            Self::NotFound | Self::CursorExpired | Self::PageTokenRejected => {}
         }
         self
     }
@@ -73,6 +77,7 @@ impl ProviderError {
             Self::Permanent { .. } => "permanent",
             Self::NotFound => "not_found",
             Self::CursorExpired => "cursor_expired",
+            Self::PageTokenRejected => "page_token_rejected",
             Self::NeedsAuth { .. } => "needs_auth",
         }
     }
@@ -82,7 +87,7 @@ impl ProviderError {
             Self::Transient { detail, .. }
             | Self::Permanent { detail, .. }
             | Self::NeedsAuth { detail } => detail.as_deref(),
-            Self::NotFound | Self::CursorExpired => None,
+            Self::NotFound | Self::CursorExpired | Self::PageTokenRejected => None,
         }
     }
 }
@@ -93,7 +98,9 @@ impl From<ProviderError> for OpError {
             ProviderError::Transient { .. } => ErrorCode::Network,
             ProviderError::NotFound => ErrorCode::NotFound,
             ProviderError::NeedsAuth { .. } => ErrorCode::Auth,
-            ProviderError::Permanent { .. } | ProviderError::CursorExpired => ErrorCode::Provider,
+            ProviderError::Permanent { .. }
+            | ProviderError::CursorExpired
+            | ProviderError::PageTokenRejected => ErrorCode::Provider,
         };
         let mut op = OpError::new(code, error.class(), error.to_string());
         if let Some(detail) = error.detail() {
@@ -130,6 +137,11 @@ mod tests {
                 ProviderError::CursorExpired,
                 ErrorClass::Permanent,
                 "cursor_expired",
+            ),
+            (
+                ProviderError::PageTokenRejected,
+                ErrorClass::Permanent,
+                "page_token_rejected",
             ),
             (
                 ProviderError::NeedsAuth { detail: None },

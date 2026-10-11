@@ -13,8 +13,9 @@ pub(crate) mod mock;
 
 pub use error::ProviderError;
 pub use types::{
-    AttachmentMeta, Body, ChangeSet, Envelope, EnvelopePage, FolderKind, Mailbox, PageToken,
-    Profile, Relabel, RemoteFolder, RemoteId, SyncCursor, Window,
+    AttachmentMeta, Body, ChangeSet, Envelope, EnvelopePage, FolderKind, IdPage,
+    MAX_PAGE_TOKEN_BYTES, Mailbox, PageToken, Profile, Relabel, RemoteFolder, RemoteId, SyncCursor,
+    Window,
 };
 
 /// One account's mailbox, read through its provider's API. Every method speaks Rail types;
@@ -25,12 +26,14 @@ pub trait Provider: Send + Sync {
     async fn folders(&self) -> Result<Vec<RemoteFolder>, ProviderError>;
     /// The mailbox's current sync cursor and size, read before a backfill.
     async fn profile(&self) -> Result<Profile, ProviderError>;
-    /// One page of envelopes inside `window`, newest first.
-    async fn backfill(
+    /// One page of the message ids inside `window`, in the provider's order (Gmail: roughly
+    /// newest first, not strictly). `page` must come from a listing of the same `window`;
+    /// `ProviderError::PageTokenRejected` means the provider refused it.
+    async fn list(
         &self,
         window: &Window,
         page: Option<&PageToken>,
-    ) -> Result<EnvelopePage, ProviderError>;
+    ) -> Result<IdPage, ProviderError>;
     /// What changed since `cursor`. `ProviderError::CursorExpired` means a full resync.
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError>;
     /// One message's body, rendered to text.

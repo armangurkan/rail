@@ -41,7 +41,7 @@ async fn labels_map_system_labels_to_kinds_and_flags_to_nothing() {
 }
 
 #[tokio::test]
-async fn backfill_pages_newest_first_with_the_window_query() {
+async fn a_listing_pages_with_the_window_query_and_its_token() {
     let gmail = Gmail::start().await;
     let window = Window {
         after_ms: Some(1_700_000_000_123),
@@ -61,6 +61,7 @@ async fn backfill_pages_newest_first_with_the_window_query() {
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{API_PATH}/messages")))
+        .and(query_param("q", "after:1700000000 before:1700100000"))
         .and(query_param("pageToken", "p2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(list_json(&[], None)))
         .expect(1)
@@ -78,19 +79,21 @@ async fn backfill_pages_newest_first_with_the_window_query() {
             .await;
     }
     let provider = gmail.provider();
-    let first = provider.backfill_page(&window, None).await.unwrap();
-    let ids: Vec<&str> = first
+    let first = provider.list_page(&window, None).await.unwrap();
+    assert_eq!(first.ids, ["m2", "m1"]);
+    assert_eq!(first.next, Some(PageToken("p2".into())));
+    let envelopes = provider.metadata(&first.ids).await.unwrap();
+    let ids: Vec<&str> = envelopes
         .envelopes
         .iter()
         .map(|e| e.remote_id.as_str())
         .collect();
-    assert_eq!(ids, ["m2", "m1"]);
-    assert_eq!(first.next, Some(PageToken("p2".into())));
+    assert_eq!(ids, ["m2", "m1"], "metadata keeps the listing's order");
     let second = provider
-        .backfill_page(&window, first.next.as_ref())
+        .list_page(&window, first.next.as_ref())
         .await
         .unwrap();
-    assert!(second.envelopes.is_empty() && second.next.is_none());
+    assert!(second.ids.is_empty() && second.next.is_none());
 }
 
 #[tokio::test]
@@ -104,10 +107,56 @@ async fn the_whole_mailbox_is_listed_without_a_query() {
         .await;
     let page = gmail
         .provider()
-        .backfill_page(&Window::default(), None)
+        .list_page(&Window::default(), None)
         .await
         .unwrap();
-    assert!(page.envelopes.is_empty());
+    assert!(page.ids.is_empty());
+}
+
+/// P4-LIVE: a 400 to a listing that carried a page token is `PageTokenRejected`, so the engine
+/// can fall back to its date marker; without a token a 400 stays a plain refusal.
+#[tokio::test]
+async fn a_refused_page_token_is_recognised() {
+    let gmail = Gmail::start().await;
+    let refusal = json!({"error": {"code": 400, "message": "Invalid pageToken", "errors": [{"reason": "invalidArgument"}]}});
+    Mock::given(path(format!("{API_PATH}/messages")))
+        .respond_with(ResponseTemplate::new(400).set_body_json(refusal))
+        .mount(&gmail.server)
+        .await;
+    let provider = gmail.provider();
+    let stale = PageToken("12345".into());
+    let error = provider
+        .list_page(&Window::default(), Some(&stale))
+        .await
+        .unwrap_err();
+    assert_eq!(error, ProviderError::PageTokenRejected);
+    let plain = provider
+        .list_page(&Window::default(), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&plain, ProviderError::Permanent { message, .. } if message.contains("HTTP 400")),
+        "{plain:?}"
+    );
+}
+
+/// A next-page token Rail would not send back fails the listing instead of ending it early.
+#[tokio::test]
+async fn an_unsafe_next_page_token_fails_the_listing() {
+    let gmail = Gmail::start().await;
+    Mock::given(path(format!("{API_PATH}/messages")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(list_json(&["m1"], Some("a b&c=d"))))
+        .mount(&gmail.server)
+        .await;
+    let error = gmail
+        .provider()
+        .list_page(&Window::default(), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, ProviderError::Permanent { message, .. } if message.contains("page token")),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

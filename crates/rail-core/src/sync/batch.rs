@@ -1,6 +1,6 @@
 //! What the writer commits in one transaction.
 
-use crate::provider::{Body, Envelope, Relabel, RemoteFolder, RemoteId};
+use crate::provider::{Body, Envelope, PageToken, Relabel, RemoteFolder, RemoteId, Window};
 
 /// Why a message is in the store: the sync window, or a server search that found it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -19,6 +19,15 @@ impl Origin {
     }
 }
 
+/// Where a backfill's listing stands: Gmail's token for the next page, the listing (query) it
+/// belongs to, and when it was issued (Unix seconds). Stored with the page it follows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeToken {
+    pub token: PageToken,
+    pub listing: Window,
+    pub issued_at: i64,
+}
+
 /// Columns of the account's row to change. `None` leaves a column; `Some(None)` clears it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StateUpdate {
@@ -27,6 +36,8 @@ pub struct StateUpdate {
     pub backfill_cursor: Option<Option<String>>,
     pub backfill_window: Option<Option<i64>>,
     pub backfill_started_at: Option<Option<i64>>,
+    /// The token, listing and time columns, always set (or cleared) together.
+    pub backfill_resume: Option<Option<ResumeToken>>,
     pub phase: Option<String>,
     pub last_sync_at: Option<i64>,
     /// The error's code and when it happened (Unix seconds).

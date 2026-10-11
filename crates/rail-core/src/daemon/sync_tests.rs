@@ -213,11 +213,8 @@ async fn search_merges_local_and_server_hits_and_keeps_server_ones() {
     assert_eq!(origin, "search");
     let again = client.call::<Search>(&request).await.unwrap();
     assert_eq!(again.hits.len(), 2);
-    let fetched = mock
-        .calls()
-        .iter()
-        .filter(|c| **c == Call::Envelopes)
-        .count();
+    // old9 is outside the window, so only a search ever asks for its metadata.
+    let fetched = mock.with(|m| m.metadata_gets.iter().filter(|id| *id == "old9").count());
     assert_eq!(
         fetched, 1,
         "the second search asked for no metadata it already had"

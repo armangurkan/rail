@@ -7,7 +7,7 @@ use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
 use super::{Store, StoreError, rollup};
 use crate::provider::{Body, Envelope, Relabel, RemoteFolder, RemoteId};
-use crate::sync::batch::{Batch, BatchOutcome, Origin, Prune, StateUpdate, Sweep};
+use crate::sync::batch::{Batch, BatchOutcome, Origin, Prune, ResumeToken, StateUpdate, Sweep};
 
 const UPSERT: &str = "INSERT INTO messages (account_id, thread_id, remote_id, message_id,
     in_reply_to, references_ids, subject, from_json, to_json, cc_json, bcc_json, date, snippet,
@@ -395,6 +395,25 @@ fn set_column(
     Ok(())
 }
 
+fn set_resume(
+    tx: &Transaction,
+    account: i64,
+    resume: Option<&ResumeToken>,
+) -> Result<(), StoreError> {
+    tx.execute(
+        "UPDATE accounts SET backfill_page_token = ?2, backfill_list_after_ms = ?3,
+                backfill_list_before_ms = ?4, backfill_token_at = ?5 WHERE id = ?1",
+        params![
+            account,
+            resume.map(|r| r.token.0.as_str()),
+            resume.and_then(|r| r.listing.after_ms),
+            resume.and_then(|r| r.listing.before_ms),
+            resume.map(|r| r.issued_at),
+        ],
+    )?;
+    Ok(())
+}
+
 fn update_state(tx: &Transaction, account: i64, state: &StateUpdate) -> Result<(), StoreError> {
     if let Some(v) = &state.cursor {
         set_column(tx, account, "sync_cursor", v)?;
@@ -410,6 +429,9 @@ fn update_state(tx: &Transaction, account: i64, state: &StateUpdate) -> Result<(
     }
     if let Some(v) = &state.backfill_started_at {
         set_column(tx, account, "backfill_started_at", v)?;
+    }
+    if let Some(resume) = &state.backfill_resume {
+        set_resume(tx, account, resume.as_ref())?;
     }
     if let Some(v) = &state.phase {
         set_column(tx, account, "sync_phase", v)?;

@@ -4,8 +4,8 @@ use rusqlite::params;
 
 use super::Store;
 use crate::provider::mock::envelope;
-use crate::provider::{Body, Envelope, FolderKind, Relabel, RemoteFolder};
-use crate::sync::batch::{Batch, Origin, Prune, StateUpdate, Sweep};
+use crate::provider::{Body, Envelope, FolderKind, PageToken, Relabel, RemoteFolder, Window};
+use crate::sync::batch::{Batch, Origin, Prune, ResumeToken, StateUpdate, Sweep};
 
 const DAY_MS: i64 = 86_400_000;
 const NOW: i64 = 200 * 86_400;
@@ -392,6 +392,17 @@ fn prune_keeps_starred_mail_and_threads_with_mail_inside_the_window() {
     assert_eq!(thread(&store, "t1"), None);
 }
 
+fn resume_token() -> ResumeToken {
+    ResumeToken {
+        token: PageToken("0987654321".into()),
+        listing: Window {
+            after_ms: Some(3 * DAY_MS),
+            before_ms: None,
+        },
+        issued_at: NOW - 5,
+    }
+}
+
 #[test]
 fn state_updates_set_and_clear_columns() {
     let mut store = store();
@@ -402,6 +413,7 @@ fn state_updates_set_and_clear_columns() {
             backfill_cursor: Some(Some("70".into())),
             backfill_window: Some(Some(0)),
             backfill_started_at: Some(Some(9)),
+            backfill_resume: Some(Some(resume_token())),
             phase: Some("backfill".into()),
             last_sync_at: Some(NOW),
             last_error: Some(Some(("transient".into(), NOW))),
@@ -421,6 +433,7 @@ fn state_updates_set_and_clear_columns() {
         (Some(5), Some(0), Some(9))
     );
     assert_eq!(state.backfill_cursor.as_deref(), Some("70"));
+    assert_eq!(state.backfill_resume, Some(resume_token()));
     assert_eq!(
         (state.phase.as_str(), state.last_sync_at, state.needs_auth),
         ("backfill", Some(NOW), true)
@@ -429,6 +442,7 @@ fn state_updates_set_and_clear_columns() {
     let clear = Batch {
         state: StateUpdate {
             backfill_before: Some(None),
+            backfill_resume: Some(None),
             last_error: Some(None),
             needs_auth: Some(false),
             ..StateUpdate::default()
@@ -437,6 +451,7 @@ fn state_updates_set_and_clear_columns() {
     };
     store.apply(&clear, NOW).unwrap();
     let state = store.sync_state(1).unwrap();
+    assert_eq!(state.backfill_resume, None);
     assert_eq!(
         (
             state.backfill_before,
@@ -490,6 +505,7 @@ fn a_failing_batch_changes_nothing() {
         state: StateUpdate {
             cursor: Some(Some("9".into())),
             backfill_before: Some(Some(5)),
+            backfill_resume: Some(Some(resume_token())),
             phase: Some("backfill".into()),
             ..StateUpdate::default()
         },
@@ -509,7 +525,7 @@ fn a_failing_batch_changes_nothing() {
     );
     assert_eq!(
         after, before,
-        "rollups and the cursor, marker and phase rolled back"
+        "rollups and the cursor, marker, page token and phase rolled back"
     );
     assert_eq!(thread(&store, "tc"), None);
 }
@@ -576,4 +592,52 @@ fn prune_keeps_stale_search_hits_in_a_thread_with_any_message_inside_the_window(
     assert_eq!(outcome.pruned, 1);
     assert_eq!(ids(&store), ["stale-old", "stale-recent"]);
     assert_eq!(thread(&store, "t2"), None);
+}
+
+/// P4-LIVE: a stored token Rail would not send reads as none, so the backfill falls back to its
+/// marker instead of sending it.
+#[test]
+fn an_unsafe_stored_page_token_reads_as_none() {
+    let store = store();
+    store
+        .conn()
+        .execute(
+            "UPDATE accounts SET backfill_page_token = 'a b&c', backfill_token_at = 1",
+            [],
+        )
+        .unwrap();
+    assert_eq!(store.sync_state(1).unwrap().backfill_resume, None);
+}
+
+/// P4-LIVE: one query says which ids of a page a running backfill already stored: sync rows
+/// synced since it began; search hits and older rows are fetched again.
+#[test]
+fn backfilled_ids_are_sync_rows_synced_since_the_backfill_began() {
+    let mut store = store();
+    store
+        .apply(&upserts(vec![envelope("early", "t1", DAY_MS)]), NOW - 100)
+        .unwrap();
+    store
+        .apply(&upserts(vec![envelope("late", "t1", DAY_MS)]), NOW)
+        .unwrap();
+    let hit = Batch {
+        upserts: vec![envelope("hit", "t2", DAY_MS)],
+        origin: Origin::Search,
+        ..Batch::new(1)
+    };
+    store.apply(&hit, NOW).unwrap();
+    let page: Vec<String> = ["early", "late", "hit", "absent"]
+        .map(String::from)
+        .to_vec();
+    let since = store.backfilled_ids(1, &page, Some(NOW - 10)).unwrap();
+    assert_eq!(since.into_iter().collect::<Vec<_>>(), ["late"]);
+    let mut any: Vec<String> = store
+        .backfilled_ids(1, &page, None)
+        .unwrap()
+        .into_iter()
+        .collect();
+    any.sort_unstable();
+    assert_eq!(any, ["early", "late"]);
+    assert!(store.backfilled_ids(1, &[], None).unwrap().is_empty());
+    assert!(store.backfilled_ids(2, &page, None).unwrap().is_empty());
 }

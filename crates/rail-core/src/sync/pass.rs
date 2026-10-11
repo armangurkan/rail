@@ -1,54 +1,22 @@
-//! The steps of a pass (spec §4): labels, backfill, delta, bodies, prune.
+//! The steps of a pass (spec §4): labels, backfill (in `backfill.rs`), delta, bodies, prune.
 
 use futures_util::{StreamExt, stream};
 
-use super::batch::{Batch, Prune, StateUpdate, Sweep};
+use super::backfill::needs_backfill;
+use super::batch::{Batch, Prune, StateUpdate};
 use super::engine::{Engine, SyncError};
 use super::{
-    BACKFILL_PAGES_PER_PASS, BODIES_PER_PASS, BODY_BATCH, BODY_BATCH_BYTES, BODY_CONCURRENCY,
-    SEARCH_KEEP_DAYS, UNREADABLE_BODY,
+    BODIES_PER_PASS, BODY_BATCH, BODY_BATCH_BYTES, BODY_CONCURRENCY, SEARCH_KEEP_DAYS,
+    UNREADABLE_BODY,
 };
 use crate::config::DAY_SECS;
 use crate::ops::SyncPhase;
-use crate::provider::{Body, PageToken, ProviderError, RemoteId, SyncCursor, Window};
+use crate::provider::{Body, ProviderError, RemoteId, SyncCursor};
 use crate::store::SyncStateRow;
 
-/// One second, in milliseconds: Gmail's `before:` resolution.
-const SECOND_MS: i64 = 1000;
 /// Answers one delta step reads at most (each holds at most 5,000 added ids): 500,000 changes
 /// a pass. The cursor is saved after every answer, so the next pass goes on from there.
 const MAX_DELTA_ROUNDS: usize = 100;
-
-/// Whether this pass backfills: no cursor yet, an unfinished backfill, or a grown window.
-fn needs_backfill(state: &SyncStateRow, window: Option<i64>) -> bool {
-    let wanted = window.unwrap_or(0);
-    state.cursor.is_none()
-        || state.backfill_before.is_some()
-        || state.backfill_window.is_none_or(|covered| wanted < covered)
-}
-
-/// The listing a backfill resumes or starts: below the marker (the whole oldest second
-/// again), below the old window when it grew, or from the top.
-///
-/// Resuming below the marker relies on the provider listing newest first (Gmail does): every
-/// message newer than the oldest one stored was then on an earlier page. Were a listing ever
-/// out of order, a message above the marker could be missed until the next `CursorExpired`
-/// resync, whose full backfill and sweep fetch it at worst.
-fn listing(state: &SyncStateRow, window: Option<i64>) -> Window {
-    let before = match (
-        state.backfill_before,
-        state.cursor.is_some(),
-        state.backfill_window,
-    ) {
-        (Some(marker), _, _) => Some(marker + SECOND_MS),
-        (None, true, Some(covered)) => Some(covered + SECOND_MS),
-        _ => None,
-    };
-    Window {
-        after_ms: window,
-        before_ms: before,
-    }
-}
 
 impl Engine {
     pub(crate) async fn pass(&self) -> Result<(), SyncError> {
@@ -66,7 +34,8 @@ impl Engine {
     }
 
     /// Backfill and delta. With a cursor (a grown window, or such a backfill resumed), the
-    /// delta runs first and the backfill lists at most `BACKFILL_PAGES_PER_PASS` pages, so new
+    /// delta runs first and the backfill lists at most `BACKFILL_PAGES_PER_PASS` pages with
+    /// progress, so new
     /// mail arrives within one poll interval however long the backfill takes. Without one (the
     /// first full backfill), the delta can only follow it.
     async fn envelopes(&self, window: Option<i64>) -> Result<(), SyncError> {
@@ -122,101 +91,6 @@ impl Engine {
         Ok(())
     }
 
-    async fn backfill(&self, state: &SyncStateRow, window: Option<i64>) -> Result<(), SyncError> {
-        self.phase(SyncPhase::Backfill);
-        let full = state.cursor.is_none();
-        let (cursor, started) = if full {
-            self.first_cursor(state).await?
-        } else {
-            (None, (self.clock)())
-        };
-        let listing = listing(state, window);
-        let max_pages = if full {
-            usize::MAX
-        } else {
-            BACKFILL_PAGES_PER_PASS
-        };
-        let mut page: Option<PageToken> = None;
-        for listed in 1.. {
-            let fetched = self
-                .call(
-                    SyncPhase::Backfill,
-                    self.provider.backfill(&listing, page.as_ref()),
-                )
-                .await?;
-            log_skipped(&self.account.name, &fetched.skipped);
-            let count = fetched.envelopes.len() as u64;
-            let oldest = fetched.envelopes.iter().map(|e| e.internal_date).min();
-            let batch = Batch {
-                upserts: fetched.envelopes,
-                state: StateUpdate {
-                    phase: Some(SyncPhase::Backfill.as_str().to_string()),
-                    backfill_before: oldest.map(Some),
-                    backfill_cursor: cursor.clone().map(Some),
-                    backfill_started_at: full.then_some(Some(started)),
-                    ..StateUpdate::default()
-                },
-                ..Batch::new(self.account_id)
-            };
-            self.write(batch).await?;
-            self.status(|s| s.backfill_fetched += count);
-            match fetched.next {
-                None => break,
-                Some(_) if listed >= max_pages => {
-                    tracing::info!(account = %self.account.name, pages = listed, "the backfill goes on next pass");
-                    return Ok(());
-                }
-                Some(next) => page = Some(next),
-            }
-        }
-        self.end_backfill(full, cursor, started, window).await
-    }
-
-    /// The cursor read before a full backfill's first page, and when it began: from the store
-    /// when the backfill is being resumed, else from `getProfile` now.
-    async fn first_cursor(&self, state: &SyncStateRow) -> Result<(Option<String>, i64), SyncError> {
-        if let (Some(cursor), Some(started)) = (&state.backfill_cursor, state.backfill_started_at) {
-            return Ok((Some(cursor.clone()), started));
-        }
-        let profile = self
-            .call(SyncPhase::Backfill, self.provider.profile())
-            .await?;
-        self.status(|s| {
-            s.backfill_fetched = 0;
-            s.backfill_estimate = Some(profile.messages_total);
-        });
-        Ok((Some(profile.cursor.0), (self.clock)()))
-    }
-
-    async fn end_backfill(
-        &self,
-        full: bool,
-        cursor: Option<String>,
-        started: i64,
-        window: Option<i64>,
-    ) -> Result<(), SyncError> {
-        let mut state = StateUpdate {
-            backfill_before: Some(None),
-            backfill_cursor: Some(None),
-            backfill_started_at: Some(None),
-            backfill_window: Some(Some(window.unwrap_or(0))),
-            ..StateUpdate::default()
-        };
-        if full {
-            state.cursor = Some(cursor);
-        }
-        let batch = Batch {
-            state,
-            sweep: full.then_some(Sweep {
-                started_at: started,
-                window_start_ms: window,
-            }),
-            ..Batch::new(self.account_id)
-        };
-        self.write(batch).await?;
-        Ok(())
-    }
-
     /// Catch up from `cursor`, one batch per answer, while Gmail says more waits; at most
     /// `MAX_DELTA_ROUNDS` answers a pass (the saved cursor lets the next pass go on).
     async fn delta(&self, mut cursor: String) -> Result<(), SyncError> {
@@ -260,6 +134,7 @@ impl Engine {
             backfill_before: Some(None),
             backfill_cursor: Some(None),
             backfill_started_at: Some(None),
+            backfill_resume: Some(None),
             ..StateUpdate::default()
         };
         self.write(Batch {
@@ -404,7 +279,7 @@ impl BodyBatch {
     }
 }
 
-fn log_skipped(account: &str, skipped: &[RemoteId]) {
+pub(super) fn log_skipped(account: &str, skipped: &[RemoteId]) {
     if !skipped.is_empty() {
         let ids: Vec<String> = skipped
             .iter()

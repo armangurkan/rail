@@ -9,9 +9,28 @@ pub type RemoteId = String;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncCursor(pub String);
 
-/// The next page of a listing. Valid only within one pass; never stored.
+/// The next page of a listing (Gmail's `nextPageToken`). A backfill stores it with the page it
+/// follows, so a later pass goes on with the same listing; it is only ever valid for the query
+/// it was issued for.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PageToken(pub String);
+
+/// The longest page token Rail sends back or stores.
+pub const MAX_PAGE_TOKEN_BYTES: usize = 512;
+
+impl PageToken {
+    /// `text` as a page token, if Rail accepts it: 1 to `MAX_PAGE_TOKEN_BYTES` bytes of ASCII
+    /// letters, digits and `-_.~+/=`. It is outside text, sent back only as a percent-encoded
+    /// query value, never in a path.
+    pub fn checked(text: &str) -> Option<Self> {
+        let safe = !text.is_empty()
+            && text.len() <= MAX_PAGE_TOKEN_BYTES
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.~+/=".contains(&b));
+        safe.then(|| Self(text.to_string()))
+    }
+}
 
 /// The `folders.kind` values of the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +121,14 @@ impl Window {
     }
 }
 
+/// One page of a listing: message ids in the provider's order, which for Gmail is only
+/// roughly newest first (the live test saw spreads of hours).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IdPage {
+    pub ids: Vec<RemoteId>,
+    pub next: Option<PageToken>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnvelopePage {
     pub envelopes: Vec<Envelope>,
@@ -156,4 +183,23 @@ pub struct Body {
 pub struct Profile {
     pub cursor: SyncCursor,
     pub messages_total: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_page_token_is_checked_like_other_gmail_values() {
+        assert_eq!(
+            PageToken::checked("09876543210987654321"),
+            Some(PageToken("09876543210987654321".into()))
+        );
+        assert!(PageToken::checked("aB-_.~+/=9").is_some());
+        for bad in ["", "a b", "a&b", "a%20", "tok\n", "\u{e9}", "a?b", "a#b"] {
+            assert_eq!(PageToken::checked(bad), None, "{bad:?}");
+        }
+        assert!(PageToken::checked(&"a".repeat(MAX_PAGE_TOKEN_BYTES)).is_some());
+        assert!(PageToken::checked(&"a".repeat(MAX_PAGE_TOKEN_BYTES + 1)).is_none());
+    }
 }

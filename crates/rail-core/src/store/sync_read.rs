@@ -6,6 +6,8 @@ use std::collections::HashSet;
 use rusqlite::{OptionalExtension, params};
 
 use super::{Store, StoreError};
+use crate::provider::{PageToken, Window};
+use crate::sync::batch::ResumeToken;
 
 /// One account's sync columns.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -17,6 +19,9 @@ pub struct SyncStateRow {
     pub backfill_cursor: Option<String>,
     pub backfill_window: Option<i64>,
     pub backfill_started_at: Option<i64>,
+    /// Where the running backfill's listing goes on. A stored token Rail would not send is
+    /// read as none (the backfill then lists from its marker).
+    pub backfill_resume: Option<ResumeToken>,
     pub needs_auth: bool,
     pub phase: String,
     pub last_sync_at: Option<i64>,
@@ -71,6 +76,24 @@ fn hit(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredHit> {
     })
 }
 
+/// The stored resume token (columns 10 to 13), if there is one Rail would send.
+fn resume(r: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ResumeToken>> {
+    let token: Option<String> = r.get(10)?;
+    let issued_at: Option<i64> = r.get(13)?;
+    let (Some(token), Some(issued_at)) = (token, issued_at) else {
+        return Ok(None);
+    };
+    let listing = Window {
+        after_ms: r.get(11)?,
+        before_ms: r.get(12)?,
+    };
+    Ok(PageToken::checked(&token).map(|token| ResumeToken {
+        token,
+        listing,
+        issued_at,
+    }))
+}
+
 fn count(store: &Store, sql: &str, account_id: i64) -> Result<u64, StoreError> {
     let n: i64 = store
         .conn
@@ -95,7 +118,8 @@ impl Store {
         Ok(self.conn.query_row(
             "SELECT sync_cursor, backfill_before, backfill_cursor, backfill_window,
                     backfill_started_at, needs_auth, sync_phase, last_sync_at,
-                    last_error_code, last_error_at
+                    last_error_code, last_error_at, backfill_page_token,
+                    backfill_list_after_ms, backfill_list_before_ms, backfill_token_at
              FROM accounts WHERE id = ?1",
             params![account_id],
             |r| {
@@ -111,9 +135,32 @@ impl Store {
                     last_sync_at: r.get(7)?,
                     last_error_code: r.get(8)?,
                     last_error_at: r.get(9)?,
+                    backfill_resume: resume(r)?,
                 })
             },
         )?)
+    }
+
+    /// Which of `ids` (one listing page) a running backfill already stored for the account:
+    /// `origin = sync` rows synced at or after `since` (any time when `None`). One query.
+    pub fn backfilled_ids(
+        &self,
+        account_id: i64,
+        ids: &[String],
+        since: Option<i64>,
+    ) -> Result<HashSet<String>, StoreError> {
+        if ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT remote_id FROM messages
+             WHERE account_id = ?1 AND origin = 'sync'
+               AND remote_id IN (SELECT value FROM json_each(?2))
+               AND (?3 IS NULL OR synced_at >= ?3)",
+        )?;
+        let ids = serde_json::Value::from(ids.to_vec()).to_string();
+        let rows = stmt.query_map(params![account_id, ids, since], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Messages without a body in threads that have a message received since `since_ms`,
