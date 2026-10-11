@@ -2,6 +2,9 @@
 //! opened when first needed and opened again after any error.
 
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rail_core::ops::OpError;
@@ -18,6 +21,8 @@ pub enum ReadError {
     /// No store yet, or one at an older version that the daemon has yet to migrate.
     NotSetUp,
     Failed(OpError),
+    /// A newer list read was asked for before this one reached the store: it never ran.
+    Stale,
 }
 
 /// Which threads the list shows, by account position in `config.toml`.
@@ -64,6 +69,11 @@ pub struct SidebarOutcome {
 pub struct StoreReader {
     db: PathBuf,
     conn: Arc<Mutex<Option<Store>>>,
+    /// The newest list read's sequence number: an older one skips its query.
+    latest_list: Arc<AtomicU64>,
+    /// Reads that reached the store (tests).
+    #[cfg(test)]
+    queries: Arc<AtomicUsize>,
 }
 
 impl StoreReader {
@@ -71,7 +81,16 @@ impl StoreReader {
         Self {
             db,
             conn: Arc::default(),
+            latest_list: Arc::default(),
+            #[cfg(test)]
+            queries: Arc::default(),
         }
+    }
+
+    /// Reads that reached the store so far (tests).
+    #[cfg(test)]
+    pub(crate) fn queries(&self) -> usize {
+        self.queries.load(Ordering::SeqCst)
     }
 
     /// Run `read` on the blocking pool with the reader connection.
@@ -79,9 +98,26 @@ impl StoreReader {
         &self,
         read: impl FnOnce(&Store) -> Result<T, StoreError> + Send + 'static,
     ) -> Result<T, ReadError> {
-        let (db, slot) = (self.db.clone(), self.conn.clone());
+        self.read_unless_stale(None, read).await
+    }
+
+    /// `read`, unless `list_seq` is given and a newer list read was asked for by the time the
+    /// connection is free: then it answers `Stale` without querying.
+    async fn read_unless_stale<T: Send + 'static>(
+        &self,
+        list_seq: Option<u64>,
+        read: impl FnOnce(&Store) -> Result<T, StoreError> + Send + 'static,
+    ) -> Result<T, ReadError> {
+        let (db, slot, latest) = (self.db.clone(), self.conn.clone(), self.latest_list.clone());
+        #[cfg(test)]
+        let queries = self.queries.clone();
         tokio::task::spawn_blocking(move || {
             let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+            if list_seq.is_some_and(|seq| seq < latest.load(Ordering::SeqCst)) {
+                return Err(ReadError::Stale);
+            }
+            #[cfg(test)]
+            queries.fetch_add(1, Ordering::SeqCst);
             let store = match slot.take() {
                 Some(store) => store,
                 None => open(&db)?,
@@ -100,12 +136,25 @@ impl StoreReader {
         })
     }
 
+    /// Record `seq` as the newest list read, so any older one still waiting skips itself.
+    fn newest_list(&self, seq: u64) {
+        self.latest_list.fetch_max(seq, Ordering::SeqCst);
+    }
+
+    /// The list read of `request`, or `Stale` when a newer one was asked for meanwhile.
+    async fn read_list(&self, request: ListRequest) -> MailEvent {
+        let seq = request.seq;
+        let result = self
+            .read_unless_stale(Some(seq), move |store| list(store, &request))
+            .await;
+        MailEvent::Listed { seq, result }
+    }
+
     pub fn list(&self, request: ListRequest) -> Effect {
+        self.newest_list(request.seq);
         let reader = self.clone();
         job(move |sink| async move {
-            let seq = request.seq;
-            let result = reader.read(move |store| list(store, &request)).await;
-            send(&sink, MailEvent::Listed { seq, result });
+            send(&sink, reader.read_list(request).await);
         })
     }
 
@@ -117,13 +166,19 @@ impl StoreReader {
         })
     }
 
-    /// After a store change: the list read and then the sidebar counts, in one job.
-    pub fn refresh(&self, list: ListRequest, sidebar_seq: u64) -> Effect {
+    /// After a store change: the list read, the sidebar counts and, with `thread` (its
+    /// sequence number and id), the open thread, in one job and in that order.
+    pub fn refresh(
+        &self,
+        list: ListRequest,
+        sidebar_seq: u64,
+        thread: Option<(u64, i64)>,
+    ) -> Effect {
+        self.newest_list(list.seq);
         let reader = self.clone();
         job(move |sink| async move {
-            let (seq, addresses) = (list.seq, list.addresses.clone());
-            let result = reader.read(move |store| self::list(store, &list)).await;
-            send(&sink, MailEvent::Listed { seq, result });
+            let addresses = list.addresses.clone();
+            send(&sink, reader.read_list(list).await);
             let result = reader.read(move |store| sidebar(store, &addresses)).await;
             send(
                 &sink,
@@ -132,23 +187,25 @@ impl StoreReader {
                     result,
                 },
             );
+            if let Some((seq, thread_id)) = thread {
+                send(&sink, reader.read_thread(seq, thread_id).await);
+            }
         })
+    }
+
+    async fn read_thread(&self, seq: u64, thread_id: i64) -> MailEvent {
+        let result = self.read(move |store| store.thread_detail(thread_id)).await;
+        MailEvent::Thread {
+            seq,
+            thread_id,
+            result,
+        }
     }
 
     pub fn thread(&self, seq: u64, thread_id: i64) -> Effect {
         let reader = self.clone();
         job(move |sink| async move {
-            let result = reader
-                .read(move |store| store.thread_detail(thread_id))
-                .await;
-            send(
-                &sink,
-                MailEvent::Thread {
-                    seq,
-                    thread_id,
-                    result,
-                },
-            );
+            send(&sink, reader.read_thread(seq, thread_id).await);
         })
     }
 

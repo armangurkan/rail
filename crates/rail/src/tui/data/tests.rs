@@ -210,6 +210,45 @@ async fn sidebar_thread_and_html_queries_report_back() {
 }
 
 #[tokio::test]
+async fn a_list_read_overtaken_by_a_newer_one_skips_its_query() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let envelopes: Vec<_> = inbox_threads("w", 3).into_iter().map(|e| (0, e)).collect();
+    seed_store(&paths, &[("work", "w@example.com")], &envelopes);
+    let reader = StoreReader::new(paths.db_file());
+    let older = reader.list(request(1, PageAt::First));
+    let newer = reader.list(request(2, PageAt::First));
+    let got = events(older, 1, Duration::from_secs(5)).await;
+    assert!(
+        matches!(
+            got.as_slice(),
+            [MailEvent::Listed {
+                seq: 1,
+                result: Err(ReadError::Stale)
+            }]
+        ),
+        "{got:?}"
+    );
+    assert_eq!(
+        reader.queries(),
+        0,
+        "the stale read never reached the store"
+    );
+    let got = events(newer, 1, Duration::from_secs(5)).await;
+    assert!(
+        matches!(
+            got.as_slice(),
+            [MailEvent::Listed {
+                seq: 2,
+                result: Ok(_)
+            }]
+        ),
+        "{got:?}"
+    );
+    assert_eq!(reader.queries(), 1);
+}
+
+#[tokio::test]
 async fn timers_report_their_token_after_the_delay() {
     let got = events(
         timer(Duration::from_millis(10), 5, Timer::Requery),

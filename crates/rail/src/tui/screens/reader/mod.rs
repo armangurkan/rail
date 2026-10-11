@@ -108,7 +108,12 @@ impl Reader {
 
     /// The thread read again: each message keeps its expansion (new ones get the default),
     /// errors stay only on bodies still missing, folds stay open.
+    /// An unchanged thread leaves everything as it is, unless a body it waited for did not
+    /// arrive (that message gets its note).
     pub fn refresh(&mut self, detail: ThreadDetail) {
+        if detail == self.detail && !self.missed_a_body() {
+            return;
+        }
         let defaults = default_expanded(&detail);
         let before: HashMap<i64, bool> = self
             .detail
@@ -144,6 +149,16 @@ impl Reader {
         }
         self.detail = detail;
         self.changed();
+    }
+
+    /// A body asked for and answered is still missing, with no note yet.
+    fn missed_a_body(&self) -> bool {
+        self.detail.messages.iter().any(|m| {
+            m.body == BodyState::NotFetched
+                && self.asked.contains(&m.id)
+                && !self.fetching.contains(&m.id)
+                && !self.errors.contains_key(&m.id)
+        })
     }
 
     /// Bodies to ask the daemon for: not fetched, not asked for yet, not failed.

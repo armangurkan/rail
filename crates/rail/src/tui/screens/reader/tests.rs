@@ -585,6 +585,24 @@ async fn lines_are_cached_per_width() {
 }
 
 #[tokio::test]
+async fn a_store_change_that_leaves_the_thread_as_it_was_rebuilds_nothing() {
+    let mut f = fixture(false).await;
+    store_bodies_on_fetch(&f);
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('j')).await;
+    press(&mut f, KeyCode::Char('j')).await;
+    let before = f.screen.reader().unwrap().lines(80);
+    let cursor = f.screen.reader_cursor_text();
+    let progress = status("work", "w@example.com", SyncPhase::Delta);
+    let event = MailEvent::Daemon(DaemonEvent::Progress(Box::new(progress)));
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+    settle(&mut f.screen, effects).await;
+    let after = f.screen.reader().unwrap().lines(80);
+    assert!(Rc::ptr_eq(&before, &after), "the lines were not rebuilt");
+    assert_eq!(f.screen.reader_cursor_text(), cursor, "the cursor stayed");
+}
+
+#[tokio::test]
 async fn reader_snapshots() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);

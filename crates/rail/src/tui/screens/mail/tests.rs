@@ -13,7 +13,7 @@ use rail_core::store::view::PAGE;
 use rail_core::sync::Batch;
 
 use super::*;
-use crate::tui::app::{Msg, TaskResult};
+use crate::tui::app::{Effect, Msg, TaskResult, TaskSink};
 use crate::tui::data::{DaemonEvent, FakeCall, FakeDaemon, MailEvent, Timer};
 use crate::tui::keys::Keymap;
 use crate::tui::screen::Screen;
@@ -348,6 +348,70 @@ async fn store_changes_are_coalesced_and_an_idle_screen_runs_nothing() {
         f.screen
             .update(Msg::Task(TaskResult::Mail(stale)))
             .is_empty()
+    );
+}
+
+/// Run one job to its end and collect what it reports.
+async fn run_job(effect: Effect) -> Vec<TaskResult> {
+    let Effect::Spawn(job) = effect else {
+        panic!("expected a job, got {effect:?}");
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        job(TaskSink::new(tx, 0)),
+    )
+    .await
+    .expect("a job finished in time");
+    let mut results = Vec::new();
+    while let Ok((_, result)) = rx.try_recv() {
+        results.push(result);
+    }
+    results
+}
+
+fn feed(f: &mut Fixture, results: Vec<TaskResult>) -> Vec<Effect> {
+    results
+        .into_iter()
+        .flat_map(|r| f.screen.update(Msg::Task(r)))
+        .collect()
+}
+
+#[tokio::test]
+async fn one_refresh_runs_at_a_time_and_changes_meanwhile_run_it_once_more() {
+    let mut f = fixture(3).await;
+    let progress = |f: &mut Fixture| {
+        let status = status("work", "w@example.com", SyncPhase::Backfill);
+        let event = MailEvent::Daemon(DaemonEvent::Progress(Box::new(status)));
+        f.screen.update(Msg::Task(TaskResult::Mail(event)))
+    };
+    let mut timer = progress(&mut f);
+    assert_eq!(timer.len(), 1, "{timer:?}");
+    let fired = run_job(timer.remove(0)).await;
+    let mut refresh = feed(&mut f, fired);
+    assert_eq!(refresh.len(), 1, "one refresh job: {refresh:?}");
+    // The refresh is in flight: further changes start nothing.
+    assert!(progress(&mut f).is_empty());
+    assert!(progress(&mut f).is_empty());
+    let answers = run_job(refresh.remove(0)).await;
+    let next = feed(&mut f, answers);
+    assert_eq!(
+        next.len(),
+        1,
+        "one timer for the changes meanwhile: {next:?}"
+    );
+    let queries = f.screen.ctx.store.queries();
+    settle(&mut f.screen, next).await;
+    assert_eq!(
+        f.screen.ctx.store.queries() - queries,
+        2,
+        "exactly one more refresh: its list and its sidebar"
+    );
+    assert!(f.screen.refreshing.is_none() && !f.screen.dirty_again);
+    assert_eq!(
+        progress(&mut f).len(),
+        1,
+        "an idle screen arms the timer again"
     );
 }
 

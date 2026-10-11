@@ -163,7 +163,12 @@ pub struct MailScreen {
     latest_thread: u64,
     latest_sidebar: u64,
     requery_token: u64,
+    /// A re-query timer is armed.
     requery_pending: bool,
+    /// The sequence number of the running refresh's last answer: one refresh at a time.
+    refreshing: Option<u64>,
+    /// The store changed while a refresh ran: run once more when it ends.
+    dirty_again: bool,
     chord: Chord,
     tick: usize,
     panic_on_key: bool,
@@ -200,6 +205,8 @@ impl MailScreen {
             latest_sidebar: 0,
             requery_token: 0,
             requery_pending: false,
+            refreshing: None,
+            dirty_again: false,
             chord: Chord::default(),
             tick: 0,
             panic_on_key: false,
@@ -259,8 +266,13 @@ impl MailScreen {
         self.ctx.store.sidebar(seq, addresses)
     }
 
-    /// The store changed: re-read the visible window and the sidebar once things settle.
+    /// The store changed: re-read the visible window and the sidebar once things settle, and
+    /// after the refresh in flight, if any, has answered.
     pub(crate) fn dirty(&mut self) -> Vec<Effect> {
+        if self.refreshing.is_some() {
+            self.dirty_again = true;
+            return Vec::new();
+        }
         if self.requery_pending {
             return Vec::new();
         }
@@ -271,6 +283,10 @@ impl MailScreen {
 
     fn requery(&mut self) -> Vec<Effect> {
         self.requery_pending = false;
+        if self.refreshing.is_some() {
+            self.dirty_again = true;
+            return Vec::new();
+        }
         self.list.cancel_loading();
         let (at, place) = self
             .navigating
@@ -278,11 +294,22 @@ impl MailScreen {
         let list = self.list_request(at, place);
         let sidebar_seq = self.next_seq();
         self.latest_sidebar = sidebar_seq;
-        let mut effects = vec![self.ctx.store.refresh(list, sidebar_seq)];
-        if let Some(id) = self.reader.as_ref().map(Reader::thread_id) {
-            effects.push(self.read_thread(id));
+        let thread = self.reader.as_ref().map(Reader::thread_id).map(|id| {
+            let seq = self.next_seq();
+            self.latest_thread = seq;
+            (seq, id)
+        });
+        self.refreshing = Some(thread.map_or(sidebar_seq, |(seq, _)| seq));
+        vec![self.ctx.store.refresh(list, sidebar_seq, thread)]
+    }
+
+    /// The refresh in flight gave its last answer: run the next one if the store changed.
+    fn refreshed(&mut self) -> Vec<Effect> {
+        self.refreshing = None;
+        if std::mem::take(&mut self.dirty_again) {
+            return self.dirty();
         }
-        effects
+        Vec::new()
     }
 
     /// Show `scope`. The old rows stay drawn until the new ones arrive (spec §3); a page
@@ -445,6 +472,19 @@ impl MailScreen {
     }
 
     fn on_mail(&mut self, event: MailEvent) -> Vec<Effect> {
+        let last_of_refresh = matches!(
+            &event,
+            MailEvent::Sidebar { seq, .. } | MailEvent::Thread { seq, .. }
+                if Some(*seq) == self.refreshing
+        );
+        let mut effects = self.mail_event(event);
+        if last_of_refresh {
+            effects.extend(self.refreshed());
+        }
+        effects
+    }
+
+    fn mail_event(&mut self, event: MailEvent) -> Vec<Effect> {
         match event {
             MailEvent::Listed { seq, result } => self.listed(seq, result),
             MailEvent::Sidebar { seq, result } => self.sidebar_counted(seq, result),
@@ -508,6 +548,8 @@ impl MailScreen {
     fn read_failed(&mut self, error: ReadError) {
         match error {
             ReadError::NotSetUp => self.store_state = StoreState::NotSetUp,
+            // Only an older read is skipped, and an older answer is dropped before this.
+            ReadError::Stale => {}
             ReadError::Failed(error) => {
                 tracing::warn!(code = ?error.code, "a mail screen read failed");
                 let text = format!("The store could not be read: {}", error_line(&error));
@@ -651,6 +693,23 @@ fn account_number(action: Action) -> Option<usize> {
     Some(number)
 }
 
+impl MailScreen {
+    /// A job panicked: the message goes to the log and, escaped, to the status bar.
+    /// A refresh it may have been ends.
+    fn job_panicked(&mut self, message: &str) -> Vec<Effect> {
+        tracing::error!(panic = %message, "a mail screen job panicked");
+        let text = format!(
+            "internal error: {}; see rail.log",
+            crate::tui::text::escape(message)
+        );
+        self.status.error(text, self.ctx.clock.now(), self.tick);
+        if self.refreshing.is_some() {
+            return self.refreshed();
+        }
+        Vec::new()
+    }
+}
+
 impl Screen for MailScreen {
     fn start(&mut self) -> Vec<Effect> {
         match self.open_files.sweep(std::time::SystemTime::now()) {
@@ -677,15 +736,7 @@ impl Screen for MailScreen {
             }
             Msg::Resize(..) => Vec::new(),
             Msg::Task(TaskResult::Mail(event)) => self.on_mail(event),
-            Msg::Task(TaskResult::JobPanicked(message)) => {
-                tracing::error!(panic = %message, "a mail screen job panicked");
-                let text = format!(
-                    "internal error: {}; see rail.log",
-                    crate::tui::text::escape(&message)
-                );
-                self.status.error(text, self.ctx.clock.now(), self.tick);
-                Vec::new()
-            }
+            Msg::Task(TaskResult::JobPanicked(message)) => self.job_panicked(&message),
             Msg::Task(_) => Vec::new(),
         }
     }
