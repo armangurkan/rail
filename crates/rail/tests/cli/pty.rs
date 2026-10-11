@@ -588,6 +588,18 @@ fn sigterm_with_a_file_open_removes_it_and_restores_the_terminal() {
     assert!(entered < left, "{out:?}");
 }
 
+/// Best effort: kills the process whose pid is in the file, so a failing test never leaves
+/// Rail lingering behind its pty.
+struct KillsRail(std::path::PathBuf);
+
+impl Drop for KillsRail {
+    fn drop(&mut self) {
+        if let Ok(pid) = std::fs::read_to_string(&self.0) {
+            let _ = Command::new("kill").args(["-KILL", pid.trim()]).status();
+        }
+    }
+}
+
 /// A signal after the run loop ended (the wizard's settle, the final report) ends Rail as it
 /// ends any program: no run loop is listening any more.
 #[test]
@@ -600,6 +612,7 @@ fn sigterm_after_the_mail_screen_closed_ends_rail() {
     let _daemon = StopsDaemon(&dir);
     write_config(&dir, WORK_FILE_BACKEND);
     let pid_file = dir.path().join("rail.pid");
+    let _kills_rail = KillsRail(pid_file.clone());
     // After `exec` the shell's pid is Rail's.
     let command = format!(
         "stty cols 100 rows 30; echo $$ > '{}'; exec '{}'",
