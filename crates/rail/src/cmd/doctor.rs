@@ -5,9 +5,11 @@
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
+use rail_core::error::ErrorClass;
 use rail_core::ops::op::{Status, SyncStatus};
 use rail_core::ops::{
-    AccountSyncStatus, DoctorReport, OpError, StatusRequest, SyncPhase, SyncStatusRequest,
+    AccountSyncStatus, DoctorReport, OpError, StatusRequest, SyncErrorInfo, SyncPhase,
+    SyncStatusRequest,
 };
 use rail_core::paths::Paths;
 
@@ -234,13 +236,25 @@ fn sync_line(out: &mut String, s: &AccountSyncStatus) -> bool {
     !broken
 }
 
-/// True when the last pass failed for good (a permanent error) and no retry is under way: the
-/// sync will not mend by itself, so the check fails. Any other past error is a warning.
+/// True when the last pass (or the engine's start) failed for good and no retry is under way:
+/// the sync will not mend by itself, so the check fails. Any other past error is a warning.
 fn broken(s: &AccountSyncStatus) -> bool {
     s.last_pass_failed
-        && s.last_error.as_ref().is_some_and(|e| e.code == "permanent")
+        && s.last_error.as_ref().is_some_and(permanent)
         && s.phase != SyncPhase::Retrying
         && !s.pass_running
+}
+
+/// Whether retrying cannot mend `error`: its class, or, for a status that only remembers the
+/// code, the codes that are permanent.
+fn permanent(error: &SyncErrorInfo) -> bool {
+    match error.class {
+        Some(class) => class == ErrorClass::Permanent,
+        None => matches!(
+            error.code.as_str(),
+            "permanent" | "not_found" | "store" | "start"
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -270,6 +284,7 @@ mod tests {
         let mut flaky = AccountSyncStatus::new("side", "me@side.example", AccountKind::Gmail);
         flaky.last_error = Some(SyncErrorInfo {
             code: "transient".into(),
+            class: None,
             message: "could not reach Gmail".into(),
             at: 1_700_000_000,
             detail: Some(Untrusted::new("dns\nerror".into())),
@@ -311,6 +326,7 @@ mod tests {
         broken.last_pass_failed = true;
         broken.last_error = Some(SyncErrorInfo {
             code: "permanent".into(),
+            class: None,
             message: "Gmail refused the request (HTTP 400)".into(),
             at: 1_700_000_000,
             detail: None,
@@ -333,6 +349,40 @@ mod tests {
         }
         let (text, healthy) = render_sync(&[transient]);
         assert!(healthy && text.starts_with("warn sync"), "{text}");
+    }
+
+    /// Review minor 1: any permanent error no retry is mending fails the check, whatever its
+    /// code (an engine that could not start, the store, a vanished message); a transient one
+    /// with the same code only warns.
+    #[test]
+    fn any_permanent_error_without_a_retry_fails_the_check() {
+        use rail_core::config::AccountKind;
+        use rail_core::error::ErrorClass;
+        use rail_core::ops::{AccountSyncStatus, SyncErrorInfo, SyncPhase};
+        for (code, class) in [
+            ("start", Some(ErrorClass::Permanent)),
+            ("store", Some(ErrorClass::Permanent)),
+            ("not_found", Some(ErrorClass::Permanent)),
+            ("store", None),
+        ] {
+            let mut s = AccountSyncStatus::new("work", "me@example.com", AccountKind::Gmail);
+            s.phase = SyncPhase::Stopped;
+            s.last_pass_failed = true;
+            s.last_error = Some(SyncErrorInfo {
+                code: code.into(),
+                class,
+                message: "could not start syncing".into(),
+                at: 1_700_000_000,
+                detail: None,
+            });
+            let (text, healthy) = render_sync(std::slice::from_ref(&s));
+            assert!(!healthy && text.starts_with("FAIL"), "{code}: {text}");
+            if let Some(error) = s.last_error.as_mut() {
+                error.class = Some(ErrorClass::Transient);
+            }
+            let (text, healthy) = render_sync(&[s]);
+            assert!(healthy && text.starts_with("warn"), "{code}: {text}");
+        }
     }
 
     #[test]

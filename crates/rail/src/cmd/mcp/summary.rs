@@ -442,6 +442,7 @@ mod tests {
         (work.messages, work.threads, work.bodies) = (3, 2, 1);
         work.last_error = Some(SyncErrorInfo {
             code: "permanent".into(),
+            class: None,
             message: "Gmail refused the request (HTTP 400)".into(),
             at: 1_700_000_000,
             detail: Some(Untrusted::new(

@@ -222,6 +222,7 @@ pub(super) fn initial_status(account: &AccountConfig, state: &SyncStateRow) -> A
     if let (Some(code), Some(at)) = (&state.last_error_code, state.last_error_at) {
         status.last_error = Some(SyncErrorInfo {
             code: code.clone(),
+            class: None,
             message: "the last sync pass failed".to_string(),
             at,
             detail: None,
@@ -238,6 +239,7 @@ pub(super) fn stopped_by(status: &mut AccountSyncStatus, code: &str, error: &OpE
     status.next_attempt_at = None;
     status.last_error = Some(SyncErrorInfo {
         code: code.to_string(),
+        class: Some(error.class),
         message: error.message.clone(),
         at: unix_now(),
         detail: error.detail.clone(),

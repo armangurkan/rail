@@ -12,6 +12,7 @@ use super::batch::{Batch, BatchOutcome, StateUpdate};
 use super::status::StatusBoard;
 use super::writer::WriterHandle;
 use crate::config::{AccountConfig, SyncSettings};
+use crate::error::ErrorClass;
 use crate::ops::{AccountSyncStatus, OpError, SyncErrorInfo, SyncPhase, Untrusted};
 use crate::provider::{Provider, ProviderError};
 use crate::store::{Store, StoreError};
@@ -64,6 +65,14 @@ impl SyncError {
         match self {
             Self::Provider(e) => e.detail().map(str::to_string),
             Self::Store(e) => e.detail.as_ref().map(|d| d.get().clone()),
+        }
+    }
+
+    /// Whether retrying can help.
+    pub fn class(&self) -> ErrorClass {
+        match self {
+            Self::Provider(e) => e.class(),
+            Self::Store(e) => e.class,
         }
     }
 
@@ -294,6 +303,7 @@ fn apply_outcome(
             s.last_pass_failed = true;
             s.last_error = Some(SyncErrorInfo {
                 code: error.code(),
+                class: Some(error.class()),
                 message: error.message(),
                 at: now,
                 detail: error.detail().map(Untrusted::new),

@@ -309,6 +309,7 @@ mod tests {
         s.last_pass_failed = true;
         s.last_error = Some(SyncErrorInfo {
             code: "permanent".into(),
+            class: None,
             message: "Gmail refused the request (HTTP 400)".into(),
             at: 1_700_000_000,
             detail: Some(Untrusted::new("bad\u{1b}[2J request".into())),

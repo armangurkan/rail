@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::error::OpError;
 use super::untrusted::Untrusted;
 use crate::config::AccountKind;
+use crate::error::ErrorClass;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -47,8 +48,12 @@ impl SyncPhase {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SyncErrorInfo {
-    /// `transient`, `permanent`, `not_found`, `cursor_expired`, `needs_auth` or `store`.
+    /// `transient`, `permanent`, `not_found`, `cursor_expired`, `needs_auth`, `store` or
+    /// `start` (the engine could not start).
     pub code: String,
+    /// Whether retrying can help; absent from a status that only remembers the code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<ErrorClass>,
     /// Rail's own words.
     pub message: String,
     /// Unix seconds.
