@@ -335,6 +335,25 @@ fn a_mailto_link_lists_every_recipient_and_warns_when_the_query_adds_some() {
 }
 
 #[test]
+fn a_mailto_link_with_an_unusual_parameter_warns_first_and_names_it() {
+    let lines = mail("mailto:a@b.example?subject=hi&Attach=/etc/passwd&body=x&attachment=y");
+    assert_eq!(
+        lines[0],
+        "Warning: this link sets unusual parameters: attach, attachment"
+    );
+    assert_eq!(lines[1], "To: a@b.example");
+    // The usual parameters, in any case, do not warn.
+    let usual = mail("mailto:a@b.example?SUBJECT=hi&Body=x&to=c@d.example");
+    assert!(usual.iter().all(|l| !l.contains("unusual")), "{usual:?}");
+    // Names are escaped and bounded, at most five, then a count.
+    let many: String = (0..8).map(|i| format!("&p{i}=1")).collect();
+    let lines = mail(&format!("mailto:a@b.example?x%1B%5B2J=1{many}"));
+    assert!(lines[0].ends_with("… and 4 more"), "{}", lines[0]);
+    assert!(!lines[0].contains('\u{1b}'));
+    assert!(width(&lines[0]) <= 150, "{}", lines[0]);
+}
+
+#[test]
 fn a_mailto_path_is_decoded_and_an_empty_one_says_so() {
     assert_eq!(
         mail("mailto:ceo%40bank.com@evil.example")[0],

@@ -288,10 +288,15 @@ const SHOWN_HOST_COLS: usize = 100;
 const SHOWN_RECIPIENT_COLS: usize = 100;
 /// How many recipient lines the confirmation shows before `... and K more recipients`.
 const SHOWN_RECIPIENTS: usize = 5;
+/// The parameters a `mailto:` link may carry without a warning (compared in lower case).
+const USUAL_MAIL_PARAMETERS: [&str; 5] = ["to", "cc", "bcc", "subject", "body"];
+/// How many unusual parameter names the warning gives, and how wide each may be.
+const SHOWN_PARAMETERS: usize = 5;
+const SHOWN_PARAMETER_COLS: usize = 18;
 
 /// What the `g x` confirmation shows for `url` (from `safe_link`), each line escaped and bounded:
-/// first any warning (a user name or password, which reads like a host before `@`; recipients a
-/// `mailto:` query adds); then where it goes (the host as the URL serialises it, so an IDN or
+/// first any warning (a user name or password, which reads like a host before `@`; recipients or
+/// unusual parameters a `mailto:` query adds); then where it goes (the host as the URL serialises it, so an IDN or
 /// lookalike host shows in its ASCII `xn--` form, cut from the left when long; or the recipients
 /// of a `mailto:` link); then the address, cut to about three rows. The confirmation box also
 /// always keeps its answer line, so a warning or the hint cannot be pushed off by what follows.
@@ -341,6 +346,37 @@ fn host_lines(url: &Url) -> Vec<String> {
     lines
 }
 
+/// A warning naming the parameters of a `mailto:` link other than `to`, `cc`, `bcc`, `subject`
+/// and `body` (some mail clients have honoured `attach=` and attached local files): at most
+/// `SHOWN_PARAMETERS` names, then a count of the rest.
+fn unusual_parameters(url: &Url) -> Option<String> {
+    let mut names: Vec<String> = Vec::new();
+    for (name, _) in url.query_pairs() {
+        let lower = name.to_ascii_lowercase();
+        if !name.is_empty() && !USUAL_MAIL_PARAMETERS.contains(&lower.as_str()) {
+            names.push(lower);
+        }
+    }
+    names.sort();
+    names.dedup();
+    let shown: Vec<String> = names
+        .iter()
+        .take(SHOWN_PARAMETERS)
+        .map(|n| fit(n, SHOWN_PARAMETER_COLS))
+        .collect();
+    let mut line = format!(
+        "Warning: this link sets unusual parameters: {}",
+        shown.join(", ")
+    );
+    if names.len() > SHOWN_PARAMETERS {
+        line.push_str(&format!(
+            " {ELLIPSIS} and {} more",
+            names.len() - SHOWN_PARAMETERS
+        ));
+    }
+    (!names.is_empty()).then_some(line)
+}
+
 /// A warning when the parameters of a `mailto:` link add recipients, then `To:`, `Cc:` and
 /// `Bcc:` lines (at most `SHOWN_RECIPIENTS`, then a count of the rest) for every recipient of its
 /// path and its `to`, `cc` and `bcc` parameters, decoded.
@@ -359,7 +395,7 @@ fn mail_lines(url: &Url) -> Vec<String> {
         added |= !found.is_empty();
         list.extend(found);
     }
-    let mut lines = Vec::new();
+    let mut lines: Vec<String> = unusual_parameters(url).into_iter().collect();
     if added {
         lines
             .push("Warning: this link adds recipients beyond the address in its path.".to_string());

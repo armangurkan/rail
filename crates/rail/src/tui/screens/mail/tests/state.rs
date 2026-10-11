@@ -227,7 +227,10 @@ async fn a_fetch_that_finds_the_daemon_gone_again_after_reachable_says_unreachab
     let effects = f.screen.update(Msg::Task(TaskResult::Mail(failed)));
     settle(&mut f.screen, effects).await;
     let line = f.screen.status_line();
-    assert!(line.contains("daemon unreachable (Ctrl-r retries)"), "{line}");
+    assert!(
+        line.contains("daemon unreachable (Ctrl-r retries)"),
+        "{line}"
+    );
     assert!(!line.contains("reachable again"), "{line}");
 }
 

@@ -247,12 +247,14 @@ screen) the marker is clickable; while a box such as help or a confirmation is o
 are plain text. `g x` opens a link: the marker on the cursor line, or the number you type when the
 line has none or several. The confirmation shows where the link really goes before the address
 (cut if it is long): the host (an international or look-alike host in its ASCII `xn--` form) or,
-for `mailto`, every recipient (`To`, `Cc` and `Bcc`, including those added by the link's
-parameters). It warns when the address has text before an `@` that could pass for a host
-(`https://bank.com@evil.example` goes to `evil.example`) or when a `mailto` link adds recipients.
-Rail opens only `http`, `https` and `mailto` links of at most 2,048 bytes. `a` lists the thread's
-attachments (name, type, size); opening and
-saving them is not possible in this version.
+for `mailto`, the recipients (`To`, `Cc` and `Bcc`, including those added by the link's
+parameters): up to five, then a count of the rest. It warns when the address has text before an
+`@` that could pass for a host (`https://bank.com@evil.example` goes to `evil.example`), when a
+`mailto` link adds recipients, or when a `mailto` link carries a parameter other than `to`, `cc`,
+`bcc`, `subject` and `body` (some mail clients have acted on `attach=`); the warning names up to
+five such parameters. Rail opens only `http`, `https` and `mailto` links of at most 2,048 bytes.
+`a` lists the thread's attachments (name, type, size); opening and saving them is not possible in
+this version.
 
 `o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file in
 the `open` folder of its cache directory (`~/.cache/rail/open/` on Linux; `RAIL_CACHE_DIR`
