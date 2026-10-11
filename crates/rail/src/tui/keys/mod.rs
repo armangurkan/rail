@@ -50,10 +50,6 @@ pub enum Resolved {
 }
 
 /// One row of help.
-#[allow(
-    dead_code,
-    reason = "used by the mail screens and help, which come later in Phase 5"
-)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HelpRow {
     pub keys: String,
@@ -230,19 +226,11 @@ impl Keymap {
             .map_or_else(|| "(unbound)".to_string(), ToString::to_string)
     }
 
-    #[allow(
-        dead_code,
-        reason = "used by the mail screens and help, which come later in Phase 5"
-    )]
     pub fn is_overridden(&self, action: Action) -> bool {
         self.overridden.contains(&action)
     }
 
     /// Help for `view`: every action that works there, with all its keys.
-    #[allow(
-        dead_code,
-        reason = "used by the mail screens and help, which come later in Phase 5"
-    )]
     pub fn help(&self, view: View) -> Vec<HelpRow> {
         Action::ALL
             .iter()

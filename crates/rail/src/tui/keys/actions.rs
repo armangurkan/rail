@@ -34,10 +34,6 @@ impl View {
     }
 
     /// The heading in help.
-    #[allow(
-        dead_code,
-        reason = "used by the mail screens and help, which come later in Phase 5"
-    )]
     pub fn title(self) -> &'static str {
         match self {
             Self::Global => "Everywhere",
@@ -83,7 +79,6 @@ macro_rules! actions {
             }
 
             /// What help says the action does.
-            #[allow(dead_code, reason = "used by help, which comes later in Phase 5")]
             pub fn description(self) -> &'static str {
                 match self {
                     $(Self::$variant => $desc),+

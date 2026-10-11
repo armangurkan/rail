@@ -249,6 +249,24 @@ Bodies of recent mail (`body_cache_days`) are already in the store. An older mes
 **fetching…** while the daemon fetches its body from Gmail; the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
 
+`/` filters the list as you type: plain words search subjects, senders, recipients and stored
+bodies; `from:`, `to:` (also Cc), `subject:`, `has:attachment`, `is:unread`, `is:starred`,
+`before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
+`account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread matches when
+one of its messages matches all of them. Anything else is searched as words, and the status bar
+shows how Rail read your filter, so a typo such as `form:dana` shows up as a word. `Enter` keeps
+the filter; `Esc` clears it. The filter searches the local store only (`rail search` also asks
+Gmail).
+
+`:` opens the command palette: type a few letters of a command, an account or a label and press
+`Enter`; the key bound to each command is shown beside it. `:errors` lists the session's recent
+errors. `?` shows the keys of the view you are in, marking the ones you changed in `[keys]`.
+
+The status bar shows each account's sync state (`✓` caught up, `⟳` syncing with a count during
+the first sync, `!` needs a login), whether the daemon can be reached, and notices. When the
+daemon cannot be reached the list still reads from the store; `Ctrl-r` reconnects (and starts a
+sync).
+
 ## Account setup
 
 Rail ships no OAuth client of its own: you register one per provider once (or use a preset from

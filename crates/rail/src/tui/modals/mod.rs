@@ -1,8 +1,14 @@
-//! The one optional modal over the mail screen: confirmations, the link number prompt and the
-//! attachment list here; the palette, help, the filter line and `:errors` join in Task 10.
+//! The one optional modal over the mail screen: confirmations, the link number prompt, the
+//! attachment list, the filter line, the palette, help and `:errors`.
 //! Modal keys are fixed (Enter, Esc, `y`/`n`, arrows): they are not keymap actions.
 
 pub mod confirm;
+pub mod errors;
+pub mod filter;
+pub mod help;
+pub mod palette;
+#[cfg(test)]
+mod tests;
 
 use crossterm::event::KeyEvent;
 use ratatui::Frame;
@@ -11,6 +17,10 @@ use ratatui::widgets::{Block, Borders, Clear};
 use url::Url;
 
 pub use confirm::{AttachmentList, AttachmentRow, Confirm, LinkPrompt};
+pub use errors::ErrorList;
+pub use filter::FilterLine;
+pub use help::Help;
+pub use palette::{Palette, PaletteEntry, Target};
 
 use crate::tui::theme::Theme;
 
@@ -25,12 +35,18 @@ pub enum Command {
     },
     /// Open the message with this id in the browser, once confirmed.
     OpenHtml(i64),
+    /// `Esc` in the filter line: drop the filter.
+    ClearFilter,
+    /// Run what a palette entry stands for.
+    Palette(Target),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModalOutcome {
     Stay,
     Close,
+    /// The filter text changed; the line stays open.
+    Typed(String),
     Run(Command),
 }
 
@@ -38,6 +54,10 @@ pub enum Modal {
     Confirm(Confirm),
     LinkNumber(LinkPrompt),
     Attachments(AttachmentList),
+    Filter(FilterLine),
+    Palette(Palette),
+    Help(Help),
+    Errors(ErrorList),
 }
 
 impl Modal {
@@ -46,12 +66,19 @@ impl Modal {
             Self::Confirm(confirm) => confirm.key(key),
             Self::LinkNumber(prompt) => prompt.key(key),
             Self::Attachments(list) => list.key(key),
+            Self::Filter(line) => line.key(key),
+            Self::Palette(palette) => palette.key(key),
+            Self::Help(help) => help.key(key),
+            Self::Errors(list) => list.key(key),
         }
     }
 
     /// True while the modal takes typed text (so `q` is typed, not quit).
     pub fn captures_text(&self) -> bool {
-        matches!(self, Self::LinkNumber(_))
+        matches!(
+            self,
+            Self::LinkNumber(_) | Self::Filter(_) | Self::Palette(_)
+        )
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
@@ -59,6 +86,10 @@ impl Modal {
             Self::Confirm(confirm) => confirm.render(frame, area, theme),
             Self::LinkNumber(prompt) => prompt.render(frame, area, theme),
             Self::Attachments(list) => list.render(frame, area, theme),
+            Self::Filter(line) => line.render(frame, area, theme),
+            Self::Palette(palette) => palette.render(frame, area, theme),
+            Self::Help(help) => help.render(frame, area, theme),
+            Self::Errors(list) => list.render(frame, area, theme),
         }
     }
 }

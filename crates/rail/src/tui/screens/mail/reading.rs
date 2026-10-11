@@ -6,10 +6,11 @@ use rail_core::store::view::{BodyState, HtmlBody, ThreadDetail};
 
 use super::{Focus, Glyphs, MailScreen, error_line};
 use crate::tui::app::Effect;
-use crate::tui::data::ReadError;
+use crate::tui::data::{FILTER_DEBOUNCE, ReadError, Timer, timer};
 use crate::tui::keys::Action;
 use crate::tui::modals::{
-    AttachmentList, AttachmentRow, Command, Confirm, LinkPrompt, Modal, ModalOutcome,
+    AttachmentList, AttachmentRow, Command, Confirm, ErrorList, LinkPrompt, Modal, ModalOutcome,
+    Target,
 };
 use crate::tui::screens::reader::{Reader, ReaderOutcome};
 use crate::tui::text::{escape, fit, safe_link};
@@ -391,6 +392,21 @@ impl MailScreen {
         match outcome {
             ModalOutcome::Stay => {}
             ModalOutcome::Close => self.modal = None,
+            ModalOutcome::Typed(text) => {
+                self.filter_text = text;
+                self.filter_token += 1;
+                return vec![timer(FILTER_DEBOUNCE, self.filter_token, Timer::Filter)];
+            }
+            ModalOutcome::Run(Command::ClearFilter) => {
+                self.modal = None;
+                self.filter_text.clear();
+                self.filter_token += 1;
+                return self.apply_filter();
+            }
+            ModalOutcome::Run(Command::Palette(target)) => {
+                self.modal = None;
+                return self.run_palette(target);
+            }
             ModalOutcome::Run(Command::ChooseLink { links, number }) => {
                 self.modal = None;
                 self.confirm_link(&links, number);
@@ -413,6 +429,34 @@ impl MailScreen {
             }
         }
         Vec::new()
+    }
+
+    fn run_palette(&mut self, target: Target) -> Vec<Effect> {
+        match target {
+            Target::Errors => {
+                let rows = self
+                    .status
+                    .errors()
+                    .rev()
+                    .map(|e| format!("{}  {}", self.ctx.clock.short(e.at), e.text))
+                    .collect();
+                self.modal = Some(Modal::Errors(ErrorList::new(rows)));
+                Vec::new()
+            }
+            Target::Scope(scope) => {
+                self.close_reader();
+                self.set_scope(scope)
+            }
+            Target::Action(Action::GlobalQuit) => vec![Effect::Quit],
+            Target::Action(action) => {
+                if self.focus == Focus::Reader
+                    && !action.views().contains(&crate::tui::keys::View::Reader)
+                {
+                    self.close_reader();
+                }
+                self.act(action)
+            }
+        }
     }
 
     /// The message `o` waits on (tests).

@@ -10,6 +10,8 @@
 
 mod layout;
 mod list;
+#[cfg(test)]
+mod modal_tests;
 mod reading;
 mod sidebar;
 mod status;
@@ -46,7 +48,7 @@ use crate::tui::data::{
 };
 use crate::tui::effects::Opener;
 use crate::tui::keys::{Action, Chord, Keymap, Resolved, View};
-use crate::tui::modals::Modal;
+use crate::tui::modals::{FilterLine, Help, Modal, Palette, PaletteEntry, Target};
 use crate::tui::open::OpenFiles;
 use crate::tui::screen::Screen;
 use crate::tui::screens::reader::Reader;
@@ -133,6 +135,10 @@ pub struct MailScreen {
     account_ids: Vec<Option<i64>>,
     scope: ScopeChoice,
     filter: Filter,
+    /// The filter line's text, kept while the line is closed.
+    filter_text: String,
+    /// The newest filter keystroke: only its timer reads.
+    filter_token: u64,
     list: ListWindow,
     /// Where the selection goes when the newest list read answers.
     place: Place,
@@ -177,6 +183,8 @@ impl MailScreen {
             accounts,
             scope: ScopeChoice::Unified,
             filter: parse(""),
+            filter_text: String::new(),
+            filter_token: 0,
             list: ListWindow::default(),
             place: Place::Top,
             sidebar: Sidebar::default(),
@@ -317,6 +325,21 @@ impl MailScreen {
     }
 
     pub(crate) fn act(&mut self, action: Action) -> Vec<Effect> {
+        match action {
+            Action::GlobalPalette => {
+                self.modal = Some(Modal::Palette(Palette::new(self.palette_entries())));
+                return Vec::new();
+            }
+            Action::GlobalHelp => {
+                self.modal = Some(Modal::Help(Help::new(&self.ctx.keymap, &self.views())));
+                return Vec::new();
+            }
+            Action::ListFilter if self.focus == Focus::List => {
+                self.modal = Some(Modal::Filter(FilterLine::new(&self.filter_text)));
+                return Vec::new();
+            }
+            _ => {}
+        }
         if let Some(effects) = self.shared_action(action) {
             return effects;
         }
@@ -442,6 +465,10 @@ impl MailScreen {
                 token,
                 kind: Timer::Requery,
             } if token == self.requery_token && self.requery_pending => self.requery(),
+            MailEvent::Timer {
+                token,
+                kind: Timer::Filter,
+            } if token == self.filter_token => self.apply_filter(),
             _ => Vec::new(),
         }
     }
@@ -526,14 +553,98 @@ impl MailScreen {
         }
     }
 
-    /// The status bar's text, for tests and the view.
+    /// The status bar's text, for tests and the view; led by the filter's operators while a
+    /// filter is set.
     pub(crate) fn status_line(&self) -> String {
-        self.status.line(
+        let line = self.status.line(
             &self.accounts,
             &Glyphs::of(self.ctx.icons),
             &self.ctx.keymap,
-        )
+        );
+        if self.filter.is_empty() {
+            return line;
+        }
+        let parsed = crate::tui::text::escape(&self.filter.describe().join(" · "));
+        format!("filter: {parsed}  ·  {line}")
     }
+
+    fn apply_filter(&mut self) -> Vec<Effect> {
+        self.filter = parse(&self.filter_text);
+        self.list.cancel_loading();
+        vec![self.read_list(PageAt::First, Place::Top)]
+    }
+
+    /// Every palette entry: the commands with their keys, `errors`, each account and label.
+    pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
+        let key = |a: Action| self.ctx.keymap.label(a);
+        let mut entries: Vec<PaletteEntry> = PALETTE_ACTIONS
+            .into_iter()
+            .map(|a| PaletteEntry {
+                text: a.description().to_string(),
+                search: format!("{} {}", a.description(), a.id()),
+                key: key(a),
+                target: Target::Action(a),
+            })
+            .collect();
+        entries.push(PaletteEntry {
+            text: "Show recent errors".into(),
+            search: "errors Show recent errors".into(),
+            key: String::new(),
+            target: Target::Errors,
+        });
+        entries.extend(self.accounts.iter().enumerate().map(|(i, a)| PaletteEntry {
+            text: format!("Go to {}'s inbox", a.name),
+            search: format!("Go to {}'s inbox account {} {}", a.name, a.name, a.address),
+            key: account_action(i + 1).map(key).unwrap_or_default(),
+            target: Target::Scope(ScopeChoice::Account(i)),
+        }));
+        entries.extend(
+            self.sidebar
+                .items()
+                .iter()
+                .filter(|i| i.depth > 0)
+                .map(|item| {
+                    let account = item
+                        .account
+                        .and_then(|i| self.accounts.get(i))
+                        .map_or("", |a| a.name.as_str());
+                    PaletteEntry {
+                        text: format!("Label: {account} · {}", item.label),
+                        search: format!("label {account} {}", item.label),
+                        key: String::new(),
+                        target: Target::Scope(item.scope.clone()),
+                    }
+                }),
+        );
+        entries
+    }
+}
+
+/// The commands the palette lists besides `errors`, accounts and labels.
+const PALETTE_ACTIONS: [Action; 6] = [
+    Action::ListFilter,
+    Action::ListSidebar,
+    Action::ListUnified,
+    Action::ListRefresh,
+    Action::GlobalHelp,
+    Action::GlobalQuit,
+];
+
+/// The `list.account_n` action for account number `n` (1 to 9).
+fn account_action(n: usize) -> Option<Action> {
+    let action = match n {
+        1 => Action::ListAccount1,
+        2 => Action::ListAccount2,
+        3 => Action::ListAccount3,
+        4 => Action::ListAccount4,
+        5 => Action::ListAccount5,
+        6 => Action::ListAccount6,
+        7 => Action::ListAccount7,
+        8 => Action::ListAccount8,
+        9 => Action::ListAccount9,
+        _ => return None,
+    };
+    Some(action)
 }
 
 /// The account number of a `list.account_n` action.
