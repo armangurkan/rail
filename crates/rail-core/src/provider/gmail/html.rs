@@ -1,524 +1,423 @@
-//! HTML bodies as plain text, in bounded time. html2text renders offline (it parses with
-//! html5ever and drops `head`, `script`, `style` and `link`; an `img` becomes its alt text;
-//! nothing is fetched), but html5ever's tree building costs time quadratic in how deeply the
-//! document nests, and nesting can come from end tags that close nothing or from formatting
-//! elements html5ever reopens on its own. So html2text only sees HTML of at most
-//! `HTML_RENDER_CAP` bytes whose shape one linear pass has bounded; anything else is stripped
-//! to text by that same pass.
+//! HTML bodies as plain text, by Rail's own scanner. A browser parser builds a tree, and on
+//! hostile mail its cost can grow faster than the mail (deep nesting, thousands of distinct
+//! attributes, huge list numbers, indentation repeated on every line); this scanner builds
+//! nothing. It reads each byte a constant number of times, keeps no stack and no lists,
+//! fetches nothing and runs nothing:
 //!
-//! The pass runs html5ever's own tokenizer (so it reads tags, attributes, comments and raw text
-//! exactly as the parser will) and estimates the tree from the tokens, erring high: an end tag
-//! only closes what the tree builder would let it close, void elements open nothing, and every
-//! formatting element the builder could reopen counts. Content whose tree rules are too
-//! intricate to follow (`svg`, `math`, `select`, `frameset`, `template`) is never rendered.
+//! - text is copied, white space collapsed to one space;
+//! - tags are read only for their first few name bytes (block tags make line breaks, cells a
+//!   space); attributes are skipped, quotes honoured only to find the tag's end, and a tag
+//!   longer than `MAX_TAG_BYTES` ends there;
+//! - comments are dropped, and so is the content of `script`, `style`, `head`, `title`,
+//!   `template` and `noscript`;
+//! - character references are decoded: numeric ones (never to a control character other than
+//!   a line break or tab) and a small table of common names; anything else stays as written.
+//!
+//! The text is never longer than the HTML.
 
-use std::cell::RefCell;
+/// Bytes one tag (or `<!...>` declaration) may span before Rail treats it as closed.
+pub(crate) const MAX_TAG_BYTES: usize = 4096;
+/// The longest character reference name Rail looks up.
+const MAX_ENTITY_NAME: usize = 32;
+/// Digits of a numeric character reference (more cannot be a code point).
+const MAX_DIGITS: usize = 8;
+/// Tag name bytes compared; longer names match nothing.
+const NAME_BYTES: usize = 10;
+/// Consecutive line breaks kept.
+const MAX_NEWLINES: usize = 2;
 
-use html5ever::tendril::StrTendril;
-use html5ever::tokenizer::states::RawKind;
-use html5ever::tokenizer::{
-    BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts,
-};
-use html5ever::{Attribute, LocalName};
+const BLOCK: &[&[u8]] = &[
+    b"p",
+    b"div",
+    b"br",
+    b"li",
+    b"tr",
+    b"h1",
+    b"h2",
+    b"h3",
+    b"h4",
+    b"h5",
+    b"h6",
+    b"blockquote",
+    b"pre",
+    b"table",
+    b"ul",
+    b"ol",
+    b"dl",
+    b"dt",
+    b"dd",
+    b"hr",
+    b"section",
+    b"article",
+    b"header",
+    b"footer",
+];
+const CELL: &[&[u8]] = &[b"td", b"th"];
+/// Elements whose content is dropped up to their own end tag.
+const HIDDEN: &[&[u8]] = &[
+    b"script",
+    b"style",
+    b"head",
+    b"title",
+    b"template",
+    b"noscript",
+];
+/// Hidden elements that can stand inside `head` and hold text that looks like tags.
+const HIDDEN_IN_HEAD: &[&[u8]] = &[b"script", b"style", b"title", b"template", b"noscript"];
 
-/// The most HTML html2text is given; larger bodies are stripped.
-pub(crate) const HTML_RENDER_CAP: usize = 256 * 1024;
-/// How deeply rendered HTML may nest. Real mail nests a few dozen levels (each table four:
-/// table, tbody, tr, td).
-pub(crate) const MAX_HTML_DEPTH: usize = 128;
-/// Start tags in HTML that is rendered.
-pub(crate) const MAX_START_TAGS: usize = 50_000;
-/// Formatting elements the tree builder could reopen at once.
-pub(crate) const MAX_ACTIVE_FORMATTING: usize = 64;
-/// Elements the tree builder could reopen in all (each text and start tag may reopen every
-/// active formatting element).
-pub(crate) const MAX_REOPENED: usize = 200_000;
-const TEXT_WIDTH: usize = 100;
-/// Indenting elements (quotes, lists) open at once: html2text indents each line once per
-/// level, so deep quotes multiply the text's size.
-pub(crate) const MAX_INDENT_DEPTH: usize = 24;
-const INDENTING: &[&str] = &["blockquote", "dd", "dl", "ol", "ul"];
-/// Elements the adoption agency may create for one formatting end tag (eight outer passes,
-/// three inner).
-const ADOPTION_CLONES: usize = 24;
+/// The character references Rail decodes by name.
+const ENTITIES: &[(&[u8], char)] = &[
+    (b"amp", '&'),
+    (b"lt", '<'),
+    (b"gt", '>'),
+    (b"quot", '"'),
+    (b"apos", '\''),
+    (b"nbsp", '\u{a0}'),
+    (b"copy", '©'),
+    (b"reg", '®'),
+    (b"trade", '™'),
+    (b"hellip", '…'),
+    (b"mdash", '—'),
+    (b"ndash", '–'),
+    (b"lsquo", '‘'),
+    (b"rsquo", '’'),
+    (b"sbquo", '‚'),
+    (b"ldquo", '“'),
+    (b"rdquo", '”'),
+    (b"bdquo", '„'),
+    (b"laquo", '«'),
+    (b"raquo", '»'),
+    (b"bull", '•'),
+    (b"middot", '·'),
+    (b"deg", '°'),
+    (b"euro", '€'),
+    (b"pound", '£'),
+    (b"yen", '¥'),
+    (b"cent", '¢'),
+    (b"sect", '§'),
+    (b"para", '¶'),
+    (b"times", '×'),
+    (b"divide", '÷'),
+    (b"plusmn", '±'),
+    (b"frac12", '½'),
+    (b"iexcl", '¡'),
+    (b"iquest", '¿'),
+    (b"aacute", 'á'),
+    (b"agrave", 'à'),
+    (b"acirc", 'â'),
+    (b"auml", 'ä'),
+    (b"aring", 'å'),
+    (b"ccedil", 'ç'),
+    (b"eacute", 'é'),
+    (b"egrave", 'è'),
+    (b"ecirc", 'ê'),
+    (b"euml", 'ë'),
+    (b"iacute", 'í'),
+    (b"icirc", 'î'),
+    (b"iuml", 'ï'),
+    (b"ntilde", 'ñ'),
+    (b"oacute", 'ó'),
+    (b"ocirc", 'ô'),
+    (b"ouml", 'ö'),
+    (b"oslash", 'ø'),
+    (b"uacute", 'ú'),
+    (b"ucirc", 'û'),
+    (b"uuml", 'ü'),
+    (b"szlig", 'ß'),
+    (b"Aacute", 'Á'),
+    (b"Agrave", 'À'),
+    (b"Auml", 'Ä'),
+    (b"Ccedil", 'Ç'),
+    (b"Eacute", 'É'),
+    (b"Egrave", 'È'),
+    (b"Ntilde", 'Ñ'),
+    (b"Ouml", 'Ö'),
+    (b"Uuml", 'Ü'),
+];
 
-const VOID: &[&str] = &[
-    "area", "base", "br", "col", "embed", "frame", "hr", "img", "image", "input", "keygen", "link",
-    "meta", "param", "source", "track", "wbr",
-];
-/// Content Rail does not render through html2text at all.
-const UNCERTAIN: &[&str] = &["svg", "math", "select", "frameset", "template"];
-const FORMATTING: &[&str] = &[
-    "a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt", "u",
-];
-/// Elements that put a marker in the list of active formatting elements.
-const MARKERS: &[&str] = &["applet", "caption", "marquee", "object", "td", "th"];
-/// An end tag never closes an element past one of these: the scope boundaries of every scope
-/// the tree builder checks, together.
-const BOUNDARY: &[&str] = &[
-    "applet", "button", "caption", "html", "marquee", "object", "ol", "table", "tbody", "td",
-    "tfoot", "th", "thead", "tr", "ul",
-];
-/// The HTML standard's special elements: an ordinary end tag stops at one.
-const SPECIAL: &[&str] = &[
-    "address",
-    "applet",
-    "area",
-    "article",
-    "aside",
-    "base",
-    "basefont",
-    "bgsound",
-    "blockquote",
-    "body",
-    "br",
-    "button",
-    "caption",
-    "center",
-    "col",
-    "colgroup",
-    "dd",
-    "details",
-    "dir",
-    "div",
-    "dl",
-    "dt",
-    "embed",
-    "fieldset",
-    "figcaption",
-    "figure",
-    "footer",
-    "form",
-    "frame",
-    "frameset",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "head",
-    "header",
-    "hgroup",
-    "hr",
-    "html",
-    "iframe",
-    "img",
-    "input",
-    "keygen",
-    "li",
-    "link",
-    "listing",
-    "main",
-    "marquee",
-    "menu",
-    "meta",
-    "nav",
-    "noembed",
-    "noframes",
-    "noscript",
-    "object",
-    "ol",
-    "p",
-    "param",
-    "plaintext",
-    "pre",
-    "script",
-    "search",
-    "section",
-    "select",
-    "source",
-    "style",
-    "summary",
-    "table",
-    "tbody",
-    "td",
-    "template",
-    "textarea",
-    "tfoot",
-    "th",
-    "thead",
-    "title",
-    "tr",
-    "track",
-    "ul",
-    "wbr",
-    "xmp",
-];
-/// Raw text whose content the stripped text leaves out.
-const HIDDEN_RAW: &[&str] = &["script", "style", "title", "iframe", "noembed", "noframes"];
-/// What may stand in `head` without ending it.
-const HEAD_CONTENT: &[&str] = &[
-    "base", "basefont", "bgsound", "link", "meta", "noscript", "script", "style", "template",
-    "title",
-];
-/// Tags that start or end a line of stripped text.
-const BLOCK: &[&str] = &[
-    "address",
-    "article",
-    "aside",
-    "blockquote",
-    "br",
-    "dd",
-    "div",
-    "dl",
-    "dt",
-    "footer",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "header",
-    "hr",
-    "li",
-    "main",
-    "nav",
-    "ol",
-    "p",
-    "pre",
-    "section",
-    "table",
-    "tr",
-    "ul",
-];
-const CELL: &[&str] = &["td", "th"];
-
-/// `html` as plain text: rendered by html2text when it is small and its shape is bounded,
-/// stripped otherwise.
+/// `html` as plain text (see the module documentation).
 pub(crate) fn html_text(html: &str) -> String {
-    let scan = scan(html);
-    if html.len() <= HTML_RENDER_CAP && scan.renderable() {
-        let rendered = html2text::config::plain_no_decorate()
-            .allow_width_overflow()
-            .string_from_read(html.as_bytes(), TEXT_WIDTH);
-        if let Ok(text) = rendered {
-            return text.trim_end().to_string();
-        }
+    let mut scanner = Scanner {
+        bytes: html.as_bytes(),
+        out: Vec::with_capacity(html.len().min(1 << 20)),
+        space: false,
+        newlines: 0,
+    };
+    scanner.run();
+    while scanner.out.last() == Some(&b'\n') {
+        scanner.out.pop();
     }
-    scan.stripped()
+    // Only whole UTF-8 sequences of the input and whole encoded characters are written.
+    String::from_utf8(scanner.out)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
-/// Whether html2text would be given `html` (tests and callers that only ask).
-#[cfg(test)]
-pub(crate) fn renderable(html: &str) -> bool {
-    html.len() <= HTML_RENDER_CAP && scan(html).renderable()
+fn is_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
 }
 
-/// One pass of html5ever's tokenizer over `html`.
-fn scan(html: &str) -> Scan {
-    let tokenizer = Tokenizer::new(Sink(RefCell::default()), TokenizerOpts::default());
-    let input = BufferQueue::default();
-    input.push_back(StrTendril::from_slice(html));
-    // The sink never asks the tokenizer to pause for a script, so one feed reads it all.
-    let _ = tokenizer.feed(&input);
-    tokenizer.end();
-    tokenizer.sink.0.take()
+/// A byte that ends a tag name.
+fn ends_name(b: u8) -> bool {
+    is_space(b) || b == b'/' || b == b'>'
 }
 
-struct Sink(RefCell<Scan>);
+/// The first `NAME_BYTES` bytes of a tag name, lower-cased; `None` when it is longer.
+struct Name {
+    bytes: [u8; NAME_BYTES],
+    len: usize,
+    long: bool,
+}
 
-impl TokenSink for Sink {
-    type Handle = ();
+impl Name {
+    fn get(&self) -> Option<&[u8]> {
+        (!self.long).then(|| &self.bytes[..self.len])
+    }
 
-    fn process_token(&self, token: Token, _line: u64) -> TokenSinkResult<()> {
-        let mut scan = self.0.borrow_mut();
-        match token {
-            Token::TagToken(tag) => scan.tag(tag),
-            Token::CharacterTokens(text) => {
-                scan.characters(&text);
-                TokenSinkResult::Continue
-            }
-            // Comments, doctypes, NULs and parse errors add no text and no elements.
-            _ => TokenSinkResult::Continue,
-        }
+    fn is_in(&self, list: &[&[u8]]) -> bool {
+        self.get().is_some_and(|name| list.contains(&name))
     }
 }
 
-/// What the tree builder would make the tokenizer do after start tag `name`.
-fn tokenizer_state(name: &str) -> TokenSinkResult<()> {
-    match name {
-        "script" => TokenSinkResult::RawData(RawKind::ScriptData),
-        "style" | "xmp" | "iframe" | "noembed" | "noframes" => {
-            TokenSinkResult::RawData(RawKind::Rawtext)
-        }
-        "textarea" | "title" => TokenSinkResult::RawData(RawKind::Rcdata),
-        "plaintext" => TokenSinkResult::Plaintext,
-        _ => TokenSinkResult::Continue,
-    }
+struct Scanner<'a> {
+    bytes: &'a [u8],
+    out: Vec<u8>,
+    /// White space seen since the last text.
+    space: bool,
+    /// Line breaks at the end of `out`.
+    newlines: usize,
 }
 
-/// An entry of the list of active formatting elements, with the number of markers before it.
-/// Markers are only counted, never cleared: Rail cannot always tell when the tree builder
-/// clears one, and keeping entries errs high.
-type Formatting = (LocalName, Vec<Attribute>, usize);
-
-#[derive(Default)]
-struct Scan {
-    /// The open elements, as far as Rail can tell; `uncertain` once that is not far enough.
-    stack: Vec<LocalName>,
-    formatting: Vec<Formatting>,
-    markers: usize,
-    start_tags: usize,
-    reopened: usize,
-    uncertain: bool,
-    text: String,
-    hidden_raw: Option<LocalName>,
-    templates: usize,
-    in_head: bool,
-}
-
-impl Scan {
-    fn renderable(&self) -> bool {
-        !self.uncertain
-    }
-
-    fn tag(&mut self, tag: Tag) -> TokenSinkResult<()> {
-        match tag.kind {
-            TagKind::StartTag => {
-                let state = tokenizer_state(&tag.name);
-                self.strip_start(&tag.name);
-                self.shape_start(tag);
-                state
-            }
-            TagKind::EndTag => {
-                self.strip_end(&tag.name);
-                self.shape_end(&tag.name);
-                TokenSinkResult::Continue
-            }
-        }
-    }
-
-    fn characters(&mut self, text: &str) {
-        if !self.uncertain {
-            self.reopened += self.active();
-            self.check();
-        }
-        self.strip_text(text);
-    }
-
-    fn active(&self) -> usize {
-        self.formatting.len()
-    }
-
-    fn check(&mut self) {
-        self.uncertain |= self.start_tags > MAX_START_TAGS
-            || self.stack.len() > MAX_HTML_DEPTH
-            || self.active() > MAX_ACTIVE_FORMATTING
-            || self.reopened > MAX_REOPENED;
-    }
-
-    fn shape_start(&mut self, tag: Tag) {
-        if self.uncertain {
-            return;
-        }
-        let name: &str = &tag.name;
-        self.start_tags += 1;
-        self.reopened += self.active();
-        self.uncertain |= UNCERTAIN.contains(&name);
-        if MARKERS.contains(&name) {
-            self.markers += 1;
-        }
-        if FORMATTING.contains(&name) {
-            if matches!(name, "a" | "nobr") && self.has_active(&tag.name) {
-                // A second `a` (or `nobr`) runs the adoption agency for the first.
-                self.reopened += ADOPTION_CLONES;
-            }
-            self.push_formatting(&tag);
-        }
-        let indenting = INDENTING.contains(&name);
-        if !VOID.contains(&name) {
-            self.stack.push(tag.name);
-            self.uncertain |= indenting && self.indents() > MAX_INDENT_DEPTH;
-        }
-        self.check();
-    }
-
-    fn has_active(&self, name: &LocalName) -> bool {
-        self.formatting
-            .iter()
-            .any(|(n, _, m)| *m == self.markers && n == name)
-    }
-
-    /// Open elements that indent what they hold.
-    fn indents(&self) -> usize {
-        self.stack
-            .iter()
-            .filter(|n| INDENTING.contains(&&***n))
-            .count()
-    }
-
-    /// Add a formatting element, keeping at most three identical ones after the last marker
-    /// (the tree builder's "Noah's Ark" rule).
-    fn push_formatting(&mut self, tag: &Tag) {
-        let mut attrs = tag.attrs.clone();
-        attrs.sort();
-        let same: Vec<usize> = (0..self.formatting.len())
-            .filter(|&i| {
-                let (n, a, m) = &self.formatting[i];
-                *m == self.markers && *n == tag.name && *a == attrs
-            })
-            .collect();
-        if same.len() >= 3 {
-            self.formatting.remove(same[0]);
-        }
-        self.formatting
-            .push((tag.name.clone(), attrs, self.markers));
-    }
-
-    fn shape_end(&mut self, name: &LocalName) {
-        if self.uncertain {
-            return;
-        }
-        let tag: &str = name;
-        match tag {
-            // The tree builder keeps `html` and `body` open to the end.
-            "html" | "body" => {}
-            // `</form>` takes the form out of the stack and leaves what is above it.
-            "form" => {
-                if let Some(index) = self.in_scope(name) {
-                    self.stack.remove(index);
+impl Scanner<'_> {
+    fn run(&mut self) {
+        let mut at = 0;
+        while at < self.bytes.len() {
+            at = match self.bytes[at] {
+                b'<' => self.markup(at),
+                b'&' => self.reference(at),
+                b if is_space(b) => {
+                    self.space = true;
+                    at + 1
                 }
-            }
-            _ if FORMATTING.contains(&tag) => {
-                self.end_formatting(name);
-                self.check();
-            }
-            _ => {
-                self.close(name);
-            }
+                _ => self.text(at),
+            };
         }
     }
 
-    /// The index of the open `name` an end tag could reach, if any.
-    fn in_scope(&self, name: &LocalName) -> Option<usize> {
-        let special = SPECIAL.contains(&&**name);
-        for index in (0..self.stack.len()).rev() {
-            let open = &self.stack[index];
-            if open == name {
-                return Some(index);
-            }
-            let open: &str = open;
-            if BOUNDARY.contains(&open) || (!special && SPECIAL.contains(&open)) {
-                return None;
-            }
-        }
-        None
-    }
-
-    /// Close `name` and what is above it, if an end tag could; true when it did.
-    fn close(&mut self, name: &LocalName) -> bool {
-        match self.in_scope(name) {
-            Some(index) => {
-                self.stack.truncate(index);
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// A formatting end tag: the list entry goes only when the tree builder would drop it.
-    fn end_formatting(&mut self, name: &LocalName) {
-        let entry = self
-            .formatting
+    /// A run of text bytes from `at`.
+    fn text(&mut self, at: usize) -> usize {
+        let end = self.bytes[at..]
             .iter()
-            .rposition(|(n, _, m)| *m == self.markers && n == name);
-        let Some(entry) = entry else {
-            self.close(name);
+            .position(|&b| b == b'<' || b == b'&' || is_space(b))
+            .map_or(self.bytes.len(), |p| at + p);
+        self.visible(at, end);
+        end
+    }
+
+    fn visible(&mut self, start: usize, end: usize) {
+        self.flush_space();
+        self.out.extend_from_slice(&self.bytes[start..end]);
+        self.newlines = 0;
+    }
+
+    fn flush_space(&mut self) {
+        if self.space && !self.out.is_empty() && self.newlines == 0 {
+            self.out.push(b' ');
+        }
+        self.space = false;
+    }
+
+    fn push_char(&mut self, c: char) {
+        if c == '\n' || c == '\t' {
+            self.space = true;
             return;
+        }
+        self.flush_space();
+        let mut buf = [0u8; 4];
+        self.out
+            .extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+        self.newlines = 0;
+    }
+
+    fn newline(&mut self) {
+        self.space = false;
+        if !self.out.is_empty() && self.newlines < MAX_NEWLINES {
+            self.out.push(b'\n');
+            self.newlines += 1;
+        }
+    }
+
+    /// What starts with `<` at `at`: a comment, a declaration, a tag, or a plain `<`.
+    fn markup(&mut self, at: usize) -> usize {
+        let rest = &self.bytes[at..];
+        if rest.starts_with(b"<!--") {
+            return find(self.bytes, at + 2, b"-->").map_or(self.bytes.len(), |e| e + 3);
+        }
+        if rest.starts_with(b"<!") || rest.starts_with(b"<?") {
+            return self.tag_end(at + 2, at);
+        }
+        let closing = rest.get(1) == Some(&b'/');
+        let name_at = at + 1 + usize::from(closing);
+        if !self.bytes.get(name_at).is_some_and(u8::is_ascii_alphabetic) {
+            self.visible(at, at + 1);
+            return at + 1;
+        }
+        let (name, after_name) = self.name(name_at, at);
+        let end = self.tag_end(after_name, at);
+        if name.is_in(BLOCK) {
+            self.newline();
+        } else if name.is_in(CELL) {
+            self.space = true;
+        }
+        match name.get() {
+            Some(hidden) if !closing && HIDDEN.contains(&hidden) => self.skip_hidden(end, hidden),
+            _ => end,
+        }
+    }
+
+    /// The tag name at `at`, and where it ends (within the tag's byte cap from `start`).
+    fn name(&self, at: usize, start: usize) -> (Name, usize) {
+        let mut name = Name {
+            bytes: [0; NAME_BYTES],
+            len: 0,
+            long: false,
         };
-        if !self.stack.contains(name) || self.close(name) {
-            self.formatting.remove(entry);
-        } else {
-            // A special element stands above it: the adoption agency clones elements.
-            self.reopened += ADOPTION_CLONES;
-        }
-    }
-
-    fn hidden(&self) -> bool {
-        self.hidden_raw.is_some() || self.templates > 0
-    }
-
-    fn strip_start(&mut self, name: &LocalName) {
-        let tag: &str = name;
-        if HIDDEN_RAW.contains(&tag) {
-            self.hidden_raw = Some(name.clone());
-            return;
-        }
-        if tag == "template" {
-            self.templates += 1;
-        } else if tag == "head" {
-            self.in_head = true;
-        } else if self.in_head && !HEAD_CONTENT.contains(&tag) {
-            self.in_head = false;
-        }
-        if self.hidden() {
-            return;
-        }
-        if BLOCK.contains(&tag) {
-            self.text.push('\n');
-        } else if CELL.contains(&tag) {
-            self.push_space();
-        }
-    }
-
-    fn strip_end(&mut self, name: &LocalName) {
-        if self.hidden_raw.as_ref() == Some(name) {
-            self.hidden_raw = None;
-            return;
-        }
-        let tag: &str = name;
-        if tag == "template" {
-            self.templates = self.templates.saturating_sub(1);
-        } else if tag == "head" {
-            self.in_head = false;
-        } else if BLOCK.contains(&tag) && !self.hidden() {
-            self.text.push('\n');
-        }
-    }
-
-    /// Text outside hidden raw text and `head`, with runs of white space made one space.
-    fn strip_text(&mut self, text: &str) {
-        if self.hidden() {
-            return;
-        }
-        if self.in_head {
-            if text.trim().is_empty() {
-                return;
-            }
-            self.in_head = false;
-        }
-        for c in text.chars() {
-            if c.is_whitespace() {
-                self.push_space();
+        let limit = self.bytes.len().min(start + MAX_TAG_BYTES);
+        let mut end = at;
+        while end < limit && !ends_name(self.bytes[end]) {
+            if name.len < NAME_BYTES {
+                name.bytes[name.len] = self.bytes[end].to_ascii_lowercase();
+                name.len += 1;
             } else {
-                self.text.push(c);
+                name.long = true;
             }
+            end += 1;
         }
+        (name, end)
     }
 
-    fn push_space(&mut self) {
-        if !self.text.ends_with([' ', '\n']) && !self.text.is_empty() {
-            self.text.push(' ');
+    /// Just past the `>` that ends the tag begun at `start`, reading from `at`. A quote opens
+    /// a value only after `=`; at `MAX_TAG_BYTES` (or the end of the text) the tag ends.
+    fn tag_end(&self, at: usize, start: usize) -> usize {
+        let limit = self.bytes.len().min(start + MAX_TAG_BYTES);
+        let mut quote: Option<u8> = None;
+        let mut after_equals = false;
+        for index in at.min(limit)..limit {
+            let b = self.bytes[index];
+            match quote {
+                Some(q) if b == q => quote = None,
+                Some(_) => {}
+                None if b == b'>' => return index + 1,
+                None if b == b'=' => after_equals = true,
+                None if (b == b'"' || b == b'\'') && after_equals => quote = Some(b),
+                None if is_space(b) => {}
+                None => after_equals = false,
+            }
         }
+        limit
     }
 
-    /// The stripped text: each line trimmed, at most one blank line in a row.
-    fn stripped(self) -> String {
-        let mut out = String::with_capacity(self.text.len());
-        let mut blank = 0;
-        for line in self.text.split('\n').map(str::trim) {
-            if line.is_empty() {
-                blank += 1;
-                continue;
+    /// Just past the end tag of hidden element `name` whose content starts at `at`. `head`
+    /// also ends where `body` starts, and skips the hidden elements inside it whole.
+    fn skip_hidden(&self, mut at: usize, name: &[u8]) -> usize {
+        let head = name == b"head";
+        while let Some(offset) = self.bytes[at..].iter().position(|&b| b == b'<') {
+            let open = at + offset;
+            if self.is_end_tag(open, name) {
+                return self.tag_end(open + 2 + name.len(), open);
             }
-            if !out.is_empty() {
-                out.push_str(if blank > 1 { "\n\n" } else { "\n" });
+            if head && self.starts_tag(open + 1, b"body") {
+                return open;
             }
-            out.push_str(line);
-            blank = 0;
+            at = open + 1;
+            let inner = HIDDEN_IN_HEAD
+                .iter()
+                .filter(|_| head)
+                .find(|n| self.starts_tag(open + 1, n));
+            if let Some(inner) = inner {
+                let end = self.tag_end(open + 1 + inner.len(), open);
+                at = self.skip_hidden(end, inner);
+            }
         }
-        out
+        self.bytes.len()
     }
+
+    /// Whether `</name` followed by the end of a name starts at `at`.
+    fn is_end_tag(&self, at: usize, name: &[u8]) -> bool {
+        self.bytes.get(at + 1) == Some(&b'/') && self.starts_tag(at + 2, name)
+    }
+
+    /// Whether `name` (case-insensitively) followed by the end of a name starts at `at`.
+    fn starts_tag(&self, at: usize, name: &[u8]) -> bool {
+        let Some(found) = self.bytes.get(at..at + name.len()) else {
+            return false;
+        };
+        found.eq_ignore_ascii_case(name)
+            && self
+                .bytes
+                .get(at + name.len())
+                .is_none_or(|&b| ends_name(b))
+    }
+
+    /// A character reference at `at`, decoded; a plain `&` when it is not one Rail decodes.
+    fn reference(&mut self, at: usize) -> usize {
+        match decode_reference(self.bytes, at) {
+            Some((c, end)) => {
+                self.push_char(c);
+                end
+            }
+            None => {
+                self.visible(at, at + 1);
+                at + 1
+            }
+        }
+    }
+}
+
+/// The character and the end of the reference starting with `&` at `at`.
+fn decode_reference(bytes: &[u8], at: usize) -> Option<(char, usize)> {
+    if bytes.get(at + 1) == Some(&b'#') {
+        return decode_numeric(bytes, at + 2);
+    }
+    let start = at + 1;
+    let len = bytes[start..]
+        .iter()
+        .take(MAX_ENTITY_NAME + 1)
+        .take_while(|b| b.is_ascii_alphanumeric())
+        .count();
+    if len == 0 || len > MAX_ENTITY_NAME || bytes.get(start + len) != Some(&b';') {
+        return None;
+    }
+    let name = &bytes[start..start + len];
+    let (_, c) = ENTITIES.iter().find(|(n, _)| *n == name)?;
+    Some((*c, start + len + 1))
+}
+
+/// `&#N;` or `&#xH;` (the `;` optional), starting just past `#`.
+fn decode_numeric(bytes: &[u8], at: usize) -> Option<(char, usize)> {
+    let hex = matches!(bytes.get(at), Some(b'x' | b'X'));
+    let start = at + usize::from(hex);
+    let radix = if hex { 16 } else { 10 };
+    let len = bytes[start.min(bytes.len())..]
+        .iter()
+        .take(MAX_DIGITS + 1)
+        .take_while(|b| char::from(**b).is_digit(radix))
+        .count();
+    if len == 0 || len > MAX_DIGITS {
+        return None;
+    }
+    let digits = std::str::from_utf8(&bytes[start..start + len]).ok()?;
+    let code = u32::from_str_radix(digits, radix).ok()?;
+    let allowed = code == 0x09 || code == 0x0a || (code >= 0x20 && !(0x7f..=0x9f).contains(&code));
+    let c = char::from_u32(code).filter(|_| allowed)?;
+    let end = start + len;
+    Some((c, end + usize::from(bytes.get(end) == Some(&b';'))))
+}
+
+/// The first `needle` at or after `from`.
+fn find(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
+    bytes
+        .get(from..)?
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|p| p + from)
 }

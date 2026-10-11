@@ -36,8 +36,6 @@ async-trait.workspace = true
 fastrand.workspace = true
 mail-parser.workspace = true
 base64.workspace = true
-html2text.workspace = true
-html5ever.workspace = true
 futures-util.workspace = true
 
 [dev-dependencies]
