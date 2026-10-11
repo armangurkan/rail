@@ -14,6 +14,7 @@ mod sidebar;
 mod status;
 #[cfg(test)]
 mod tests;
+mod themes;
 mod view;
 #[cfg(test)]
 mod view_tests;
@@ -73,16 +74,8 @@ pub struct MailContext {
     /// The terminal shows OSC 8 hyperlinks.
     pub hyperlinks: bool,
     /// What the terminal can show; the theme picker needs it to preview.
-    #[expect(
-        dead_code,
-        reason = "used by the :theme and :accent pickers in the next task"
-    )]
     pub depth: ColorDepth,
     /// The scheme and accent in force, which the pickers change one at a time.
-    #[expect(
-        dead_code,
-        reason = "used by the :theme and :accent pickers in the next task"
-    )]
     pub theme_choice: ThemeChoice,
 }
 
@@ -160,6 +153,8 @@ pub struct MailScreen {
     reader: Option<Reader>,
     modal: Option<Modal>,
     pub(crate) actions: actions::ActionState,
+    /// The theme kept and, while `:theme` or `:accent` is open, the one to restore.
+    pub(crate) themes: themes::ThemeState,
     /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
     open_files: OpenFiles,
     /// The browser confirmation was answered yes this session.
@@ -194,6 +189,7 @@ impl MailScreen {
 
     pub fn new(ctx: MailContext, accounts: Vec<AccountEntry>) -> Self {
         let open_files = OpenFiles::new(&ctx.paths.cache_dir);
+        let themes = themes::ThemeState::new(ctx.theme_choice);
         Self {
             ctx,
             account_ids: vec![None; accounts.len()],
@@ -214,6 +210,7 @@ impl MailScreen {
             reader: None,
             modal: None,
             actions: actions::ActionState::default(),
+            themes,
             open_files,
             html_confirmed: false,
             pending_open: None,
@@ -613,7 +610,8 @@ impl MailScreen {
         vec![self.read_list(PageAt::First, Place::Top)]
     }
 
-    /// Every palette entry: each key action of the active view and the global ones with its key, `errors`, each account and label.
+    /// Every palette entry: each key action of the active view and the global ones with its
+    /// key, `errors`, `theme`, `accent`, each account and label.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let key = |a: Action| self.ctx.keymap.label(a);
         let views = self.views();
@@ -627,12 +625,17 @@ impl MailScreen {
                 target: Target::Action(a),
             })
             .collect();
-        entries.push(PaletteEntry {
-            text: "Show recent errors".into(),
-            search: "errors Show recent errors".into(),
+        let commands = [
+            ("Show recent errors", "errors", Target::Errors),
+            ("Change the colour theme", "theme", Target::Theme),
+            ("Change the accent colour", "accent", Target::Accent),
+        ];
+        entries.extend(commands.into_iter().map(|(text, id, target)| PaletteEntry {
+            text: text.into(),
+            search: format!("{id} {text}"),
             key: String::new(),
-            target: Target::Errors,
-        });
+            target,
+        }));
         entries.extend(self.accounts.iter().enumerate().map(|(i, a)| PaletteEntry {
             text: format!("Go to {}'s inbox", a.name),
             search: format!("Go to {}'s inbox account {} {}", a.name, a.name, a.address),
@@ -718,6 +721,9 @@ impl Screen for MailScreen {
             Err(error) => {
                 tracing::warn!(error = %error, "could not clean the opened-messages directory");
             }
+        }
+        if self.ctx.depth == ColorDepth::Ansi && self.themes.current.scheme.is_some() {
+            self.status.notify(themes::NEEDS_TRUECOLOR, self.tick);
         }
         vec![
             self.ctx.link.watch(),

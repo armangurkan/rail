@@ -4,6 +4,7 @@
 use rail_core::ops::{BodyFetchResponse, ErrorCode, MAX_BODY_FETCH, OpError};
 use rail_core::store::view::{BodyState, HtmlBody, ThreadDetail};
 
+use super::themes::Kept;
 use super::{Focus, Glyphs, MailScreen, error_line};
 use crate::tui::app::Effect;
 use crate::tui::data::{FILTER_DEBOUNCE, ReadError, Timer, timer};
@@ -433,6 +434,18 @@ impl MailScreen {
             ModalOutcome::Close => {
                 self.modal = None;
                 self.actions.picking = None;
+                return self.restore_theme();
+            }
+            ModalOutcome::Preview(Command::Theme(index)) => return self.preview_theme(index),
+            ModalOutcome::Preview(Command::Accent(accent)) => return self.preview_accent(accent),
+            ModalOutcome::Preview(_) => {}
+            ModalOutcome::Run(Command::Theme(index)) => {
+                let choice = self.choice_for_theme(index);
+                return self.keep_theme(choice, Kept::Theme);
+            }
+            ModalOutcome::Run(Command::Accent(accent)) => {
+                let choice = self.choice_for_accent(accent);
+                return self.keep_theme(choice, Kept::Accent);
             }
             ModalOutcome::Typed(text) => {
                 self.filter_text = text;
@@ -509,6 +522,8 @@ impl MailScreen {
                 self.modal = Some(Modal::Errors(ErrorList::with_retries(rows, self.ctx.icons)));
                 Vec::new()
             }
+            Target::Theme => self.open_theme_picker(),
+            Target::Accent => self.open_accent_picker(),
             Target::Scope(scope) => {
                 self.close_reader();
                 self.set_scope(scope)

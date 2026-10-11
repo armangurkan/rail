@@ -496,13 +496,27 @@ pub fn status(name: &str, address: &str, phase: SyncPhase) -> AccountSyncStatus 
 /// Run every job `effects` start, feeding what each reports back to `screen`, until nothing
 /// is left. Each job must finish (the fake daemon's always do); timers really sleep.
 pub async fn settle<S: Screen>(screen: &mut S, effects: Vec<Effect>) {
+    settle_capturing(screen, effects, &Arc::new(Mutex::new(None))).await;
+}
+
+/// `settle`, keeping the last `Effect::Theme` seen in `themes`.
+pub async fn settle_capturing<S: Screen>(
+    screen: &mut S,
+    effects: Vec<Effect>,
+    themes: &Arc<Mutex<Option<Theme>>>,
+) {
     let mut queue: VecDeque<Effect> = effects.into();
     let mut ran = 0;
     while let Some(effect) = queue.pop_front() {
         ran += 1;
         assert!(ran < 1_000, "the effects never settled");
-        let Effect::Spawn(job) = effect else {
-            continue;
+        let job = match effect {
+            Effect::Spawn(job) => job,
+            Effect::Theme(theme) => {
+                *themes.lock().unwrap() = Some(theme);
+                continue;
+            }
+            _ => continue,
         };
         let (tx, mut rx) = mpsc::unbounded_channel();
         tokio::time::timeout(Duration::from_secs(10), job(TaskSink::new(tx, 0)))

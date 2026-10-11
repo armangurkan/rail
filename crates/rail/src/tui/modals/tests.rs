@@ -464,3 +464,100 @@ fn errors_with_a_retry_move_a_highlight_and_enter_retries_it() {
         "not retryable"
     );
 }
+
+/// "Rail default" and the first twenty schemes, Dracula ticked, swatches on.
+fn theme_picker() -> Picker {
+    use crate::tui::theme::scheme::schemes;
+    let mut items = vec![PickerItem {
+        id: -1,
+        name: "Rail default".into(),
+        checked: false,
+        swatch: Vec::new(),
+    }];
+    items.extend(
+        schemes()
+            .iter()
+            .take(20)
+            .enumerate()
+            .map(|(i, s)| PickerItem {
+                id: i64::try_from(i).unwrap(),
+                name: s.name.into(),
+                checked: false,
+                swatch: vec![
+                    s.background.color(),
+                    s.foreground.color(),
+                    s.palette[6].color(),
+                ],
+            }),
+    );
+    let dracula = schemes().iter().position(|s| s.name == "Dracula").unwrap();
+    items.push(PickerItem {
+        id: i64::try_from(dracula).unwrap(),
+        name: "Dracula".into(),
+        checked: true,
+        swatch: {
+            let s = &schemes()[dracula];
+            vec![
+                s.background.color(),
+                s.foreground.color(),
+                s.palette[6].color(),
+            ]
+        },
+    });
+    Picker::new(PickerKind::Theme, items)
+}
+
+#[test]
+fn the_theme_and_accent_pickers_at_90_and_150_columns() {
+    let theme = theme_picker();
+    for (width, height) in [(90, 24), (150, 40)] {
+        let text = snapshot(width, height, |frame| {
+            theme.render(frame, frame.area(), &Theme::default());
+        });
+        insta::assert_snapshot!(format!("modal_theme_picker_{width}x{height}"), text);
+    }
+    let accents = (-1..16)
+        .map(|n| PickerItem {
+            id: n,
+            name: if n < 0 {
+                "scheme default".into()
+            } else {
+                format!("{n}")
+            },
+            checked: n == -1,
+            swatch: u8::try_from(n)
+                .map(|slot| vec![ratatui::style::Color::Indexed(slot)])
+                .unwrap_or_default(),
+        })
+        .collect();
+    let accent = Picker::new(PickerKind::Accent, accents);
+    let text = snapshot(90, 24, |frame| {
+        accent.render(frame, frame.area(), &Theme::default());
+    });
+    insta::assert_snapshot!("modal_accent_picker_90x24", text);
+}
+
+#[test]
+fn a_scheme_row_draws_its_swatch_in_the_scheme_colours() {
+    let picker = theme_picker();
+    let mut terminal = Terminal::new(TestBackend::new(90, 24)).unwrap();
+    terminal
+        .draw(|frame| picker.render(frame, frame.area(), &Theme::default()))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let row = (0..buffer.area.height)
+        .find(|&y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .contains("Dracula")
+        })
+        .expect("the Dracula row is drawn");
+    let first = (0..buffer.area.width)
+        .find(|&x| buffer[(x, row)].symbol() == "█")
+        .expect("a swatch cell");
+    assert_eq!(
+        buffer[(first, row)].fg,
+        ratatui::style::Color::Rgb(0x28, 0x2a, 0x36)
+    );
+}

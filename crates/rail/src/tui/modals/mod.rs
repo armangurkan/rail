@@ -1,5 +1,5 @@
 //! The one optional modal over the mail screen: confirmations, the link number prompt, the
-//! attachment list, the filter line, the palette, the label pickers, help and `:errors`.
+//! attachment list, the filter line, the palette, the label and theme pickers, help and `:errors`.
 //! Modal keys are fixed (Enter, Esc, `y`/`n`, arrows): they are not keymap actions.
 
 pub mod confirm;
@@ -23,7 +23,7 @@ pub use errors::{ErrorList, ErrorRow};
 pub use filter::FilterLine;
 pub use help::Help;
 pub use palette::{Palette, PaletteEntry, Target};
-pub use picker::{Picker, PickerItem, PickerMode};
+pub use picker::{Picker, PickerItem, PickerKind};
 
 use crate::tui::theme::Theme;
 
@@ -53,6 +53,10 @@ pub enum Command {
     },
     /// The move picker's answer: the label folder to move to.
     MoveTo(i64),
+    /// `:theme`'s answer: an index into `theme::scheme::schemes()`, or `None` for Rail's default.
+    Theme(Option<usize>),
+    /// `:accent`'s answer.
+    Accent(crate::tui::theme::choice::Accent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +66,8 @@ pub enum ModalOutcome {
     /// The filter text changed; the line stays open.
     Typed(String),
     Run(Command),
+    /// The highlight moved in a picker that previews: apply `Command` without keeping it.
+    Preview(Command),
 }
 
 pub enum Modal {

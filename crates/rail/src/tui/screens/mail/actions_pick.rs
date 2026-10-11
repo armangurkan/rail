@@ -11,20 +11,20 @@ use super::MailScreen;
 use super::selection::Picked;
 use crate::tui::app::Effect;
 use crate::tui::data::ReadError;
-use crate::tui::modals::{Command, Modal, Picker, PickerItem, PickerMode};
+use crate::tui::modals::{Command, Modal, Picker, PickerItem, PickerKind};
 
 /// A picker waiting for its labels, and what it applies to.
 #[derive(Debug)]
 pub(crate) struct Picking {
     seq: u64,
-    mode: PickerMode,
+    mode: PickerKind,
     targets: Vec<(i64, Picked)>,
 }
 
 impl MailScreen {
     pub(super) fn open_picker(
         &mut self,
-        mode: PickerMode,
+        mode: PickerKind,
         targets: Vec<(i64, Picked)>,
     ) -> Vec<Effect> {
         let accounts: BTreeSet<i64> = targets.iter().map(|(_, p)| p.account_id).collect();
@@ -66,10 +66,11 @@ impl MailScreen {
                     .labels
                     .into_iter()
                     .map(|l| PickerItem {
-                        checked: mode == PickerMode::Toggle
+                        checked: mode == PickerKind::Labels
                             && choices.current.contains(&l.folder_id),
-                        folder_id: l.folder_id,
+                        id: l.folder_id,
                         name: l.name,
+                        swatch: Vec::new(),
                     })
                     .collect();
                 self.modal = Some(Modal::Picker(Picker::new(mode, items)));

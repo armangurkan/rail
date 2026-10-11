@@ -1,0 +1,25 @@
+---
+source: crates/rail/src/tui/modals/tests.rs
+expression: text
+---
+
+
+
+
+               ┌ Theme ───────────────────────────────────────────────────┐
+               │>                                                         │
+               │                                                          │
+               │Acid Lime                                           ██████│
+               │Adobe Moon                                          ██████│
+               │Adventure                                           ██████│
+               │Adventure Time                                      ██████│
+               │Adwaita                                             ██████│
+               │Adwaita Dark                                        ██████│
+               │After Hours                                         ██████│
+               │Afterglow                                           ██████│
+               │Afterimage                                          ██████│
+               │Agave Dusk                                          ██████│
+               │Aizen Dark                                          ██████│
+               │Dracula                                             ██████│
+               │Enter keeps · Esc restores · ↑↓ move                      │
+               └──────────────────────────────────────────────────────────┘

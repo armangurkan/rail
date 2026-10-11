@@ -168,8 +168,8 @@ impl MailScreen {
                 let on = targets.iter().any(|(_, p)| p.unread);
                 self.send_action(MailAction::Read { on }, &targets, true)
             }
-            Action::ListLabels => self.open_picker(crate::tui::modals::PickerMode::Toggle, targets),
-            Action::ListMove => self.open_picker(crate::tui::modals::PickerMode::Move, targets),
+            Action::ListLabels => self.open_picker(crate::tui::modals::PickerKind::Labels, targets),
+            Action::ListMove => self.open_picker(crate::tui::modals::PickerKind::Move, targets),
             _ => Vec::new(),
         }
     }
@@ -402,6 +402,7 @@ impl MailScreen {
             }
             MailEvent::ActionFailed(failure) => self.action_failed(*failure),
             MailEvent::Labels { seq, result } => self.labels_read(seq, result),
+            MailEvent::ThemeSaved { result } => self.theme_saved(result),
             _ => Vec::new(),
         }
     }

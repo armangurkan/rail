@@ -26,6 +26,10 @@ const PALETTE_WIDTH: u16 = 70;
 pub enum Target {
     Action(Action),
     Errors,
+    /// `:theme`: the colour scheme picker.
+    Theme,
+    /// `:accent`: the accent slot picker.
+    Accent,
     Scope(ScopeChoice),
 }
 

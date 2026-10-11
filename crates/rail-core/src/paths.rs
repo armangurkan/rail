@@ -219,11 +219,14 @@ pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 /// data goes to a 0600 sibling temp file which is synced and renamed over
 /// `path`. A crash leaves either the old file or the new one, never a torn one.
 pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let parent = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
-    create_private_dir(parent)?;
+    create_private_dir(parent_of(path))?;
+    replace_private_atomic(path, bytes)
+}
+
+/// `write_private_atomic` into a directory that must already exist, leaving the directory's
+/// own permissions as they are.
+pub fn replace_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = parent_of(path);
     let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
     tmp_name.push(".tmp");
     let tmp = parent.join(tmp_name);
@@ -233,6 +236,14 @@ pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
     result?;
     sync_dir(parent)
+}
+
+/// The directory `path` is in (`.` for a bare file name).
+fn parent_of(path: &Path) -> &Path {
+    match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    }
 }
 
 fn write_synced_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -430,6 +441,24 @@ mod tests {
         assert_eq!(mode(&file), 0o600);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
         assert!(!stale_tmp.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_private_atomic_keeps_the_directory_mode_and_needs_the_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("shared");
+        std::fs::create_dir(&shared).unwrap();
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let file = shared.join("f");
+        replace_private_atomic(&file, b"new").unwrap();
+        assert_eq!(mode(&shared), 0o755, "the directory is left alone");
+        assert_eq!(mode(&file), 0o600);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+        let missing = dir.path().join("missing").join("f");
+        assert!(replace_private_atomic(&missing, b"x").is_err());
     }
 
     #[test]
