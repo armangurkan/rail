@@ -142,7 +142,11 @@ pub(super) fn not_syncing(who: &str) -> OpError {
 }
 
 pub(super) fn unsupported() -> OpError {
-    OpError::invalid_input("Microsoft 365 sync arrives in a later phase of Rail")
+    OpError::new(
+        ErrorCode::Unsupported,
+        ErrorClass::Permanent,
+        "Microsoft 365 sync arrives in a later phase of Rail",
+    )
 }
 
 pub(super) fn not_running() -> OpError {

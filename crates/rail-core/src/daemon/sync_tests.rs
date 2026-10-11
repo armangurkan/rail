@@ -165,7 +165,7 @@ async fn sync_now_for_a_microsoft_account_says_it_is_not_supported_yet() {
         watch: false,
     };
     let err = client.call::<SyncNow>(&request).await.unwrap_err();
-    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert_eq!(err.code, ErrorCode::Unsupported);
     assert!(err.message.contains("Microsoft 365"), "{err}");
 }
 
@@ -431,5 +431,5 @@ async fn search_reports_the_accounts_it_could_not_ask() {
     let found = client.call::<Search>(&request).await.unwrap();
     assert_eq!(found.failures.len(), 1, "{:?}", found.failures);
     assert_eq!(found.failures[0].account, "corp");
-    assert_eq!(found.failures[0].error.code, ErrorCode::InvalidInput);
+    assert_eq!(found.failures[0].error.code, ErrorCode::Unsupported);
 }

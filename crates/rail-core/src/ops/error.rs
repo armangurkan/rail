@@ -53,6 +53,9 @@ pub enum ErrorCode {
     Daemon,
     /// A bug in Rail.
     Internal,
+    /// The account's provider cannot do this in this version of Rail (Microsoft 365 sync and
+    /// server search, for now).
+    Unsupported,
 }
 
 /// A failed operation. `message` is Rail's own text, written for a person (or a model) to read;
