@@ -5,14 +5,14 @@ use crossterm::event::{KeyCode, KeyEvent};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::{Command, ModalOutcome, boxed};
 use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
-use crate::tui::text::{escape, fit, pad, width};
+use crate::tui::text::{escape, input_row, pad, width};
 use crate::tui::theme::Theme;
 use crate::tui::widgets::text_input::TextInput;
 
@@ -128,11 +128,8 @@ impl Palette {
         let height = u16::try_from(SHOWN + 4).unwrap_or(u16::MAX);
         let inner = boxed(frame, area, PALETTE_WIDTH, height, "Command palette", theme);
         let cols = usize::from(inner.width);
-        let typed = format!(":{}▏", escape(self.input.value()));
-        let mut lines = vec![
-            Line::styled(fit(&typed, cols), theme.accent),
-            Line::default(),
-        ];
+        let (typed, column) = input_row(":", self.input.value(), self.input.cursor(), cols);
+        let mut lines = vec![Line::styled(typed, theme.accent), Line::default()];
         // A window of SHOWN rows that keeps the selection in view.
         let first = (self.selected + 1).saturating_sub(SHOWN);
         for (row, entry) in self.shown().into_iter().enumerate().skip(first).take(SHOWN) {
@@ -153,5 +150,11 @@ impl Palette {
             lines.push(Line::styled("Nothing matches.", theme.muted));
         }
         frame.render_widget(Paragraph::new(lines), inner);
+        if cols > 0 && inner.height > 0 {
+            let x = inner
+                .x
+                .saturating_add(u16::try_from(column).unwrap_or(u16::MAX));
+            frame.set_cursor_position(Position::new(x, inner.y));
+        }
     }
 }

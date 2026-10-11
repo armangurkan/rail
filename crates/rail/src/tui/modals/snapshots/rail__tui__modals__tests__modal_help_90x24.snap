@@ -3,7 +3,7 @@ source: crates/rail/src/tui/modals/tests.rs
 expression: text
 ---
 
-     ┌ Keys ────────────────────────────────────────────────────────────────────────┐
+     ┌ Keys (* set in config.toml) ─────────────────────────────────────────────────┐
      │Thread list                                                                   │
      │  Enter                Open the thread                                        │
      │  f *                  Filter the list as you type                            │
@@ -23,5 +23,5 @@ expression: text
      │  k, ↑                 Previous thread                                        │
      │  PgDn, Ctrl-d         One page down                                          │
      │  PgUp, Ctrl-u         One page up                                            │
-     │  Home, g g            Newest thread                                          │
+     │↓ more                                                                        │
      └──────────────────────────────────────────────────────────────────────────────┘

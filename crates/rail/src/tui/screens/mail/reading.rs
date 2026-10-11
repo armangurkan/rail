@@ -492,7 +492,7 @@ impl MailScreen {
                     .rev()
                     .map(|e| format!("{}  {}", self.ctx.clock.short(e.at), e.text))
                     .collect();
-                self.modal = Some(Modal::Errors(ErrorList::new(rows)));
+                self.modal = Some(Modal::Errors(ErrorList::new(rows, self.ctx.icons)));
                 Vec::new()
             }
             Target::Scope(scope) => {

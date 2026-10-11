@@ -408,3 +408,17 @@ fn recipients_are_capped_with_a_count_and_the_warning_comes_first() {
     let long = format!("mailto:a@b.example?bcc={}", "z".repeat(1_500));
     assert!(mail(&long).iter().all(|l| width(l) <= 150));
 }
+
+#[test]
+fn an_input_row_puts_the_cursor_after_what_is_before_it_in_columns() {
+    // Wide characters take two columns; an escaped control takes its escape's columns.
+    assert_eq!(input_row(":", "日本語", 2, 40), (":日本語".to_string(), 5));
+    assert_eq!(
+        input_row("/", "a\u{1b}b", 2, 40),
+        ("/a\\u{1b}b".to_string(), 8)
+    );
+    assert_eq!(input_row("/", "abc", 0, 40), ("/abc".to_string(), 1));
+    // Past the last column the start is dropped, so the cursor stays in view.
+    assert_eq!(input_row(":", &"x".repeat(50), 50, 10), ("x".repeat(9), 9));
+    assert_eq!(input_row(":", "abc", 3, 0), (String::new(), 0));
+}

@@ -12,6 +12,8 @@ mod sync_write;
 mod sync_write_tests;
 pub mod view;
 #[cfg(test)]
+mod view_sidebar_tests;
+#[cfg(test)]
 mod view_tests;
 
 use std::path::{Path, PathBuf};

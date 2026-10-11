@@ -356,7 +356,8 @@ impl MailScreen {
                 return Vec::new();
             }
             Action::GlobalHelp => {
-                self.modal = Some(Modal::Help(Help::new(&self.ctx.keymap, &self.views())));
+                let help = Help::new(&self.ctx.keymap, &self.views(), self.ctx.icons);
+                self.modal = Some(Modal::Help(help));
                 return Vec::new();
             }
             Action::ListFilter if self.focus == Focus::List => {

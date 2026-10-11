@@ -230,8 +230,8 @@ retries.
 The thread list shows the unified inbox: the account's colour dot, the date, the people, the
 message count, `★` for starred and `📎` for attachments, and the subject; unread threads are bold.
 `1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
-and wider; `b` toggles it, `Tab` moves into it) lists every account and label with its unread
-count; `Enter` opens one.
+and wider; `b` toggles it, `Tab` moves into it) lists every account and its labels (up to 500
+per account) with their unread counts; `Enter` opens one.
 
 `Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
 beside the list; narrower, it covers the screen. `q` or `Esc` closes it. Messages are oldest
@@ -278,7 +278,9 @@ local store only (`rail search` also asks Gmail).
 `:` opens the command palette: type a few letters of a key action for the current view, an account
 or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
 the session's recent errors. `?` shows the keys of the view you are in, marking with `*` the ones
-set in `config.toml`.
+set in `config.toml`; `?` again (or whatever `global.help` is bound to), `Esc` or `q` closes it.
+Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more` line (`v more` and
+`^ more` with `icons = "ascii"`) says there is more beyond the box.
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`

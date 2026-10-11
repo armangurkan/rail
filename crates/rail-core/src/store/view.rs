@@ -21,7 +21,7 @@ pub const PAGE: usize = 100;
 pub const MAX_THREAD_MESSAGES: usize = 200;
 /// Characters of one body the reader gets.
 pub const MAX_SHOWN_BODY_CHARS: usize = 500_000;
-/// Folders the sidebar lists.
+/// Folders the sidebar lists for each account.
 pub const MAX_SIDEBAR_FOLDERS: usize = 500;
 
 /// Which threads a list shows.
@@ -563,19 +563,25 @@ impl Store {
         })
     }
 
+    /// Every account's folders, at most `MAX_SIDEBAR_FOLDERS` of each: the inbox and the
+    /// other system folders first, then labels by name.
     fn folder_counts(&self, ids: &str) -> Result<Vec<FolderCount>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT f.id, f.account_id, f.name, f.kind,
+            "SELECT r.id, r.account_id, r.name, r.kind,
                (SELECT count(DISTINCT m.thread_id) FROM message_folders mf
-                  JOIN messages m ON m.id = mf.message_id WHERE mf.folder_id = f.id),
+                  JOIN messages m ON m.id = mf.message_id WHERE mf.folder_id = r.id),
                (SELECT count(DISTINCT m.thread_id) FROM message_folders mf
                   JOIN messages m ON m.id = mf.message_id
-                  WHERE mf.folder_id = f.id AND m.is_read = 0)
-             FROM folders f WHERE f.account_id IN (SELECT value FROM json_each(?1))
-             ORDER BY f.account_id, CASE f.kind WHEN 'inbox' THEN 0 WHEN 'sent' THEN 1
-               WHEN 'drafts' THEN 2 WHEN 'archive' THEN 3 WHEN 'spam' THEN 4
-               WHEN 'trash' THEN 5 WHEN 'user' THEN 6 ELSE 7 END, f.name
-             LIMIT ?2",
+                  WHERE mf.folder_id = r.id AND m.is_read = 0)
+             FROM (SELECT f.id, f.account_id, f.name, f.kind,
+                     row_number() OVER (PARTITION BY f.account_id ORDER BY
+                       CASE f.kind WHEN 'inbox' THEN 0 WHEN 'sent' THEN 1
+                         WHEN 'drafts' THEN 2 WHEN 'archive' THEN 3 WHEN 'spam' THEN 4
+                         WHEN 'trash' THEN 5 WHEN 'user' THEN 6 ELSE 7 END, f.name) AS place
+                   FROM folders f
+                   WHERE f.account_id IN (SELECT value FROM json_each(?1))) r
+             WHERE r.place <= ?2
+             ORDER BY r.account_id, r.place",
         )?;
         let rows = stmt.query_map(params![ids, int(MAX_SIDEBAR_FOLDERS)], |r| {
             Ok(FolderCount {

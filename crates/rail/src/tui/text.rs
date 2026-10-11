@@ -71,6 +71,31 @@ pub fn pad_left(text: &str, cols: usize) -> String {
     out
 }
 
+/// A one-line text field in `cols` columns: `prefix` and `value`, escaped, and the column the
+/// cursor (`cursor` characters into `value`) is drawn in. When the cursor would fall past the
+/// last column, the start of the row is dropped so the cursor stays in view.
+pub fn input_row(prefix: &str, value: &str, cursor: usize, cols: usize) -> (String, usize) {
+    let split = value
+        .char_indices()
+        .nth(cursor)
+        .map_or(value.len(), |(i, _)| i);
+    let (before, after) = value.split_at(split);
+    let head = format!("{}{}", escape(prefix), escape(before));
+    let room = cols.saturating_sub(1);
+    let mut used = 0;
+    let mut start = head.len();
+    for (i, grapheme) in head.grapheme_indices(true).rev() {
+        let w = width(grapheme);
+        if used + w > room {
+            break;
+        }
+        used += w;
+        start = i;
+    }
+    let head = &head[start..];
+    (fit(&format!("{head}{}", escape(after)), cols), used)
+}
+
 /// Text from outside Rail (the provider's or the system's words), escaped and labelled.
 pub fn outside(text: &str) -> String {
     format!(
