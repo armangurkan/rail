@@ -1,23 +1,31 @@
 //! The Gmail provider: labels, `messages.list` and `messages.get`, history and search, over
 //! the shared `ApiClient`. Every string Gmail returns is outside text.
 
-// Only tests call the Gmail methods until `impl Provider for GmailProvider` lands; the
-// `dead_code` allowances below are removed in Task 5 when impl Provider lands.
-#[cfg_attr(not(test), allow(dead_code))]
+mod body;
+mod history;
+mod html_depth;
 mod labels;
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod list;
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod metadata;
 mod wire;
 
 #[cfg(test)]
+mod body_tests;
+#[cfg(test)]
 pub(crate) mod fixtures;
+#[cfg(test)]
+mod history_tests;
 #[cfg(test)]
 mod tests;
 
 use super::http::ApiClient;
-use super::{EnvelopePage, PageToken, Profile, ProviderError, RemoteFolder, SyncCursor, Window};
+use super::{
+    Body, ChangeSet, EnvelopePage, PageToken, Profile, ProviderError, RemoteFolder, RemoteId,
+    SyncCursor, Window,
+};
+
+pub use body::{MAX_BODY_BYTES, TRUNCATED_MARKER};
+pub use history::{MAX_HISTORY_PAGES, MAX_HISTORY_RECORDS};
 
 pub use metadata::{
     MAX_ADDRESSES, MAX_HEADER_BYTES, MAX_SNIPPET_CHARS, MAX_SUBJECT_CHARS, METADATA_HEADERS,
@@ -39,13 +47,16 @@ pub(crate) const COST_LIST: u32 = 5;
 pub(crate) const COST_GET: u32 = 20;
 pub(crate) const COST_LABELS: u32 = 1;
 pub(crate) const COST_PROFILE: u32 = 1;
+pub(crate) const COST_HISTORY: u32 = 2;
+
+/// The most server hits one search asks for.
+pub const MAX_SEARCH_RESULTS: usize = 100;
 
 /// Gmail through its REST API.
 pub struct GmailProvider {
     api: ApiClient,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl GmailProvider {
     pub fn new(api: ApiClient) -> Self {
         Self { api }
@@ -84,6 +95,60 @@ impl GmailProvider {
         let mut fetched = self.metadata(&ids).await?;
         fetched.next = next;
         Ok(fetched)
+    }
+
+    /// Gmail's own search over the whole mailbox (spam and trash excluded, as in Gmail). Ids
+    /// Rail would not put in a path are left out.
+    pub(crate) async fn search_ids(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<RemoteId>, ProviderError> {
+        let limit = limit.clamp(1, MAX_SEARCH_RESULTS);
+        let max = u32::try_from(limit).unwrap_or(1);
+        let (ids, _) = self
+            .list_ids(Some(query.to_string()), None, max, false)
+            .await?;
+        Ok(ids
+            .into_iter()
+            .filter(|id| checked_id(id).is_some())
+            .take(limit)
+            .collect())
+    }
+}
+
+#[async_trait::async_trait]
+impl super::Provider for GmailProvider {
+    async fn folders(&self) -> Result<Vec<RemoteFolder>, ProviderError> {
+        self.labels().await
+    }
+
+    async fn profile(&self) -> Result<Profile, ProviderError> {
+        self.read_profile().await
+    }
+
+    async fn backfill(
+        &self,
+        window: &Window,
+        page: Option<&PageToken>,
+    ) -> Result<EnvelopePage, ProviderError> {
+        self.backfill_page(window, page).await
+    }
+
+    async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {
+        self.history(cursor).await
+    }
+
+    async fn body(&self, id: &str) -> Result<Body, ProviderError> {
+        self.full_body(id).await
+    }
+
+    async fn search(&self, query: &str, limit: usize) -> Result<Vec<RemoteId>, ProviderError> {
+        self.search_ids(query, limit).await
+    }
+
+    async fn envelopes(&self, ids: &[RemoteId]) -> Result<EnvelopePage, ProviderError> {
+        self.metadata(ids).await
     }
 }
 

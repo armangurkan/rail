@@ -30,8 +30,6 @@ enum Fetched {
     Gone,
 }
 
-// Removed in Task 5 when impl Provider lands.
-#[cfg_attr(not(test), allow(dead_code))]
 impl GmailProvider {
     /// One page of message ids, newest first.
     pub(crate) async fn list_ids(
@@ -61,8 +59,10 @@ impl GmailProvider {
     /// longer has are dropped. Any other failure fails the whole call.
     pub(crate) async fn metadata(&self, ids: &[RemoteId]) -> Result<EnvelopePage, ProviderError> {
         let mut fetched = std::pin::pin!(
-            stream::iter(ids)
-                .map(|id| self.one_metadata(id))
+            // Owned ids: a closure over `&RemoteId` makes the future too general to be `Send`
+            // inside `async_trait`.
+            stream::iter(ids.iter().cloned())
+                .map(|id| async move { self.one_metadata(&id).await })
                 .buffered(GMAIL_CONCURRENCY)
         );
         let mut page = EnvelopePage::default();

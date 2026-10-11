@@ -131,7 +131,7 @@ fn header_block(headers: &[Header]) -> String {
 }
 
 /// At most `max` bytes of `text`, cut at a character boundary.
-fn cut(text: &str, max: usize) -> &str {
+pub(super) fn cut(text: &str, max: usize) -> &str {
     if text.len() <= max {
         return text;
     }

@@ -1,6 +1,7 @@
 //! Fake Gmail: JSON in the shapes of the Gmail REST reference, with fake data, served by
 //! wiremock under `/gmail/v1/users/me/`.
 
+use base64::Engine as _;
 use serde_json::{Value, json};
 use url::Url;
 use wiremock::matchers::{method, path};
@@ -109,4 +110,32 @@ pub(crate) fn labels_json() -> Value {
         {"id": "CATEGORY_SOCIAL", "name": "CATEGORY_SOCIAL", "type": "system"},
         {"id": "Label_12", "name": "Receipts/2026", "type": "user", "color": {"textColor": "#000000", "backgroundColor": "#ffffff"}}
     ]})
+}
+
+/// Gmail's base64url, unpadded.
+pub(crate) fn b64(data: &[u8]) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
+}
+
+pub(crate) fn history_json(records: Value, next: Option<&str>, history_id: &str) -> Value {
+    let mut list = json!({"history": records, "historyId": history_id});
+    if let Some(next) = next {
+        list["nextPageToken"] = json!(next);
+    }
+    list
+}
+
+pub(crate) fn full_json(id: &str, payload: Value) -> Value {
+    json!({
+        "id": id, "threadId": "t", "labelIds": ["INBOX"], "snippet": "",
+        "historyId": "1", "internalDate": "1000", "sizeEstimate": 10, "payload": payload
+    })
+}
+
+pub(crate) fn part_json(mime: &str, content_type: &str, data: &[u8]) -> Value {
+    json!({
+        "partId": "1", "mimeType": mime, "filename": "",
+        "headers": [{"name": "Content-Type", "value": content_type}],
+        "body": {"size": data.len(), "data": b64(data)}
+    })
 }
