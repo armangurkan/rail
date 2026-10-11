@@ -160,6 +160,107 @@ async fn metadata_decodes_encoded_words_addresses_flags_and_references() {
     assert_eq!(env.size, 2048);
 }
 
+/// Fix round 1: a `Date:` is believed only when every field is in range and it is not
+/// absurdly far before Gmail received the message.
+#[tokio::test]
+async fn impossible_or_ancient_dates_fall_back_to_the_receive_time() {
+    let gmail = Gmail::start().await;
+    let internal = 1_700_000_000_000;
+    let cases = [
+        ("nines", "Tue, 99 Nov 2023 99:99:99 +0000"),
+        ("year1", "Mon, 1 Jan 0001 00:00:00 +0000"),
+        ("feb31", "Fri, 31 Feb 2023 10:00:00 +0000"),
+        ("old", "Mon, 1 Jan 2018 00:00:00 +0000"),
+    ];
+    for (id, date) in cases {
+        gmail
+            .mount_message(message_json(id, "t", internal, &[], &[("Date", date)]))
+            .await;
+    }
+    gmail
+        .mount_message(message_json(
+            "recent",
+            "t",
+            internal,
+            &[],
+            &[("Date", "Mon, 1 May 2023 08:00:00 +0000")],
+        ))
+        .await;
+    let mut ids: Vec<String> = cases.iter().map(|(id, _)| id.to_string()).collect();
+    ids.push("recent".into());
+    let page = gmail.provider().metadata(&ids).await.unwrap();
+    assert_eq!(page.envelopes.len(), 5);
+    for env in &page.envelopes[..4] {
+        assert_eq!(env.date, internal / 1000, "{}", env.remote_id);
+    }
+    assert_eq!(
+        page.envelopes[4].date, 1_682_928_000,
+        "a date within the year is believed"
+    );
+}
+
+/// Fix round 1: ids in a reply are checked too.
+#[tokio::test]
+async fn a_reply_for_another_id_or_with_an_unsafe_thread_is_skipped() {
+    let gmail = Gmail::start().await;
+    Mock::given(path(format!("{API_PATH}/messages/asked")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(message_json(
+            "other",
+            "t",
+            1_000,
+            &[],
+            &[],
+        )))
+        .mount(&gmail.server)
+        .await;
+    gmail
+        .mount_message(message_json("badthread", "../t", 1_000, &[], &[]))
+        .await;
+    let many: Vec<String> = (0..500).map(|i| format!("Label_{i}")).collect();
+    let mut labels: Vec<&str> = vec!["INBOX", "bad/label"];
+    let long = "L".repeat(200);
+    labels.push(&long);
+    labels.extend(many.iter().map(String::as_str));
+    gmail
+        .mount_message(message_json("labelled", "t", 1_000, &labels, &[]))
+        .await;
+    let ids = ["asked", "badthread", "labelled"].map(String::from);
+    let page = gmail.provider().metadata(&ids).await.unwrap();
+    assert_eq!(page.skipped, ["asked", "badthread"]);
+    let folders = &page.envelopes[0].folders;
+    assert_eq!(folders.len(), 100);
+    assert_eq!(folders[0], "INBOX");
+    assert!(
+        folders.iter().all(|f| checked_id(f).is_some()),
+        "{folders:?}"
+    );
+}
+
+/// Fix round 1: a refusal stops the fetch; the remaining ids spend no quota.
+#[tokio::test]
+async fn a_refusal_stops_fetching_the_remaining_ids() {
+    let gmail = Gmail::start().await;
+    let ids: Vec<String> = (0..10).map(|i| format!("m{i}")).collect();
+    Mock::given(path(format!("{API_PATH}/messages/m1")))
+        .respond_with(ResponseTemplate::new(400))
+        .mount(&gmail.server)
+        .await;
+    for id in ids.iter().filter(|id| *id != "m1") {
+        Mock::given(path(format!("{API_PATH}/messages/{id}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(message_json(id, "t", 1_000, &[], &[]))
+                    .set_delay(Duration::from_millis(50)),
+            )
+            .mount(&gmail.server)
+            .await;
+    }
+    let err = gmail.provider().metadata(&ids).await.unwrap_err();
+    assert_eq!(err.code(), "permanent");
+    let seen = gmail.server.received_requests().await.unwrap().len();
+    assert!(seen < 10, "{seen} requests");
+}
+
 #[tokio::test]
 async fn missing_headers_and_odd_dates_fall_back() {
     let gmail = Gmail::start().await;
@@ -226,7 +327,33 @@ async fn hostile_headers_are_capped_and_cannot_inject_fields() {
             &[("Subject", &huge)],
         ))
         .await;
-    let ids = ["evil", "long"].map(String::from);
+    // Decodes to a CR/LF "Bcc:" line followed by far more than the subject cap.
+    let encoded = format!(
+        "=?UTF-8?Q?hi=0D=0ABcc:_x@example.com=0D=0A{}?=",
+        "z".repeat(2000)
+    );
+    gmail
+        .mount_message(message_json(
+            "encoded",
+            "t",
+            1_700_000_000_000,
+            &[],
+            &[("Subject", &encoded)],
+        ))
+        .await;
+    let mut ctl = message_json(
+        "ctl",
+        "t",
+        1_700_000_000_000,
+        &[],
+        &[
+            ("Subject", "=?UTF-8?Q?a=00b=1Bc?="),
+            ("From", "\u{1b}[31mEvil\u{7}  <e\u{1b}x@example.com>"),
+        ],
+    );
+    ctl["snippet"] = json!("a&#10;b&#27;c&#0;d&#127;e\u{1b}f\u{0}g");
+    gmail.mount_message(ctl).await;
+    let ids = ["evil", "long", "encoded", "ctl"].map(String::from);
     let page = gmail.provider().metadata(&ids).await.unwrap();
     assert!(page.skipped.is_empty(), "{:?}", page.skipped);
     let evil = &page.envelopes[0];
@@ -235,8 +362,37 @@ async fn hostile_headers_are_capped_and_cannot_inject_fields() {
     assert!(evil.subject.starts_with("hello"));
     assert_eq!(evil.to.len(), MAX_ADDRESSES);
     assert_eq!(evil.cc.len(), 1);
+    assert_eq!(
+        evil.cc[0].name.as_deref(),
+        Some("=?UTF-8?B?!!!not-base64?="),
+        "a broken encoded word survives as literal text"
+    );
     assert!(evil.references.iter().map(String::len).sum::<usize>() <= 16 * 1024);
     assert!(page.envelopes[1].subject.chars().count() <= MAX_SUBJECT_CHARS);
+    let encoded = &page.envelopes[2];
+    assert!(encoded.bcc.is_empty());
+    assert!(
+        encoded.subject.starts_with("hi  Bcc: x@example.com"),
+        "{}",
+        encoded.subject
+    );
+    assert_eq!(encoded.subject.chars().count(), MAX_SUBJECT_CHARS);
+    let ctl = &page.envelopes[3];
+    let texts = [
+        ctl.subject.as_str(),
+        ctl.snippet.as_str(),
+        ctl.from[0].name.as_deref().unwrap_or_default(),
+        ctl.from[0].address.as_str(),
+    ];
+    for text in texts {
+        assert!(!text.chars().any(char::is_control), "{text:?}");
+    }
+    assert_eq!(ctl.subject, "a b c");
+    assert!(
+        ctl.snippet.starts_with("a&#10;b&#27;c&#0;d&#127;e f g"),
+        "{:?}",
+        ctl.snippet
+    );
 }
 
 #[tokio::test]
@@ -321,6 +477,10 @@ async fn the_profile_gives_the_current_history_id() {
 #[test]
 fn snippet_character_references_are_decoded() {
     assert_eq!(
+        unescape_snippet("&#10;&#x1B;&#0;&#127;&#31;&#32;"),
+        "&#10;&#x1B;&#0;&#127;&#31; "
+    );
+    assert_eq!(
         unescape_snippet("it&#39;s &lt;b&gt; &amp;&quot; &#x263A; &bogus; & x"),
         "it's <b> &\" ☺ &bogus; & x"
     );
@@ -390,10 +550,19 @@ async fn a_profile_without_a_numeric_history_id_is_refused() {
     let gmail = Gmail::start().await;
     Mock::given(path(format!("{API_PATH}/profile")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"historyId": "12a"})))
+        .up_to_n_times(1)
         .mount(&gmail.server)
         .await;
     let err = gmail.provider().read_profile().await.unwrap_err();
     assert_eq!(err.code(), "permanent");
+    Mock::given(path(format!("{API_PATH}/profile")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"historyId": "1".repeat(21)})),
+        )
+        .mount(&gmail.server)
+        .await;
+    let err = gmail.provider().read_profile().await.unwrap_err();
+    assert_eq!(err.code(), "permanent", "a history id over 20 digits");
 }
 
 #[test]

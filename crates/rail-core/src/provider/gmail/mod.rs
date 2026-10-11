@@ -31,6 +31,8 @@ pub const GMAIL_CONCURRENCY: usize = 8;
 pub const BACKFILL_PAGE: u32 = 100;
 /// The longest message id Rail puts in a path.
 const MAX_ID_BYTES: usize = 64;
+/// A `historyId` is a decimal `u64`: at most 20 digits.
+const MAX_HISTORY_ID_DIGITS: usize = 20;
 
 /// Quota units per call (Gmail quota reference).
 pub(crate) const COST_LIST: u32 = 5;
@@ -56,7 +58,10 @@ impl GmailProvider {
 
     pub(crate) async fn read_profile(&self) -> Result<Profile, ProviderError> {
         let profile: wire::ProfileWire = self.api.get_json("profile", &[], COST_PROFILE).await?;
-        if profile.history_id.is_empty() || !profile.history_id.bytes().all(|b| b.is_ascii_digit())
+        let id = &profile.history_id;
+        if id.is_empty()
+            || id.len() > MAX_HISTORY_ID_DIGITS
+            || !id.bytes().all(|b| b.is_ascii_digit())
         {
             return Err(ProviderError::permanent(
                 "Gmail's profile has no usable history id",

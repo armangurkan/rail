@@ -2,7 +2,7 @@
 
 use futures_util::{StreamExt, stream};
 
-use super::wire::MessageList;
+use super::wire::{Message, MessageList};
 use super::{
     COST_GET, COST_LIST, GMAIL_CONCURRENCY, GmailProvider, METADATA_HEADERS, checked_id, metadata,
     unsafe_id,
@@ -60,13 +60,15 @@ impl GmailProvider {
     /// cannot read (or would not put in a URL) are skipped and logged by id; ids Gmail no
     /// longer has are dropped. Any other failure fails the whole call.
     pub(crate) async fn metadata(&self, ids: &[RemoteId]) -> Result<EnvelopePage, ProviderError> {
-        let fetched: Vec<Result<Fetched, ProviderError>> = stream::iter(ids)
-            .map(|id| self.one_metadata(id))
-            .buffered(GMAIL_CONCURRENCY)
-            .collect()
-            .await;
+        let mut fetched = std::pin::pin!(
+            stream::iter(ids)
+                .map(|id| self.one_metadata(id))
+                .buffered(GMAIL_CONCURRENCY)
+        );
         let mut page = EnvelopePage::default();
-        for outcome in fetched {
+        // The first failure that is not a skip ends the call: dropping the stream cancels the
+        // requests in flight, and the ids after them are never asked for.
+        while let Some(outcome) = fetched.next().await {
             match outcome? {
                 Fetched::Read(envelope) => page.envelopes.push(*envelope),
                 Fetched::Unreadable(id, reason) => {
@@ -95,8 +97,16 @@ impl GmailProvider {
                 .map(|h| ("metadataHeaders", (*h).to_string())),
         );
         let path = format!("messages/{}", checked_id(id).unwrap_or_default());
-        let message = match self.api.get_readable(&path, &query, COST_GET).await {
-            Ok(Readable::Parsed(message)) => message,
+        let message = match self
+            .api
+            .get_readable::<Message>(&path, &query, COST_GET)
+            .await
+        {
+            Ok(Readable::Parsed(message)) if message.id.as_deref() == Some(id.as_str()) => message,
+            Ok(Readable::Parsed(_)) => {
+                let reason = "the reply was for another message".to_string();
+                return Ok(Fetched::Unreadable(id.clone(), reason));
+            }
             // Over the response cap or not a message: this one is skipped, not the pass.
             // The error's message is Rail's own fixed text.
             Ok(Readable::Unreadable(error)) => {
@@ -108,7 +118,7 @@ impl GmailProvider {
         Ok(match metadata::envelope(message) {
             Some(envelope) => Fetched::Read(Box::new(envelope)),
             None => {
-                let reason = "it has no id, thread or usable internalDate".to_string();
+                let reason = "it has no safe thread id or no usable internalDate".to_string();
                 Fetched::Unreadable(id.clone(), reason)
             }
         })

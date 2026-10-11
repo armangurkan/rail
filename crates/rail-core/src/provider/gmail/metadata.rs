@@ -1,9 +1,11 @@
 //! `format=metadata` messages as envelopes. Mail is hostile input: each header value is cut to
-//! `MAX_HEADER_BYTES` and loses its CR and LF before Rail rebuilds a header block for
-//! `mail-parser`, so no value can start another header; decoded values are capped again.
+//! `MAX_HEADER_BYTES` and loses its control characters (CR and LF among them) before Rail
+//! rebuilds a header block for `mail-parser`, so no value can start another header; decoded
+//! values are flattened to one line and capped again. Ids are checked like any other input.
 
 use mail_parser::{Address, HeaderValue, MessageParser};
 
+use super::checked_id;
 use super::labels::{DRAFT, STARRED, UNREAD};
 use super::wire::{Header, Message};
 use crate::provider::{Envelope, Mailbox};
@@ -29,25 +31,33 @@ const MAX_NAME_CHARS: usize = 200;
 const MAX_ADDRESS_CHARS: usize = 254;
 const MAX_ID_CHARS: usize = 998;
 const MAX_REFERENCES: usize = 50;
-/// A `Date:` more than this far after Gmail received the message is not believed.
+/// A `Date:` more than this far after (or before) Gmail received the message is not believed.
 const MAX_DATE_SKEW_SECS: i64 = 366 * 86_400;
+/// Label ids kept per message.
+const MAX_LABELS: usize = 100;
 
-/// The envelope of `message`, or `None` when Rail cannot read it (no id, no thread, no usable
-/// `internalDate`): the caller skips it by id.
+/// The envelope of `message`, or `None` when Rail cannot read it (no id or thread id safe in a
+/// URL path, no usable `internalDate`): the caller skips it by id. Label ids that are not safe
+/// are dropped, and at most `MAX_LABELS` are kept.
 pub(crate) fn envelope(message: Message) -> Option<Envelope> {
-    let remote_id = message.id?;
-    let thread_id = message.thread_id?;
+    let remote_id = message.id.filter(|id| checked_id(id).is_some())?;
+    let thread_id = message.thread_id.filter(|id| checked_id(id).is_some())?;
     let internal_date: i64 = message.internal_date?.trim().parse().ok()?;
     let headers = message.payload.map(|p| p.headers).unwrap_or_default();
     let block = header_block(&headers);
     let parsed = MessageParser::default().parse(block.as_bytes());
-    let labels = message.label_ids;
+    let labels: Vec<String> = message
+        .label_ids
+        .into_iter()
+        .filter(|l| checked_id(l).is_some())
+        .take(MAX_LABELS)
+        .collect();
     let mut envelope = Envelope {
         remote_id,
         thread_id,
         internal_date,
         date: internal_date.div_euclid(1000),
-        snippet: unescape_snippet(&message.snippet)
+        snippet: one_line(&unescape_snippet(&message.snippet))
             .chars()
             .take(MAX_SNIPPET_CHARS)
             .collect(),
@@ -80,11 +90,28 @@ fn fill_headers(envelope: &mut Envelope, parsed: &mail_parser::Message<'_>) {
     envelope.in_reply_to = texts(parsed.in_reply_to()).into_iter().next();
     envelope.references = texts(parsed.references());
     let received = envelope.internal_date.div_euclid(1000);
-    if let Some(date) = parsed.date().map(|d| d.to_timestamp())
-        && date > 0
-        && date <= received + MAX_DATE_SKEW_SECS
-    {
+    if let Some(date) = parsed.date().and_then(|d| believed(d, received)) {
         envelope.date = date;
+    }
+}
+
+/// `date` in Unix seconds when every field is in range (year 1900-3000) and it lies within
+/// `MAX_DATE_SKEW_SECS` of `received`; else `None`, and the receive time stands.
+fn believed(date: &mail_parser::DateTime, received: i64) -> Option<i64> {
+    if !date.is_valid() || date.day > days_in_month(date.year, date.month) || date.tz_hour > 14 {
+        return None;
+    }
+    let seconds = date.to_timestamp();
+    (seconds.abs_diff(received) <= MAX_DATE_SKEW_SECS.unsigned_abs()).then_some(seconds)
+}
+
+fn days_in_month(year: u16, month: u8) -> u8 {
+    let leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
+    match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
     }
 }
 
@@ -115,8 +142,11 @@ fn cut(text: &str, max: usize) -> &str {
     &text[..end]
 }
 
+/// `text` with every control character (CR, LF, NUL, ESC, C1...) replaced by a space.
 fn one_line(text: &str) -> String {
-    text.replace(['\r', '\n'], " ")
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 fn capped_id(id: &str) -> String {
@@ -135,7 +165,7 @@ fn mailboxes(address: Option<&Address<'_>>) -> Vec<Mailbox> {
                 name: a
                     .name()
                     .map(|n| one_line(n).chars().take(MAX_NAME_CHARS).collect()),
-                address: addr.chars().take(MAX_ADDRESS_CHARS).collect(),
+                address: one_line(addr).chars().take(MAX_ADDRESS_CHARS).collect(),
             })
         })
         .take(MAX_ADDRESSES)
@@ -155,7 +185,8 @@ fn texts(value: &HeaderValue<'_>) -> Vec<String> {
 }
 
 /// Gmail's snippet carries HTML character references (`&#39;`, `&amp;`): decode those, and
-/// leave anything else, including a bare `&`, as it is.
+/// leave anything else, including a bare `&` and a reference to a control character below
+/// U+0020 or DEL, as it is.
 pub fn unescape_snippet(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -194,6 +225,9 @@ fn entity(name: &str) -> Option<char> {
                 Some(hex) => u32::from_str_radix(hex, 16).ok()?,
                 None => number.parse().ok()?,
             };
+            if code < 0x20 || code == 0x7f {
+                return None;
+            }
             char::from_u32(code)
         }
     }
