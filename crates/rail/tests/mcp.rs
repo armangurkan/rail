@@ -278,6 +278,8 @@ async fn the_tools_carry_their_hints_and_no_raw_secret_input() {
         writes("rail_cancel", false, false),
         writes("rail_secrets_configure", false, false),
         writes("rail_account_remove", true, false),
+        read_only("rail_sync_status", false),
+        writes("rail_sync_now", false, true),
     ]
     .into_iter()
     .collect();
@@ -306,6 +308,13 @@ async fn the_tools_carry_their_hints_and_no_raw_secret_input() {
         !configure.contains("confirm"),
         "the agent cannot confirm for the user: {configure}"
     );
+    let now = schema("rail_sync_now").to_string();
+    assert!(
+        !now.contains("watch"),
+        "an agent cannot subscribe the server: {now}"
+    );
+    assert_eq!(schema("rail_sync_now")["additionalProperties"], false);
+    assert_eq!(schema("rail_sync_status")["additionalProperties"], false);
     client.close().await;
 }
 
@@ -375,6 +384,8 @@ fn config_text(dir: &tempfile::TempDir) -> String {
 
 #[path = "mcp/guarded.rs"]
 mod guarded;
+#[path = "mcp/sync.rs"]
+mod sync;
 
 #[tokio::test]
 async fn a_relative_path_is_refused_with_the_daemons_reason() {

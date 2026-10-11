@@ -46,9 +46,9 @@ pub use status::{
     StatusRequest, StatusResponse, TokenState,
 };
 pub use sync::{
-    AccountSyncStatus, DEFAULT_SEARCH_LIMIT, HitSource, MAX_QUERY_CHARS, MAX_SEARCH_LIMIT,
-    SearchFailure, SearchHit, SearchRequest, SearchResponse, SyncErrorInfo, SyncNowRequest,
-    SyncNowResponse, SyncPhase, SyncStatusRequest, SyncStatusResponse, SyncTarget,
+    AccountSyncStatus, AgentSyncNow, DEFAULT_SEARCH_LIMIT, HitSource, MAX_QUERY_CHARS,
+    MAX_SEARCH_LIMIT, SearchFailure, SearchHit, SearchRequest, SearchResponse, SyncErrorInfo,
+    SyncNowRequest, SyncNowResponse, SyncPhase, SyncStatusRequest, SyncStatusResponse, SyncTarget,
 };
 pub use untrusted::{Secret, Untrusted};
 

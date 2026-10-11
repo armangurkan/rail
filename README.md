@@ -144,8 +144,10 @@ refused with "use an absolute path".
 | `rail_cancel` | Cancels a login or consent that has not reached the save. |
 | `rail_secrets_configure` | Moves tokens between the keyring, the file and 1Password (see below). Needs your confirmation. |
 | `rail_account_remove` | Removes an account's config entry and tokens; its mail stays. Destructive; needs your confirmation. |
+| `rail_sync_status` | Each account's sync: phase, counts of messages, threads and bodies stored, last success, last error (Gmail's words quoted as outside text) and next attempt. Read-only. No mail content. |
+| `rail_sync_now` | Wakes one account's sync, or all, instead of waiting for the next poll; returns at once. No mail content. |
 
-There are no tools that send mail yet.
+No tool returns mail content (subjects, senders, snippets or bodies) yet, and none sends mail; `rail search` is a terminal command only, so agents still cannot read your mail.
 
 `rail_account_remove` and `rail_secrets_configure` ask you to confirm in the agent's own dialog
 (MCP elicitation), showing what changes: the account and what is removed, or the old and new

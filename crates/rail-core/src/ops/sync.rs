@@ -159,6 +159,24 @@ pub struct SyncNowResponse {
     pub targets: Vec<SyncTarget>,
 }
 
+/// The arguments of the `rail_sync_now` MCP tool: which account to wake. No way to subscribe.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSyncNow {
+    /// An account's name or address; every account when absent.
+    #[serde(default)]
+    pub account: Option<String>,
+}
+
+impl AgentSyncNow {
+    pub fn into_request(self) -> SyncNowRequest {
+        SyncNowRequest {
+            account: self.account,
+            watch: false,
+        }
+    }
+}
+
 /// `search`: the store's full-text index and Gmail's own search, merged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
