@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use super::parts::{Checked, engine_ended, finish_writer, restarts_after, stop_engine, stopped_by};
+use super::parts::{
+    Checked, ConfigStamp, engine_ended, finish_writer, restarts_after, stop_engine, stopped_by,
+};
 use super::{MAX_WRITER_RESTARTS, SyncManager, lock};
 use crate::daemon::DaemonContext;
 use crate::ops::{ErrorCode, OpError};
@@ -29,12 +31,17 @@ impl SyncManager {
         });
     }
 
-    /// Reconcile when `config.toml` changed on disk since the last look, or a failed account
-    /// is due another try.
+    /// Reconcile when `config.toml` changed on disk since the last look (its time or its
+    /// contents), or a failed account is due another try.
     pub async fn refresh_if_changed(&self, ctx: &DaemonContext) {
         let path = ctx.paths.config_file();
-        let now = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-        let seen = *lock(&self.config_mtime);
+        // A check that could not run counts as a change: the reconcile reads the file again
+        // and reports its own errors.
+        let now = ctx
+            .blocking(move || Ok(ConfigStamp::read(&path)))
+            .await
+            .unwrap_or_default();
+        let seen = lock(&self.config_stamp).clone();
         let due = self.writer_failure().is_none() && self.engines.lock().await.retry_due();
         if now != seen || due {
             self.reconcile(ctx).await;

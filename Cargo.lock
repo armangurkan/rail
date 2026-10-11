@@ -2569,6 +2569,7 @@ dependencies = [
  "ratatui",
  "reqwest",
  "rmcp",
+ "rustix",
  "schemars",
  "serde",
  "serde_json",

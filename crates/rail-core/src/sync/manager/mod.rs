@@ -11,16 +11,16 @@ mod supervise;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use tokio::sync::watch;
 use tokio::time::Instant;
 
 pub(crate) use self::parts::unobserved;
 use self::parts::{
-    Engines, PlannedAccount, Prepared, Running, failed_status, finish_writer, initial_status, key,
-    named, needs_login, not_running, not_syncing, read_config, retry_observer, shutting_down,
-    stop_engine, stop_engine_within, unsupported, writer_gone,
+    ConfigStamp, Engines, PlannedAccount, Prepared, Running, failed_status, finish_writer,
+    initial_status, key, named, needs_login, not_running, not_syncing, read_config, retry_observer,
+    shutting_down, stop_engine, stop_engine_within, unsupported, writer_gone,
 };
 use super::batch::{Batch, StateUpdate};
 use super::engine::{Engine, EngineParts};
@@ -87,7 +87,8 @@ pub struct SyncManager {
     board: StatusBoard,
     factory: ProviderFactory,
     configured: AtomicUsize,
-    config_mtime: Mutex<Option<SystemTime>>,
+    /// `config.toml` as the last reconcile read it, for the periodic change check.
+    config_stamp: Mutex<ConfigStamp>,
     /// The last `config.toml` that parsed, for a writer restart while the file is invalid.
     last_config: Mutex<Option<Config>>,
     /// True once the first reconcile has finished, well or not.
@@ -115,7 +116,7 @@ impl SyncManager {
             board: StatusBoard::default(),
             factory,
             configured: AtomicUsize::new(0),
-            config_mtime: Mutex::new(None),
+            config_stamp: Mutex::new(ConfigStamp::default()),
             last_config: Mutex::new(None),
             settled: watch::Sender::new(false),
             writer_failure: Mutex::new(None),
@@ -222,10 +223,10 @@ impl SyncManager {
 
     async fn load_config(&self, ctx: &DaemonContext, fallback: bool) -> Result<Config, OpError> {
         let path = ctx.paths.config_file();
-        let (mtime, parsed) = ctx.blocking(move || Ok(read_config(&path))).await?;
+        let (stamp, parsed) = ctx.blocking(move || Ok(read_config(&path))).await?;
         // Remembered before the parse result counts: an invalid file is warned about once,
         // not again at every check.
-        *lock(&self.config_mtime) = mtime;
+        *lock(&self.config_stamp) = stamp;
         let config = match parsed {
             Ok(config) => {
                 *lock(&self.last_config) = Some(config.clone());

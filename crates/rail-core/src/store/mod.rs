@@ -48,7 +48,9 @@ pub enum StoreError {
 }
 
 impl StoreError {
-    /// Busy or locked databases clear up on their own; everything else will not.
+    /// Busy or locked databases clear up on their own, and so does an older store: the
+    /// daemon's writer migrates it when it opens it. Everything else will not, a store newer
+    /// than this build included.
     pub fn class(&self) -> ErrorClass {
         match self {
             Self::Sqlite(e)
@@ -59,6 +61,7 @@ impl StoreError {
             {
                 ErrorClass::Transient
             }
+            Self::NotSetUp { found, expected } if found < expected => ErrorClass::Transient,
             Self::Sqlite(_)
             | Self::CreateDir { .. }
             | Self::TooNew { .. }
@@ -189,6 +192,8 @@ impl Store {
 mod tests {
     use super::*;
     use rusqlite::{OptionalExtension, params};
+
+    use crate::ops::OpError;
 
     fn table_names(store: &Store) -> Vec<String> {
         let mut stmt = store
@@ -409,6 +414,25 @@ mod tests {
             None,
         ));
         assert_eq!(constraint.class(), ErrorClass::Permanent);
+
+        // An older store is migrated by the daemon's writer when it opens it: waiting mends it.
+        let older = StoreError::NotSetUp {
+            found: 4,
+            expected: 5,
+        };
+        assert_eq!(older.class(), ErrorClass::Transient);
+        assert_eq!(OpError::from(older).class, ErrorClass::Transient);
+        let unmigrated = StoreError::NotSetUp {
+            found: 0,
+            expected: 5,
+        };
+        assert_eq!(unmigrated.class(), ErrorClass::Transient);
+        // A newer store needs a newer build; no retry mends that.
+        let newer = StoreError::NotSetUp {
+            found: 6,
+            expected: 5,
+        };
+        assert_eq!(newer.class(), ErrorClass::Permanent);
     }
 
     #[cfg(unix)]

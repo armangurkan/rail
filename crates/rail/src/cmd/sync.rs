@@ -30,9 +30,28 @@ const POLL: Duration = Duration::from_secs(1);
 const INTERRUPTED: u8 = 130;
 /// What a watch that saw no change for `STALL` says.
 const STALLED: &str = "still syncing in the daemon; `rail doctor` shows progress";
-/// How often one watch follows the daemon to a new one (it stopped, or was replaced) before it
-/// gives up.
+/// How often one watch follows a restart (a new daemon, or the daemon restarting its sync)
+/// before it gives up.
 const MAX_REJOINS: u32 = 3;
+
+/// Why a watch asks the daemon to sync again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rejoin {
+    /// The connection closed: a new daemon took over (an upgrade, `rail daemon stop`).
+    DaemonGone,
+    /// A pass count went down on a live connection: the daemon restarted its sync engines
+    /// (its store writer restarted, or `config.toml` changed).
+    SyncRestarted,
+}
+
+impl Rejoin {
+    fn note(self) -> &'static str {
+        match self {
+            Self::DaemonGone => "the daemon restarted; asking the new one to sync",
+            Self::SyncRestarted => "sync restarted in the daemon; asking it to sync again",
+        }
+    }
+}
 
 /// How a watch ended; each carries the accounts' statuses then.
 enum Ended {
@@ -72,7 +91,7 @@ pub async fn run(
 }
 
 /// One watch: the connection, its notifications, the passes to wait for, and each account's
-/// last pass count (a count that goes down means a new daemon).
+/// last pass count (a count that goes down means a restart).
 struct Session<'a> {
     link: &'a Connector,
     request: SyncNowRequest,
@@ -100,33 +119,33 @@ impl<'a> Session<'a> {
         })
     }
 
-    /// The targets' statuses. When the daemon went away (the connection closed) or was
-    /// replaced (a pass count went down), connect to the new one, send `sync.now` again and
-    /// wait for the passes it names instead: the old daemon's pass numbers mean nothing there.
+    /// The targets' statuses. When the daemon went away (the connection closed) or restarted
+    /// its sync (a pass count went down), connect again, send `sync.now` again and wait for
+    /// the passes it names instead: the old pass numbers mean nothing there.
     async fn statuses(&mut self) -> Result<Vec<AccountSyncStatus>, OpError> {
-        match statuses(&self.client, &self.targets).await {
+        let why = match statuses(&self.client, &self.targets).await {
             Ok(mine) if !went_back(&self.seen, &mine) => {
                 self.seen = passes(&mine);
                 return Ok(mine);
             }
-            Ok(_) => {}
-            Err(_) if self.client.is_closed() => {}
+            Ok(_) => Rejoin::SyncRestarted,
+            Err(_) if self.client.is_closed() => Rejoin::DaemonGone,
             Err(error) => return Err(error),
-        }
-        self.rejoin().await?;
+        };
+        self.rejoin(why).await?;
         let mine = statuses(&self.client, &self.targets).await?;
         self.seen = passes(&mine);
         Ok(mine)
     }
 
-    async fn rejoin(&mut self) -> Result<(), OpError> {
+    async fn rejoin(&mut self, why: Rejoin) -> Result<(), OpError> {
         self.rejoins += 1;
         if self.rejoins > MAX_REJOINS {
             return Err(OpError::internal(
-                "the daemon kept stopping during `rail sync`",
+                "the daemon or its sync kept restarting during `rail sync`",
             ));
         }
-        eprintln!("the daemon restarted; asking the new one to sync");
+        eprintln!("{}", why.note());
         self.client = self.link.client().await?;
         self.notes = self.client.notifications();
         let fresh = self.client.call::<SyncNow>(&self.request).await?.targets;
@@ -142,7 +161,7 @@ fn passes(mine: &[AccountSyncStatus]) -> HashMap<String, u64> {
         .collect()
 }
 
-/// True when an account's pass count went down: the daemon is a new one.
+/// True when an account's pass count went down: the daemon, or its sync, restarted.
 fn went_back(seen: &HashMap<String, u64>, mine: &[AccountSyncStatus]) -> bool {
     mine.iter().any(|s| {
         seen.get(&s.address)
@@ -373,6 +392,21 @@ pub fn final_lines(status: &AccountSyncStatus) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pass count that went down on a live connection is the daemon restarting its sync
+    /// (a writer restart, a config change), not a new daemon; each says what happened.
+    #[test]
+    fn a_sync_restart_is_not_called_a_daemon_restart() {
+        assert_eq!(
+            Rejoin::SyncRestarted.note(),
+            "sync restarted in the daemon; asking it to sync again"
+        );
+        assert!(!Rejoin::SyncRestarted.note().contains("daemon restarted"));
+        assert_eq!(
+            Rejoin::DaemonGone.note(),
+            "the daemon restarted; asking the new one to sync"
+        );
+    }
     use rail_core::config::AccountKind;
     use rail_core::ops::{SyncErrorInfo, SyncPhase, Untrusted};
 

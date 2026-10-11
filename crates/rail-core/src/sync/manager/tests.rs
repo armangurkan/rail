@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::MAX_WRITER_RESTARTS;
+use super::parts::ConfigStamp;
 use crate::daemon::DaemonContext;
 use crate::ops::{AccountSyncStatus, DoctorReport, ErrorCode, SyncPhase};
 use crate::paths::Paths;
@@ -158,12 +159,40 @@ async fn an_invalid_config_leaves_the_engines_and_is_not_read_again_until_it_cha
     ctx.sync.refresh_if_changed(&ctx).await;
     assert_eq!(ctx.sync.search_plan(None).await.0.len(), 1);
     assert!(ctx.sync.has_accounts());
-    // The broken file's time is remembered, so the next check does not read it again.
-    let mtime = std::fs::metadata(ctx.paths.config_file())
-        .and_then(|m| m.modified())
-        .ok();
-    assert!(mtime.is_some());
-    assert_eq!(*ctx.sync.config_mtime.lock().unwrap(), mtime);
+    // The broken file's stamp is remembered, so the next check does not read it again.
+    let stamp = ConfigStamp::read(&ctx.paths.config_file());
+    assert!(stamp.modified.is_some() && stamp.digest.is_some());
+    assert_eq!(*ctx.sync.config_stamp.lock().unwrap(), stamp);
+    ctx.sync.shutdown(Duration::from_secs(5)).await;
+}
+
+/// An edit that keeps the file's length and modification time (two saves within one mtime
+/// tick, or a tool that restores the time) is still noticed: the check compares contents too.
+#[tokio::test]
+async fn an_edit_within_one_mtime_tick_is_noticed_by_its_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ctx = context(&tmp, &MockProvider::new());
+    ctx.sync.reconcile(&ctx).await;
+    until(&ctx, |s| s.passes_completed >= 1).await;
+    let file = ctx.paths.config_file();
+    let mtime = std::fs::metadata(&file).unwrap().modified().unwrap();
+    let renamed = WORK.replace("name = \"work\"", "name = \"wurk\"");
+    assert_eq!(renamed.len(), WORK.len());
+    std::fs::write(&file, &renamed).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(mtime)
+        .unwrap();
+    assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), mtime);
+    ctx.sync.refresh_if_changed(&ctx).await;
+    let status = ctx
+        .sync
+        .status(Some("wurk"))
+        .await
+        .expect("the renamed account is synced");
+    assert_eq!(status[0].name, "wurk");
     ctx.sync.shutdown(Duration::from_secs(5)).await;
 }
 
