@@ -290,7 +290,7 @@ fn panic_inside_the_alternate_screen_restores_the_terminal_before_the_message() 
     let entered = out
         .find("\x1b[?1049h")
         .expect("entered the alternate screen");
-    let left = out.find("\x1b[?1049l").expect("left the alternate screen");
+    let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
     let message = out.find("rail panic test").expect("panic message printed");
     assert!(entered < left && left < message, "{out:?}");
 }

@@ -137,7 +137,7 @@ fn ctrl_c_during_login_wait_restores_the_terminal_and_saves_nothing() {
     let entered = out
         .find("\x1b[?1049h")
         .expect("entered the alternate screen");
-    let left = out.find("\x1b[?1049l").expect("left the alternate screen");
+    let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
     assert!(left > entered, "{out:?}");
     assert!(out[left..].contains("setup cancelled"), "{out:?}");
     assert_eq!(status.code(), Some(1));
@@ -415,7 +415,7 @@ fn a_panic_in_the_mail_screen_restores_the_terminal() {
     let entered = out
         .find("\x1b[?1049h")
         .expect("entered the alternate screen");
-    let left = out.find("\x1b[?1049l").expect("left the alternate screen");
+    let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
     let panicked = out
         .rfind("rail test panic in the mail screen")
         .expect("the panic message");
