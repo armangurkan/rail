@@ -262,6 +262,12 @@ old. The first time in a session Rail asks first, because
 sender you opened it; Rail itself never loads them. A message whose body is not stored yet is
 fetched first. A message with no HTML part says so: its text is all there is.
 
+Two limits of `o`. Firefox installed as a snap (the default on Ubuntu) cannot read hidden folders
+such as `~/.cache`, so it shows a file-not-found page: set `RAIL_CACHE_DIR` to a folder it can read
+(for example `RAIL_CACHE_DIR=$HOME/rail-cache`) or use a browser that is not a snap. And a
+`<meta http-equiv="refresh">` tag in the message can still send the page to another address once
+it is open; the blocking above cannot stop it, so close the tab if the page moves.
+
 Bodies of recent mail (`body_cache_days`) are already in the store. An older message shows
 **fetching…** while the daemon fetches its body from Gmail; the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
