@@ -2530,6 +2530,7 @@ dependencies = [
  "fs4",
  "futures-util",
  "html2text",
+ "html5ever",
  "humantime-serde",
  "icu_properties",
  "keyring",

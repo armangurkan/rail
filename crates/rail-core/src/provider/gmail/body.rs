@@ -1,5 +1,7 @@
-//! `format=full` messages as Rail bodies. HTML is preferred and rendered to text by html2text,
-//! which drops scripts and styles and fetches nothing; plain text is decoded from its charset.
+//! `format=full` messages as Rail bodies. The text part is chosen as a mail reader would (the
+//! HTML of a `multipart/alternative`, the first readable part of a `multipart/mixed`, never a
+//! forwarded `message/rfc822`). HTML becomes text through `html::html_text`, which fetches
+//! nothing and runs in bounded time; plain text is decoded from its charset.
 //! The text keeps its lines and tabs and loses every other control and format character. A
 //! body over `MAX_BODY_BYTES` is cut and ends with `TRUNCATED_MARKER`.
 
@@ -7,10 +9,10 @@ use base64::Engine as _;
 use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 
-use super::html_depth::{MAX_HTML_DEPTH, limit_depth};
+use super::html::html_text;
 use super::metadata::cut;
 use super::wire::{AttachmentBody, Message, Part};
-use super::{COST_GET, GmailProvider, checked_id, safe_id};
+use super::{COST_ATTACHMENT, COST_GET, GmailProvider, checked_id, safe_id};
 use crate::config::model::is_format_char;
 use crate::provider::{AttachmentMeta, Body, ProviderError};
 
@@ -18,7 +20,6 @@ use crate::provider::{AttachmentMeta, Body, ProviderError};
 pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 /// The end of a body Rail cut at `MAX_BODY_BYTES`.
 pub const TRUNCATED_MARKER: &str = "\n\n[Rail kept only the first 10 MiB of this message.]";
-const TEXT_WIDTH: usize = 100;
 const MAX_PART_DEPTH: usize = 32;
 const MAX_ATTACHMENTS: usize = 100;
 const MAX_FILENAME_CHARS: usize = 255;
@@ -28,6 +29,8 @@ const MAX_ATTACHMENT_ID: usize = 1024;
 const MAX_PART_SEGMENT: usize = 16;
 const MAX_PART_ID: usize = 64;
 const MAX_CHARSET_CHARS: usize = 40;
+/// The base64 characters that hold `MAX_BODY_BYTES` (and a little more, so a cut is seen).
+const MAX_BASE64_CHARS: usize = MAX_BODY_BYTES.div_ceil(3) * 4;
 
 const URL_SAFE: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
@@ -54,8 +57,7 @@ pub(crate) struct Chosen {
 
 #[derive(Default)]
 pub(crate) struct Walked {
-    pub html: Option<Chosen>,
-    pub plain: Option<Chosen>,
+    pub chosen: Option<Chosen>,
     pub attachments: Vec<AttachmentMeta>,
 }
 
@@ -89,7 +91,7 @@ impl GmailProvider {
             return Err(unreadable());
         }
         let walked = walk(&message.payload.ok_or_else(unreadable)?);
-        let Some(chosen) = walked.html.or(walked.plain) else {
+        let Some(chosen) = walked.chosen else {
             return Ok(Body {
                 attachments: walked.attachments,
                 ..Body::default()
@@ -115,26 +117,60 @@ impl GmailProvider {
             return Err(unreadable());
         }
         let path = format!("messages/{id}/attachments/{attachment}");
-        let body: AttachmentBody = self.api.get_json(&path, &[], COST_GET).await?;
+        let body: AttachmentBody = self.api.get_json(&path, &[], COST_ATTACHMENT).await?;
         Ok(body.data.unwrap_or_default())
     }
 }
 
-/// The first HTML and plain-text parts that are not attachments, and every attachment.
+/// The part the body is made from, and every attachment.
 pub(crate) fn walk(payload: &Part) -> Walked {
-    let mut walked = Walked::default();
-    visit(payload, &mut walked, 0);
-    walked
+    let mut attachments = Vec::new();
+    collect_attachments(payload, &mut attachments, 0);
+    let chosen = choose(payload, 0).map(|(part, kind)| Chosen {
+        kind,
+        charset: charset(part),
+        data: part.body.data.clone(),
+        attachment_id: part.body.attachment_id.clone(),
+    });
+    Walked {
+        chosen,
+        attachments,
+    }
 }
 
-fn visit(part: &Part, walked: &mut Walked, depth: usize) {
-    if depth > MAX_PART_DEPTH {
+/// The text part a reader shows for `part`: a text leaf itself; the HTML (else the first
+/// readable) alternative of a `multipart/alternative`; the first readable part of any other
+/// multipart. Attachments and forwarded messages are never the body.
+fn choose(part: &Part, depth: usize) -> Option<(&Part, Kind)> {
+    if depth > MAX_PART_DEPTH || !part.filename.is_empty() {
+        return None;
+    }
+    let mime = part.mime_type.to_ascii_lowercase();
+    match mime.as_str() {
+        "text/html" => Some((part, Kind::Html)),
+        "text/plain" => Some((part, Kind::Plain)),
+        "multipart/alternative" => {
+            let mut options = part.parts.iter().filter_map(|p| choose(p, depth + 1));
+            let first = options.next()?;
+            if first.1 == Kind::Html {
+                return Some(first);
+            }
+            Some(options.find(|c| c.1 == Kind::Html).unwrap_or(first))
+        }
+        m if m.starts_with("multipart/") => part.parts.iter().find_map(|p| choose(p, depth + 1)),
+        _ => None,
+    }
+}
+
+/// Every part with a file name, outside forwarded messages, at most `MAX_ATTACHMENTS`.
+fn collect_attachments(part: &Part, attachments: &mut Vec<AttachmentMeta>, depth: usize) {
+    if depth > MAX_PART_DEPTH || attachments.len() >= MAX_ATTACHMENTS {
         return;
     }
     let mime = part.mime_type.to_ascii_lowercase();
     if !part.filename.is_empty() {
-        if walked.attachments.len() < MAX_ATTACHMENTS && part_id_ok(&part.part_id) {
-            walked.attachments.push(AttachmentMeta {
+        if part_id_ok(&part.part_id) {
+            attachments.push(AttachmentMeta {
                 part_id: part.part_id.clone(),
                 filename: part.filename.chars().take(MAX_FILENAME_CHARS).collect(),
                 mime_type: mime.chars().take(MAX_MIME_CHARS).collect(),
@@ -143,19 +179,11 @@ fn visit(part: &Part, walked: &mut Walked, depth: usize) {
         }
         return;
     }
-    let chosen = |kind| Chosen {
-        kind,
-        charset: charset(part),
-        data: part.body.data.clone(),
-        attachment_id: part.body.attachment_id.clone(),
-    };
-    match mime.as_str() {
-        "text/html" if walked.html.is_none() => walked.html = Some(chosen(Kind::Html)),
-        "text/plain" if walked.plain.is_none() => walked.plain = Some(chosen(Kind::Plain)),
-        _ => {}
+    if mime == "message/rfc822" {
+        return;
     }
     for child in &part.parts {
-        visit(child, walked, depth + 1);
+        collect_attachments(child, attachments, depth + 1);
     }
 }
 
@@ -165,28 +193,45 @@ fn part_id_ok(id: &str) -> bool {
         || (id.len() <= MAX_PART_ID && id.split('.').all(|s| safe_id(s, MAX_PART_SEGMENT)))
 }
 
-/// The `charset` parameter of the part's `Content-Type`.
+/// The `charset` parameter of the part's `Content-Type`, read as a parameter (`; charset=x`),
+/// not found as a substring.
 fn charset(part: &Part) -> Option<String> {
     let header = part
         .headers
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case("content-type"))?;
-    let lower = header.value.to_ascii_lowercase();
-    let start = lower.find("charset=")? + "charset=".len();
-    let name: String = header.value[start..]
-        .trim_start_matches('"')
-        .chars()
-        .take_while(|c| !matches!(c, '"' | ';' | ' ' | '\t'))
-        .take(MAX_CHARSET_CHARS)
-        .collect();
-    (!name.is_empty()).then_some(name)
+    header.value.split(';').skip(1).find_map(|param| {
+        let (key, value) = param.split_once('=')?;
+        if !key.trim().eq_ignore_ascii_case("charset") {
+            return None;
+        }
+        let value = value.trim();
+        let value = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .unwrap_or(value)
+            .trim();
+        let valid = !value.is_empty()
+            && value.len() <= MAX_CHARSET_CHARS
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'));
+        valid.then(|| value.to_string())
+    })
 }
 
+/// Gmail's base64 (URL-safe, or standard when it holds `+` or `/`), decoding only the prefix
+/// that holds `MAX_BODY_BYTES`: the rest would be cut anyway.
 fn decode_base64(data: &str) -> Result<Vec<u8>, ProviderError> {
-    URL_SAFE
-        .decode(data.as_bytes())
-        .or_else(|_| STANDARD.decode(data.as_bytes()))
-        .map_err(|_| unreadable())
+    let prefix = data
+        .get(..data.len().min(MAX_BASE64_CHARS))
+        .ok_or_else(unreadable)?;
+    let engine = if prefix.bytes().any(|b| b == b'+' || b == b'/') {
+        &STANDARD
+    } else {
+        &URL_SAFE
+    };
+    engine.decode(prefix.as_bytes()).map_err(|_| unreadable())
 }
 
 /// Decode `data` from `charset`, cut to `MAX_BODY_BYTES`, render HTML to text, and clean the
@@ -200,7 +245,7 @@ pub(crate) fn render(
     let decoded = to_text(&data[..data.len().min(MAX_BODY_BYTES)], charset);
     let kept = cut(&decoded, MAX_BODY_BYTES);
     let rendered = match kind {
-        Kind::Html => clean(&html_to_text(kept)?),
+        Kind::Html => clean(&html_text(kept)),
         Kind::Plain => clean(kept),
     };
     let mut text = cut(&rendered, MAX_BODY_BYTES).to_string();
@@ -226,19 +271,6 @@ fn to_text(bytes: &[u8], charset: Option<&str>) -> String {
         Some(decode) => decode(bytes),
         None => String::from_utf8_lossy(bytes).into_owned(),
     }
-}
-
-/// html2text renders offline: it parses with html5ever and drops `head`, `script`, `style`
-/// and `link`; an `img` becomes its alt text. Nothing is fetched. Nesting is bounded first
-/// (html5ever is quadratic in depth), and deep indentation may run past `TEXT_WIDTH` rather
-/// than fail.
-fn html_to_text(html: &str) -> Result<String, ProviderError> {
-    let html = limit_depth(html, MAX_HTML_DEPTH);
-    html2text::config::plain_no_decorate()
-        .allow_width_overflow()
-        .string_from_read(html.as_bytes(), TEXT_WIDTH)
-        .map(|text| text.trim_end().to_string())
-        .map_err(|_| unreadable())
 }
 
 /// `text` with lines (CRLF and a lone CR become LF) and tabs kept, and every other control

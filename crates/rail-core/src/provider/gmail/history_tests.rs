@@ -175,7 +175,7 @@ async fn empty_history_pages_with_tokens_still_end_and_move_the_cursor() {
 }
 
 #[tokio::test]
-async fn endless_empty_history_pages_never_say_more_with_the_same_cursor() {
+async fn endless_empty_history_pages_resync_rather_than_skip_ahead() {
     let gmail = Gmail::start().await;
     Mock::given(path(format!("{API_PATH}/history")))
         .respond_with(ResponseTemplate::new(200).set_body_json(history_json(
@@ -186,17 +186,83 @@ async fn endless_empty_history_pages_never_say_more_with_the_same_cursor() {
         .expect(MAX_HISTORY_PAGES as u64)
         .mount(&gmail.server)
         .await;
+    let err = gmail
+        .provider()
+        .history(&SyncCursor("100".into()))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err,
+        ProviderError::CursorExpired,
+        "never more = true with the same cursor, never a jump past unread pages"
+    );
+}
+
+#[tokio::test]
+async fn one_call_adds_at_most_the_cap_and_says_there_is_more() {
+    let gmail = Gmail::start().await;
+    let per_record = 100;
+    let records: Vec<serde_json::Value> = (0..MAX_CHANGES_ADDED / per_record + 3)
+        .map(|r| {
+            let adds: Vec<serde_json::Value> = (0..per_record)
+                .map(|i| added(&format!("n{r}x{i}")))
+                .collect();
+            json!({"id": (1000 + r).to_string(), "messagesAdded": adds})
+        })
+        .collect();
+    Mock::given(path(format!("{API_PATH}/history")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(history_json(
+            json!(records),
+            None,
+            "9999",
+        )))
+        .expect(1)
+        .mount(&gmail.server)
+        .await;
+    // Every message has vanished by the time its metadata is asked for: dropped, not skipped.
+    Mock::given(wiremock::matchers::path_regex(format!(
+        "^{API_PATH}/messages/.+"
+    )))
+    .respond_with(ResponseTemplate::new(404))
+    .mount(&gmail.server)
+    .await;
     let set = gmail
         .provider()
         .history(&SyncCursor("100".into()))
         .await
         .unwrap();
-    assert!(
-        !(set.more && set.cursor == SyncCursor("100".into())),
-        "{set:?}"
-    );
-    assert_eq!(set.cursor, SyncCursor("150".into()));
-    assert!(!set.more);
+    assert!(set.more);
+    let last = 1000 + MAX_CHANGES_ADDED / per_record - 1;
+    assert_eq!(set.cursor, SyncCursor(last.to_string()));
+    let fetched = gmail.server.received_requests().await.unwrap().len() - 1;
+    assert_eq!(fetched, MAX_CHANGES_ADDED);
+}
+
+#[tokio::test]
+async fn many_adds_and_deletes_in_one_window_net_out() {
+    let gmail = Gmail::start().await;
+    let records: Vec<serde_json::Value> = (0..400)
+        .map(|r| {
+            let ids: Vec<serde_json::Value> = (0..10).map(|i| added(&format!("m{r}x{i}"))).collect();
+            json!({"id": (1000 + r).to_string(), "messagesAdded": ids.clone(), "messagesDeleted": ids})
+        })
+        .collect();
+    Mock::given(path(format!("{API_PATH}/history")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(history_json(
+            json!(records),
+            None,
+            "9999",
+        )))
+        .mount(&gmail.server)
+        .await;
+    let set = gmail
+        .provider()
+        .history(&SyncCursor("100".into()))
+        .await
+        .unwrap();
+    assert!(set.added.is_empty());
+    assert_eq!(set.deleted.len(), 4000);
+    assert_eq!(gmail.server.received_requests().await.unwrap().len(), 1);
 }
 
 #[tokio::test]

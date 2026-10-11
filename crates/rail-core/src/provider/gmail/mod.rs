@@ -3,7 +3,9 @@
 
 mod body;
 mod history;
-mod html_depth;
+mod html;
+#[cfg(test)]
+mod html_tests;
 mod labels;
 pub(crate) mod list;
 pub(crate) mod metadata;
@@ -25,7 +27,7 @@ use super::{
 };
 
 pub use body::{MAX_BODY_BYTES, TRUNCATED_MARKER};
-pub use history::{MAX_HISTORY_PAGES, MAX_HISTORY_RECORDS};
+pub use history::{MAX_CHANGES_ADDED, MAX_HISTORY_PAGES, MAX_HISTORY_RECORDS};
 
 pub use metadata::{
     MAX_ADDRESSES, MAX_HEADER_BYTES, MAX_SNIPPET_CHARS, MAX_SUBJECT_CHARS, METADATA_HEADERS,
@@ -48,6 +50,7 @@ pub(crate) const COST_GET: u32 = 20;
 pub(crate) const COST_LABELS: u32 = 1;
 pub(crate) const COST_PROFILE: u32 = 1;
 pub(crate) const COST_HISTORY: u32 = 2;
+pub(crate) const COST_ATTACHMENT: u32 = 5;
 
 /// The most server hits one search asks for.
 pub const MAX_SEARCH_RESULTS: usize = 100;

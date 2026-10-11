@@ -326,3 +326,80 @@ fn deeply_nested_html_renders_quickly_and_keeps_its_text() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_forwarded_html_message_does_not_replace_the_plain_text() {
+    let gmail = Gmail::start().await;
+    let payload = json!({
+        "partId": "", "mimeType": "multipart/mixed", "filename": "", "headers": [], "body": {"size": 0},
+        "parts": [
+            part_json("text/plain", "text/plain; charset=utf-8", b"See below."),
+            {"partId": "1", "mimeType": "message/rfc822", "filename": "", "headers": [], "body": {"size": 0},
+             "parts": [{"partId": "1.0", "mimeType": "multipart/alternative", "filename": "", "headers": [],
+                        "body": {"size": 0},
+                        "parts": [part_json("text/html", "text/html", b"<p>forwarded</p>")]}]}
+        ]
+    });
+    let body = body_of(&gmail, payload).await.unwrap();
+    assert_eq!(body.text, "See below.");
+    assert_eq!(body.html, None);
+}
+
+#[tokio::test]
+async fn the_html_of_each_alternative_is_preferred_inside_related_parts() {
+    let gmail = Gmail::start().await;
+    let payload = json!({
+        "partId": "", "mimeType": "multipart/mixed", "filename": "", "headers": [], "body": {"size": 0},
+        "parts": [
+            {"partId": "0", "mimeType": "multipart/alternative", "filename": "", "headers": [], "body": {"size": 0},
+             "parts": [
+                part_json("text/plain", "text/plain", b"plain"),
+                {"partId": "0.1", "mimeType": "multipart/related", "filename": "", "headers": [], "body": {"size": 0},
+                 "parts": [part_json("text/html", "text/html", b"<p>rich</p>")]}
+             ]},
+            part_json("text/html", "text/html", b"<p>a later part</p>")
+        ]
+    });
+    let body = body_of(&gmail, payload).await.unwrap();
+    assert_eq!(body.text, "rich");
+}
+
+#[tokio::test]
+async fn the_charset_is_read_as_a_parameter() {
+    let gmail = Gmail::start().await;
+    let latin1 = b"caf\xe9";
+    let cases = [
+        (
+            "m1",
+            "text/plain; format=flowed; CHARSET = \"iso-8859-1\"",
+            "café",
+        ),
+        (
+            "m2",
+            "text/plain; name=\"charset=iso-8859-1\"",
+            "caf\u{FFFD}",
+        ),
+        ("m3", "text/plain; xcharset=iso-8859-1", "caf\u{FFFD}"),
+    ];
+    for (id, content_type, expected) in cases {
+        let body = body_as(&gmail, id, part_json("text/plain", content_type, latin1))
+            .await
+            .unwrap();
+        assert_eq!(body.text, expected, "{content_type}");
+    }
+}
+
+#[tokio::test]
+async fn standard_base64_is_read_too() {
+    let gmail = Gmail::start().await;
+    let mut part = part_json("text/plain", "text/plain", b"");
+    // "\u{fb}\u{ff}" in standard base64 holds '+' and '/'.
+    let data = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        "a\u{fb}\u{ff}?>".as_bytes(),
+    );
+    assert!(data.contains('+') || data.contains('/'), "{data}");
+    part["body"]["data"] = json!(data);
+    let body = body_of(&gmail, part).await.unwrap();
+    assert_eq!(body.text, "a\u{fb}\u{ff}?>");
+}

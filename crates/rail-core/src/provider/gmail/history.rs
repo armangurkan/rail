@@ -15,6 +15,9 @@ pub const MAX_HISTORY_PAGES: usize = 10;
 /// History records read from one page (the page size Rail asks for); a page carrying more is
 /// cut there and the next call resumes after the last record kept.
 pub const MAX_HISTORY_RECORDS: usize = 500;
+/// Added messages one call reads (and fetches metadata for); past this it stops after the
+/// record that reached it and says there is more.
+pub const MAX_CHANGES_ADDED: usize = 5_000;
 /// Messages (or label changes) kept from one record.
 const MAX_RECORD_ITEMS: usize = 100;
 /// Label ids kept from one label change.
@@ -80,9 +83,8 @@ impl Net {
             }
         }
         for id in message_ids(record.messages_deleted) {
-            if self.added_set.remove(&id) {
-                self.added.retain(|a| *a != id);
-            }
+            // `added` is filtered against `deleted_set` once, in `finish`.
+            self.added_set.remove(&id);
             self.relabels.remove(&id);
             if self.deleted_set.insert(id.clone()) {
                 self.deleted.push(id);
@@ -138,20 +140,19 @@ struct Progress {
 }
 
 impl Progress {
-    /// The cursor and `more` for a call that stopped before Gmail's last page. `more` is only
-    /// set when the cursor moved past `start`: a call never asks to be repeated from where it
-    /// began. With no record to resume after, the mailbox's history id is the cursor.
-    fn resume(self, start: &SyncCursor) -> (SyncCursor, bool) {
+    /// The cursor for a call that stopped before Gmail's last page, with `more` set. It must
+    /// lie past `start`: a call never asks to be repeated from where it began. With no record
+    /// to resume after (pages that promise more and carry nothing), the delta cannot go on
+    /// without skipping what may follow, so the engine resyncs in full: `CursorExpired`.
+    fn resume(self, start: &SyncCursor) -> Result<SyncCursor, ProviderError> {
         let begun = history_number(&start.0);
-        let advanced = self.last_record.filter(|r| history_number(r) > begun);
-        if let Some(record) = advanced {
-            return (SyncCursor(record), true);
+        match self.last_record.filter(|r| history_number(r) > begun) {
+            Some(record) => Ok(SyncCursor(record)),
+            None => {
+                tracing::info!("Gmail's history pages carried nothing to resume after; resyncing");
+                Err(ProviderError::CursorExpired)
+            }
         }
-        tracing::warn!(
-            "Gmail's history pages carried no records to resume after; \
-             moving the cursor to the mailbox's current history id"
-        );
-        (self.latest.map_or_else(|| start.clone(), SyncCursor), false)
     }
 }
 
@@ -171,12 +172,16 @@ impl GmailProvider {
             if let Some(id) = list.history_id.filter(|id| history_number(id).is_some()) {
                 progress.latest = Some(id);
             }
-            let cut = list.history.len() > MAX_HISTORY_RECORDS;
+            let mut cut = list.history.len() > MAX_HISTORY_RECORDS;
             for record in list.history.into_iter().take(MAX_HISTORY_RECORDS) {
                 if history_number(&record.id).is_some() {
                     progress.last_record = Some(record.id.clone());
                 }
                 net.apply(record);
+                if net.added.len() >= MAX_CHANGES_ADDED {
+                    cut = true;
+                    break;
+                }
             }
             match list.next_page_token {
                 _ if cut => break,
@@ -188,8 +193,8 @@ impl GmailProvider {
                 }
             }
         }
-        let (resume, more) = progress.resume(cursor);
-        self.finish(net, resume, more).await
+        let resume = progress.resume(cursor)?;
+        self.finish(net, resume, true).await
     }
 
     async fn history_page(
@@ -222,7 +227,13 @@ impl GmailProvider {
         cursor: SyncCursor,
         more: bool,
     ) -> Result<ChangeSet, ProviderError> {
-        let fetched = self.metadata(&net.added).await?;
+        let deleted = net.deleted_set;
+        let added: Vec<RemoteId> = net
+            .added
+            .into_iter()
+            .filter(|id| !deleted.contains(id))
+            .collect();
+        let fetched = self.metadata(&added).await?;
         let mut relabels = net.relabels;
         let relabeled = net
             .relabel_order
