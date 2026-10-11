@@ -52,6 +52,10 @@ pub(crate) struct Mailbox {
     pub body_delay: Duration,
     pub bodies_in_flight: usize,
     pub max_bodies_in_flight: usize,
+    /// History records one `changes` answer carries at most (0: all); `more` says the rest wait.
+    pub change_page: usize,
+    /// Every `changes` answer says more waits, as a broken server might.
+    pub always_more: bool,
 }
 
 impl Default for Mailbox {
@@ -78,6 +82,8 @@ impl Default for Mailbox {
             body_delay: Duration::ZERO,
             bodies_in_flight: 0,
             max_bodies_in_flight: 0,
+            change_page: 0,
+            always_more: false,
         }
     }
 }
@@ -262,11 +268,21 @@ impl Provider for MockProvider {
         if from < m.expired_below {
             return Err(ProviderError::CursorExpired);
         }
+        let pending: Vec<&(u64, Change)> = m.history.iter().filter(|(id, _)| *id > from).collect();
+        let take = match m.change_page {
+            0 => pending.len(),
+            page => page.min(pending.len()),
+        };
+        let cursor = match take < pending.len() {
+            true => pending[take - 1].0,
+            false => m.history_id,
+        };
         let mut set = ChangeSet {
-            cursor: SyncCursor(m.history_id.to_string()),
+            cursor: SyncCursor(cursor.to_string()),
+            more: take < pending.len() || m.always_more,
             ..ChangeSet::default()
         };
-        for (_, change) in m.history.iter().filter(|(id, _)| *id > from) {
+        for (_, change) in pending.into_iter().take(take) {
             match change {
                 Change::Added(id) if m.broken.contains(id) => set.skipped.push(id.clone()),
                 Change::Added(id) => set.added.extend(m.messages.get(id).cloned()),

@@ -2,10 +2,26 @@
 //! the manager the daemon runs them through.
 
 pub mod batch;
+pub mod engine;
+mod pass;
+pub mod status;
 pub mod writer;
 
+#[cfg(test)]
+mod engine_tests;
+
 pub use batch::{Batch, BatchOutcome, Origin, Prune, StateUpdate, Sweep};
+pub use engine::{Clock, Engine, EngineParts, SyncError};
+pub use status::{StatusBoard, Subscriber};
 pub use writer::{WRITER_QUEUE, WriterHandle, WriterTask, spawn_writer};
 
 /// How long a message found only by server search is kept after it was last searched for.
 pub const SEARCH_KEEP_DAYS: i64 = 14;
+/// Bodies fetched at once.
+pub const BODY_CONCURRENCY: usize = 4;
+/// Bodies per writer batch.
+pub const BODY_BATCH: usize = 16;
+/// Bodies one pass fetches at most; the rest wait for the next pass.
+pub const BODIES_PER_PASS: usize = 500;
+/// Stored for a body Rail could not read, so it is not fetched again every pass.
+pub const UNREADABLE_BODY: &str = "[Rail could not read this message's body.]";

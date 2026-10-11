@@ -12,6 +12,7 @@ pub mod pending;
 pub mod presets;
 pub mod secrets;
 pub mod status;
+pub mod sync;
 pub mod untrusted;
 
 #[cfg(test)]
@@ -44,6 +45,7 @@ pub use status::{
     AccountStatus, AccountSummary, AccountsListRequest, AccountsListResponse, DoctorReport,
     StatusRequest, StatusResponse, TokenState,
 };
+pub use sync::{AccountSyncStatus, SyncErrorInfo, SyncPhase};
 pub use untrusted::{Secret, Untrusted};
 
 /// serde default for flags that are on unless the caller says otherwise.
