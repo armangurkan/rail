@@ -59,7 +59,8 @@ pub enum Command {
     Doctor,
     /// Serve Rail's tools to an AI coding agent over MCP on stdin and stdout.
     Mcp,
-    /// The background daemon that runs every operation. Started on demand.
+    /// The background daemon that runs every operation. Started on demand, or at login once
+    /// `rail daemon install` has run.
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,
@@ -74,6 +75,11 @@ pub enum DaemonCommand {
     Status,
     /// Ask the daemon to exit once running saves finish.
     Stop,
+    /// Start the daemon at login: write and enable a systemd user unit (Linux) or a launchd
+    /// agent (macOS) that runs this binary. Stops a daemon already running first.
+    Install,
+    /// Stop, disable and remove the login unit.
+    Uninstall,
 }
 
 #[derive(Debug, Subcommand)]

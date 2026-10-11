@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod mcp;
 pub mod search;
 pub mod secrets;
+pub mod service;
 pub mod setup;
 pub mod sync;
 pub mod text;

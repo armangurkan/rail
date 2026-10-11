@@ -37,6 +37,12 @@ pub fn idle_with_accounts() -> bool {
     var("RAIL_TEST_IDLE_WITH_ACCOUNTS").is_some()
 }
 
+/// A file that receives the service-manager commands (`systemctl`, `launchctl`) instead of
+/// running them, one line each, so no test ever reaches the real service manager.
+pub fn service_log() -> Option<std::path::PathBuf> {
+    var("RAIL_TEST_SERVICE_LOG").map(Into::into)
+}
+
 fn var(name: &str) -> Option<String> {
     if !cfg!(debug_assertions) {
         return None;

@@ -13,6 +13,8 @@ fn rail_env<'a>(cmd: &'a mut Command, dir: &tempfile::TempDir) -> &'a mut Comman
         .env("RAIL_CACHE_DIR", dir.path().join("cache"))
         .env("RAIL_STATE_DIR", dir.path().join("state"))
         .env("RAIL_RUNTIME_DIR", dir.path().join("run"))
+        // `rail doctor` looks for the login unit here, never in the real one.
+        .env("XDG_CONFIG_HOME", dir.path().join("xdg"))
         .env("RAIL_TEST_IDLE_SECS", "2")
         // A configured account in a test must never reach Google, and its daemon must still
         // idle out. Tests that serve a token endpoint set RAIL_TEST_TOKEN_URL again later.
@@ -635,6 +637,9 @@ mod daemon;
 #[cfg(debug_assertions)]
 #[path = "cli/pty.rs"]
 mod pty;
+
+#[path = "cli/service.rs"]
+mod service;
 
 #[path = "cli/sync.rs"]
 mod sync;

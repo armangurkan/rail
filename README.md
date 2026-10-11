@@ -203,8 +203,10 @@ It talks to the background daemon like every other command.
 | `rail daemon status` | Says whether the background daemon is running, with its pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any account being saved is written, and waits (up to 35 seconds) until it has. Says so and exits 1 if it has not exited by then. |
 | `rail daemon run` | Runs the daemon in the foreground. Rail starts it this way by itself; you rarely need it. |
+| `rail daemon install` | Starts Rail's daemon at login, so mail keeps syncing without a command running: on Linux it writes `~/.config/systemd/user/rail.service` (under `$XDG_CONFIG_HOME` when set) and runs `systemctl --user daemon-reload` and `systemctl --user enable --now rail.service`; on macOS it writes `~/Library/LaunchAgents/io.github.vitosans.rail.plist` and loads it with `launchctl bootstrap`. A daemon already running is stopped first, so only one runs. Running it again rewrites the unit only if it changed (it says `already up to date` otherwise) and enables and starts it again. On Linux it first checks that a user service manager answers (`systemctl --user show --property=Version`); where none does (some containers), it says so, changes nothing and exits 1. If enabling fails, the unit is disabled and removed again, so nothing is left half-installed. See [Start at login](#start-at-login). |
+| `rail daemon uninstall` | Stops and disables the login unit and removes its file. Says `not installed; nothing to remove` and exits 0 when none is installed. Where no user service manager answers, it still removes the file (and its enable link) and says there was nothing to stop. |
 | `rail mcp` | Serves Rail's tools to an AI agent over MCP on standard input and output (see [Use Rail from an AI agent](#use-rail-from-an-ai-agent-mcp)). |
-| `rail doctor` | Checks the config file, the store (with its size), the secrets backend, every account's tokens and `ai_send` policy, and the daemon, plus each account's sync: its phase, last success, counts and last error (an account that needs a login, or whose last sync failed with a permanent error and is not being retried, fails the check; any other past error is a warning). The checks run in the daemon, so if it cannot start, `rail doctor` fails outright with the reason (for example a socket path too long for a Unix socket; set `RAIL_RUNTIME_DIR` to a shorter directory). Exits non-zero for config, store, secrets-backend and token-read errors and for a Gmail account that needs a login or whose sync failed for good; a Microsoft 365 account with no tokens shows as `missing` without failing the check (see [Check everything](#check-everything)). |
+| `rail doctor` | Checks the config file, the store (with its size), the secrets backend, every account's tokens and `ai_send` policy, and the daemon, plus each account's sync: its phase, last success, counts and last error (an account that needs a login, or whose last sync failed with a permanent error and is not being retried, fails the check; any other past error is a warning). The checks run in the daemon, so if it cannot start, `rail doctor` fails outright with the reason (for example a socket path too long for a Unix socket; set `RAIL_RUNTIME_DIR` to a shorter directory). Also says whether the login unit (`rail daemon install`) is installed, enabled and still runs this binary; that line never changes the exit status. Exits non-zero for config, store, secrets-backend and token-read errors and for a Gmail account that needs a login or whose sync failed for good; a Microsoft 365 account with no tokens shows as `missing` without failing the check (see [Check everything](#check-everything)). |
 
 ## Setup
 
@@ -435,7 +437,10 @@ not touched.
 version, the secrets backend, and token presence and last sync time for every account, then one `sync`
 line per account (its phase, last success in UTC and what the store holds, or `needs a login`,
 or its last error with the provider's words quoted under it; Microsoft 365 accounts show `skip`),
-then ends with an `ok   daemon` line naming the daemon that ran the checks. An account that needs a
+then a `login` line (`skip` when `rail daemon install` has not run; `ok` when the unit is installed
+and enabled; `warn` when it is installed but not enabled, or when it no longer matches what this
+binary would write, for example after you moved the `rail` binary; the `login` line never changes
+the exit status), then ends with an `ok   daemon` line naming the daemon that ran the checks. An account that needs a
 login, or whose last sync failed with a permanent error (Gmail refusing a request) and is not
 being retried, fails the check; any other past error is a `warn` line. Text Rail did not write (a keyring's or SQLite's
 message, the config parser's) is marked `from outside Rail` and shown in quotes with control
@@ -534,6 +539,7 @@ nothing enforces it.
 | Tokens | OS keyring (service `rail`), `~/.local/share/rail/secrets.json` with `secrets = "file"`, or 1Password items with `secrets = "1password"` |
 | Logs | `~/.local/state/rail/rail.log` |
 | Daemon socket | `$XDG_RUNTIME_DIR/rail/rail.sock` (the state directory where there is no runtime directory, as on macOS) |
+| Login unit (`rail daemon install`) | `$XDG_CONFIG_HOME/systemd/user/rail.service` (default `~/.config`); on macOS `~/Library/LaunchAgents/io.github.vitosans.rail.plist` |
 
 macOS uses the platform directories under `~/Library/Application Support/rail` instead. Override any
 location with `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR`, `RAIL_CACHE_DIR`, `RAIL_STATE_DIR` and
@@ -562,7 +568,7 @@ fresh daemon, starting one if needed. A request that only reads is sent again on
 one that changes something (beginning a login or a consent) is not, and the wizard asks you to try
 again. A login that was waiting in the stopped daemon is gone: retry it.
 You never start it yourself: the first command that needs it starts `rail daemon run` in the
-background. While any account is configured it keeps running and syncs every Gmail account in
+background (or, after `rail daemon install`, your login does; see [Start at login](#start-at-login)). While any account is configured it keeps running and syncs every Gmail account in
 the background: labels, envelopes for the configured window, and bodies for recent threads,
 then it checks each account for new mail every `poll_interval`. With no account configured it
 exits after ten minutes with no client connected and no login waiting. It follows
@@ -614,6 +620,34 @@ When a command or a step of the setup wizard fails, it shows Rail's own message 
 starting `hint:`, what to do next. Words from outside Rail (a provider's error description, the system's error text) come on a
 line of their own, quoted and with control characters escaped. No error ever shows a token, a
 client secret or an authorization code.
+
+### Start at login
+
+`rail daemon install` writes a unit that runs the `rail` binary you ran it with (its full,
+resolved path: install again after moving or upgrading it to a new place) as `rail daemon run`.
+The unit sets `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR`, `RAIL_CACHE_DIR`, `RAIL_STATE_DIR` and
+`RAIL_RUNTIME_DIR` to the directories your shell resolved at install time, and `PATH` to
+`/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` plus the directory of `op_path` if you set one, so
+the daemon finds the same files and the same `op` wherever it starts. Rail writes only values it
+resolved itself: paths are quoted for systemd (`%` doubled, `"` and `\` escaped) or XML-escaped
+for launchd, and a path with a newline or another control character (or, for `op_path`'s
+directory, a `:`) is refused with an error instead of being written. The unit restarts the
+daemon if it fails (at most five times in five minutes) and not when it stops cleanly
+(`rail daemon stop`). `rail doctor` shows whether it is installed and enabled, and warns when
+it no longer matches this binary.
+
+On macOS the agent gets only those variables (launchd adds little more than `HOME`, `USER` and
+`TMPDIR`). On Linux, a systemd user service also inherits the user service manager's own
+environment, so the unit lists `UnsetEnvironment=DISPLAY WAYLAND_DISPLAY XAUTHORITY BROWSER
+RUST_LOG OP_ACCOUNT OP_SERVICE_ACCOUNT_TOKEN OP_CONNECT_HOST OP_CONNECT_TOKEN OP_CONFIG_DIR
+OP_BIOMETRIC_UNLOCK_ENABLED`. What the user manager can still pass in: the variables systemd sets
+for every user service (`HOME`, `USER`, `LOGNAME`, `SHELL`, `XDG_RUNTIME_DIR`, `LANG` and the
+like), and anything imported into it by your session or `environment.d` (`systemctl --user
+import-environment`), such as `DBUS_SESSION_BUS_ADDRESS` (which the OS keyring needs, so it is
+kept), `SSH_AUTH_SOCK`, or an `OP_SESSION_<account>` variable: systemd's `UnsetEnvironment=`
+takes exact names only, and those names depend on your 1Password account. `systemctl --user
+show-environment` lists what your user manager holds. A display and a browser are not needed
+at start: a login you begin from a terminal still opens the browser on that terminal's display.
 
 ### Tokens in 1Password
 
@@ -726,7 +760,10 @@ real 1Password account (a fake `op` script stands in).
 Debug builds honour three test hooks, `RAIL_TEST_OPENER` (a program run instead of the browser),
 `RAIL_TEST_TOKEN_URL` (a token endpoint served by the test) and `RAIL_TEST_IDLE_SECS` (the daemon's
 idle timeout, so the daemons the binary tests start exit seconds after their last client); release
-builds ignore all three. Every binary test runs with the stand-in browser set, so neither it nor a
+builds ignore all three. `RAIL_TEST_SERVICE_LOG` makes `rail daemon install` and `uninstall` append
+the `systemctl` or `launchctl` commands they would run to a file instead of running them, and every
+binary test sets `XDG_CONFIG_HOME` (and the install tests `HOME`) inside its temporary directory,
+so no test reaches the real systemd or launchd. Every binary test runs with the stand-in browser set, so neither it nor a
 daemon it starts can open a real one. On Linux, the tests that drive the wizard and `rail account remove` in a
 pseudo-terminal use util-linux `script` and are skipped where `script` is missing. The tests that
 exercise the real keyring and a real 1Password vault are ignored by default:

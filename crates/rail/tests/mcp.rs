@@ -120,6 +120,7 @@ fn rail_env<'a>(
         .env("RAIL_CACHE_DIR", dir.path().join("cache"))
         .env("RAIL_STATE_DIR", dir.path().join("state"))
         .env("RAIL_RUNTIME_DIR", dir.path().join("run"))
+        .env("XDG_CONFIG_HOME", dir.path().join("xdg"))
         .env("RAIL_TEST_IDLE_SECS", "2")
         .env("RAIL_TEST_OPENER", write_opener(dir))
         .env("RAIL_TEST_URL_FILE", dir.path().join("url.txt"))

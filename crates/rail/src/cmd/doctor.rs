@@ -24,7 +24,8 @@ const WARN: &str = "warn";
 const SKIP: &str = "skip";
 
 /// `rail doctor` over the daemon's `status` and `sync.status` operations: the report, each
-/// account's sync, then the daemon's line. Exits 1 when a check fails, as before; a failed
+/// account's sync, whether the login unit is installed (checked here, never a failure), then
+/// the daemon's line. Exits 1 when a check fails, as before; a failed
 /// `sync.status` is a failed sync check, not an abort.
 pub async fn run(paths: &Paths) -> color_eyre::Result<ExitCode> {
     let client = daemon_link::connector(paths)
@@ -44,6 +45,7 @@ pub async fn run(paths: &Paths) -> color_eyre::Result<ExitCode> {
     };
     print!("{}", render(&status.doctor));
     print!("{sync_text}");
+    println!("{}", crate::cmd::service::autostart_line(paths));
     println!("{} daemon   {}", mark(true), describe(&status.daemon));
     Ok(if status.doctor.is_healthy() && sync_ok {
         ExitCode::SUCCESS

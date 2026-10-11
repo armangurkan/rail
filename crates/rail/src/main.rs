@@ -58,6 +58,8 @@ async fn run(cli: Cli) -> color_eyre::Result<ExitCode> {
             DaemonCommand::Run => cmd::daemon::run(&paths).await,
             DaemonCommand::Status => cmd::daemon::status(&paths).await,
             DaemonCommand::Stop => cmd::daemon::stop(&paths).await,
+            DaemonCommand::Install => cmd::service::install(&paths).await,
+            DaemonCommand::Uninstall => cmd::service::uninstall(&paths).await,
         },
     }
 }
