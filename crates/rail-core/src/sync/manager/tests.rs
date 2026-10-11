@@ -128,7 +128,7 @@ async fn a_writer_that_keeps_dying_stops_sync_and_says_so() {
     );
 }
 
-/// PF18: `sync.now` on an account whose engine failed to start answers with that error.
+/// `sync.now` on an account whose engine failed to start answers with that error.
 #[tokio::test]
 async fn waking_an_account_that_failed_to_start_gives_its_start_error() {
     let tmp = tempfile::tempdir().unwrap();
@@ -146,7 +146,7 @@ async fn waking_an_account_that_failed_to_start_gives_its_start_error() {
     assert_eq!(status.last_error.unwrap().code, "start");
 }
 
-/// PF12: an invalid config is read once per change, and leaves the running engine alone.
+/// An invalid config is read once per change, and leaves the running engine alone.
 #[tokio::test]
 async fn an_invalid_config_leaves_the_engines_and_is_not_read_again_until_it_changes() {
     let tmp = tempfile::tempdir().unwrap();
@@ -193,7 +193,7 @@ impl Gate {
     }
 }
 
-/// Fix round 1: building a provider (an `op read` waiting on 1Password) holds no lock that
+/// Building a provider (an `op read` waiting on 1Password) holds no lock that
 /// `sync.now`, `search` or shutdown need, and shutdown still stops the engines and the writer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_slow_provider_build_blocks_neither_requests_nor_shutdown() {
@@ -250,7 +250,7 @@ async fn a_slow_provider_build_blocks_neither_requests_nor_shutdown() {
     );
 }
 
-/// Fix round 1: a writer restart while `config.toml` is invalid uses the last good config.
+/// A writer restart while `config.toml` is invalid uses the last good config.
 #[tokio::test]
 async fn a_writer_restart_with_an_invalid_config_uses_the_last_good_one() {
     let tmp = tempfile::tempdir().unwrap();
@@ -314,7 +314,7 @@ impl crate::provider::Provider for Panics {
     }
 }
 
-/// Fix round 1: an engine that ends on its own is noticed, shown as stopped with an error,
+/// An engine that ends on its own is noticed, shown as stopped with an error,
 /// and started again (here by `sync.now`, which retries a failed account at once).
 #[tokio::test]
 async fn an_engine_that_panics_is_noticed_and_started_again() {
@@ -412,7 +412,7 @@ async fn reconciles_done(ctx: &DaemonContext) {
     .expect("the reconcile ended");
 }
 
-/// Fix round 2: `sync.now` for every account wakes the healthy engines at once while a failed
+/// `sync.now` for every account wakes the healthy engines at once while a failed
 /// account's retry waits on 1Password.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn waking_every_account_does_not_wait_for_a_failed_ones_retry() {
@@ -447,7 +447,7 @@ async fn waking_every_account_does_not_wait_for_a_failed_ones_retry() {
     ctx.sync.shutdown(Duration::from_secs(5)).await;
 }
 
-/// Fix round 2: an account removed from `config.toml` while its provider was being built
+/// An account removed from `config.toml` while its provider was being built
 /// gets no engine.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_account_removed_while_building_gets_no_engine() {
@@ -470,7 +470,7 @@ async fn an_account_removed_while_building_gets_no_engine() {
     ctx.sync.shutdown(Duration::from_secs(5)).await;
 }
 
-/// Fix round 2: an invalid `config.toml` with a failed account due another try is warned
+/// An invalid `config.toml` with a failed account due another try is warned
 /// about once, not at every check.
 #[tokio::test(start_paused = true)]
 async fn an_invalid_config_is_warned_about_once_even_with_a_retry_due() {

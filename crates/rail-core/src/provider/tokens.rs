@@ -109,7 +109,7 @@ mod tests {
     use super::*;
     use crate::auth::SecretError;
 
-    /// T3-C(b): a keyring or 1Password hiccup stays transient; a corrupt store does not.
+    /// A keyring or 1Password hiccup stays transient; a corrupt store does not.
     #[test]
     fn secret_store_hiccups_stay_transient() {
         let transient = [

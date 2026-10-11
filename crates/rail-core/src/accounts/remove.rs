@@ -130,7 +130,7 @@ mod tests {
         assert!(removal_plan(&paths, "nobody").is_err());
     }
 
-    /// Ruling S3: values from config cannot forge a line or hide text in the question. Config
+    /// Values from config cannot forge a line or hide text in the question. Config
     /// refuses an address with a line break, a space or a format character (a right-to-left
     /// override) outright, so the plan is never built for one.
     #[test]

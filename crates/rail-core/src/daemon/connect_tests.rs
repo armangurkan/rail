@@ -349,7 +349,7 @@ fn hold_daemon_lock(paths: &Paths) -> std::fs::File {
     file
 }
 
-/// Ruling P5: a daemon that stopped answering but still holds `daemon.lock` is still shutting
+/// A daemon that stopped answering but still holds `daemon.lock` is still shutting
 /// down; the connector leaves its socket alone and spawns nothing until the lock is released.
 #[tokio::test]
 async fn the_connector_waits_for_a_silent_daemon_to_release_its_lock() {
@@ -573,7 +573,7 @@ async fn an_oversized_reply_fails_calls_with_its_own_error() {
     assert!(err.message.contains("1 MiB"), "{}", err.message);
 }
 
-/// Fix round 1: a daemon that shares the runtime directory but works on another config, data
+/// A daemon that shares the runtime directory but works on another config, data
 /// or state directory is refused, never used, never stopped and never replaced.
 #[tokio::test]
 async fn a_daemon_with_other_directories_is_refused_and_left_alone() {
@@ -624,7 +624,7 @@ async fn wait_for_socket(paths: &Paths) {
     }
 }
 
-/// Fix round 2: a daemon of this version whose hello does not name its directories cannot be
+/// A daemon of this version whose hello does not name its directories cannot be
 /// shown to work on ours, so ordinary requests are refused with the mismatch error; it can
 /// still be reached without that check, and stopped.
 #[tokio::test]
@@ -655,7 +655,7 @@ async fn a_hello_without_directories_is_refused_but_the_daemon_can_be_stopped() 
     assert!(!paths.socket_file().exists());
 }
 
-/// Fix round 2: an older daemon whose hello lacks the directories is still replaced on a
+/// An older daemon whose hello lacks the directories is still replaced on a
 /// version change.
 #[tokio::test]
 async fn an_older_daemon_without_directories_is_replaced() {
@@ -720,7 +720,7 @@ fn only_reads_and_idempotent_operations_are_resent() {
     }
 }
 
-/// Fix round 3: directories are compared after resolving symlinks, so the same directory
+/// Directories are compared after resolving symlinks, so the same directory
 /// reached through a symlink (or macOS's `/var` -> `/private/var`) is the same daemon; a
 /// genuinely different one is still refused.
 #[cfg(unix)]

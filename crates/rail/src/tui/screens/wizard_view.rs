@@ -629,7 +629,7 @@ mod tests {
         );
     }
 
-    /// Ruling P6: the copy's outcome, not the key press, sets the notice.
+    /// The copy's outcome, not the key press, sets the notice.
     #[test]
     fn the_copy_outcome_sets_the_notice() {
         let mut screen = wizard_screen();

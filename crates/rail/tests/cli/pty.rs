@@ -236,7 +236,7 @@ fn account_remove_on_a_terminal_removes_after_yes() {
     assert!(!tokens.contains("me@example.com"), "{tokens}");
 }
 
-/// Ruling S3: the account changes while the question is on the screen; the yes was for the
+/// The account changes while the question is on the screen; the yes was for the
 /// old account, so nothing is removed and the user is told to run the command again.
 #[test]
 fn account_remove_after_the_account_changed_removes_nothing() {

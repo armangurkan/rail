@@ -441,7 +441,7 @@ fn store_work_tokens(dir: &tempfile::TempDir) -> std::path::PathBuf {
     file
 }
 
-/// Ruling P6: without a terminal nothing is removed, whatever the account. `output()` pipes
+/// Without a terminal nothing is removed, whatever the account. `output()` pipes
 /// stdout and gives no terminal on stdin.
 #[test]
 fn account_remove_without_a_terminal_refuses_and_changes_nothing() {

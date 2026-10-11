@@ -66,7 +66,7 @@ async fn remove_without_elicitation_removes_nothing_and_names_the_cli_command() 
     assert_eq!(config_text(&dir), WORK);
 }
 
-/// Ruling A1: the agent cannot even send a `confirm` field.
+/// The agent cannot even send a `confirm` field.
 #[tokio::test]
 async fn a_confirm_field_from_the_agent_is_refused() {
     let args = json!({"account": "work", "confirm": true});
@@ -90,7 +90,7 @@ async fn a_confirm_field_from_the_agent_is_refused() {
     assert_eq!(config_text(&dir), KEYRING_BACKEND);
 }
 
-/// Ruling S3: the account changes while the user reads the question; their yes was for the
+/// The account changes while the user reads the question; their yes was for the
 /// old plan, so nothing is removed.
 #[tokio::test]
 async fn a_removal_whose_plan_changed_before_the_answer_removes_nothing() {

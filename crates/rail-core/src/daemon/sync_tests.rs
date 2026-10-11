@@ -230,7 +230,7 @@ async fn search_merges_local_and_server_hits_and_keeps_server_ones() {
     );
 }
 
-/// PF15: on equal dates the local hit comes first, and one account narrows the search.
+/// On equal dates the local hit comes first, and one account narrows the search.
 #[tokio::test]
 async fn search_for_one_account_keeps_local_hits_first_on_equal_dates() {
     let tmp = tempfile::tempdir().unwrap();
@@ -398,7 +398,7 @@ async fn a_stop_during_sync_ends_in_time_with_the_store_intact() {
     assert_eq!(reader.counts(1).unwrap().messages, 10);
 }
 
-/// Fix round 1: at the default idle timeout a daemon with no accounts exits (the 2 s config
+/// At the default idle timeout a daemon with no accounts exits (the 2 s config
 /// check must not keep re-arming the idle check).
 #[tokio::test(start_paused = true)]
 async fn a_daemon_without_accounts_idles_out_at_the_default_timeout() {
@@ -413,7 +413,7 @@ async fn a_daemon_without_accounts_idles_out_at_the_default_timeout() {
         .unwrap();
 }
 
-/// Fix round 1: accounts the server search skipped are reported, so the CLI can say so.
+/// Accounts the server search skipped are reported, so the CLI can say so.
 #[tokio::test]
 async fn search_reports_the_accounts_it_could_not_ask() {
     let tmp = tempfile::tempdir().unwrap();

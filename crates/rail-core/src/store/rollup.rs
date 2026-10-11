@@ -1,4 +1,4 @@
-//! Thread rollups, recomputed only for the threads a batch touched (design §4): counts,
+//! Thread rollups, recomputed only for the threads a batch touched: counts,
 //! flags, the newest receive time, the earliest message's subject and the distinct senders.
 
 use std::collections::BTreeSet;

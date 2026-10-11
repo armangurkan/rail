@@ -198,7 +198,7 @@ async fn an_answer_over_the_cap_or_of_the_wrong_shape_never_quotes_it() {
     assert!(!text.contains("secret mail"), "{text}");
 }
 
-/// T3-C(c): an error answer is read only up to `MAX_ERROR_BODY`, whatever the answer cap.
+/// An error answer is read only up to `MAX_ERROR_BODY`, whatever the answer cap.
 #[tokio::test]
 async fn an_error_body_is_read_only_up_to_its_own_cap() {
     let server = MockServer::start().await;
@@ -221,7 +221,7 @@ async fn an_error_body_is_read_only_up_to_its_own_cap() {
     assert_eq!(busy.class(), ErrorClass::Transient, "{busy:?}");
 }
 
-/// T3-C(d): a path that leaves the API root is refused before any request is sent.
+/// A path that leaves the API root is refused before any request is sent.
 #[tokio::test]
 async fn a_path_outside_the_api_root_is_refused_before_sending() {
     let server = MockServer::start().await;

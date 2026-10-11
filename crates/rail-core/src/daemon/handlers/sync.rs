@@ -101,7 +101,7 @@ mod tests {
             .update("w@example.com", |s| s.passes_completed = n);
     }
 
-    /// Fix round 1: repeated `sync.now { watch: true }` on one connection gives one
+    /// Repeated `sync.now { watch: true }` on one connection gives one
     /// notification per change, and a watch every holder let go of sends nothing more.
     #[test]
     fn one_connection_has_one_progress_watch() {
@@ -122,7 +122,7 @@ mod tests {
         assert_ne!(start_watch(&sync, &caller), first, "and can be asked again");
     }
 
-    /// Fix round 2: request A's failed wake cannot end the watch request B joined.
+    /// Request A's failed wake cannot end the watch request B joined.
     #[test]
     fn a_failed_wake_does_not_cancel_another_requests_watch() {
         let (sync, caller, _frames, mut sent) = setup();

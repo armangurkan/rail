@@ -1,5 +1,5 @@
 //! The daemon's sync: one engine per configured Gmail account, the writer they share and the
-//! status board, kept in step with `config.toml` (spec §3, "Daemon").
+//! status board, kept in step with `config.toml`.
 //!
 //! Reconciles run one at a time. Each holds the engines lock only to decide what to start and
 //! to insert what it built: the slow part (the store rows and the provider, which may wait on

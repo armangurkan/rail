@@ -1,4 +1,4 @@
-//! One account's sync: passes until the daemon stops it (spec §4). The pass steps are in
+//! One account's sync: passes until the daemon stops it. The pass steps are in
 //! `pass.rs`. After a pass the engine sleeps until the poll interval passes, it is woken, or
 //! it is stopped; `NeedsAuth` pauses it until it is woken. Stopping drops the pass at its next
 //! await point; a batch already handed to the writer still commits.

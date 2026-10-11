@@ -55,14 +55,14 @@ mod tests {
         assert_eq!(shown("a\u{200b}b"), r#""a\u{200b}b""#);
     }
 
-    /// Ruling S4: plain ASCII, so a homoglyph cannot pass for a Latin letter.
+    /// Plain ASCII, so a homoglyph cannot pass for a Latin letter.
     #[test]
     fn a_homoglyph_is_shown_as_its_code_point() {
         assert_eq!(shown("R\u{430}il"), r#""R\u{430}il""#);
         assert!(shown("caf\u{e9} \u{1f600}").is_ascii());
     }
 
-    /// Ruling S4: never cut, so two long values cannot look the same.
+    /// Never cut, so two long values cannot look the same.
     #[test]
     fn two_long_values_sharing_a_prefix_look_different() {
         let common = "v".repeat(MAX_NAME_CHARS);

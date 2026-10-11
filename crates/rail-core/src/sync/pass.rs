@@ -1,4 +1,4 @@
-//! The steps of a pass (spec §4): labels, backfill (in `backfill.rs`), delta, bodies, prune.
+//! The steps of a pass: labels, backfill (in `backfill.rs`), delta, bodies, prune.
 
 use futures_util::{StreamExt, stream};
 

@@ -124,7 +124,7 @@ async fn rail_sync_fills_the_store_and_exits_0_when_caught_up() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let text = stdout_of(&out);
     assert!(text.contains("work: up to date (1 message"), "{text}");
-    // PF19: only the last success; the phase may be mid-pass after an idle restart.
+    // Only the last success; the phase may be mid-pass after an idle restart.
     let doctor = sync_cmd(&dir, &server, &["doctor"]);
     let doctor_text = stdout_of(&doctor);
     assert!(
@@ -209,7 +209,7 @@ async fn rail_search_finds_old_mail_through_gmail_and_escapes_it() {
     assert_eq!(none.status.code(), Some(1), "{none:?}");
 }
 
-/// T9-A: a sync that stops changing is left to the daemon after the stall interval (one
+/// A sync that stops changing is left to the daemon after the stall interval (one
 /// second here, ten minutes for real), exiting 0 when nothing failed.
 #[tokio::test]
 async fn rail_sync_leaves_a_stalled_sync_to_the_daemon() {
@@ -378,7 +378,7 @@ async fn a_failed_gmail_search_keeps_local_hits_and_reports_on_stderr() {
     );
 }
 
-/// T9-B: a Microsoft 365 account gives one note on stderr, and alone is no failure.
+/// A Microsoft 365 account gives one note on stderr, and alone is no failure.
 #[tokio::test]
 async fn a_microsoft_account_gives_one_search_note() {
     let dir = tempfile::tempdir().unwrap();

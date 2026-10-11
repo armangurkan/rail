@@ -594,7 +594,7 @@ fn prune_keeps_stale_search_hits_in_a_thread_with_any_message_inside_the_window(
     assert_eq!(thread(&store, "t2"), None);
 }
 
-/// P4-LIVE: a stored token Rail would not send reads as none, so the backfill falls back to its
+/// A stored token Rail would not send reads as none, so the backfill falls back to its
 /// marker instead of sending it.
 #[test]
 fn an_unsafe_stored_page_token_reads_as_none() {
@@ -609,7 +609,7 @@ fn an_unsafe_stored_page_token_reads_as_none() {
     assert_eq!(store.sync_state(1).unwrap().backfill_resume, None);
 }
 
-/// P4-LIVE: one query says which ids of a page a running backfill already stored: sync rows
+/// One query says which ids of a page a running backfill already stored: sync rows
 /// synced since it began; search hits and older rows are fetched again.
 #[test]
 fn backfilled_ids_are_sync_rows_synced_since_the_backfill_began() {
@@ -642,7 +642,7 @@ fn backfilled_ids_are_sync_rows_synced_since_the_backfill_began() {
     assert!(store.backfilled_ids(2, &page, None).unwrap().is_empty());
 }
 
-/// Fix round 3: the count a pass sizes its page ceiling with: the same rows as
+/// The count a pass sizes its page ceiling with: the same rows as
 /// `backfilled_ids`, inside the listing's receive times.
 #[test]
 fn backfilled_count_counts_sync_rows_inside_the_listing() {

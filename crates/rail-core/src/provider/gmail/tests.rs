@@ -113,7 +113,7 @@ async fn the_whole_mailbox_is_listed_without_a_query() {
     assert!(page.ids.is_empty());
 }
 
-/// P4-LIVE: a 400 to a listing that carried a page token is `PageTokenRejected`, so the engine
+/// A 400 to a listing that carried a page token is `PageTokenRejected`, so the engine
 /// can list from the top; without a token a 400 stays a plain refusal.
 #[tokio::test]
 async fn a_refused_page_token_is_recognised() {
@@ -209,7 +209,7 @@ async fn metadata_decodes_encoded_words_addresses_flags_and_references() {
     assert_eq!(env.size, 2048);
 }
 
-/// Fix round 1: a `Date:` is believed only when every field is in range and it is not
+/// A `Date:` is believed only when every field is in range and it is not
 /// absurdly far before Gmail received the message.
 #[tokio::test]
 async fn impossible_or_ancient_dates_fall_back_to_the_receive_time() {
@@ -248,7 +248,7 @@ async fn impossible_or_ancient_dates_fall_back_to_the_receive_time() {
     );
 }
 
-/// Fix round 1: ids in a reply are checked too.
+/// Ids in a reply are checked too.
 #[tokio::test]
 async fn a_reply_for_another_id_or_with_an_unsafe_thread_is_skipped() {
     let gmail = Gmail::start().await;
@@ -285,7 +285,7 @@ async fn a_reply_for_another_id_or_with_an_unsafe_thread_is_skipped() {
     );
 }
 
-/// Fix round 1: a refusal stops the fetch; the remaining ids spend no quota.
+/// A refusal stops the fetch; the remaining ids spend no quota.
 #[tokio::test]
 async fn a_refusal_stops_fetching_the_remaining_ids() {
     let gmail = Gmail::start().await;
@@ -556,7 +556,7 @@ fn window_queries_use_whole_seconds() {
     assert_eq!(list::window_query(&after).as_deref(), Some("after:5"));
 }
 
-/// T3-C(a), spec §5: one answer Rail cannot read is skipped, not the end of the pass.
+/// One answer Rail cannot read is skipped, not the end of the pass.
 #[tokio::test]
 async fn an_answer_over_the_cap_or_unparseable_is_skipped_by_id() {
     let gmail = Gmail::start().await;

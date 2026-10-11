@@ -130,7 +130,7 @@ impl WizardScreen {
         effects
     }
 
-    /// Ruling: a panicked job is the failure of whatever action is in flight, and that job is
+    /// A panicked job is the failure of whatever action is in flight, and that job is
     /// cancelled so it cannot deliver later. While saving, the panic is only logged: it may
     /// come from a sibling job, and the save is never abandoned.
     fn job_panicked(&mut self, message: &str) -> Vec<Effect> {
@@ -554,7 +554,7 @@ mod tests {
         );
     }
 
-    /// Ruling P1: once saving, Esc and q do nothing, and Ctrl-C waits for the result.
+    /// Once saving, Esc and q do nothing, and Ctrl-C waits for the result.
     #[test]
     fn persist_cannot_be_cancelled() {
         let mut app = App::new(wizard_screen(), Box::new(RecordingClipboard::default()));
@@ -581,7 +581,7 @@ mod tests {
         assert_eq!(app.screen.added(), ["me".to_string()]);
     }
 
-    /// Ruling P6: a panicked job fails whatever action was in flight.
+    /// A panicked job fails whatever action was in flight.
     #[test]
     fn a_panicked_job_fails_the_action_in_flight() {
         let mut screen = wizard_screen();

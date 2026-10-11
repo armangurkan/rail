@@ -316,7 +316,7 @@ mod tests {
         );
     }
 
-    /// T9-C: a pass that failed for good, with no retry under way, fails the check; the same
+    /// A pass that failed for good, with no retry under way, fails the check; the same
     /// error while a pass runs again is a warning.
     #[test]
     fn a_permanent_failure_fails_the_check_unless_a_retry_runs() {

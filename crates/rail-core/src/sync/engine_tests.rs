@@ -171,7 +171,7 @@ async fn a_backfill_then_deltas_keep_the_store_current() {
     );
 }
 
-/// P4-LIVE: a crash mid-backfill leaves Gmail's page token with the last committed page; a
+/// A crash mid-backfill leaves Gmail's page token with the last committed page; a
 /// restarted engine goes on with it, exactly where the listing stood, with the first cursor.
 #[tokio::test]
 async fn a_crash_mid_backfill_resumes_from_the_page_token_with_the_first_cursor() {
@@ -587,7 +587,7 @@ async fn a_delta_that_says_more_without_moving_its_cursor_stops() {
     );
 }
 
-/// PF17: "retrying" (set by the HTTP layer's retry observer) gives way to the step's own
+/// "Retrying" (set by the HTTP layer's retry observer) gives way to the step's own
 /// phase once the call returns.
 #[tokio::test]
 async fn the_retrying_phase_gives_way_to_the_step_once_its_call_returns() {
@@ -632,7 +632,7 @@ async fn the_retrying_phase_gives_way_to_the_step_once_its_call_returns() {
         .unwrap();
 }
 
-/// Task 6: a stopped writer is permanent: the pass ends at once and nothing retries the write.
+/// A stopped writer is permanent: the pass ends at once and nothing retries the write.
 #[tokio::test]
 async fn a_dead_writer_ends_the_pass_without_retrying_the_write() {
     let h = harness(&["a@example.com"]);

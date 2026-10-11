@@ -90,7 +90,7 @@ mod tests {
         assert_eq!(escape_field("", 5), "");
     }
 
-    /// Ruling (Tasks 4/5): format characters and the Unicode line and paragraph separators
+    /// Format characters and the Unicode line and paragraph separators
     /// are escaped like controls, so a subject can neither reverse, hide nor break the line.
     #[test]
     fn invisible_and_line_breaking_characters_are_escaped() {

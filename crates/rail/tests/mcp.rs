@@ -414,7 +414,7 @@ async fn a_relative_path_is_refused_with_the_daemons_reason() {
     );
 }
 
-/// Ruling A1: a client secret from an agent is refused with fixed text, and a pasted secret
+/// A client secret from an agent is refused with fixed text, and a pasted secret
 /// in the reference field is never echoed.
 #[tokio::test]
 async fn a_client_secret_from_an_agent_is_refused_and_never_echoed() {
@@ -462,7 +462,7 @@ async fn a_tool_without_parameters_refuses_unknown_arguments() {
     client.close().await;
 }
 
-/// Ruling L1: rmcp's text for a wrong-typed argument quotes the value, which may be a pasted
+/// Rmcp's text for a wrong-typed argument quotes the value, which may be a pasted
 /// secret; it goes back to the agent that sent it, never into `rail.log`.
 #[tokio::test]
 async fn a_wrong_typed_argument_never_reaches_the_log() {

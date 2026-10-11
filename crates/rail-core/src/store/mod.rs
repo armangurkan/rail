@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(internal, 1_700_000_000_000, "seconds become milliseconds");
     }
 
-    /// P4-LIVE: 0003 adds the resume token columns to a version 2 database and keeps its
+    /// 0003 adds the resume token columns to a version 2 database and keeps its
     /// backfill state; the token columns start empty.
     #[test]
     fn a_version_2_database_upgrades_to_3_and_keeps_its_backfill_state() {

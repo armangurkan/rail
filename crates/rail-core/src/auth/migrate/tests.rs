@@ -207,7 +207,7 @@ fn an_unconfirmed_change_is_refused_with_nothing_written() {
     assert!(fake.items().is_empty());
 }
 
-/// Ruling S3: what the person confirmed is what runs. An account whose tokens appear
+/// What the person confirmed is what runs. An account whose tokens appear
 /// between the question and the answer changes the plan, so the answer no longer counts.
 #[test]
 fn a_plan_that_changed_after_the_question_is_refused_with_the_fresh_one() {
@@ -248,7 +248,7 @@ fn a_confirmed_change_without_a_plan_is_refused() {
     assert!(fake.items().is_empty());
 }
 
-/// Ruling S3: a vault name cannot forge part of the text or hide characters in it.
+/// A vault name cannot forge part of the text or hide characters in it.
 #[test]
 fn a_vault_name_cannot_forge_or_hide_text_in_the_confirmation() {
     let tmp = tempfile::tempdir().unwrap();
@@ -449,7 +449,7 @@ fn an_unverifiable_new_copy_keeps_the_old_one() {
     assert_eq!(old.get_tokens("a@x.com").unwrap(), Some(tokens(1)));
 }
 
-/// Ruling S4: names longer than the limit are refused at input, without echoing them.
+/// Names longer than the limit are refused at input, without echoing them.
 #[test]
 fn a_vault_or_account_over_the_limit_is_refused_without_echo() {
     let tmp = tempfile::tempdir().unwrap();

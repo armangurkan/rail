@@ -1,4 +1,4 @@
--- Rail schema v3: a backfill resumes from Gmail's page token (ruling P4-LIVE). Additive only.
+-- Rail schema v3: a backfill resumes from Gmail's page token. Additive only.
 -- Gmail lists only roughly newest first, so a date marker alone cannot say what a resumed
 -- listing has yet to return. The token is only valid for the query it was issued for, so that
 -- query's bounds are kept with it. All four are set together, and with the page they follow.

@@ -461,7 +461,7 @@ mod tests {
         );
     }
 
-    /// T9-A: a watch ends only after the stall interval with no change at all.
+    /// A watch ends only after the stall interval with no change at all.
     #[test]
     fn a_watch_stalls_only_after_the_interval_without_change() {
         let start = Instant::now();

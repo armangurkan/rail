@@ -1,4 +1,4 @@
-//! `search`: the local FTS query and each account's server query (spec §4). The local query
+//! `search`: the local FTS query and each account's server query. The local query
 //! runs to the end first, so a server hit written meanwhile can never pass for a local one.
 //! Server ids missing locally are fetched with their metadata and stored with
 //! `origin = search`; ids already stored refresh `searched_at`. Results merge newest first,
@@ -206,7 +206,7 @@ mod tests {
         }
     }
 
-    /// PF15: newest first, local first on equal dates, one per thread, at most `limit`.
+    /// Newest first, local first on equal dates, one per thread, at most `limit`.
     #[test]
     fn merge_orders_by_date_with_local_first_on_ties() {
         let local = vec![hit("w", "a", 2_000), hit("w", "b", 1_000)];

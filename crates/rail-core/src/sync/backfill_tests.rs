@@ -1,4 +1,4 @@
-//! Rulings P4-LIVE and P4-LIVE-2: Gmail lists only roughly newest first and silently answers a
+//! Gmail lists only roughly newest first and silently answers a
 //! page token it does not know. A backfill goes on with Gmail's page token, lists the window
 //! from the top when it cannot, never fetches metadata it already stored, never bounds a
 //! listing by its date marker, and never stalls on pages that store nothing.
@@ -47,7 +47,7 @@ async fn until_backfilled(h: &Harness, engine: &Engine, limit: usize) -> usize {
 
 /// The listing is out of order by hours and an imported message years old comes first; a
 /// grown window capped per pass still stores every message once it completes, and fetches no
-/// metadata twice. (Failed before P4-LIVE: 59 of 61.)
+/// metadata twice.
 #[tokio::test]
 async fn an_out_of_order_listing_loses_nothing_across_capped_passes() {
     let h = harness(&["a@example.com"]);
@@ -61,9 +61,9 @@ async fn an_out_of_order_listing_loses_nothing_across_capped_passes() {
     assert!(mock.metadata_refetches().is_empty());
 }
 
-/// P4-LIVE-2: the stored token is refused after the imported message dragged the oldest-seen
+/// The stored token is refused after the imported message dragged the oldest-seen
 /// date back years. The backfill lists the window again from the top, with no date bound
-/// (P4-LIVE's `before: marker + 3 days` skipped everything between), stores everything, and
+/// (a `before: marker + 3 days` bound would skip everything between), stores everything, and
 /// asks no stored id's metadata again.
 #[tokio::test]
 async fn a_refused_token_relists_the_window_from_the_top() {
@@ -108,7 +108,7 @@ async fn a_refused_token_relists_the_window_from_the_top() {
     assert_eq!(mock.with(|m| m.metadata_gets.len()), messages(old));
 }
 
-/// P4-LIVE-2: as Gmail does, the mock answers a stale token with the first page. Nothing can
+/// As Gmail does, the mock answers a stale token with the first page. Nothing can
 /// tell, and nothing needs to: everything ends up stored, each message fetched once.
 #[tokio::test]
 async fn a_silently_ignored_token_still_ends_with_everything_stored() {
@@ -125,7 +125,7 @@ async fn a_silently_ignored_token_still_ends_with_everything_stored() {
     assert!(mock.metadata_refetches().is_empty());
 }
 
-/// P4-LIVE-2: a capped re-list from the top keeps its place across passes: the token is stored
+/// A capped re-list from the top keeps its place across passes: the token is stored
 /// after every listed page, pages of stored mail included, so the next pass does not start
 /// from the top again.
 #[tokio::test]
@@ -157,7 +157,7 @@ async fn a_capped_relist_makes_progress_across_passes() {
     assert_eq!(stored(&h).len(), messages(old));
 }
 
-/// P4-LIVE-2: Gmail is not known to refuse a stale token, so any permanent failure of a
+/// Gmail is not known to refuse a stale token, so any permanent failure of a
 /// listing that carried one lists from the top once, rather than failing every pass.
 #[tokio::test]
 async fn a_failure_with_a_stored_token_relists_once_instead_of_failing_every_pass() {
@@ -357,7 +357,7 @@ async fn a_pass_lists_at_most_the_hard_ceiling_of_pages() {
     }
 }
 
-/// Fix round 3: if Gmail answered every resumed token with the first page, each pass would
+/// If Gmail answered every resumed token with the first page, each pass would
 /// re-walk the stored prefix of the listing. With the ceiling fixed at
 /// `BACKFILL_MAX_PAGES_PER_PASS`, a prefix longer than that was a livelock (nothing lost,
 /// never done); the ceiling now grows with what is stored, so the backfill completes.

@@ -1,4 +1,4 @@
-//! The backfill step of a pass (spec §4): list the window page by page, fetch metadata for the
+//! The backfill step of a pass: list the window page by page, fetch metadata for the
 //! ids this backfill has not stored yet, and commit each page with where the listing goes on.
 //!
 //! Gmail lists only roughly newest first (the live test saw spreads of hours, and imported

@@ -171,7 +171,7 @@ mod tests {
         }
     }
 
-    /// T9-B: Microsoft 365 accounts give one note, not a failure each; other failures are
+    /// Microsoft 365 accounts give one note, not a failure each; other failures are
     /// still listed per account and still count as failed.
     #[test]
     fn microsoft_accounts_give_one_note_and_other_failures_stay_listed() {

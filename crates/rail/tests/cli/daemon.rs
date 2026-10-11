@@ -125,7 +125,7 @@ fn a_second_daemon_logs_why_it_cannot_start() {
     assert!(log.contains("another rail daemon is running"), "{log}");
 }
 
-/// Fix round 1: relative `RAIL_*_DIR` settings name directories under the command's working
+/// Relative `RAIL_*_DIR` settings name directories under the command's working
 /// directory, and the daemon (which runs in `/`) works on those same directories.
 #[test]
 fn relative_directory_settings_work_through_the_daemon() {
@@ -172,7 +172,7 @@ fn relative_directory_settings_work_through_the_daemon() {
     assert!(dir.path().join("data").join("rail.db").exists());
 }
 
-/// Fix round 1: a command whose config, data or state directory differs from the running
+/// A command whose config, data or state directory differs from the running
 /// daemon's (sharing its runtime directory) is refused and changes nothing on either side.
 #[test]
 fn a_daemon_with_other_directories_is_refused_and_nothing_changes() {
@@ -227,7 +227,7 @@ fn a_daemon_with_other_directories_is_refused_and_nothing_changes() {
     );
 }
 
-/// Fix round 1: SIGTERM or SIGINT to a foreground `rail daemon run` shuts it down like
+/// SIGTERM or SIGINT to a foreground `rail daemon run` shuts it down like
 /// `rail daemon stop`: exit 0, the socket removed and `daemon.lock` released.
 #[cfg(unix)]
 #[test]
@@ -273,7 +273,7 @@ fn signals_stop_a_foreground_daemon_cleanly() {
     }
 }
 
-/// Fix round 3: directories are compared after resolving symlinks, so a config directory
+/// Directories are compared after resolving symlinks, so a config directory
 /// reached through a symlink (a dotfiles setup, or macOS's `/var` -> `/private/var`) uses the
 /// running daemon instead of being refused.
 #[test]

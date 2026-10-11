@@ -585,7 +585,7 @@ async fn daemon_stop_always_receives_its_reply() {
     }
 }
 
-/// Fix round 1: `run_until` stops through the same shutdown as `daemon.stop` once its future
+/// `run_until` stops through the same shutdown as `daemon.stop` once its future
 /// resolves (the binary's SIGINT and SIGTERM), removing the socket and releasing the lock.
 #[tokio::test]
 async fn run_until_stops_cleanly_when_its_future_resolves() {
@@ -614,7 +614,7 @@ async fn run_until_stops_cleanly_when_its_future_resolves() {
         .unwrap();
 }
 
-/// Fix round 1: the hello names the daemon's directories, so a client can refuse a daemon
+/// The hello names the daemon's directories, so a client can refuse a daemon
 /// that works on another configuration.
 #[tokio::test]
 async fn the_hello_names_the_daemons_directories() {
