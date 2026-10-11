@@ -4,6 +4,7 @@
 //! comes back as a re-read.
 
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use rail_core::ops::{Action as MailAction, ActionApplyResponse, ActionFailed, OpError, OutboxId};
 use rail_core::store::view::ThreadDetail;
@@ -27,6 +28,9 @@ pub(super) struct LastAction {
     rows: Vec<OutboxId>,
     count: usize,
     until: usize,
+    /// When `UNDO_GRACE` of wall time has passed: ticks are skipped while the terminal is
+    /// suspended, so `until` alone could offer `z` long after the rows were sent.
+    deadline: Instant,
     /// `action.apply` calls (one per account) not answered yet.
     pending: usize,
     /// `z` was pressed: rows are undone as their calls answer.
@@ -50,6 +54,7 @@ impl LastAction {
             rows: Vec::new(),
             count,
             until,
+            deadline: Instant::now() + rail_core::ops::UNDO_GRACE,
             pending: 0,
             undo_wanted: false,
             undos: 0,
@@ -307,7 +312,8 @@ impl MailScreen {
         if last.undo_wanted {
             return Vec::new();
         }
-        if last.pending == 0 && tick >= last.until {
+        let late = Instant::now() >= last.deadline;
+        if late || (last.pending == 0 && tick >= last.until) {
             self.actions.last = None;
             self.status.notify("Too late to undo.", tick);
             return Vec::new();
@@ -540,6 +546,16 @@ impl MailScreen {
                 .error_with_retry(text, self.ctx.clock.now(), self.tick, failure.row);
         }
         self.dirty()
+    }
+}
+
+#[cfg(test)]
+impl MailScreen {
+    /// As if the terminal was suspended past the undo window: the ticks did not move.
+    pub(super) fn pass_undo_deadline(&mut self) {
+        if let Some(last) = self.actions.last.as_mut() {
+            last.deadline = Instant::now();
+        }
     }
 }
 

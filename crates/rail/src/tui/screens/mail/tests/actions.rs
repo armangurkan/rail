@@ -232,6 +232,31 @@ async fn z_after_the_window_or_when_too_late_says_so() {
     assert!(f.screen.status_line().contains("too late to undo"));
 }
 
+/// A suspended terminal skips ticks: past `UNDO_GRACE` of wall time `z` is refused although
+/// the tick count is still inside the window, and nothing is sent.
+#[tokio::test]
+async fn z_after_the_wall_clock_window_is_too_late_whatever_the_ticks() {
+    let mut f = fixture(3).await;
+    applying(&f);
+    press(&mut f, KeyCode::Char('e')).await;
+    f.screen.pass_undo_deadline();
+    press(&mut f, KeyCode::Char('z')).await;
+    assert!(
+        f.screen.status_line().contains("Too late to undo"),
+        "{}",
+        f.screen.status_line()
+    );
+    let undos = f
+        .fake
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| matches!(c, FakeCall::Undo { .. }))
+        .count();
+    assert_eq!(undos, 0);
+}
+
 #[tokio::test]
 async fn reader_keys_act_on_the_open_thread_and_archive_closes_it() {
     let mut f = fixture(3).await;
