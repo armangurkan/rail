@@ -102,6 +102,12 @@ pub fn line_col(text: &str, offset: usize) -> (usize, usize) {
 }
 
 fn validate(config: &Config) -> Result<(), String> {
+    if let Some(theme) = &config.general.theme {
+        if theme.is_empty() {
+            return Err("general.theme must not be empty".to_string());
+        }
+        super::model::plain_text("theme", theme)?;
+    }
     let mut names = HashSet::new();
     let mut addresses = HashSet::new();
     for account in &config.accounts {
@@ -193,8 +199,6 @@ tenant = "common"
 [keys]
 archive = "e"
 
-[theme]
-unread = { bold = true }
 "#;
 
     fn p(text: &str) -> Result<Config, ConfigError> {
@@ -229,7 +233,6 @@ unread = { bold = true }
             c.keys.get("archive").map(|k| k.get_ref().as_str()),
             Some("e")
         );
-        assert!(c.theme.contains_key("unread"));
     }
 
     #[test]
@@ -423,5 +426,45 @@ client_id = "2"
         };
         assert_eq!(missing.class(), ErrorClass::Permanent);
         assert_eq!(invalid.class(), ErrorClass::Permanent);
+    }
+
+    #[test]
+    fn theme_and_accent_load_and_default_to_none() {
+        let c = p("").unwrap();
+        assert_eq!(c.general.theme, None);
+        assert_eq!(c.general.accent, None);
+        let c = p("[general]\ntheme = \"Dracula\"\naccent = 5\n").unwrap();
+        assert_eq!(c.general.theme.as_deref(), Some("Dracula"));
+        assert_eq!(c.general.accent, Some(crate::config::AccentSpec::Slot(5)));
+        let c = p("[general]\naccent = \"#bd93f9\"\n").unwrap();
+        assert_eq!(
+            c.general.accent,
+            Some(crate::config::AccentSpec::Color("#bd93f9".into()))
+        );
+    }
+
+    #[test]
+    fn a_bad_accent_or_empty_theme_is_refused() {
+        let err = p("[general]\naccent = 16\n").unwrap_err().to_string();
+        assert!(err.contains("accent must be 0 to 15"), "{err}");
+        let err = p("[general]\naccent = -1\n").unwrap_err().to_string();
+        assert!(err.contains("accent must be 0 to 15"), "{err}");
+        let err = p("[general]\naccent = true\n").unwrap_err().to_string();
+        assert!(err.contains("accent"), "{err}");
+        let err = p("[general]\ntheme = \"\"\n").unwrap_err().to_string();
+        assert!(err.contains("theme must not be empty"), "{err}");
+        let err = p("[general]\ntheme = \"a\u{202E}b\"\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("theme"), "{err}");
+        assert!(!err.contains('\u{202E}'), "{err:?}");
+    }
+
+    #[test]
+    fn the_old_free_form_theme_table_is_an_unknown_key() {
+        let err = p("[theme]\nunread = { bold = true }\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("theme"), "{err}");
     }
 }

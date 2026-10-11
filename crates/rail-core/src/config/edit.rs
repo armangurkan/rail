@@ -72,15 +72,65 @@ fn write_onepassword(doc: &mut DocumentMut, op: &OnePasswordConfig) {
 
 /// Set `key` to a string, keeping the formatting and trailing comment of an existing value.
 fn set_string(table: &mut Table, key: &str, text: &str) {
+    set_value(table, key, toml_edit::Value::from(text));
+}
+
+/// Set `key` to `new`, keeping the formatting and trailing comment of an existing value.
+fn set_value(table: &mut Table, key: &str, mut new: toml_edit::Value) {
     let decor = table
         .get(key)
         .and_then(Item::as_value)
         .map(|v| v.decor().clone());
-    let mut new = toml_edit::Value::from(text);
     if let Some(decor) = decor {
         *new.decor_mut() = decor;
     }
     table[key] = Item::Value(new);
+}
+
+/// Return `text` with `[general] key` set to `value`, or removed when `value` is `None`. The
+/// table is created when absent; an existing value keeps its formatting and trailing comment;
+/// comments and other keys stay. Validates the result.
+pub fn set_general(
+    text: &str,
+    path: &Path,
+    key: &str,
+    value: Option<toml_edit::Value>,
+) -> Result<String, ConfigError> {
+    let mut doc = document(text, path)?;
+    let general = doc
+        .entry("general")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| not_a_table(path, "general"))?;
+    match value {
+        Some(new) => set_value(general, key, new),
+        None => {
+            general.remove(key);
+        }
+    }
+    let out = doc.to_string();
+    parse(&out, path)?;
+    Ok(out)
+}
+
+/// `set_general` for a text value.
+pub fn set_general_text(
+    text: &str,
+    path: &Path,
+    key: &str,
+    value: Option<&str>,
+) -> Result<String, ConfigError> {
+    set_general(text, path, key, value.map(Into::into))
+}
+
+/// `set_general` for an integer value.
+pub fn set_general_number(
+    text: &str,
+    path: &Path,
+    key: &str,
+    value: Option<i64>,
+) -> Result<String, ConfigError> {
+    set_general(text, path, key, value.map(Into::into))
 }
 
 /// Return `text` with a new `[[accounts]]` table appended. Validates the result.
@@ -368,6 +418,60 @@ mod tests {
         assert_eq!(
             default_account_name("dana.reyes+x@corp.com", &config),
             "dana_reyes_x-2"
+        );
+    }
+
+    #[test]
+    fn set_general_changes_one_key_and_keeps_everything_else() {
+        let text = "# my rail config\n[general]\neditor = \"nvim\" # the good one\nicons = \"ascii\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"g\"\n";
+        let path = Path::new("c.toml");
+        let out = set_general(text, path, "theme", Some("Dracula".into())).unwrap();
+        let expected = text.replace(
+            "icons = \"ascii\"\n",
+            "icons = \"ascii\"\ntheme = \"Dracula\"\n",
+        );
+        assert_eq!(out, expected);
+        let config = parse(&out, path).unwrap();
+        assert_eq!(config.general.theme.as_deref(), Some("Dracula"));
+
+        let again = set_general(&out, path, "theme", Some("Nord".into())).unwrap();
+        assert_eq!(again, out.replace("\"Dracula\"", "\"Nord\""));
+
+        let slot = set_general(&again, path, "accent", Some(5i64.into())).unwrap();
+        assert!(slot.contains("accent = 5\n"), "{slot}");
+
+        let removed = set_general(&slot, path, "theme", None).unwrap();
+        assert!(!removed.contains("theme"), "{removed}");
+        assert!(removed.contains("# the good one"), "{removed}");
+        assert_eq!(
+            set_general(&removed, path, "theme", None).unwrap(),
+            removed,
+            "removing an absent key changes nothing"
+        );
+    }
+
+    #[test]
+    fn set_general_creates_the_table_and_rejects_a_value_the_config_refuses() {
+        let out = set_general("", Path::new("c.toml"), "theme", Some("Nord".into())).unwrap();
+        assert_eq!(out, "[general]\ntheme = \"Nord\"\n");
+        let err = set_general("", Path::new("c.toml"), "accent", Some(99i64.into()));
+        assert!(matches!(err, Err(ConfigError::Parse { .. })), "{err:?}");
+    }
+
+    #[test]
+    fn the_text_and_number_wrappers_round_trip() {
+        let path = Path::new("c.toml");
+        let out = set_general_text("", path, "theme", Some("Nord")).unwrap();
+        assert_eq!(out, "[general]\ntheme = \"Nord\"\n");
+        assert_eq!(
+            set_general_text(&out, path, "theme", None).unwrap(),
+            "[general]\n"
+        );
+        let out = set_general_number("", path, "accent", Some(7)).unwrap();
+        assert_eq!(out, "[general]\naccent = 7\n");
+        assert_eq!(
+            set_general_number(&out, path, "accent", None).unwrap(),
+            "[general]\n"
         );
     }
 }

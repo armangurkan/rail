@@ -46,6 +46,9 @@ pub struct DoctorReport {
     /// treats as another).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout_note: Option<String>,
+    /// `general.theme` as configured (not checked against the TUI's table).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
 }
 
 impl DoctorReport {
