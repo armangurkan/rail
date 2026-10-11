@@ -36,6 +36,11 @@ impl Selection {
         }
     }
 
+    /// Put back targets an action took when it failed.
+    pub fn restore(&mut self, targets: &[(i64, Picked)]) {
+        self.picked.extend(targets.iter().copied());
+    }
+
     pub fn clear(&mut self) {
         self.picked.clear();
     }

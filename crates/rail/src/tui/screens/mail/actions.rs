@@ -27,6 +27,18 @@ pub(super) struct LastAction {
     rows: Vec<OutboxId>,
     count: usize,
     until: usize,
+    /// `action.apply` calls (one per account) not answered yet.
+    pending: usize,
+    /// `z` was pressed: rows are undone as their calls answer.
+    undo_wanted: bool,
+    /// `action.undo` calls not answered yet.
+    undos: usize,
+    /// Some undo answered `too_late`.
+    too_late: bool,
+    /// The targets that came from the selection, put back if a call fails.
+    selected: Vec<(i64, Picked)>,
+    /// Some failed call already put its targets back.
+    restored: bool,
 }
 
 #[derive(Debug, Default)]
@@ -165,13 +177,26 @@ impl MailScreen {
         self.actions.seq += 1;
         let seq = self.actions.seq;
         if grace {
+            let from_selection = self.targets_are_selection(targets);
             self.actions.last = Some(LastAction {
                 seq,
                 rows: Vec::new(),
                 count: targets.len(),
                 until: self.tick + UNDO_TICKS,
+                pending: 0,
+                undo_wanted: false,
+                undos: 0,
+                too_late: false,
+                selected: if from_selection {
+                    targets.to_vec()
+                } else {
+                    Vec::new()
+                },
+                restored: false,
             });
-            self.actions.selection.clear();
+            if from_selection {
+                self.actions.selection.clear();
+            }
         }
         let leaves = matches!(
             action,
@@ -195,7 +220,25 @@ impl MailScreen {
                 grace,
             }));
         }
+        if grace {
+            if effects.is_empty() {
+                self.actions.last = None;
+            } else if let Some(last) = self.actions.last.as_mut() {
+                last.pending = effects.len();
+            }
+        }
         effects
+    }
+
+    /// The targets are the list's selection (not the open thread or the cursor row).
+    fn targets_are_selection(&self, targets: &[(i64, Picked)]) -> bool {
+        let selected = self.actions.selection.targets();
+        self.focus != Focus::Reader
+            && !selected.is_empty()
+            && selected
+                .iter()
+                .map(|(id, _)| id)
+                .eq(targets.iter().map(|(id, _)| id))
     }
 
     fn confirm_trash(&mut self, targets: Vec<(i64, Picked)>) -> Vec<Effect> {
@@ -226,22 +269,49 @@ impl MailScreen {
         Vec::new()
     }
 
+    /// `z`: take back the newest action. Calls still unanswered are undone as they answer.
     fn undo(&mut self) -> Vec<Effect> {
-        match self.actions.last.take() {
-            Some(last) if self.tick < last.until && !last.rows.is_empty() => {
-                vec![self.ctx.link.undo(last.rows)]
-            }
-            _ => {
-                self.status.notify("Nothing to undo.", self.tick);
-                Vec::new()
-            }
+        let tick = self.tick;
+        let Some(last) = self.actions.last.as_mut() else {
+            self.status.notify("Nothing to undo.", tick);
+            return Vec::new();
+        };
+        if last.undo_wanted {
+            return Vec::new();
         }
+        if last.pending == 0 && tick >= last.until {
+            self.actions.last = None;
+            self.status.notify("Too late to undo.", tick);
+            return Vec::new();
+        }
+        last.undo_wanted = true;
+        let rows = std::mem::take(&mut last.rows);
+        let waiting = last.pending > 0;
+        if rows.is_empty() {
+            if waiting {
+                self.status.notify("undoing…", tick);
+            } else {
+                self.actions.last = None;
+                self.status.notify("Nothing to undo.", tick);
+            }
+            return Vec::new();
+        }
+        last.undos += 1;
+        if waiting {
+            self.status.notify("undoing…", tick);
+        }
+        vec![self.ctx.link.undo(rows)]
     }
 
     /// Mark-read on open: no grace, no notice, nothing to undo.
-    pub(super) fn mark_read_on_open(&mut self, detail: &ThreadDetail) -> Vec<Effect> {
+    /// The detail is patched to read at once, so the reader and its keys agree with what was
+    /// sent before the store's change comes back.
+    pub(super) fn mark_read_on_open(&mut self, detail: &mut ThreadDetail) -> Vec<Effect> {
         if detail.messages.iter().all(|m| m.is_read) {
             return Vec::new();
+        }
+        for message in &mut detail.messages {
+            message.is_read = true;
         }
         let picked = Picked {
             account_id: detail.account_id,
@@ -274,13 +344,14 @@ impl MailScreen {
         match event {
             MailEvent::Applied { call, result } => self.applied(&call, result),
             MailEvent::Undone(result) => {
-                match result {
-                    Ok(answer) if answer.too_late.is_empty() => {
-                        self.status.notify("undone", self.tick);
+                let (too_late, failed) = match &result {
+                    Ok(answer) => (!answer.too_late.is_empty(), false),
+                    Err(error) => {
+                        self.action_error("undo", error);
+                        (false, true)
                     }
-                    Ok(_) => self.status.notify("too late to undo", self.tick),
-                    Err(error) => self.action_error("undo", &error),
-                }
+                };
+                self.undone(too_late, failed);
                 self.dirty()
             }
             MailEvent::Retried { result, .. } => {
@@ -306,25 +377,106 @@ impl MailScreen {
         call: &ApplyCall,
         result: Result<ActionApplyResponse, OpError>,
     ) -> Vec<Effect> {
+        let tracked = call.grace
+            && self
+                .actions
+                .last
+                .as_ref()
+                .is_some_and(|l| l.seq == call.seq);
+        let mut effects = Vec::new();
         match result {
-            Ok(answer) => {
-                if let Some(last) = self
-                    .actions
-                    .last
-                    .as_mut()
-                    .filter(|l| l.seq == call.seq && call.grace)
-                {
-                    last.rows.extend(answer.rows);
-                    let (done, _) = verbs(&call.action);
-                    let key = self.ctx.keymap.label(Action::GlobalUndo);
-                    let text = format!("{done} {} · {key} undoes", last.count);
-                    let left = last.until.saturating_sub(self.tick);
-                    self.status.notify_for(text, self.tick, left);
+            Ok(answer) if tracked => effects = self.call_answered(&call.action, answer.rows),
+            Ok(_) => {}
+            Err(error) => {
+                self.action_error(verbs(&call.action).1, &error);
+                if tracked {
+                    self.call_failed(call);
                 }
             }
-            Err(error) => self.action_error(verbs(&call.action).1, &error),
         }
-        self.dirty()
+        effects.extend(self.dirty());
+        effects
+    }
+
+    /// One account's `action.apply` answered: keep its rows for `z`, or undo them at once if
+    /// `z` was pressed first.
+    fn call_answered(&mut self, action: &MailAction, rows: Vec<OutboxId>) -> Vec<Effect> {
+        let Some(last) = self.actions.last.as_mut() else {
+            return Vec::new();
+        };
+        last.pending = last.pending.saturating_sub(1);
+        if last.undo_wanted {
+            if rows.is_empty() {
+                self.settle_undo();
+                return Vec::new();
+            }
+            last.undos += 1;
+            return vec![self.ctx.link.undo(rows)];
+        }
+        last.rows.extend(rows);
+        let (done, _) = verbs(action);
+        let key = self.ctx.keymap.label(Action::GlobalUndo);
+        let text = format!("{done} {} · {key} undoes", last.count);
+        let left = last.until.saturating_sub(self.tick);
+        self.status.notify_for(text, self.tick, left);
+        Vec::new()
+    }
+
+    /// One account's `action.apply` failed: its selected threads come back to the selection
+    /// (if nothing was selected since), and a record with nothing to undo is dropped.
+    fn call_failed(&mut self, call: &ApplyCall) {
+        let Some(last) = self.actions.last.as_mut() else {
+            return;
+        };
+        last.pending = last.pending.saturating_sub(1);
+        if last.restored || self.actions.selection.is_empty() {
+            last.restored = true;
+            let back: Vec<(i64, Picked)> = last
+                .selected
+                .iter()
+                .filter(|(id, _)| call.threads.contains(id))
+                .copied()
+                .collect();
+            self.actions.selection.restore(&back);
+        }
+        if last.pending == 0 && last.rows.is_empty() && last.undos == 0 {
+            self.actions.last = None;
+        } else {
+            self.settle_undo();
+        }
+    }
+
+    /// The record of an undone action ends when its last call and undo are answered.
+    fn settle_undo(&mut self) {
+        let done = self
+            .actions
+            .last
+            .as_ref()
+            .is_some_and(|l| l.undo_wanted && l.pending == 0 && l.undos == 0);
+        if done {
+            self.actions.last = None;
+        }
+    }
+
+    /// An `action.undo` answered: report once every call and undo of the record is in.
+    fn undone(&mut self, too_late: bool, failed: bool) {
+        let tick = self.tick;
+        let all_in = match self.actions.last.as_mut() {
+            Some(last) => {
+                last.undos = last.undos.saturating_sub(1);
+                last.too_late |= too_late;
+                last.undos == 0 && last.pending == 0
+            }
+            None => true,
+        };
+        if !all_in {
+            return;
+        }
+        let late = self.actions.last.take().is_some_and(|l| l.too_late) || too_late;
+        if !failed {
+            let text = if late { "too late to undo" } else { "undone" };
+            self.status.notify(text, tick);
+        }
     }
 
     fn action_error(&mut self, what: &str, error: &OpError) {

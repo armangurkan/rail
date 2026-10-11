@@ -57,17 +57,16 @@ impl MailScreen {
         result: Result<Option<ThreadDetail>, ReadError>,
     ) -> Vec<Effect> {
         match result {
-            Ok(Some(detail)) => {
+            Ok(Some(mut detail)) => {
                 let mut marked = Vec::new();
                 match self.reader.as_mut().filter(|r| r.thread_id() == thread_id) {
                     // A re-read after a store change: the focus stays where it is.
                     Some(reader) => reader.refresh(detail),
                     None => {
                         let glyphs = Glyphs::of(self.ctx.icons);
-                        let opened = detail.clone();
+                        marked = self.mark_read_on_open(&mut detail);
                         self.reader = Some(Reader::new(detail, self.ctx.clock.clone(), glyphs));
                         self.focus = Focus::Reader;
-                        marked = self.mark_read_on_open(&opened);
                     }
                 }
                 let mut effects = self.fetch_wanted();

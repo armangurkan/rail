@@ -216,6 +216,12 @@ async fn z_after_the_window_or_when_too_late_says_so() {
         "the notice expired"
     );
     press(&mut f, KeyCode::Char('z')).await;
+    assert!(
+        f.screen.status_line().contains("Too late to undo"),
+        "{}",
+        f.screen.status_line()
+    );
+    press(&mut f, KeyCode::Char('z')).await;
     assert!(f.screen.status_line().contains("Nothing to undo"));
     press(&mut f, KeyCode::Char('e')).await;
     *f.fake.undo_answer.lock().unwrap() = Some(Ok(rail_core::ops::ActionUndoResponse {
@@ -331,6 +337,127 @@ async fn a_failure_shows_on_the_row_and_in_errors_where_enter_retries() {
     assert!(
         !f.screen.actions.failures.contains_key(&top),
         "cleared by the retry"
+    );
+}
+
+async fn feed(f: &mut Fixture, event: MailEvent) {
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+    settle(&mut f.screen, effects).await;
+}
+
+fn applied(seq: u64, account: &str, row: i64) -> MailEvent {
+    MailEvent::Applied {
+        call: ApplyCall {
+            seq,
+            account: account.into(),
+            threads: vec![1],
+            action: MailAction::Archive {},
+            grace: true,
+        },
+        result: Ok(ActionApplyResponse {
+            rows: vec![row],
+            applied: 1,
+        }),
+    }
+}
+
+fn undo_calls(f: &Fixture) -> Vec<Vec<i64>> {
+    f.fake
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|c| match c {
+            FakeCall::Undo { rows } => Some(rows.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn z_between_two_accounts_answers_undoes_both() {
+    let mut f = fixture(2).await;
+    for _ in 0..4 {
+        press(&mut f, KeyCode::Char(' ')).await;
+    }
+    // The two calls go out but their answers are fed by hand, one after the key.
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Char('e'))));
+    feed(&mut f, applied(1, "work", 10)).await;
+    press(&mut f, KeyCode::Char('z')).await;
+    assert_eq!(undo_calls(&f), [vec![10]]);
+    assert!(
+        f.screen.status_line().contains("undoing…"),
+        "{}",
+        f.screen.status_line()
+    );
+    feed(&mut f, applied(1, "home", 11)).await;
+    assert_eq!(undo_calls(&f), [vec![10], vec![11]]);
+    assert!(
+        f.screen.status_line().contains("undone"),
+        "{}",
+        f.screen.status_line()
+    );
+    press(&mut f, KeyCode::Char('z')).await;
+    assert!(f.screen.status_line().contains("Nothing to undo"));
+}
+
+#[tokio::test]
+async fn z_before_any_account_answers_waits_and_undoes_each_answer() {
+    let mut f = fixture(2).await;
+    for _ in 0..4 {
+        press(&mut f, KeyCode::Char(' ')).await;
+    }
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Char('e'))));
+    press(&mut f, KeyCode::Char('z')).await;
+    assert!(undo_calls(&f).is_empty());
+    feed(&mut f, applied(1, "work", 10)).await;
+    feed(&mut f, applied(1, "home", 11)).await;
+    assert_eq!(undo_calls(&f), [vec![10], vec![11]]);
+    assert!(f.screen.status_line().contains("undone"));
+}
+
+#[tokio::test]
+async fn a_failed_request_keeps_the_selection_and_leaves_nothing_to_undo() {
+    let mut f = fixture(3).await;
+    *f.fake.on_apply.lock().unwrap() =
+        Some(Box::new(|_| Err(OpError::not_found("the daemon said no"))));
+    press(&mut f, KeyCode::Char(' ')).await;
+    press(&mut f, KeyCode::Char(' ')).await;
+    press(&mut f, KeyCode::Char('e')).await;
+    assert_eq!(f.screen.actions.selection.len(), 2, "put back");
+    assert!(f.screen.status_line().contains("Could not archive"));
+    press(&mut f, KeyCode::Char('z')).await;
+    assert!(f.screen.status_line().contains("Nothing to undo"));
+}
+
+#[tokio::test]
+async fn an_action_in_the_reader_keeps_a_selection_it_did_not_use() {
+    let mut f = fixture(3).await;
+    applying(&f);
+    press(&mut f, KeyCode::Char(' ')).await;
+    press(&mut f, KeyCode::Char(' ')).await;
+    press(&mut f, KeyCode::Enter).await;
+    assert!(f.screen.reader().is_some());
+    press(&mut f, KeyCode::Char('s')).await;
+    assert_eq!(f.screen.actions.selection.len(), 2);
+}
+
+#[tokio::test]
+async fn u_right_after_opening_marks_unread() {
+    let mut f = fixture(3).await;
+    applying(&f);
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('u')).await;
+    let last = applies(&f).pop().unwrap();
+    assert!(
+        matches!(
+            last,
+            FakeCall::Apply {
+                action: MailAction::Read { on: false },
+                ..
+            }
+        ),
+        "{last:?}"
     );
 }
 
