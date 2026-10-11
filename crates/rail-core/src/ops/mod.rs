@@ -25,7 +25,7 @@ pub use accounts::{
     AgentAccountRemove, BeginResponse, ClientSecretInput, ConsentBeginRequest, LoginBeginRequest,
     NO_SECRETS_FROM_AGENTS, OP_REFERENCE_PREFIX, SavedAccount,
 };
-pub use actions::{Action, OutboxId};
+pub use actions::{Action, ActionFailed, OutboxDepth, OutboxId, UNDO_GRACE};
 pub use body::{
     BodyFetchRequest, BodyFetchResponse, BodyFetchResult, BodyOutcome, MAX_BODY_FETCH,
     MAX_MESSAGE_ID_CHARS,

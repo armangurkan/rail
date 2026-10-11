@@ -423,10 +423,18 @@ impl Store {
         ))
     }
 
-    /// The earliest `not_before` of a pending row.
+    /// The earliest `not_before` of a pending row that `claim_next` can take once due: rows
+    /// held back by an older live row on a shared thread are left out, so a worker sleeping
+    /// until this time is not woken by a row it cannot claim.
     pub fn outbox_next_due(&self, account_id: i64) -> Result<Option<i64>, StoreError> {
         Ok(self.conn.query_row(
-            "SELECT min(not_before) FROM outbox WHERE account_id = ?1 AND state = 'pending'",
+            "SELECT min(o.not_before) FROM outbox o
+             WHERE o.account_id = ?1 AND o.state = 'pending'
+               AND NOT EXISTS (
+                 SELECT 1 FROM outbox p
+                 WHERE p.id < o.id AND p.state IN ('pending', 'inflight')
+                   AND EXISTS (SELECT 1 FROM json_each(p.thread_ids) pt
+                               WHERE pt.value IN (SELECT value FROM json_each(o.thread_ids))))",
             [account_id],
             |r| r.get(0),
         )?)

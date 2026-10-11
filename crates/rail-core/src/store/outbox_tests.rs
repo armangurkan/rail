@@ -69,6 +69,28 @@ fn a_backed_off_row_holds_back_a_later_due_row_on_its_thread() {
 }
 
 #[test]
+fn next_due_skips_rows_held_back_by_an_older_row_on_their_thread() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    let a = enqueue(&mut store, Action::Star { on: true }, vec![t1], "a");
+    enqueue(&mut store, Action::Star { on: false }, vec![t1], "b");
+    claim(&mut store, NOW + 10).unwrap();
+    let fail = OutboxWrite::Fail {
+        id: a,
+        failure: Failure::Transient {
+            error: "Gmail is busy".into(),
+            retry_at: NOW + 70,
+        },
+    };
+    store.outbox_write(&fail, NOW + 10).unwrap();
+    assert_eq!(
+        store.outbox_next_due(1).unwrap(),
+        Some(NOW + 70),
+        "a's time, not b's (b is blocked by a)"
+    );
+}
+
+#[test]
 fn due_rows_on_different_threads_are_claimed_in_id_order() {
     let mut store = seeded();
     let (t1, t2) = (thread(&store, "t1"), thread(&store, "t2"));

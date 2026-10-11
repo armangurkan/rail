@@ -15,7 +15,7 @@ use crate::test_support::{daemon_context, mock_factory};
 
 const WORK: &str = "[general]\nsecrets = \"file\"\npoll_interval = \"5s\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\n";
 
-fn context(tmp: &tempfile::TempDir, mock: &MockProvider) -> Arc<DaemonContext> {
+pub(super) fn context(tmp: &tempfile::TempDir, mock: &MockProvider) -> Arc<DaemonContext> {
     let paths = Paths::all_in(tmp.path());
     std::fs::create_dir_all(&paths.config_dir).unwrap();
     std::fs::write(paths.config_file(), WORK).unwrap();
@@ -23,7 +23,7 @@ fn context(tmp: &tempfile::TempDir, mock: &MockProvider) -> Arc<DaemonContext> {
     Arc::new(ctx.with_provider_factory(mock_factory(mock)))
 }
 
-async fn until(
+pub(super) async fn until(
     ctx: &DaemonContext,
     done: impl Fn(&AccountSyncStatus) -> bool,
 ) -> AccountSyncStatus {

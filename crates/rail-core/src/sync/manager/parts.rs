@@ -32,7 +32,7 @@ pub(super) const START_RETRIES: [Duration; 3] = [
     Duration::from_secs(900),
 ];
 
-pub(super) fn retry_delay(attempts: u32) -> Duration {
+pub(crate) fn retry_delay(attempts: u32) -> Duration {
     let index = usize::try_from(attempts.saturating_sub(1)).unwrap_or(usize::MAX);
     START_RETRIES[index.min(START_RETRIES.len() - 1)]
 }
@@ -71,6 +71,9 @@ pub(super) struct Running {
     pub(super) wake: Arc<Notify>,
     pub(super) stop: watch::Sender<bool>,
     pub(super) task: JoinHandle<()>,
+    /// Wakes the account's outbox worker (a new row, a login).
+    pub(super) outbox_signal: Arc<Notify>,
+    pub(super) outbox_task: JoinHandle<()>,
     pub(super) provider: Arc<dyn Provider>,
 }
 
@@ -96,6 +99,7 @@ pub(super) struct Prepared {
     pub(super) account_id: i64,
     pub(super) state: SyncStateRow,
     pub(super) reader: Store,
+    pub(super) outbox_reader: Store,
     pub(super) provider: Arc<dyn Provider>,
 }
 
@@ -217,13 +221,17 @@ pub(super) async fn stop_engine(running: Running) {
 /// `stop_engine`, aborting the task once `limit` (at most `ENGINE_STOP`) has passed.
 pub(super) async fn stop_engine_within(running: Running, limit: Duration) {
     let _ = running.stop.send(true);
-    let mut task = running.task;
-    if tokio::time::timeout(limit.min(ENGINE_STOP), &mut task)
-        .await
-        .is_err()
-    {
-        tracing::warn!(account = %running.name, "an engine did not stop in time; aborting it");
+    let limit = limit.min(ENGINE_STOP);
+    let (mut task, mut outbox) = (running.task, running.outbox_task);
+    let joined = tokio::time::timeout(limit, async {
+        let _ = (&mut task).await;
+        let _ = (&mut outbox).await;
+    })
+    .await;
+    if joined.is_err() {
+        tracing::warn!(account = %running.name, "an engine or its outbox did not stop in time; aborting it");
         task.abort();
+        outbox.abort();
     }
 }
 

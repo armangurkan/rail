@@ -106,7 +106,7 @@ pub struct Engine {
     pub(super) clock: Clock,
 }
 
-async fn stopped(stop: &mut watch::Receiver<bool>) {
+pub(crate) async fn stopped(stop: &mut watch::Receiver<bool>) {
     // A dropped sender also means stop.
     let _ = stop.wait_for(|stop| *stop).await;
 }

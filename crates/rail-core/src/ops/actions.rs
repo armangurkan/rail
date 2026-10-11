@@ -2,11 +2,37 @@
 //! row ids those operations speak. Terminal-only: no MCP tool reaches them, so agents cannot
 //! change mail. Every value here is an id, a flag or a count: never mail content.
 
+use std::time::Duration;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::error::OpError;
+
 /// An outbox row's id.
 pub type OutboxId = i64;
+
+/// How long an action waits in the outbox before it is sent, so `z` can take it back.
+pub const UNDO_GRACE: Duration = Duration::from_secs(10);
+
+/// An account's outbox: rows waiting (inflight ones too) and rows that failed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OutboxDepth {
+    pub pending: u64,
+    pub failed: u64,
+}
+
+/// The `action.failed` notification: an action Gmail refused for good, already reverted in the
+/// store. `error` is Rail's words with Gmail's as untrusted detail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionFailed {
+    /// The account's name.
+    pub account: String,
+    pub row: OutboxId,
+    pub threads: Vec<i64>,
+    pub action: Action,
+    pub error: OpError,
+}
 
 /// One change to whole threads (every message in them, as Gmail does). Label ids are the
 /// store's `folders.id`. `Archive {}` and `Trash {}` are empty structs, not unit variants, so

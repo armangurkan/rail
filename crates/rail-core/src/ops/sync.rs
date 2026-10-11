@@ -88,6 +88,9 @@ pub struct AccountSyncStatus {
     pub passes_completed: u64,
     pub pass_running: bool,
     pub last_pass_failed: bool,
+    /// The account's outbox: actions waiting for Gmail and actions it refused.
+    #[serde(default)]
+    pub outbox: super::actions::OutboxDepth,
 }
 
 impl AccountSyncStatus {
@@ -110,6 +113,7 @@ impl AccountSyncStatus {
             passes_completed: 0,
             pass_running: false,
             last_pass_failed: false,
+            outbox: super::actions::OutboxDepth::default(),
         }
     }
 }

@@ -12,11 +12,15 @@ use crate::auth::unix_now;
 use crate::error::ErrorClass;
 use crate::ops::{ErrorCode, OpError};
 use crate::store::Store;
+use crate::store::outbox::{OutboxOutcome, OutboxWrite};
 
 /// Batches that may wait for the writer.
 pub const WRITER_QUEUE: usize = 4;
 
-type Job = (Batch, oneshot::Sender<Result<BatchOutcome, OpError>>);
+enum Job {
+    Batch(Box<Batch>, oneshot::Sender<Result<BatchOutcome, OpError>>),
+    Outbox(OutboxWrite, oneshot::Sender<Result<OutboxOutcome, OpError>>),
+}
 
 /// Where batches go. Cheap to clone; the writer ends once every handle is dropped.
 #[derive(Clone)]
@@ -48,7 +52,17 @@ impl WriterHandle {
     pub async fn write(&self, batch: Batch) -> Result<BatchOutcome, OpError> {
         let (reply, answer) = oneshot::channel();
         self.jobs
-            .send((batch, reply))
+            .send(Job::Batch(Box::new(batch), reply))
+            .await
+            .map_err(|_| stopped())?;
+        answer.await.map_err(|_| stopped())?
+    }
+
+    /// Queue one outbox write and wait for its commit.
+    pub async fn outbox(&self, write: OutboxWrite) -> Result<OutboxOutcome, OpError> {
+        let (reply, answer) = oneshot::channel();
+        self.jobs
+            .send(Job::Outbox(write, reply))
             .await
             .map_err(|_| stopped())?;
         answer.await.map_err(|_| stopped())?
@@ -60,6 +74,33 @@ impl WriterTask {
     /// False when the grace ran out or the writer thread died (panicked) instead of ending.
     pub async fn finish(self, grace: Duration) -> bool {
         matches!(tokio::time::timeout(grace, self.done).await, Ok(Ok(())))
+    }
+}
+
+/// Commit one job and answer its sender.
+fn run_job(store: &mut Store, job: Job) {
+    match job {
+        Job::Batch(batch, reply) => {
+            #[cfg(test)]
+            if batch.panic_writer {
+                panic!("test: the writer thread panics");
+            }
+            let now = batch.at.unwrap_or_else(unix_now);
+            let outcome = store.apply(&batch, now).map_err(OpError::from);
+            if let Err(error) = &outcome {
+                tracing::warn!(account = batch.account_id, error = %error.message, "a sync batch was rolled back");
+            }
+            let _ = reply.send(outcome);
+        }
+        Job::Outbox(write, reply) => {
+            let outcome = store
+                .outbox_write(&write, unix_now())
+                .map_err(OpError::from);
+            if let Err(error) = &outcome {
+                tracing::warn!(error = %error.message, "an outbox write was rolled back");
+            }
+            let _ = reply.send(outcome);
+        }
     }
 }
 
@@ -88,22 +129,13 @@ fn spawn(
     std::thread::Builder::new()
         .name("rail-writer".into())
         .spawn(move || {
-            while let Some((batch, reply)) = queue.blocking_recv() {
+            while let Some(job) = queue.blocking_recv() {
                 if let Some(permits) = &permits
                     && permits.recv().is_err()
                 {
                     break;
                 }
-                #[cfg(test)]
-                if batch.panic_writer {
-                    panic!("test: the writer thread panics");
-                }
-                let now = batch.at.unwrap_or_else(unix_now);
-                let outcome = store.apply(&batch, now).map_err(OpError::from);
-                if let Err(error) = &outcome {
-                    tracing::warn!(account = batch.account_id, error = %error.message, "a sync batch was rolled back");
-                }
-                let _ = reply.send(outcome);
+                run_job(&mut store, job);
             }
             let _ = finished.send(());
         })
@@ -261,7 +293,10 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let (probe, _) = tokio::sync::oneshot::channel();
         assert!(
-            writer.jobs.try_send((page(999, 1), probe)).is_err(),
+            writer
+                .jobs
+                .try_send(Job::Batch(Box::new(page(999, 1)), probe))
+                .is_err(),
             "the queue is full while the writer is held"
         );
         for _ in 0..=WRITER_QUEUE {
@@ -274,6 +309,34 @@ mod tests {
                 .unwrap()
                 .unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn outbox_writes_commit_on_the_writer_thread() {
+        use crate::ops::Action;
+        use crate::store::outbox::NewAction;
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("rail.db");
+        account(&db);
+        let (writer, _task) = spawn_writer(&db).unwrap();
+        writer.write(page(0, 1)).await.unwrap();
+        let new = NewAction {
+            account_id: 1,
+            action: Action::Read { on: true },
+            threads: vec![1],
+            not_before: 0,
+            client_token: "t".into(),
+        };
+        let outcome = writer.outbox(OutboxWrite::Enqueue(new)).await.unwrap();
+        assert!(matches!(
+            outcome,
+            OutboxOutcome::Enqueued { applied: 1, .. }
+        ));
+        let claimed = writer
+            .outbox(OutboxWrite::Claim { account_id: 1 })
+            .await
+            .unwrap();
+        assert!(matches!(claimed, OutboxOutcome::Claimed(Some(_))));
     }
 
     #[tokio::test]
