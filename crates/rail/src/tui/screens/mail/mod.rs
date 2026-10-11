@@ -694,10 +694,10 @@ fn account_number(action: Action) -> Option<usize> {
 }
 
 impl MailScreen {
-    /// A job panicked: the message goes to the log and, escaped, to the status bar.
-    /// A refresh it may have been ends.
+    /// A job panicked: the status bar shows the message escaped; the log gets only its length,
+    /// since a panic message can quote mail text. A refresh it may have been ends.
     fn job_panicked(&mut self, message: &str) -> Vec<Effect> {
-        tracing::error!(panic = %message, "a mail screen job panicked");
+        tracing::error!(message_bytes = message.len(), "a mail screen job panicked");
         let text = format!(
             "internal error: {}; see rail.log",
             crate::tui::text::escape(message)
