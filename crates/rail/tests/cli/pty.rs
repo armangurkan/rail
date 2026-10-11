@@ -474,3 +474,116 @@ fn a_daemon_that_cannot_be_reached_shows_in_the_status_bar() {
         cmd.env("RAIL_RUNTIME_DIR", blocker.join("run"));
     });
 }
+
+/// A store for `WORK_FILE_BACKEND`'s account holding one inbox thread whose body has HTML.
+fn seed_html_thread(dir: &tempfile::TempDir) {
+    use rail_core::provider::{Body, Envelope, FolderKind, Mailbox, RemoteFolder};
+    use rail_core::store::Store;
+    use rail_core::sync::Batch;
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let mut store = Store::open(&data.join("rail.db")).unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (name, kind, address) VALUES ('work', 'gmail', 'me@example.com')",
+            [],
+        )
+        .unwrap();
+    let envelope = Envelope {
+        remote_id: "m1".into(),
+        thread_id: "t1".into(),
+        subject: "Quarterly plan".into(),
+        from: vec![Mailbox {
+            name: Some("Tom".into()),
+            address: "tom@example.com".into(),
+        }],
+        date: 1_760_000_000,
+        internal_date: 1_760_000_000_000,
+        folders: vec!["INBOX".into()],
+        ..Envelope::default()
+    };
+    let body = Body {
+        text: "The plan is ready.".into(),
+        html: Some("<p>The plan is ready.</p>".into()),
+        ..Body::default()
+    };
+    let batch = Batch {
+        folders: Some(vec![RemoteFolder {
+            remote_id: "INBOX".into(),
+            name: "Inbox".into(),
+            kind: FolderKind::Inbox,
+        }]),
+        upserts: vec![envelope],
+        bodies: vec![("m1".into(), body)],
+        ..Batch::new(1)
+    };
+    store.apply(&batch, 1_760_000_000).unwrap();
+}
+
+/// Closing the terminal window or `kill` ends Rail as `q` does: the file `o` wrote is gone
+/// and the terminal is restored (spec §6: "deleted on close").
+#[test]
+fn sigterm_with_a_file_open_removes_it_and_restores_the_terminal() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    seed_html_thread(&dir);
+    let pid_file = dir.path().join("rail.pid");
+    let url_file = dir.path().join("url.txt");
+    // After `exec` the shell's pid is Rail's.
+    let command = format!(
+        "stty cols 100 rows 30; echo $$ > '{}'; exec '{}'",
+        pid_file.display(),
+        env!("CARGO_BIN_EXE_rail")
+    );
+    let mut script = Command::new("script");
+    rail_env(&mut script, &dir)
+        .env("RAIL_TEST_URL_FILE", &url_file)
+        .args(["-q", "-e", "-c", &command, "/dev/null"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = Running(script.spawn().unwrap());
+    let mut keys = child.0.stdin.take().unwrap();
+    let output = collect(child.0.stdout.take().unwrap());
+    let seen = |needle: &'static str| {
+        let output = output.clone();
+        move || text(&output).contains(needle)
+    };
+    wait_until("the thread in the list", &output, seen("Quarterly plan"));
+    keys.write_all(b"\r").unwrap();
+    keys.flush().unwrap();
+    wait_until("the reader", &output, seen("ready."));
+    keys.write_all(b"o").unwrap();
+    keys.flush().unwrap();
+    wait_until("the confirmation", &output, seen("Remote"));
+    keys.write_all(b"y").unwrap();
+    keys.flush().unwrap();
+    wait_until("the browser to be asked", &output, || url_file.exists());
+    let open_dir = dir.path().join("cache").join("open");
+    let files = || std::fs::read_dir(&open_dir).map_or(0, Iterator::count);
+    assert_eq!(files(), 1, "the file `o` wrote");
+
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    let killed = Command::new("kill")
+        .args(["-TERM", pid.trim()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let status = wait_for_exit(&mut child, &output);
+    drop(keys);
+    std::thread::sleep(Duration::from_millis(200));
+    let out = text(&output);
+    assert!(status.success(), "{status:?}: {out:?}");
+    assert_eq!(files(), 0, "the file went with Rail");
+    let entered = out
+        .find("\x1b[?1049h")
+        .expect("entered the alternate screen");
+    let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
+    assert!(entered < left, "{out:?}");
+}

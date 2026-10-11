@@ -248,8 +248,9 @@ is not possible in this version.
 `o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file in
 the `open` folder of its cache directory (`~/.cache/rail/open/` on Linux; `RAIL_CACHE_DIR`
 overrides the cache directory) with scripts, frames and connections blocked, and removes the file
-when you close the reader. Files a crashed session left behind are removed the next time the mail
-screen starts, once they are a day old. The first time in a session Rail asks first, because
+when you close the reader, quit Rail, close the terminal window or stop Rail with `kill`. Files a
+crashed session left behind are removed the next time the mail screen starts, once they are a day
+old. The first time in a session Rail asks first, because
 **remote images, styles, fonts and media in the message load in the browser**, which can tell the
 sender you opened it; Rail itself never loads them. A message whose body is not stored yet is
 fetched first. A message with no HTML part says so: its text is all there is.

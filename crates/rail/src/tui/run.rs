@@ -53,6 +53,7 @@ where
     let mut tasks = Tasks::new(sink);
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut signals = QuitSignals::new()?;
     let mut pending: VecDeque<Msg> = VecDeque::new();
     for effect in app.screen.start() {
         pending.extend(apply(effect, app, &mut tasks));
@@ -76,11 +77,56 @@ where
                 None => continue,
             },
             _ = tick.tick() => Msg::Tick,
+            () = signals.recv() => {
+                app.quit = true;
+                continue;
+            }
         };
         dispatch(msg, app, &mut tasks);
         draw(terminal, app)?;
     }
     Ok(())
+}
+
+/// SIGHUP (the terminal window closed) and SIGTERM. Either ends the loop as `q` does, so the
+/// screen is dropped (and the files `o` wrote removed) and the terminal restored.
+#[cfg(unix)]
+struct QuitSignals {
+    hangup: tokio::signal::unix::Signal,
+    terminate: tokio::signal::unix::Signal,
+}
+
+#[cfg(unix)]
+impl QuitSignals {
+    fn new() -> io::Result<Self> {
+        use tokio::signal::unix::{SignalKind, signal};
+        Ok(Self {
+            hangup: signal(SignalKind::hangup())?,
+            terminate: signal(SignalKind::terminate())?,
+        })
+    }
+
+    async fn recv(&mut self) {
+        tokio::select! {
+            _ = self.hangup.recv() => {}
+            _ = self.terminate.recv() => {}
+        }
+    }
+}
+
+/// No such signals here: never fires.
+#[cfg(not(unix))]
+struct QuitSignals;
+
+#[cfg(not(unix))]
+impl QuitSignals {
+    fn new() -> io::Result<Self> {
+        Ok(Self)
+    }
+
+    async fn recv(&mut self) {
+        std::future::pending::<()>().await;
+    }
 }
 
 fn to_msg(event: TermEvent) -> Option<Msg> {
