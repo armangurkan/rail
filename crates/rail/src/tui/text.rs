@@ -71,6 +71,31 @@ pub fn pad_left(text: &str, cols: usize) -> String {
     out
 }
 
+/// A one-line text field in `cols` columns: `prefix` and `value`, escaped, and the column the
+/// cursor (`cursor` characters into `value`) is drawn in. When the cursor would fall past the
+/// last column, the start of the row is dropped so the cursor stays in view.
+pub fn input_row(prefix: &str, value: &str, cursor: usize, cols: usize) -> (String, usize) {
+    let split = value
+        .char_indices()
+        .nth(cursor)
+        .map_or(value.len(), |(i, _)| i);
+    let (before, after) = value.split_at(split);
+    let head = format!("{}{}", escape(prefix), escape(before));
+    let room = cols.saturating_sub(1);
+    let mut used = 0;
+    let mut start = head.len();
+    for (i, grapheme) in head.grapheme_indices(true).rev() {
+        let w = width(grapheme);
+        if used + w > room {
+            break;
+        }
+        used += w;
+        start = i;
+    }
+    let head = &head[start..];
+    (fit(&format!("{head}{}", escape(after)), cols), used)
+}
+
 /// Text from outside Rail (the provider's or the system's words), escaped and labelled.
 pub fn outside(text: &str) -> String {
     format!(
@@ -233,9 +258,11 @@ pub fn markers(row: &str, links: usize) -> Vec<Marker> {
     found
 }
 
-/// `address` as a URL Rail may show as a hyperlink or open: at most `MAX_LINK_BYTES`, no space
-/// or control byte (ASCII or Unicode), no format character or line separator, a scheme in `SCHEMES`, and a serialisation of printable ASCII only (so it
-/// can stand inside an OSC 8 sequence).
+/// `address` as a URL Rail may show as a hyperlink or open: at most `MAX_LINK_BYTES` both as
+/// written and once normalised (percent-encoding and punycode can make it longer), no space or
+/// control byte (ASCII or Unicode), no format character or line separator, a scheme in
+/// `SCHEMES`, and a serialisation of printable ASCII only (so it can stand inside an OSC 8
+/// sequence).
 pub fn safe_link(address: &str) -> Option<Url> {
     let clean =
         address.bytes().all(|b| b > b' ' && b != 0x7f) && !address.chars().any(hides_or_breaks);
@@ -246,8 +273,184 @@ pub fn safe_link(address: &str) -> Option<Url> {
     let scheme = SCHEMES
         .iter()
         .any(|s| s.trim_end_matches(':') == url.scheme());
-    let printable = url.as_str().bytes().all(|b| (0x21..0x7f).contains(&b));
-    (scheme && printable).then_some(url)
+    let serialised = url.as_str();
+    let printable = serialised.bytes().all(|b| (0x21..0x7f).contains(&b));
+    let fits = serialised.len() <= MAX_LINK_BYTES;
+    (scheme && printable && fits).then_some(url)
+}
+
+/// The longest address the `g x` confirmation shows, in columns: about three rows of the box.
+const SHOWN_ADDRESS_COLS: usize = 150;
+/// The longest host (or host in a warning) the confirmation shows; a longer one is cut from the
+/// left so its registrable end stays visible.
+const SHOWN_HOST_COLS: usize = 100;
+/// The longest recipient the confirmation shows.
+const SHOWN_RECIPIENT_COLS: usize = 100;
+/// How many recipient lines the confirmation shows before `... and K more recipients`.
+const SHOWN_RECIPIENTS: usize = 5;
+/// The parameters a `mailto:` link may carry without a warning (compared in lower case).
+const USUAL_MAIL_PARAMETERS: [&str; 5] = ["to", "cc", "bcc", "subject", "body"];
+/// How many unusual parameter names the warning gives, and how wide each may be.
+const SHOWN_PARAMETERS: usize = 5;
+const SHOWN_PARAMETER_COLS: usize = 18;
+
+/// What the `g x` confirmation shows for `url` (from `safe_link`), each line escaped and bounded:
+/// first any warning (a user name or password, which reads like a host before `@`; recipients or
+/// unusual parameters a `mailto:` query adds); then where it goes (the host as the URL serialises it, so an IDN or
+/// lookalike host shows in its ASCII `xn--` form, cut from the left when long; or the recipients
+/// of a `mailto:` link); then the address, cut to about three rows. The confirmation box also
+/// always keeps its answer line, so a warning or the hint cannot be pushed off by what follows.
+pub fn link_lines(url: &Url) -> Vec<String> {
+    let mut lines = if url.scheme() == "mailto" {
+        mail_lines(url)
+    } else {
+        host_lines(url)
+    };
+    lines.push(fit(url.as_str(), SHOWN_ADDRESS_COLS));
+    lines
+}
+
+/// `text` escaped and, when wider than `cols`, cut from the left with a leading `…`.
+fn fit_end(text: &str, cols: usize) -> String {
+    let escaped = escape(text);
+    if width(&escaped) <= cols {
+        return escaped;
+    }
+    let mut kept: Vec<&str> = Vec::new();
+    let mut used = 1;
+    for grapheme in escaped.graphemes(true).rev() {
+        let w = width(grapheme);
+        if used + w > cols {
+            break;
+        }
+        kept.push(grapheme);
+        used += w;
+    }
+    kept.push(ELLIPSIS);
+    kept.reverse();
+    kept.concat()
+}
+
+fn host_lines(url: &Url) -> Vec<String> {
+    let Some(host) = url.host_str() else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    if !url.username().is_empty() || url.password().is_some() {
+        lines.push(format!(
+            "Warning: the part before \"@\" is not where this link goes. It goes to {}.",
+            fit_end(host, SHOWN_HOST_COLS / 2)
+        ));
+    }
+    lines.push(format!("Host: {}", fit_end(host, SHOWN_HOST_COLS)));
+    lines
+}
+
+/// A warning naming the parameters of a `mailto:` link other than `to`, `cc`, `bcc`, `subject`
+/// and `body` (some mail clients have honoured `attach=` and attached local files): at most
+/// `SHOWN_PARAMETERS` names, then a count of the rest.
+fn unusual_parameters(url: &Url) -> Option<String> {
+    let mut names: Vec<String> = Vec::new();
+    for (name, _) in url.query_pairs() {
+        let lower = name.to_ascii_lowercase();
+        if !name.is_empty() && !USUAL_MAIL_PARAMETERS.contains(&lower.as_str()) {
+            names.push(lower);
+        }
+    }
+    names.sort();
+    names.dedup();
+    let shown: Vec<String> = names
+        .iter()
+        .take(SHOWN_PARAMETERS)
+        .map(|n| fit(n, SHOWN_PARAMETER_COLS))
+        .collect();
+    let mut line = format!(
+        "Warning: this link sets unusual parameters: {}",
+        shown.join(", ")
+    );
+    if names.len() > SHOWN_PARAMETERS {
+        line.push_str(&format!(
+            " {ELLIPSIS} and {} more",
+            names.len() - SHOWN_PARAMETERS
+        ));
+    }
+    (!names.is_empty()).then_some(line)
+}
+
+/// A warning when the parameters of a `mailto:` link add recipients, then `To:`, `Cc:` and
+/// `Bcc:` lines (at most `SHOWN_RECIPIENTS`, then a count of the rest) for every recipient of its
+/// path and its `to`, `cc` and `bcc` parameters, decoded.
+fn mail_lines(url: &Url) -> Vec<String> {
+    let mut to = recipients(&percent_decode(url.path()));
+    let (mut cc, mut bcc) = (Vec::new(), Vec::new());
+    let mut added = false;
+    for (name, value) in url.query_pairs() {
+        let list = match name.to_ascii_lowercase().as_str() {
+            "to" => &mut to,
+            "cc" => &mut cc,
+            "bcc" => &mut bcc,
+            _ => continue,
+        };
+        let found = recipients(&value);
+        added |= !found.is_empty();
+        list.extend(found);
+    }
+    let mut lines: Vec<String> = unusual_parameters(url).into_iter().collect();
+    if added {
+        lines
+            .push("Warning: this link adds recipients beyond the address in its path.".to_string());
+    }
+    if to.is_empty() {
+        lines.push("To: (no recipient)".to_string());
+    }
+    let all: Vec<(&str, &String)> = [("To", &to), ("Cc", &cc), ("Bcc", &bcc)]
+        .into_iter()
+        .flat_map(|(label, list)| list.iter().map(move |r| (label, r)))
+        .collect();
+    for (label, recipient) in all.iter().take(SHOWN_RECIPIENTS) {
+        lines.push(format!("{label}: {}", fit(recipient, SHOWN_RECIPIENT_COLS)));
+    }
+    if all.len() > SHOWN_RECIPIENTS {
+        lines.push(format!(
+            "{ELLIPSIS} and {} more recipients",
+            all.len() - SHOWN_RECIPIENTS
+        ));
+    }
+    lines
+}
+
+/// The non-empty, comma-separated entries of `list`.
+fn recipients(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// `text` with `%XX` escapes decoded; bytes that are not UTF-8 become U+FFFD.
+pub(super) fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let hex = bytes
+            .get(at + 1..at + 3)
+            .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[at], hex) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                at += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// `text` as an OSC 8 hyperlink to `url`. `url` must come from `safe_link` and `text` from

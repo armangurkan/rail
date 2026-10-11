@@ -49,6 +49,14 @@ pub fn mail_panic() -> bool {
     var("RAIL_TEST_MAIL_PANIC").is_some()
 }
 
+/// How long `run_app` waits after the terminal is restored, in seconds, so a binary test can
+/// signal Rail while it is past its run loop (as during the wizard's settle).
+pub fn linger_after_loop() -> Option<std::time::Duration> {
+    var("RAIL_TEST_LINGER_SECS")
+        .and_then(|secs| secs.parse().ok())
+        .map(std::time::Duration::from_secs)
+}
+
 fn var(name: &str) -> Option<String> {
     if !cfg!(debug_assertions) {
         return None;

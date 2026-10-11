@@ -3,12 +3,12 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use rail_core::store::filter::{MAX_FILTER_CHARS, parse};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use super::{Command, ModalOutcome};
-use crate::tui::text::{escape, fit, width};
+use crate::tui::text::{escape, fit, input_row, width};
 use crate::tui::theme::Theme;
 use crate::tui::widgets::text_input::TextInput;
 
@@ -46,14 +46,15 @@ impl FilterLine {
         }
     }
 
-    /// Drawn in the bottom row of `area`: `/text` and, muted, the parsed operators.
+    /// Drawn in the bottom row of `area`: `/text` with the cursor in it and, muted, the parsed
+    /// operators.
     pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let Some(y) = (area.y + area.height).checked_sub(1) else {
             return;
         };
         let row = Rect::new(area.x, y, area.width, 1);
         let cols = usize::from(area.width);
-        let typed = fit(&format!("/{}", escape(self.input.value())), cols);
+        let (typed, column) = input_row("/", self.input.value(), self.input.cursor(), cols);
         let parsed = format!("   {}", escape(&self.parsed()));
         let room = cols.saturating_sub(width(&typed));
         let line = Line::from(vec![
@@ -62,5 +63,11 @@ impl FilterLine {
         ]);
         frame.render_widget(Clear, row);
         frame.render_widget(Paragraph::new(line), row);
+        if cols > 0 {
+            let x = row
+                .x
+                .saturating_add(u16::try_from(column).unwrap_or(u16::MAX));
+            frame.set_cursor_position(Position::new(x, row.y));
+        }
     }
 }

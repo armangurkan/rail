@@ -78,7 +78,9 @@ cargo install --locked --path crates/rail
 ```
 
 This puts `rail` in `~/.cargo/bin`. To upgrade, pull and run the same command; the first command
-of the new version replaces any older daemon still running.
+of the new version replaces any older daemon still running. When an upgrade changes the store,
+the new daemon migrates it the first time it starts (rebuilding the search index can take a
+moment on a large mailbox); until then the mail screen says the store is not set up.
 
 ## Quick start
 
@@ -103,7 +105,9 @@ rail daemon install        # keep syncing after you log out and back in
    Gmail's quota). Set [`history_days`](#sync-settings) to sync only recent mail. Ctrl-C stops
    watching, not the sync.
 4. **`rail search <query>`** prints date, account, sender and subject for each matching thread,
-   newest first. Gmail's search syntax works for the Gmail part.
+   newest first. Gmail's search syntax works for the Gmail part. When Gmail is busy or
+   refuses the connection, the Gmail part is retried once after a short wait; the local
+   results still print.
 5. **`rail doctor`** reports on the config, store, token backend, each account's tokens and sync,
    the daemon and the login unit.
 6. **`rail daemon install`** writes a systemd user unit (Linux) or a launchd agent (macOS) so the
@@ -228,8 +232,8 @@ retries.
 The thread list shows the unified inbox: the account's colour dot, the date, the people, the
 message count, `★` for starred and `📎` for attachments, and the subject; unread threads are bold.
 `1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
-and wider; `b` toggles it, `Tab` moves into it) lists every account and label with its unread
-count; `Enter` opens one.
+and wider; `b` toggles it, `Tab` moves into it) lists every account and its labels (up to 500
+per account) with their unread counts; `Enter` opens one.
 
 `Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
 beside the list; narrower, it covers the screen. `q` or `Esc` closes it. Messages are oldest
@@ -239,10 +243,18 @@ messages, `Tab` expands or collapses one, and `Enter` on `[n quoted lines]` show
 HTML mail is shown as Rail's plain-text rendering, with each link as a numbered marker such as
 `[1]`; in terminals that support hyperlinks (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows
 Terminal, Hyper, foot, Alacritty, GNOME Terminal and other VTE terminals; not inside tmux or
-screen) the marker is clickable. `g x` opens a link: the marker on the cursor line, or the number
-you type when the line has none or several. Rail shows the address first and opens only `http`,
-`https` and `mailto` links. `a` lists the thread's attachments (name, type, size); opening and
-saving them is not possible in this version.
+screen) the marker is clickable; while a box such as help or a confirmation is open the markers
+are plain text. `g x` opens a link: the marker on the cursor line, or the number you type when the
+line has none or several. The confirmation shows where the link really goes before the address
+(cut if it is long): the host (an international or look-alike host in its ASCII `xn--` form) or,
+for `mailto`, the recipients (`To`, `Cc` and `Bcc`, including those added by the link's
+parameters): up to five, then a count of the rest. It warns when the address has text before an
+`@` that could pass for a host (`https://bank.com@evil.example` goes to `evil.example`), when a
+`mailto` link adds recipients, or when a `mailto` link carries a parameter other than `to`, `cc`,
+`bcc`, `subject` and `body` (some mail clients have acted on `attach=`); the warning names up to
+five such parameters. Rail opens only `http`, `https` and `mailto` links of at most 2,048 bytes.
+`a` lists the thread's attachments (name, type, size); opening and saving them is not possible in
+this version.
 
 `o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file in
 the `open` folder of its cache directory (`~/.cache/rail/open/` on Linux; `RAIL_CACHE_DIR`
@@ -254,29 +266,40 @@ old. The first time in a session Rail asks first, because
 sender you opened it; Rail itself never loads them. A message whose body is not stored yet is
 fetched first. A message with no HTML part says so: its text is all there is.
 
+Two limits of `o`. Firefox installed as a snap (the default on Ubuntu) cannot read hidden folders
+such as `~/.cache`, so it shows a file-not-found page: set `RAIL_CACHE_DIR` to a folder it can read
+(for example `RAIL_CACHE_DIR=$HOME/rail-cache`) or use a browser that is not a snap. And a
+`<meta http-equiv="refresh">` tag in the message can still send the page to another address once
+it is open; the blocking above cannot stop it, so close the tab if the page moves.
+
 Bodies of recent mail (`body_cache_days`) are already in the store. An older message shows
 **fetching…** while the daemon fetches its body from Gmail; the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
 
-`/` filters the list as you type: plain words search subjects, senders, recipients and stored
-bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`, `is:unread`, `is:starred`,
-`before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
-`account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread matches when
-one of its messages matches all of them. Anything else is searched as words, and the status bar
-shows how Rail read your filter, so a typo such as `form:dana` shows up as a word. `Enter` keeps
-the filter; `Esc` clears it. The filter searches the local store only (`rail search` also asks
-Gmail).
+`/` filters the list as you type: plain words search subjects, the names and addresses of senders
+and recipients (To, Cc and Bcc) and stored bodies; `from:`, `to:` (also Cc and Bcc), `subject:`,
+`has:attachment`, `is:unread`, `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates,
+by when the mail arrived) and `account:<name>` narrow it; quote values with spaces
+(`from:"Dana Reyes"`). A thread matches when one of its messages matches all of them. Anything else
+is searched as words, and the status bar shows how Rail read your filter, so a typo such as
+`form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
+local store only (`rail search` also asks Gmail).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account
 or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
 the session's recent errors. `?` shows the keys of the view you are in, marking with `*` the ones
-set in `config.toml`.
+set in `config.toml`; `?` again (or whatever `global.help` is bound to), `Esc` or `q` closes it.
+Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more` line (`v more` and
+`^ more` with `icons = "ascii"`) says there is more beyond the box.
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`
 for Microsoft 365 accounts), whether the daemon can be reached (`connecting to the daemon…`,
-`daemon unreachable`), and notices. When the daemon cannot be reached the list still reads from
-the store; `Ctrl-r` reconnects (and starts a sync).
+`daemon unreachable`, or `daemon reachable again` once a message fetch gets through after the
+connection was lost), and notices. When the daemon cannot be reached the list still reads from
+the store; `Ctrl-r` reconnects (and starts a sync) and resumes live updates. A store read that
+fails says so where it was shown (the list, the top of the sidebar, or the reader's title) and in
+the status bar; `:errors` keeps it.
 
 ## Account setup
 
@@ -711,13 +734,13 @@ pass in.
 | `rail account list` | Lists accounts and whether their tokens are stored, without reading the tokens. |
 | `rail account remove <account>` | Removes the account's config entry and tokens; its mail stays in the store. Asks `Remove? [y/N]`; refuses (exit 1) when stdin or stdout is not a terminal. |
 | `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves them there (`--no-migrate`: setting only; each account then needs `rail account login`). Asks `Change? [y/N]`; interactive only. |
-| `rail sync [<account>] [--no-wait]` | Wakes the sync for one account or all and shows progress until caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs `rail account login`, 130 on Ctrl-C. If nothing changes for 10 minutes it stops watching (the sync goes on). `--no-wait` wakes it and exits 0. |
+| `rail sync [<account>] [--no-wait]` | Wakes the sync for one account or all and shows progress until caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs `rail account login`, 130 on Ctrl-C. If nothing changes for 10 minutes it stops watching (the sync goes on). If the daemon restarts, or restarts its sync, during the watch, it says which and waits for the new pass. `--no-wait` wakes it and exits 0. |
 | `rail search <query> [--account <account>] [--limit N]` | Searches the local store and, for Gmail, the whole mailbox. One line per thread: date (UTC), account, sender, subject; never a snippet or body. `--limit` is 1 to 100 (default 20). Results go to stdout, notes to stderr. Exits 1 for an unknown account, or when nothing was found and a Gmail search failed. |
 | `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit; notes a `general.layout` this version treats as `auto`. Exits non-zero for config, store, token-backend and token-read errors, and for a Gmail account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
 | `rail daemon status` | Shows whether the daemon runs, with pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any save in flight is written; waits up to 35 seconds. |
 | `rail daemon run` | Runs the daemon in the foreground (Ctrl-C or SIGTERM stops it cleanly). Rarely needed. |
-| `rail daemon install` | Writes and enables a systemd user unit (Linux) or launchd agent (macOS) that starts the daemon at login; stops a daemon already running first. If enabling fails it puts the previous state back and exits 1; if the daemon does not answer within 10 seconds it exits 1 with the unit's state (the unit stays installed). |
+| `rail daemon install` | Writes and enables a systemd user unit (Linux) or launchd agent (macOS) for the user running it that starts the daemon at login; stops a daemon already running first. If enabling fails it puts the previous state back and exits 1; if the daemon does not answer within 10 seconds it exits 1 with the unit's state (the unit stays installed). |
 | `rail daemon uninstall` | Stops, disables and removes the login unit. |
 | `rail mcp` | Serves Rail's tools to an AI agent over MCP on stdin and stdout. |
 

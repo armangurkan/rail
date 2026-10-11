@@ -5,9 +5,10 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::{Command, ModalOutcome, boxed};
-use crate::tui::text::{fit, pad, wrap};
+use crate::tui::text::{fit, pad, width, wrap};
 use crate::tui::theme::Theme;
 
 /// A confirmation's width, its border included.
@@ -37,20 +38,48 @@ impl Confirm {
         }
     }
 
-    /// The box is as tall as the lines wrapped to its width, plus the answer line.
+    /// The box is as tall as the lines wrapped to its width, plus the answer line, at most the
+    /// screen. The answer line is always the last row inside the box; when the lines do not fit
+    /// above it they are cut there, the last row shown ending in `…`.
     pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let cols = usize::from(area.width.min(CONFIRM_WIDTH).saturating_sub(2)).max(1);
-        let rows: Vec<String> = self.lines.iter().flat_map(|l| wrap(l, cols)).collect();
+        let mut rows: Vec<String> = self.lines.iter().flat_map(|l| wrap(l, cols)).collect();
         let height = u16::try_from(rows.len() + 4).unwrap_or(u16::MAX);
         let inner = boxed(frame, area, CONFIRM_WIDTH, height, &self.title, theme);
-        let mut lines: Vec<Line> = rows
+        let hint = Rect {
+            y: inner.y + inner.height.saturating_sub(1),
+            height: inner.height.min(1),
+            ..inner
+        };
+        let above = usize::from(inner.height.saturating_sub(1));
+        if rows.len() + 1 > above {
+            // No room for the blank separator: cut the lines to what is left.
+            let cut = rows.len() > above;
+            rows.truncate(above);
+            if let (true, Some(last)) = (cut, rows.last_mut()) {
+                *last = ellipsise(last, cols);
+            }
+        }
+        let lines: Vec<Line> = rows
             .into_iter()
             .map(|row| Line::styled(row, theme.text))
             .collect();
-        lines.push(Line::default());
-        lines.push(Line::styled("y yes · n or Esc no", theme.muted));
         frame.render_widget(Paragraph::new(lines), inner);
+        frame.render_widget(
+            Paragraph::new(Line::styled("y yes · n or Esc no", theme.muted)),
+            hint,
+        );
     }
+}
+
+/// `row` ending in `…`, within `cols` columns.
+fn ellipsise(row: &str, cols: usize) -> String {
+    let mut kept: Vec<&str> = row.graphemes(true).collect();
+    while !kept.is_empty() && width(&kept.concat()) + 1 > cols {
+        kept.pop();
+    }
+    kept.push("…");
+    kept.concat()
 }
 
 /// Asks which of `links` to open, by number.

@@ -2,6 +2,11 @@
 //! stored refresh token and the secret store), behind a trait the HTTP layer and tests share.
 //! Tokens never leave this module except as the bearer header.
 
+use std::sync::{Arc, Mutex, PoisonError};
+
+use futures_util::future::{BoxFuture, FutureExt, Shared};
+use sha2::{Digest, Sha256};
+
 use crate::auth::{AuthError, TokenSource};
 use crate::error::ErrorClass;
 
@@ -33,6 +38,84 @@ impl AccessTokens for OAuthTokens {
 
     async fn refresh(&self) -> Result<String, ProviderError> {
         self.source.force_refresh().await.map_err(from_auth)
+    }
+}
+
+/// One refresh in flight, shared by every request it answers.
+type Flight = Shared<BoxFuture<'static, Result<String, ProviderError>>>;
+
+/// One account's tokens with a single-flight refresh: requests the API refused with the same
+/// access token share one refresh and its outcome, error included. The refused token is kept
+/// only as a SHA-256, never as text.
+pub(crate) struct RefreshFlight {
+    tokens: Arc<dyn AccessTokens>,
+    current: Mutex<Option<(Vec<u8>, Flight)>>,
+    /// Requests that reached `refresh_after`, so a test can wait until a burst has joined.
+    #[cfg(test)]
+    pub(crate) arrivals: std::sync::atomic::AtomicUsize,
+    /// Makes every `refresh_after` report a reused result, as a racing flight could.
+    #[cfg(test)]
+    pub(crate) always_reused: std::sync::atomic::AtomicBool,
+}
+
+impl RefreshFlight {
+    pub(crate) fn new(tokens: Arc<dyn AccessTokens>) -> Self {
+        Self {
+            tokens,
+            current: Mutex::new(None),
+            #[cfg(test)]
+            arrivals: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            always_reused: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) async fn token(&self) -> Result<String, ProviderError> {
+        self.tokens.token().await
+    }
+
+    /// A new token after the API refused `rejected`, and whether it is a finished refresh's
+    /// token reused rather than a refresh this request started or joined in flight. The first
+    /// request refused with a token starts the refresh; the others await the same one. A
+    /// finished successful refresh answers later refusals of the same token with its token
+    /// (reused: it is not a refresh made for that request) when `allow_reuse`; a failed one, or
+    /// one a request may not reuse again, starts a new refresh.
+    pub(crate) async fn refresh_after(
+        &self,
+        rejected: &str,
+        allow_reuse: bool,
+    ) -> Result<(String, bool), ProviderError> {
+        #[cfg(test)]
+        self.arrivals
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (flight, reused) = self.join(Sha256::digest(rejected.as_bytes()).to_vec(), allow_reuse);
+        #[cfg(test)]
+        let reused = reused || self.always_reused.load(std::sync::atomic::Ordering::SeqCst);
+        flight.await.map(|token| (token, reused))
+    }
+
+    fn join(&self, key: Vec<u8>, allow_reuse: bool) -> (Flight, bool) {
+        let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((held, flight)) = current.as_ref()
+            && *held == key
+        {
+            // One read: the decision and the reported `reused` must agree even if another
+            // task finishes the flight meanwhile.
+            let finished = match flight.peek() {
+                None => Some(false),
+                Some(Ok(_)) => Some(true),
+                Some(Err(_)) => None,
+            };
+            if let Some(finished) = finished
+                && (!finished || allow_reuse)
+            {
+                return (flight.clone(), finished);
+            }
+        }
+        let tokens = self.tokens.clone();
+        let flight = async move { tokens.refresh().await }.boxed().shared();
+        *current = Some((key, flight.clone()));
+        (flight, false)
     }
 }
 

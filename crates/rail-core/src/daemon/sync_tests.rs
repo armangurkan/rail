@@ -475,3 +475,35 @@ async fn searching_every_account_leaves_out_removed_accounts_mail() {
     let threads: Vec<&str> = found.hits.iter().map(|h| h.thread_id.as_str()).collect();
     assert_eq!(threads, ["t-work"]);
 }
+
+/// Spec §7: the server part of a search runs on the short interactive policy; the background
+/// sync keeps its own.
+#[tokio::test]
+async fn a_server_search_runs_on_the_interactive_retry_policy_and_sync_does_not() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = paths_with(&tmp, WORK);
+    let mock = MockProvider::new();
+    mock.seed(envelope("m1", "t1", now_ms(1)));
+    mock.with(|m| m.search_hits = vec!["m1".into()]);
+    let (client, _daemon) = daemon(&paths, &mock, ServeConfig::default()).await;
+    until(&client, "work", |s| s.passes_completed >= 1).await;
+    let request = SearchRequest {
+        query: "subject".into(),
+        account: None,
+        limit: 10,
+    };
+    client.call::<Search>(&request).await.unwrap();
+    let policies = mock.with(|m| m.policies.clone());
+    let interactive = Some(crate::provider::http::RetryPolicy::interactive());
+    assert!(
+        policies.contains(&(Call::Search, interactive)),
+        "{policies:?}"
+    );
+    assert!(
+        policies
+            .iter()
+            .filter(|(call, _)| *call != Call::Search && *call != Call::Envelopes)
+            .all(|(_, policy)| policy.is_none()),
+        "sync calls ran on a scoped policy: {policies:?}"
+    );
+}

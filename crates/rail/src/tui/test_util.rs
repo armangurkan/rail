@@ -77,6 +77,36 @@ pub fn snapshot(width: u16, height: u16, draw: impl FnOnce(&mut Frame)) -> Strin
         .join("\n")
 }
 
+/// Run `work` with this thread's log lines captured (no colours); return its output and the
+/// log text. A second dispatcher kept alive for the whole test process stops a parallel test
+/// thread without a subscriber from caching `never` for a callsite.
+pub fn logged<R>(work: impl FnOnce() -> R) -> (R, String) {
+    static KEEP_TWO: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+    KEEP_TWO.get_or_init(|| tracing::Dispatch::new(tracing_subscriber::registry()));
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let sink = buffer.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(move || LogSink(sink.clone()))
+        .finish();
+    let out = tracing::subscriber::with_default(subscriber, work);
+    let log = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+    (out, log)
+}
+
+struct LogSink(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for LogSink {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Records copies instead of touching the real clipboard.
 #[derive(Clone, Default)]
 pub struct RecordingClipboard(pub Arc<Mutex<Vec<String>>>);

@@ -80,7 +80,7 @@ pub(crate) fn envelope(message: Message) -> Option<Envelope> {
 fn fill_headers(envelope: &mut Envelope, parsed: &mail_parser::Message<'_>) {
     envelope.subject = parsed
         .subject()
-        .map(|s| one_line(s).chars().take(MAX_SUBJECT_CHARS).collect())
+        .map(|s| one_line_capped(s, MAX_SUBJECT_CHARS))
         .unwrap_or_default();
     envelope.from = mailboxes(parsed.from());
     envelope.to = mailboxes(parsed.to());
@@ -142,19 +142,20 @@ pub(super) fn cut(text: &str, max: usize) -> &str {
     &text[..end]
 }
 
-/// `text` with every control character (CR, LF, NUL, ESC, C1...) replaced by a space.
+/// `text`'s characters with every control character (CR, LF, NUL, ESC, C1...) a space: the one
+/// rule that puts header text on one line.
+fn one_line_chars(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars().map(|c| if c.is_control() { ' ' } else { c })
+}
+
+/// `text` on one line (each control character a space).
 fn one_line(text: &str) -> String {
-    text.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
+    one_line_chars(text).collect()
 }
 
 /// The first `max` characters of `text` on one line (each control character a space).
 pub(super) fn one_line_capped(text: &str, max: usize) -> String {
-    text.chars()
-        .take(max)
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
+    one_line_chars(text).take(max).collect()
 }
 
 fn capped_id(id: &str) -> String {
@@ -170,10 +171,8 @@ fn mailboxes(address: Option<&Address<'_>>) -> Vec<Mailbox> {
         .filter_map(|a| {
             let addr = a.address()?;
             Some(Mailbox {
-                name: a
-                    .name()
-                    .map(|n| one_line(n).chars().take(MAX_NAME_CHARS).collect()),
-                address: one_line(addr).chars().take(MAX_ADDRESS_CHARS).collect(),
+                name: a.name().map(|n| one_line_capped(n, MAX_NAME_CHARS)),
+                address: one_line_capped(addr, MAX_ADDRESS_CHARS),
             })
         })
         .take(MAX_ADDRESSES)
@@ -244,5 +243,32 @@ fn entity(name: &str) -> Option<char> {
             }
             char::from_u32(code)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One rule for header text: `one_line_capped` is `one_line` cut to `max` characters,
+    /// for controls, C1, line separators, wide and combining characters alike.
+    #[test]
+    fn one_line_capped_is_one_line_cut_to_max_characters() {
+        let hostile = [
+            "plain",
+            "a\r\nb\0c\u{1b}[2Jd",
+            "\u{85}next\u{9b}line",
+            "日本語のメール",
+            "e\u{301}e\u{301}e\u{301}",
+            "",
+        ];
+        for text in hostile {
+            for max in [0, 1, 3, 100] {
+                let expected: String = one_line(text).chars().take(max).collect();
+                assert_eq!(one_line_capped(text, max), expected, "{text:?} {max}");
+            }
+        }
+        assert_eq!(one_line("a\nb\u{7f}c"), "a b c");
+        assert_eq!(one_line_capped("ab\ncd", 3), "ab ");
     }
 }

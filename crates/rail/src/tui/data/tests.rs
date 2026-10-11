@@ -156,6 +156,61 @@ async fn a_store_newer_than_this_build_is_an_error_not_a_hint() {
     assert!(error.message.contains("newer than this build"), "{error}");
 }
 
+/// Review Focus 1: the mail screen opens while the store is still at version 4 (the daemon
+/// of the new build has not opened it yet). The list reads "not set up", never an SQL error
+/// about `from_text` or `messages_fts`; once the daemon's `Store::open` has migrated it, the
+/// next read works and finds the sender by a plain word.
+#[tokio::test]
+async fn a_store_mid_upgrade_reads_as_not_set_up_then_reads_after_the_migration() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    std::fs::create_dir_all(&paths.data_dir).unwrap();
+    let old = rail_core::store::Store::open_at_version(&paths.db_file(), 4).unwrap();
+    old.conn()
+        .execute_batch(
+            "INSERT INTO accounts (name, kind, address) VALUES ('work', 'gmail', 'w@example.com');
+             INSERT INTO folders (account_id, remote_id, name, kind) VALUES (1, 'INBOX', 'Inbox', 'inbox');
+             INSERT INTO threads (account_id, remote_id, subject, last_date, message_count)
+               VALUES (1, 't1', 'Q4 roadmap', 1760000000000, 1);
+             INSERT INTO messages (account_id, thread_id, remote_id, subject, from_json, internal_date)
+               VALUES (1, 1, 'm1', 'Q4 roadmap', '[{\"name\":\"Dana Reyes\",\"address\":\"dana@x.example\"}]',
+                       1760000000000);
+             INSERT INTO message_folders (message_id, folder_id) VALUES (1, 1);",
+        )
+        .unwrap();
+    drop(old);
+    let reader = StoreReader::new(paths.db_file());
+    let mut asked = request(1, PageAt::First);
+    asked.filter = parse("dana");
+    let got = events(reader.list(asked.clone()), 1, Duration::from_secs(5)).await;
+    assert!(
+        matches!(
+            got.as_slice(),
+            [MailEvent::Listed {
+                seq: 1,
+                result: Err(ReadError::NotSetUp)
+            }]
+        ),
+        "{got:?}"
+    );
+
+    // The daemon's writer opens the store and migrates it.
+    drop(rail_core::store::Store::open(&paths.db_file()).unwrap());
+
+    asked.seq = 2;
+    let got = events(reader.list(asked), 1, Duration::from_secs(5)).await;
+    let [
+        MailEvent::Listed {
+            seq: 2,
+            result: Ok(outcome),
+        },
+    ] = got.as_slice()
+    else {
+        panic!("{got:?}");
+    };
+    assert_eq!(outcome.page.rows.len(), 1, "Dana is found by a plain word");
+}
+
 #[tokio::test]
 async fn sidebar_thread_and_html_queries_report_back() {
     let tmp = tempfile::tempdir().unwrap();
@@ -370,5 +425,61 @@ async fn an_unreachable_daemon_is_reported_as_lost() {
     assert!(
         matches!(got.as_slice(), [MailEvent::Daemon(DaemonEvent::Lost(_))]),
         "{got:?}"
+    );
+}
+
+#[test]
+fn a_folder_choice_is_its_account_and_id_not_its_name() {
+    let folder = |account, folder_id, name: &str| ScopeChoice::Folder {
+        account,
+        folder_id,
+        name: name.into(),
+    };
+    assert_eq!(folder(0, 7, "Projects"), folder(0, 7, "Clients"));
+    assert_ne!(folder(0, 7, "Projects"), folder(1, 7, "Projects"));
+    assert_ne!(folder(0, 7, "Projects"), folder(0, 8, "Projects"));
+    assert_ne!(ScopeChoice::Account(0), folder(0, 7, "Projects"));
+}
+
+#[tokio::test]
+async fn a_refresh_job_reports_its_end_after_its_answers_and_after_a_panic() {
+    let finished = refresh_job(3, |sink| async move {
+        send(
+            &sink,
+            MailEvent::Timer {
+                token: 1,
+                kind: Timer::Requery,
+            },
+        );
+    });
+    let got = events(finished, 2, Duration::from_secs(10)).await;
+    assert!(
+        matches!(
+            got.as_slice(),
+            [MailEvent::Timer { .. }, MailEvent::RefreshEnded { seq: 3 }]
+        ),
+        "{got:?}"
+    );
+
+    let Effect::Spawn(job) = refresh_job(4, |_sink| async { panic!("boom") }) else {
+        panic!("expected a job");
+    };
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let joined = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::spawn(job(TaskSink::new(tx, 0))),
+    )
+    .await
+    .expect("the job ended in time");
+    assert!(
+        joined.is_err_and(|e| e.is_panic()),
+        "the panic goes on to the supervisor"
+    );
+    assert!(
+        matches!(
+            rx.try_recv(),
+            Ok((_, TaskResult::Mail(MailEvent::RefreshEnded { seq: 4 })))
+        ),
+        "the refresh ended anyway"
     );
 }

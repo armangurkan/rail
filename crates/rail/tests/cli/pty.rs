@@ -137,7 +137,7 @@ fn ctrl_c_during_login_wait_restores_the_terminal_and_saves_nothing() {
     let entered = out
         .find("\x1b[?1049h")
         .expect("entered the alternate screen");
-    let left = out.find("\x1b[?1049l").expect("left the alternate screen");
+    let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
     assert!(left > entered, "{out:?}");
     assert!(out[left..].contains("setup cancelled"), "{out:?}");
     assert_eq!(status.code(), Some(1));
@@ -415,7 +415,7 @@ fn a_panic_in_the_mail_screen_restores_the_terminal() {
     let entered = out
         .find("\x1b[?1049h")
         .expect("entered the alternate screen");
-    let left = out.find("\x1b[?1049l").expect("left the alternate screen");
+    let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
     let panicked = out
         .rfind("rail test panic in the mail screen")
         .expect("the panic message");
@@ -586,4 +586,86 @@ fn sigterm_with_a_file_open_removes_it_and_restores_the_terminal() {
         .expect("entered the alternate screen");
     let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
     assert!(entered < left, "{out:?}");
+}
+
+/// Best effort: kills the process whose pid is in the file, so a failing test never leaves
+/// Rail lingering behind its pty.
+struct KillsRail(Option<std::path::PathBuf>);
+
+impl KillsRail {
+    fn new(pid_file: std::path::PathBuf) -> Self {
+        Self(Some(pid_file))
+    }
+
+    /// Rail exited: leave its (possibly reused) pid alone.
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for KillsRail {
+    fn drop(&mut self) {
+        let Some(pid_file) = self.0.take() else {
+            return;
+        };
+        if let Ok(pid) = std::fs::read_to_string(pid_file) {
+            let _ = Command::new("kill").args(["-KILL", pid.trim()]).status();
+        }
+    }
+}
+
+/// A signal after the run loop ended (the wizard's settle, the final report) ends Rail as it
+/// ends any program: no run loop is listening any more.
+#[test]
+fn sigterm_after_the_mail_screen_closed_ends_rail() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    let pid_file = dir.path().join("rail.pid");
+    let mut kills_rail = KillsRail::new(pid_file.clone());
+    // After `exec` the shell's pid is Rail's.
+    let command = format!(
+        "stty cols 100 rows 30; echo $$ > '{}'; exec '{}'",
+        pid_file.display(),
+        env!("CARGO_BIN_EXE_rail")
+    );
+    let mut script = Command::new("script");
+    rail_env(&mut script, &dir)
+        // Far longer than LIMIT: only the signal can end Rail in time.
+        .env("RAIL_TEST_LINGER_SECS", "120")
+        .args(["-q", "-e", "-c", &command, "/dev/null"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = Running(script.spawn().unwrap());
+    let mut keys = child.0.stdin.take().unwrap();
+    let output = collect(child.0.stdout.take().unwrap());
+    let shown = output.clone();
+    wait_until("the mail screen", &output, move || {
+        text(&shown).contains("All inboxes")
+    });
+    keys.write_all(b"q").unwrap();
+    keys.flush().unwrap();
+    let restored = output.clone();
+    wait_until("the terminal restored", &output, move || {
+        text(&restored).contains("\x1b[?1049l")
+    });
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    let killed = Command::new("kill")
+        .args(["-TERM", pid.trim()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let status = wait_for_exit(&mut child, &output);
+    // Rail has exited: its pid may be reused, so the guard must not kill it now.
+    kills_rail.disarm();
+    drop(keys);
+    assert!(
+        !status.success(),
+        "ended by the signal, not by a clean exit: {status:?}"
+    );
 }

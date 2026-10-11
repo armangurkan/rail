@@ -377,3 +377,141 @@ fn delays_double_up_to_the_cap_with_jitter_below_the_base() {
         Duration::from_secs(120)
     );
 }
+
+/// 2026-10-11 12:00:00 UTC, a Sunday.
+fn noon() -> std::time::SystemTime {
+    httpdate::parse_http_date("Sun, 11 Oct 2026 12:00:00 GMT").unwrap()
+}
+
+/// RFC 9110 §10.2.3: delay-seconds, or an HTTP-date in any of its three forms.
+#[test]
+fn retry_after_reads_seconds_and_all_three_http_date_forms() {
+    let now = noon();
+    let secs = Duration::from_secs;
+    assert_eq!(parse_retry_after("7", now), Some(secs(7)));
+    assert_eq!(parse_retry_after(" 7 ", now), Some(secs(7)));
+    assert_eq!(
+        parse_retry_after("Sun, 11 Oct 2026 12:00:05 GMT", now),
+        Some(secs(5))
+    );
+    assert_eq!(
+        parse_retry_after("Sunday, 11-Oct-26 12:00:09 GMT", now),
+        Some(secs(9))
+    );
+    assert_eq!(
+        parse_retry_after("Sun Oct 11 12:00:07 2026", now),
+        Some(secs(7))
+    );
+}
+
+/// Review Focus 3: a `Retry-After` far in the future or malformed. Far dates and huge numbers
+/// are capped (never an overflow or an endless wait); a past date retries now; a negative
+/// number, garbage or a date with the wrong weekday fall back to the backoff.
+#[test]
+fn a_far_future_huge_negative_or_garbage_retry_after_is_capped_or_ignored() {
+    let now = noon();
+    let policy = RetryPolicy::default();
+    for capped in [
+        "Fri, 31 Dec 9999 23:59:59 GMT",
+        "99999999999",
+        "999999999999999999999999",
+    ] {
+        let after = parse_retry_after(capped, now);
+        assert!(after.is_some(), "{capped}");
+        assert_eq!(policy.delay(0, after), policy.max_retry_after, "{capped}");
+    }
+    // A two-digit year in the past (1994) and an IMF date in the past: retry now.
+    for past in [
+        "Sunday, 06-Nov-94 08:49:37 GMT",
+        "Sun, 06 Nov 1994 08:49:37 GMT",
+    ] {
+        assert_eq!(parse_retry_after(past, now), Some(Duration::ZERO), "{past}");
+        assert_eq!(
+            policy.delay(0, parse_retry_after(past, now)),
+            Duration::ZERO
+        );
+    }
+    for garbage in [
+        "-5",
+        "+5",
+        "soon",
+        "",
+        "7.5",
+        "Mon, 11 Oct 2026 12:00:05 GMT", // 11 October 2026 is a Sunday
+        "Sun, 11 Oct 2026 12:00:05 UTC",
+        "Sun, 11 Oct 2026 12:00:05 GMT\u{202e}",
+    ] {
+        assert_eq!(parse_retry_after(garbage, now), None, "{garbage:?}");
+        let wait = policy.delay(0, None);
+        assert!(wait >= policy.base && wait < policy.base * 2, "{wait:?}");
+    }
+}
+
+/// End to end: a date an hour ahead waits the cap; a date in the past retries at once.
+#[tokio::test]
+async fn a_retry_after_date_is_honoured_and_a_past_one_retries_now() {
+    let ahead = httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(3600));
+    for (value, expected) in [
+        (ahead.as_str(), Duration::from_millis(30)),
+        ("Sun, 06 Nov 1994 08:49:37 GMT", Duration::ZERO),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(503).insert_header("Retry-After", value))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ok())
+            .mount(&server)
+            .await;
+        let (api, waits) = client(&server, FixedTokens::new(["t"]));
+        assert!(get(&api).await.unwrap().ok);
+        assert_eq!(*waits.lock().unwrap(), [expected], "{value}");
+    }
+}
+
+/// One retry, and no wait over 2 s: a dead Gmail fails a search in seconds.
+#[test]
+fn the_interactive_policy_retries_once_and_waits_at_most_two_seconds() {
+    let policy = RetryPolicy::interactive();
+    assert_eq!(policy.attempts, 2);
+    for _ in 0..100 {
+        assert!(policy.delay(0, None) < Duration::from_secs(1));
+    }
+    assert_eq!(policy.delay(0, Some(Duration::MAX)), Duration::from_secs(2));
+}
+
+/// Work inside `with_retry_policy` runs on that policy; the same client outside keeps its own.
+#[tokio::test]
+async fn a_scoped_policy_replaces_the_clients_own_for_that_work_only() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&server)
+        .await;
+    let (api, waits) = client(&server, FixedTokens::new(["t"])); // quick(): three tries
+    let short = RetryPolicy {
+        attempts: 2,
+        ..RetryPolicy::quick()
+    };
+    assert_eq!(retry_policy_override(), None);
+    let err = with_retry_policy(short, async {
+        assert_eq!(retry_policy_override(), Some(short));
+        get(&api).await
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(err.class(), ErrorClass::Transient, "{err:?}");
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    assert_eq!(waits.lock().unwrap().len(), 1);
+    assert!(get(&api).await.is_err());
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        5,
+        "outside: three tries"
+    );
+}
+
+#[path = "http_refresh_tests.rs"]
+mod refresh;

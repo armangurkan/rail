@@ -2,7 +2,7 @@
 //! none is run.
 
 use std::cell::RefCell;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -320,4 +320,20 @@ fn a_path_with_a_control_character_is_refused_and_shown_escaped() {
     let error = text_of(Path::new("/a\nb")).err().unwrap().to_string();
     assert!(error.contains("/a\\nb"), "{error}");
     assert!(!error.contains('\n'), "{error}");
+}
+
+/// The launchd domain (`gui/<uid>`) is the running user's: the uid comes from the process, not
+/// from the owner of `HOME`. Here `HOME` is `/`, owned by root, as a `sudo -E` or a shared home
+/// would give.
+#[test]
+fn the_uid_is_the_running_users_not_the_owner_of_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(dir.path());
+    let setup = setup_in(&paths, "/".into(), "/.config".into()).unwrap();
+    let mine = std::fs::metadata(dir.path()).unwrap().uid();
+    assert_eq!(
+        setup.uid, mine,
+        "the test's own files are the running user's"
+    );
+    assert_eq!(setup.uid, rustix::process::getuid().as_raw());
 }

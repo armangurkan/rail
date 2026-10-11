@@ -7,6 +7,7 @@ pub mod errors;
 pub mod filter;
 pub mod help;
 pub mod palette;
+mod scroll;
 #[cfg(test)]
 mod tests;
 

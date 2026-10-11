@@ -9,7 +9,6 @@ pub mod launchd;
 pub mod runner;
 pub mod systemd;
 
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{WrapErr, bail, eyre};
@@ -132,11 +131,15 @@ fn homes() -> color_eyre::Result<(PathBuf, PathBuf)> {
 }
 
 pub fn setup(paths: &Paths) -> color_eyre::Result<Setup> {
+    let (home, config_home) = homes()?;
+    setup_in(paths, home, config_home)
+}
+
+/// `setup` for a given `HOME` and config home.
+fn setup_in(paths: &Paths, home: PathBuf, config_home: PathBuf) -> color_eyre::Result<Setup> {
     let exe = std::env::current_exe()
         .and_then(std::fs::canonicalize)
         .wrap_err("finding the rail binary")?;
-    let (home, config_home) = homes()?;
-    let uid = std::fs::metadata(&home).wrap_err("reading HOME")?.uid();
     let (_, config) = rail_core::config::load_text_or_empty(&paths.config_file())
         .map_err(|e| report(e.into()))?;
     let op_dir = config
@@ -150,8 +153,15 @@ pub fn setup(paths: &Paths) -> color_eyre::Result<Setup> {
         op_dir,
         home,
         config_home,
-        uid,
+        uid: current_uid(),
     })
+}
+
+/// The uid this process runs as: the user `rail daemon install` installs for, whose launchd
+/// domain (`gui/<uid>`) the agent goes in. Not the owner of `HOME`, which can be another user
+/// (`sudo -E`, a shared or root-owned home).
+fn current_uid() -> u32 {
+    rustix::process::getuid().as_raw()
 }
 
 pub fn unit(setup: &Setup) -> color_eyre::Result<Unit> {

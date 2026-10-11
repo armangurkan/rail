@@ -27,6 +27,24 @@ fn style(tone: Tone, theme: &Theme) -> Style {
 }
 
 impl Reader {
+    /// The subject and message count, or a failed re-read's error until a read succeeds.
+    fn render_title(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        let count = self.detail.messages.len();
+        let (heading, style) = match &self.read_error {
+            Some(text) => (text.clone(), theme.error),
+            None => (
+                format!(
+                    "{}  ({count} message{})",
+                    self.detail.subject,
+                    if count == 1 { "" } else { "s" }
+                ),
+                theme.accent,
+            ),
+        };
+        let line = Line::styled(fit(&heading, usize::from(area.width)), style);
+        frame.render_widget(Paragraph::new(line), area);
+    }
+
     pub fn render(
         &self,
         frame: &mut Frame,
@@ -37,19 +55,7 @@ impl Reader {
     ) {
         let [title, body] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-        let count = self.detail.messages.len();
-        let heading = format!(
-            "{}  ({count} message{})",
-            self.detail.subject,
-            if count == 1 { "" } else { "s" }
-        );
-        frame.render_widget(
-            Paragraph::new(Line::styled(
-                fit(&heading, usize::from(title.width)),
-                theme.accent,
-            )),
-            title,
-        );
+        self.render_title(frame, title, theme);
         self.size.set((body.width, body.height));
         let lines = self.lines(body.width);
         let height = usize::from(body.height);

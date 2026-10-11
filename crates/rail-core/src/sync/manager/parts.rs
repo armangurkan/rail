@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
+use sha2::{Digest, Sha256};
 use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -303,15 +304,40 @@ pub(super) fn failed_status(account: &AccountConfig, error: &OpError) -> Account
     status
 }
 
-/// The config file's modification time and its contents; a missing file is no accounts.
-pub(super) fn read_config(path: &std::path::Path) -> (Option<SystemTime>, Result<Config, OpError>) {
-    let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+/// The most of `config.toml` the change check hashes. A larger file is compared by its
+/// modification time alone; Rail's own config is a few KiB.
+const MAX_CONFIG_STAMP_BYTES: u64 = 1024 * 1024;
+
+/// What the periodic check compares to tell whether `config.toml` changed: its modification
+/// time and a SHA-256 of its contents, read through the guarded capped open (a FIFO swapped
+/// in never blocks the check), so an edit within one mtime tick is still seen.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct ConfigStamp {
+    pub(super) modified: Option<SystemTime>,
+    /// `None`: missing, not a regular file, over the cap, or unreadable.
+    pub(super) digest: Option<Vec<u8>>,
+}
+
+impl ConfigStamp {
+    pub(super) fn read(path: &std::path::Path) -> Self {
+        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let digest = crate::guarded::read_capped(path, MAX_CONFIG_STAMP_BYTES)
+            .ok()
+            .map(|bytes| Sha256::digest(&bytes).to_vec());
+        Self { modified, digest }
+    }
+}
+
+/// The config file's stamp and its contents; a missing file is no accounts. The stamp is
+/// taken first, so an edit during the load shows as a change at the next check.
+pub(super) fn read_config(path: &std::path::Path) -> (ConfigStamp, Result<Config, OpError>) {
+    let stamp = ConfigStamp::read(path);
     let config = match config::load(path) {
         Ok(config) => Ok(config),
         Err(ConfigError::Missing { .. }) => Ok(Config::default()),
         Err(error) => Err(error.into()),
     };
-    (mtime, config)
+    (stamp, config)
 }
 
 /// The writer's restart count once it has run for `healthy_for`: a writer that stayed up an

@@ -7,7 +7,7 @@ expression: text
 
 
           ┌ Command palette ───────────────────────────────────────────────────┐
-          │:go▏                                                                │
+          │:go                                                                 │
           │                                                                    │
           │Go to home's inbox                                                 2│
           │                                                                    │

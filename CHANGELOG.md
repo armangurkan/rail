@@ -141,6 +141,28 @@ All notable changes to Rail are recorded here. The format follows
 - `rail doctor` notes a `general.layout` of `split` or `stack`, which this version treats as
   `auto`.
 - The roadmap marks Phase 5 done; actions and compose are next.
+- Plain-word search no longer matches every message for the words `name`, `address` or `null`:
+  the full-text index holds the names and addresses of senders and recipients as plain text.
+  Store migration 5 rebuilds the index once, the first time the daemon opens the store after the
+  upgrade (this can take a moment on a large mailbox); until then the mail screen says the store
+  is not set up.
+- The `g x` confirmation shows its warnings first, then where the link really goes (the host, cut
+  at the left so its end shows, or every `mailto:` recipient: `To`, `Cc` and `Bcc`, at most five
+  lines and then "... and K more recipients"), then the address, cut if it is long. A warning
+  names the whole host when the address has a user name or password before the `@`
+  (`https://bank.com@evil.example`). A `mailto:` link with a parameter other than `to`, `cc`, `bcc`,
+  `subject` or `body` (such as `attach=`) gets a first-line warning naming up to five of them. The
+  yes/no hint always stays on the last row.
+- Help and `:errors` show a `↓ more` / `↑ more` line (`v more` / `^ more` with `icons = "ascii"`)
+  when there is more to scroll, and help keeps the `* set in config.toml` legend in its title;
+  `:errors` scrolls with `j`/`k` or the arrow keys. Help closes on the bound help key, `Esc` or `q`.
+- `rail search` retries a failing Gmail once, after a short wait (at most 2 seconds), so a Gmail
+  outage fails fast; background sync keeps its retries.
+- `rail sync` says "sync restarted in the daemon" when the daemon restarts its sync, and keeps
+  "the daemon restarted" for a new daemon.
+- The README notes that Firefox installed as a snap cannot read `o`'s files under `~/.cache` (set
+  `RAIL_CACHE_DIR` to a folder it can read, or use a browser that is not a snap) and that a
+  message's `<meta http-equiv="refresh">` can still move the page `o` opens.
 
 ### Fixed
 
@@ -148,6 +170,35 @@ All notable changes to Rail are recorded here. The format follows
   text is escaped on the terminal.
 - `rail secrets set` refuses control and format characters in `--vault`/`--account`, as MCP did.
 - Account addresses refuse Unicode format characters (bidi overrides, zero-width spaces).
+- A label renamed in Gmail keeps the sidebar cursor, and the header keeps its unread count and shows
+  the new name; a deleted label sends the screen to its account's inbox. A label beyond the
+  500-per-account sidebar cap gets its own notice ("more than 500 labels") instead of "gone".
+- A failed sidebar read shows in the sidebar and a failed thread read in the reader, and both reach
+  the status bar and `:errors`; only a failed list read replaces the list.
+- After a message fetch gets through to the daemon again, the status bar says "daemon reachable
+  again" instead of keeping "daemon unreachable"; a later fetch that finds the daemon gone again
+  puts "daemon unreachable" back.
+- The first `j` in help and `:errors` after the top shows a new row (the `↑ more` line used to take
+  the row it would have revealed).
+- Upgrading a store whose full-text triggers or table were already missing no longer fails.
+- An HTML answer for a message outside the open thread is dropped; the reader's cursor is clamped
+  when the body shrinks; a re-read of the open thread no longer moves the focus; a refresh ends
+  only when the refresh itself ends, even if it panics.
+- The palette and the filter line draw the cursor where it is, so editing in the middle of the
+  text shows where you are typing.
+- The 500-folder sidebar cap applies per account, so one account's labels cannot hide another's.
+- The terminal is restored once per session, whichever of the panic hook, the guard or a signal
+  gets there first; SIGHUP and SIGTERM end Rail normally after the screen has closed, and stay
+  graceful while it runs.
+- `Retry-After` given as an HTTP date is honoured (capped, as a number of seconds already was; a
+  date in the past retries now); concurrent requests refused with a 401 for one account share one
+  token refresh, and a request makes at most three authorised attempts.
+- `rail daemon install` on macOS uses the uid of the user running it, not the owner of `HOME`.
+- The daemon notices a `config.toml` edit that keeps the file's modification time: it compares a
+  digest of the contents as well.
+- A store the daemon is still migrating is reported as a temporary error where an engine's sync
+  status lines or a search meet it, instead of a failure; `rail doctor`'s store line still fails on
+  any store error, and a newer store is still an error.
 
 ### Security
 
@@ -205,3 +256,9 @@ All notable changes to Rail are recorded here. The format follows
   opened only for `http`, `https` and `mailto` addresses, and only after their address is shown.
 - `o` writes the HTML 0600 with a policy that blocks scripts, deletes it when the reader closes,
   and Rail itself never loads remote content.
+- A link is refused when its normalised address (percent-encoded, punycode) is over 2,048 bytes, not
+  only when the text in the message is.
+- While a box such as help or a confirmation is open, the reader draws plain `[n]` link markers,
+  so a box border can never land on a hyperlink cell.
+- A panicking background job or the setup wizard's job logs the length of the panic message, never
+  its text, which can quote mail or a token.

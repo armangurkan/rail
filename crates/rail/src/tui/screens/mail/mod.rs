@@ -39,7 +39,7 @@ use crate::tui::app::{Effect, Msg, TaskResult};
 use crate::tui::clock::Clock;
 use crate::tui::data::{
     DaemonEvent, DaemonLink, ListOutcome, ListRequest, MailEvent, REQUERY_DEBOUNCE, ReadError,
-    ScopeChoice, SidebarOutcome, StoreReader, Timer, timer,
+    ScopeChoice, StoreReader, Timer, timer,
 };
 use crate::tui::effects::Opener;
 use crate::tui::keys::{Action, Chord, Keymap, Resolved, View};
@@ -165,7 +165,7 @@ pub struct MailScreen {
     requery_token: u64,
     /// A re-query timer is armed.
     requery_pending: bool,
-    /// The sequence number of the running refresh's last answer: one refresh at a time.
+    /// The running refresh's sequence number: one refresh at a time, ended by its `RefreshEnded`.
     refreshing: Option<u64>,
     /// The store changed while a refresh ran: run once more when it ends.
     dirty_again: bool,
@@ -299,8 +299,9 @@ impl MailScreen {
             self.latest_thread = seq;
             (seq, id)
         });
-        self.refreshing = Some(thread.map_or(sidebar_seq, |(seq, _)| seq));
-        vec![self.ctx.store.refresh(list, sidebar_seq, thread)]
+        let end = self.next_seq();
+        self.refreshing = Some(end);
+        vec![self.ctx.store.refresh(list, sidebar_seq, thread, end)]
     }
 
     /// The refresh in flight gave its last answer: run the next one if the store changed.
@@ -355,7 +356,8 @@ impl MailScreen {
                 return Vec::new();
             }
             Action::GlobalHelp => {
-                self.modal = Some(Modal::Help(Help::new(&self.ctx.keymap, &self.views())));
+                let help = Help::new(&self.ctx.keymap, &self.views(), self.ctx.icons);
+                self.modal = Some(Modal::Help(help));
                 return Vec::new();
             }
             Action::ListFilter if self.focus == Focus::List => {
@@ -463,7 +465,7 @@ impl MailScreen {
         let mut effects = Vec::new();
         match self.status.daemon {
             DaemonState::Connected => effects.push(self.ctx.link.refresh()),
-            DaemonState::Unreachable => {
+            DaemonState::Unreachable | DaemonState::Reachable => {
                 self.status.connecting();
                 effects.push(self.ctx.link.watch());
             }
@@ -473,21 +475,9 @@ impl MailScreen {
         effects
     }
 
-    fn on_mail(&mut self, event: MailEvent) -> Vec<Effect> {
-        let last_of_refresh = matches!(
-            &event,
-            MailEvent::Sidebar { seq, .. } | MailEvent::Thread { seq, .. }
-                if Some(*seq) == self.refreshing
-        );
-        let mut effects = self.mail_event(event);
-        if last_of_refresh {
-            effects.extend(self.refreshed());
-        }
-        effects
-    }
-
     fn mail_event(&mut self, event: MailEvent) -> Vec<Effect> {
         match event {
+            MailEvent::RefreshEnded { seq } if Some(seq) == self.refreshing => self.refreshed(),
             MailEvent::Listed { seq, result } => self.listed(seq, result),
             MailEvent::Sidebar { seq, result } => self.sidebar_counted(seq, result),
             MailEvent::Thread {
@@ -528,21 +518,6 @@ impl MailScreen {
                 self.list.cancel_loading();
                 self.read_failed(error);
             }
-        }
-        Vec::new()
-    }
-
-    fn sidebar_counted(
-        &mut self,
-        seq: u64,
-        result: Result<SidebarOutcome, ReadError>,
-    ) -> Vec<Effect> {
-        if seq != self.latest_sidebar {
-            return Vec::new();
-        }
-        match result {
-            Ok(outcome) => self.sidebar.rebuild(&self.accounts, &outcome),
-            Err(error) => self.read_failed(error),
         }
         Vec::new()
     }
@@ -697,7 +672,8 @@ fn account_number(action: Action) -> Option<usize> {
 
 impl MailScreen {
     /// A job panicked: the status bar shows the message escaped; the log gets only its length,
-    /// since a panic message can quote mail text. A refresh it may have been ends.
+    /// since a panic message can quote mail text. A refresh is ended by its own
+    /// `RefreshEnded`, which its job sends even when it panics.
     fn job_panicked(&mut self, message: &str) -> Vec<Effect> {
         tracing::error!(message_bytes = message.len(), "a mail screen job panicked");
         let text = format!(
@@ -705,9 +681,6 @@ impl MailScreen {
             crate::tui::text::escape(message)
         );
         self.status.error(text, self.ctx.clock.now(), self.tick);
-        if self.refreshing.is_some() {
-            return self.refreshed();
-        }
         Vec::new()
     }
 }
@@ -738,7 +711,7 @@ impl Screen for MailScreen {
                 Vec::new()
             }
             Msg::Resize(..) => Vec::new(),
-            Msg::Task(TaskResult::Mail(event)) => self.on_mail(event),
+            Msg::Task(TaskResult::Mail(event)) => self.mail_event(event),
             Msg::Task(TaskResult::JobPanicked(message)) => self.job_panicked(&message),
             Msg::Task(_) => Vec::new(),
         };

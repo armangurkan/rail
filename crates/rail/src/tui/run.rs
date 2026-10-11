@@ -5,6 +5,10 @@
 use std::collections::VecDeque;
 use std::io;
 use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::Mutex;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
@@ -27,14 +31,23 @@ pub const TICK: Duration = Duration::from_millis(250);
 const PANIC_FALLBACK: &str = "task panicked";
 
 /// Run `screen` full-screen with `keymap` until it quits, restore the terminal, and hand the
-/// screen back.
+/// screen back. SIGHUP and SIGTERM stay graceful (they quit the loop, nothing else) until the
+/// caller has dropped whatever cleans up after the screen and calls `finish_run`;
+/// a failed run resumes them itself, after the screen is dropped.
 pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>) -> io::Result<S> {
     let mut tui = terminal::enter()?;
     let mut app = App::new(screen, Box::new(Osc52)).with_keymap(keymap);
     let events = Box::pin(EventStream::new());
     let result = run_loop(&mut tui.terminal, &mut app, events).await;
     drop(tui);
-    result.map(|()| app.screen)
+    match result {
+        Ok(()) => Ok(app.screen),
+        Err(e) => {
+            drop(app);
+            resume_default_signals();
+            Err(e)
+        }
+    }
 }
 
 /// Drive `app` until it quits or `events` ends. Tasks still running when this returns are
@@ -89,7 +102,11 @@ where
 }
 
 /// SIGHUP (the terminal window closed) and SIGTERM. Either ends the loop as `q` does, so the
-/// screen is dropped (and the files `o` wrote removed) and the terminal restored.
+/// screen is dropped (and the files `o` wrote removed) and the terminal restored. Tokio never
+/// removes its handlers, so the signals' default action is re-armed by
+/// `finish_run`, called once the terminal is restored and the screen is dropped;
+/// from then on (the wizard's settle, the final report) they end the process as they would
+/// any program. Until then a signal is recorded and the cleanup finishes.
 #[cfg(unix)]
 struct QuitSignals {
     hangup: tokio::signal::unix::Signal,
@@ -99,7 +116,13 @@ struct QuitSignals {
 #[cfg(unix)]
 impl QuitSignals {
     fn new() -> io::Result<Self> {
+        Self::listening(default_action_flag()?.as_ref())
+    }
+
+    /// Listen, and hold `default_action` false so the signals are not deadly meanwhile.
+    fn listening(default_action: &AtomicBool) -> io::Result<Self> {
         use tokio::signal::unix::{SignalKind, signal};
+        default_action.store(false, Ordering::SeqCst);
         Ok(Self {
             hangup: signal(SignalKind::hangup())?,
             terminate: signal(SignalKind::terminate())?,
@@ -113,6 +136,51 @@ impl QuitSignals {
         }
     }
 }
+
+/// The end of a run, once the terminal is restored and the screen dropped: SIGHUP and SIGTERM
+/// take their default action again. In debug builds a test hook then waits, so a binary test
+/// can signal Rail while it is past its run loop (as during the wizard's settle).
+pub async fn finish_run() {
+    resume_default_signals();
+    if let Some(linger) = crate::test_hooks::linger_after_loop() {
+        tokio::time::sleep(linger).await;
+    }
+}
+
+/// Let SIGHUP and SIGTERM take their default action (terminate) again. Call it after the run
+/// loop's terminal is restored and its screen dropped; nothing is listening any more.
+#[cfg(unix)]
+pub fn resume_default_signals() {
+    match default_action_flag() {
+        Ok(flag) => flag.store(true, Ordering::SeqCst),
+        Err(e) => tracing::warn!(error = %e, "could not restore the signals' default action"),
+    }
+}
+
+/// The process-wide flag that, while true, makes SIGHUP and SIGTERM take their default action
+/// (terminate). Registered once; a run loop holds it false while it listens. One loop runs at
+/// a time in the binary; parallel unit-test loops only flip it in a process nobody signals.
+#[cfg(unix)]
+fn default_action_flag() -> io::Result<Arc<AtomicBool>> {
+    use signal_hook::consts::{SIGHUP, SIGTERM};
+    static FLAG: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+    let mut slot = FLAG
+        .lock()
+        .map_err(|_| io::Error::other("the signal flag lock is poisoned"))?;
+    if let Some(flag) = slot.as_ref() {
+        return Ok(flag.clone());
+    }
+    let flag = Arc::new(AtomicBool::new(false));
+    for signal in [SIGHUP, SIGTERM] {
+        signal_hook::flag::register_conditional_default(signal, flag.clone())?;
+    }
+    *slot = Some(flag.clone());
+    Ok(flag)
+}
+
+/// No such signals here: nothing to resume.
+#[cfg(not(unix))]
+pub fn resume_default_signals() {}
 
 /// No such signals here: never fires.
 #[cfg(not(unix))]
@@ -269,6 +337,19 @@ mod tests {
 
     use crate::tui::app::TaskResult;
     use crate::tui::test_util::{Hello, RecordingClipboard, ctrl, key};
+
+    /// Dropping the listeners (when `run_loop` returns) must not make the signals deadly: the
+    /// terminal is not restored yet and the screen not dropped. Only
+    /// `resume_default_signals` does that, after both.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropping_the_listeners_leaves_the_default_action_off() {
+        let flag = AtomicBool::new(true);
+        let signals = QuitSignals::listening(&flag).unwrap();
+        assert!(!flag.load(Ordering::SeqCst), "listening arms the default");
+        drop(signals);
+        assert!(!flag.load(Ordering::SeqCst), "the drop armed the default");
+    }
 
     fn keys(keys: Vec<KeyEvent>) -> impl Stream<Item = io::Result<TermEvent>> + Unpin {
         stream::iter(

@@ -1,8 +1,10 @@
 //! Raw mode and the alternate screen. `enter` hands back a terminal whose guard restores the
-//! user's terminal on every exit path, and the panic hook restores it before a panic prints.
+//! user's terminal on every exit path, and the panic hook restores it before a panic prints; each session is restored once, by
+//! whichever gets there first.
 
 use std::io::{self, Stdout, Write};
 use std::panic::PanicHookInfo;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
 
@@ -23,7 +25,7 @@ pub struct Tui {
 
 impl Drop for Tui {
     fn drop(&mut self) {
-        hook_state().set_tui_thread(None);
+        hook_state().set_active(None);
     }
 }
 
@@ -31,9 +33,10 @@ impl Drop for Tui {
 /// is entered, so every later failure still restores the terminal.
 pub fn enter() -> io::Result<Tui> {
     install_panic_hook();
-    activate_after(hook_state(), || {
+    let restored = Restored::default();
+    activate_after(hook_state(), restored.clone(), move || {
         enable_raw_mode()?;
-        let guard = TerminalGuard::new(io::stdout());
+        let guard = TerminalGuard::new(io::stdout(), restored);
         execute!(io::stdout(), EnterAlternateScreen)?;
         let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         Ok(Tui {
@@ -43,29 +46,54 @@ pub fn enter() -> io::Result<Tui> {
     })
 }
 
-/// Run `setup`, and only if it succeeds record this thread as the one that owns the terminal.
-/// A failed setup leaves no `Tui` to clear the record, so it must not be written first.
-fn activate_after<T>(state: &HookState, setup: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+/// Run `setup`, and only if it succeeds record this thread as the one that owns the terminal,
+/// with the session's restore flag. A failed setup leaves no `Tui` to clear the record, so it
+/// must not be written first.
+fn activate_after<T>(
+    state: &HookState,
+    restored: Restored,
+    setup: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
     let value = setup()?;
-    state.set_tui_thread(Some(thread::current().id()));
+    state.set_active(Some(Active {
+        thread: thread::current().id(),
+        restored,
+    }));
     Ok(value)
 }
 
-/// Restores the terminal when dropped: raw mode off, alternate screen left, cursor shown.
+/// One terminal session's restore. Whichever of the panic hook and the guard's drop gets
+/// there first restores the terminal; the other writes nothing.
+#[derive(Clone, Default)]
+pub struct Restored(Arc<AtomicBool>);
+
+impl Restored {
+    /// True for the first caller only.
+    fn claim(&self) -> bool {
+        !self.0.swap(true, Ordering::SeqCst)
+    }
+}
+
+/// Restores the terminal when dropped (raw mode off, alternate screen left, cursor shown),
+/// unless its session was already restored.
 pub struct TerminalGuard<W: Write> {
     out: W,
+    restored: Restored,
 }
 
 impl<W: Write> TerminalGuard<W> {
-    /// Guard `out`; nothing is written until the guard is dropped.
-    pub fn new(out: W) -> Self {
-        Self { out }
+    /// Guard `out` for the session `restored` belongs to; nothing is written until the guard
+    /// is dropped.
+    pub fn new(out: W, restored: Restored) -> Self {
+        Self { out, restored }
     }
 }
 
 impl<W: Write> Drop for TerminalGuard<W> {
     fn drop(&mut self) {
-        restore(&mut self.out);
+        if self.restored.claim() {
+            restore(&mut self.out);
+        }
     }
 }
 
@@ -77,25 +105,49 @@ fn restore(out: &mut impl Write) {
     let _ = execute!(out, LeaveAlternateScreen, Show);
 }
 
-/// What the panic hook reads: which thread owns the terminal, and how to restore it.
+/// The session the panic hook looks after: the thread that owns the terminal and its flag.
+#[derive(Clone)]
+struct Active {
+    thread: ThreadId,
+    restored: Restored,
+}
+
+/// What the panic hook reads: the active session, and how to restore the terminal.
 struct HookState {
-    tui_thread: Mutex<Option<ThreadId>>,
+    active: Mutex<Option<Active>>,
     restore: Box<dyn Fn() + Send + Sync>,
 }
 
 impl HookState {
-    fn set_tui_thread(&self, id: Option<ThreadId>) {
-        if let Ok(mut slot) = self.tui_thread.lock() {
-            *slot = id;
+    fn set_active(&self, active: Option<Active>) {
+        if let Ok(mut slot) = self.active.lock() {
+            *slot = active;
         }
     }
 
     /// Where a panic on this thread happens relative to the TUI.
     fn site(&self) -> PanicSite {
-        match self.tui_thread.lock().map(|slot| *slot).unwrap_or(None) {
+        let owner = self
+            .active
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|active| active.thread));
+        match owner {
             None => PanicSite::NoTui,
             Some(id) if id == thread::current().id() => PanicSite::TuiThread,
             Some(_) => PanicSite::OtherThread,
+        }
+    }
+
+    /// Restore the active session's terminal unless its guard (or an earlier call) did.
+    fn restore_once(&self) {
+        let restored = self
+            .active
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|active| active.restored.clone()));
+        if restored.is_some_and(|restored| restored.claim()) {
+            (self.restore)();
         }
     }
 }
@@ -114,37 +166,42 @@ type Hook = Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync>;
 
 /// Restore the terminal and defer to `previous` (which prints) for a panic on the TUI thread;
 /// with no TUI active, only defer. A panic on any other thread while the TUI is up is a
-/// background job: leave the terminal alone and log one line, because the task supervisor
-/// reports it to the screen.
+/// background job: leave the terminal alone and log one line with the message's length,
+/// because the task supervisor reports the message to the screen.
 fn panic_hook(state: Arc<HookState>, previous: Hook) -> Hook {
     Box::new(move |info| match state.site() {
         PanicSite::TuiThread => {
-            (state.restore)();
+            state.restore_once();
             previous(info);
         }
         PanicSite::NoTui => previous(info),
         PanicSite::OtherThread => {
             let location = info.location().map(ToString::to_string).unwrap_or_default();
-            tracing::error!(location, "background task panicked: {}", payload_text(info));
+            tracing::error!(
+                location,
+                message_bytes = payload_bytes(info),
+                "background task panicked"
+            );
         }
     })
 }
 
-/// The panic message when the payload is a string; never the Debug of arbitrary data.
-fn payload_text(info: &PanicHookInfo<'_>) -> String {
+/// The panic message's length when the payload is a string (0 otherwise). The text itself can
+/// quote mail or a token, so it never reaches the log; the screen that ran the job shows it.
+fn payload_bytes(info: &PanicHookInfo<'_>) -> usize {
     let payload = info.payload();
     payload
         .downcast_ref::<&str>()
-        .map(|s| (*s).to_string())
-        .or_else(|| payload.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "non-string panic payload".to_string())
+        .map(|s| s.len())
+        .or_else(|| payload.downcast_ref::<String>().map(String::len))
+        .unwrap_or(0)
 }
 
 fn hook_state() -> &'static Arc<HookState> {
     static STATE: OnceLock<Arc<HookState>> = OnceLock::new();
     STATE.get_or_init(|| {
         Arc::new(HookState {
-            tui_thread: Mutex::new(None),
+            active: Mutex::new(None),
             restore: Box::new(|| restore(&mut io::stdout())),
         })
     })
@@ -165,7 +222,10 @@ pub fn install_panic_hook() {
 /// Raw mode is skipped because that test runs without a terminal.
 pub fn panic_test() -> ! {
     install_panic_hook();
-    hook_state().set_tui_thread(Some(thread::current().id()));
+    hook_state().set_active(Some(Active {
+        thread: thread::current().id(),
+        restored: Restored::default(),
+    }));
     let _ = execute!(io::stdout(), EnterAlternateScreen);
     panic!("rail panic test: panicking inside the alternate screen");
 }
@@ -173,7 +233,11 @@ pub fn panic_test() -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, Mutex};
+
+    /// The panic hook swaps the process-global hook; tests that do so run one at a time.
+    static HOOK_TESTS: Mutex<()> = Mutex::new(());
 
     #[derive(Clone, Default)]
     struct SharedBuf(Arc<Mutex<Vec<u8>>>);
@@ -196,7 +260,7 @@ mod tests {
     #[test]
     fn guard_leaves_the_alternate_screen_and_shows_the_cursor_on_drop() {
         let buf = SharedBuf::default();
-        drop(TerminalGuard::new(buf.clone()));
+        drop(TerminalGuard::new(buf.clone(), Restored::default()));
         let out = written(&buf);
         assert!(out.contains("\x1b[?1049l"), "{out:?}");
         assert!(out.contains("\x1b[?25h"), "{out:?}");
@@ -205,14 +269,15 @@ mod tests {
     /// Install a hook over test-owned state, panic once, and return (restored, printed). The
     /// hook is process-global, so this swaps it out and back under a lock.
     fn hook_flags(tui: Option<ThreadId>, panic_on_worker: bool) -> (bool, bool) {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        static HOOK_TESTS: Mutex<()> = Mutex::new(());
         let _serial = HOOK_TESTS.lock().unwrap();
 
         let restored = Arc::new(AtomicBool::new(false));
         let printed = Arc::new(AtomicBool::new(false));
         let state = Arc::new(HookState {
-            tui_thread: Mutex::new(tui),
+            active: Mutex::new(tui.map(|thread| Active {
+                thread,
+                restored: Restored::default(),
+            })),
             restore: {
                 let restored = restored.clone();
                 Box::new(move || restored.store(true, Ordering::SeqCst))
@@ -261,7 +326,7 @@ mod tests {
 
     fn fresh_state() -> HookState {
         HookState {
-            tui_thread: Mutex::new(None),
+            active: Mutex::new(None),
             restore: Box::new(|| {}),
         }
     }
@@ -269,7 +334,7 @@ mod tests {
     #[test]
     fn a_failed_enter_leaves_the_tui_thread_unset() {
         let state = fresh_state();
-        let result = activate_after(&state, || -> io::Result<()> {
+        let result = activate_after(&state, Restored::default(), || -> io::Result<()> {
             Err(io::Error::other("no tty"))
         });
         assert!(result.is_err());
@@ -279,16 +344,78 @@ mod tests {
     #[test]
     fn a_successful_enter_records_the_tui_thread() {
         let state = fresh_state();
-        activate_after(&state, || Ok(())).unwrap();
+        activate_after(&state, Restored::default(), || Ok(())).unwrap();
         assert_eq!(state.site(), PanicSite::TuiThread);
     }
 
     #[test]
     fn guard_writes_nothing_until_dropped() {
         let buf = SharedBuf::default();
-        let guard = TerminalGuard::new(buf.clone());
+        let guard = TerminalGuard::new(buf.clone(), Restored::default());
         assert!(written(&buf).is_empty());
         drop(guard);
         assert!(!written(&buf).is_empty());
+    }
+
+    #[test]
+    fn the_hook_and_the_guard_restore_one_session_once() {
+        let restores = Arc::new(AtomicUsize::new(0));
+        let restored = Restored::default();
+        let state = HookState {
+            active: Mutex::new(Some(Active {
+                thread: thread::current().id(),
+                restored: restored.clone(),
+            })),
+            restore: {
+                let restores = restores.clone();
+                Box::new(move || {
+                    restores.fetch_add(1, Ordering::SeqCst);
+                })
+            },
+        };
+        let buf = SharedBuf::default();
+        let guard = TerminalGuard::new(buf.clone(), restored);
+        state.restore_once();
+        state.restore_once();
+        drop(guard);
+        assert_eq!(restores.load(Ordering::SeqCst), 1);
+        assert!(written(&buf).is_empty(), "the guard restored a second time");
+    }
+
+    #[test]
+    fn each_session_restores_once() {
+        let buf = SharedBuf::default();
+        drop(TerminalGuard::new(buf.clone(), Restored::default()));
+        drop(TerminalGuard::new(buf.clone(), Restored::default()));
+        assert_eq!(written(&buf).matches("\x1b[?1049l").count(), 2);
+    }
+
+    #[test]
+    fn a_background_panic_logs_its_length_not_its_text() {
+        let _serial = HOOK_TESTS.lock().unwrap();
+        let state = Arc::new(HookState {
+            active: Mutex::new(Some(Active {
+                thread: thread::current().id(),
+                restored: Restored::default(),
+            })),
+            restore: Box::new(|| {}),
+        });
+        let original = std::panic::take_hook();
+        std::panic::set_hook(panic_hook(state, Box::new(|_: &PanicHookInfo<'_>| {})));
+        let worker = thread::spawn(|| {
+            crate::tui::test_util::logged(|| {
+                std::panic::catch_unwind(|| panic!("job secret text")).is_err()
+            })
+        });
+        let joined = worker.join();
+        std::panic::set_hook(original);
+        let (panicked, log) = joined.unwrap();
+        assert!(panicked);
+        assert!(log.contains("background task panicked"), "{log:?}");
+        assert!(
+            log.contains(&format!("message_bytes={}", "job secret text".len())),
+            "{log:?}"
+        );
+        assert!(!log.contains("job secret text"), "{log:?}");
     }
 }

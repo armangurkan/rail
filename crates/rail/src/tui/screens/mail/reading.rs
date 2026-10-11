@@ -13,7 +13,7 @@ use crate::tui::modals::{
     Target,
 };
 use crate::tui::screens::reader::{Reader, ReaderOutcome};
-use crate::tui::text::{escape, fit, safe_link};
+use crate::tui::text::{escape, fit, link_lines, safe_link};
 
 /// How much of a refused address the status bar repeats.
 const SHOWN_LINK_CHARS: usize = 120;
@@ -23,6 +23,25 @@ impl MailScreen {
         let seq = self.next_seq();
         self.latest_thread = seq;
         self.ctx.store.thread(seq, thread_id)
+    }
+
+    /// A failed read outside the list (`what`: Rail's word for it): the status bar and
+    /// `:errors` get it, and the list keeps its rows. The escaped line, for the area that
+    /// asked; `None` when there is nothing to show there (a store that is not set up says so
+    /// in the list, and only list reads are ever stale).
+    pub(super) fn side_read_failed(
+        &mut self,
+        error: ReadError,
+        what: &'static str,
+    ) -> Option<String> {
+        let ReadError::Failed(error) = error else {
+            return None;
+        };
+        tracing::warn!(code = ?error.code, what, "a mail screen read failed");
+        let text = format!("The {what} could not be read: {}", error_line(&error));
+        self.status
+            .error(text.clone(), self.ctx.clock.now(), self.tick);
+        Some(text)
     }
 
     pub(super) fn open_selected(&mut self) -> Vec<Effect> {
@@ -40,13 +59,14 @@ impl MailScreen {
         match result {
             Ok(Some(detail)) => {
                 match self.reader.as_mut().filter(|r| r.thread_id() == thread_id) {
+                    // A re-read after a store change: the focus stays where it is.
                     Some(reader) => reader.refresh(detail),
                     None => {
                         let glyphs = Glyphs::of(self.ctx.icons);
                         self.reader = Some(Reader::new(detail, self.ctx.clock.clone(), glyphs));
+                        self.focus = Focus::Reader;
                     }
                 }
-                self.focus = Focus::Reader;
                 let mut effects = self.fetch_wanted();
                 effects.extend(self.resume_open());
                 effects
@@ -58,7 +78,13 @@ impl MailScreen {
                 Vec::new()
             }
             Err(error) => {
-                self.read_failed(error);
+                // The open thread's re-read: the reader says so until a read succeeds.
+                if let Some(text) = self.side_read_failed(error, "thread")
+                    && let Some(reader) =
+                        self.reader.as_mut().filter(|r| r.thread_id() == thread_id)
+                {
+                    reader.read_failed(text);
+                }
                 Vec::new()
             }
         }
@@ -101,6 +127,10 @@ impl MailScreen {
         thread_id: i64,
         result: Result<BodyFetchResponse, OpError>,
     ) -> Vec<Effect> {
+        match &result {
+            Ok(_) => self.status.answered(),
+            Err(error) => self.status.failed(error),
+        }
         let mut effects = self.dirty();
         let Some(reader) = self.reader.as_mut().filter(|r| r.thread_id() == thread_id) else {
             return effects;
@@ -285,8 +315,13 @@ impl MailScreen {
         message_id: i64,
         result: Result<Option<HtmlBody>, ReadError>,
     ) -> Vec<Effect> {
-        // The reader closed while the read was in flight: nobody asked for this any more.
-        if self.reader.is_none() {
+        // Only the open reader's own messages: the reader closed, or moved to another
+        // thread, while the read was in flight.
+        let ours = self
+            .reader
+            .as_ref()
+            .is_some_and(|r| r.detail().messages.iter().any(|m| m.id == message_id));
+        if !ours {
             return Vec::new();
         }
         match result {
@@ -299,7 +334,9 @@ impl MailScreen {
                 self.status
                     .notify("This message has no HTML part to open.", self.tick);
             }
-            Err(error) => self.read_failed(error),
+            Err(error) => {
+                self.side_read_failed(error, "message");
+            }
         }
         Vec::new()
     }
@@ -347,10 +384,9 @@ impl MailScreen {
         };
         match safe_link(address) {
             Some(url) => {
-                let lines = vec![url.as_str().to_string()];
                 self.modal = Some(Modal::Confirm(Confirm::new(
                     "Open this link?",
-                    lines,
+                    link_lines(&url),
                     Command::OpenLink(url),
                 )));
             }
@@ -457,7 +493,7 @@ impl MailScreen {
                     .rev()
                     .map(|e| format!("{}  {}", self.ctx.clock.short(e.at), e.text))
                     .collect();
-                self.modal = Some(Modal::Errors(ErrorList::new(rows)));
+                self.modal = Some(Modal::Errors(ErrorList::new(rows, self.ctx.icons)));
                 Vec::new()
             }
             Target::Scope(scope) => {

@@ -3,7 +3,8 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use rail_core::ops::{AccountSyncStatus, OpError, SyncPhase};
+use rail_core::error::ErrorClass;
+use rail_core::ops::{AccountSyncStatus, ErrorCode, OpError, SyncPhase};
 
 use super::AccountEntry;
 use super::view::Glyphs;
@@ -20,6 +21,9 @@ pub enum DaemonState {
     Connecting,
     Connected,
     Unreachable,
+    /// The watch was lost, but a request (a body fetch) got through since: the daemon is
+    /// back, and live updates wait for `Ctrl-r`.
+    Reachable,
 }
 
 /// One error as shown: when (Unix seconds) and the escaped text.
@@ -91,6 +95,22 @@ impl StatusBar {
         self.error(error_line(error), now, tick);
     }
 
+    /// A request reached the daemon: after a lost watch, the daemon is reachable again.
+    pub fn answered(&mut self) {
+        if self.daemon == DaemonState::Unreachable {
+            self.daemon = DaemonState::Reachable;
+        }
+    }
+
+    /// A request failed in the way a lost link does (the daemon closed the connection or is
+    /// not serving): after "reachable again", the daemon is unreachable once more.
+    pub fn failed(&mut self, error: &OpError) {
+        let link_down = error.code == ErrorCode::Daemon && error.class == ErrorClass::Transient;
+        if link_down && self.daemon == DaemonState::Reachable {
+            self.daemon = DaemonState::Unreachable;
+        }
+    }
+
     pub fn notify(&mut self, text: impl Into<String>, tick: usize) {
         self.notice = Some((text.into(), tick + NOTICE_TICKS, false));
     }
@@ -146,6 +166,10 @@ impl StatusBar {
             DaemonState::Connecting => parts.push("connecting to the daemon…".to_string()),
             DaemonState::Unreachable => parts.push(format!(
                 "daemon unreachable ({} retries)",
+                keymap.label(Action::ListRefresh)
+            )),
+            DaemonState::Reachable => parts.push(format!(
+                "daemon reachable again ({} resumes live updates)",
                 keymap.label(Action::ListRefresh)
             )),
         }

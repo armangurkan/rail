@@ -8,7 +8,10 @@ mod store_reader;
 mod tests;
 
 use std::fmt;
+use std::panic::AssertUnwindSafe;
 use std::time::Duration;
+
+use futures_util::FutureExt;
 
 use rail_core::ops::{AccountSyncStatus, BodyFetchResponse, OpError};
 use rail_core::store::view::{HtmlBody, ThreadDetail};
@@ -69,6 +72,10 @@ pub enum MailEvent {
         thread_id: i64,
         result: Result<BodyFetchResponse, OpError>,
     },
+    /// The refresh with this sequence number gave its last answer, or its job panicked.
+    RefreshEnded {
+        seq: u64,
+    },
     Daemon(DaemonEvent),
     Timer {
         token: u64,
@@ -109,6 +116,7 @@ impl fmt::Debug for MailEvent {
                 .field("thread_id", thread_id)
                 .field("ok", &result.is_ok())
                 .finish(),
+            Self::RefreshEnded { seq } => f.debug_struct("RefreshEnded").field("seq", seq).finish(),
             Self::Daemon(event) => {
                 let name = match event {
                     DaemonEvent::Connected(_) => "Connected",
@@ -149,4 +157,21 @@ where
     Fut: Future<Output = ()> + Send + 'static,
 {
     Effect::Spawn(Box::new(move |sink| Box::pin(work(sink))))
+}
+
+/// A refresh's job: `work` sends the refresh's answers, then `RefreshEnded { seq }` follows
+/// whether `work` finished or panicked, so the screen's one-refresh gate always opens again.
+/// A panic then goes on to the job's supervisor, which reports it as usual.
+pub(crate) fn refresh_job<F, Fut>(seq: u64, work: F) -> Effect
+where
+    F: FnOnce(TaskSink) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    job(move |sink| async move {
+        let outcome = AssertUnwindSafe(work(sink.clone())).catch_unwind().await;
+        send(&sink, MailEvent::RefreshEnded { seq });
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
+    })
 }

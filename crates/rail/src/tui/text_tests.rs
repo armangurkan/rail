@@ -1,6 +1,9 @@
 //! Escaping, width, cutting, wrapping, tabs, quote folding, link markers, link validation and
 //! OSC 8, with the hostile inputs the spec names.
 
+use rail_core::provider::links::MAX_LINK_BYTES;
+use url::Url;
+
 use super::text::*;
 
 #[test]
@@ -244,4 +247,197 @@ fn outside_text_is_labelled_and_escaped() {
         outside("bad\u{1b}[2J \u{202e}x"),
         "from outside Rail (the provider or the system): \"bad\\u{1b}[2J \\u{202e}x\""
     );
+}
+
+#[test]
+fn a_link_is_measured_after_it_is_normalised() {
+    // 1,414 bytes as written, 4,214 once each `ü` is percent-encoded.
+    let grows = format!("https://e.com/{}", "ü".repeat(700));
+    assert!(grows.len() <= MAX_LINK_BYTES);
+    assert!(safe_link(&grows).is_none());
+    // 1,814 bytes as written, 1,814 serialised: still fine.
+    let fits = format!("https://e.com/{}", "a".repeat(1_800));
+    assert!(safe_link(&fits).is_some());
+}
+
+#[test]
+fn the_confirmation_names_the_host_warns_about_userinfo_and_names_a_mail_recipient() {
+    let lines = |address: &str| link_lines(&safe_link(address).unwrap());
+    assert_eq!(
+        lines("https://docs.example/plan"),
+        ["Host: docs.example", "https://docs.example/plan"]
+    );
+    let warning =
+        "Warning: the part before \"@\" is not where this link goes. It goes to evil.example.";
+    assert_eq!(
+        lines("https://bank.com@evil.example/x"),
+        [
+            warning,
+            "Host: evil.example",
+            "https://bank.com@evil.example/x"
+        ]
+    );
+    assert_eq!(lines("https://user:pw@evil.example/")[0], warning);
+    assert_eq!(lines("https://:pw@evil.example/")[0], warning);
+    assert_eq!(
+        lines("mailto:dana@example.com"),
+        ["To: dana@example.com", "mailto:dana@example.com"]
+    );
+    let url = Url::parse("https://docs.example/").unwrap();
+    assert!(link_lines(&url).iter().all(|l| !l.contains("Warning")));
+}
+
+/// Review Focus 5.
+#[test]
+fn an_idn_or_lookalike_host_is_shown_in_ascii_and_a_long_punycode_host_is_refused() {
+    for (written, host) in [
+        ("https://bücher.example/", "xn--bcher-kva.example"),
+        ("https://xn--bcher-kva.example/", "xn--bcher-kva.example"),
+        ("https://\u{430}pple.com/", "xn--pple-43d.com"),
+    ] {
+        let url = safe_link(written).unwrap();
+        assert_eq!(link_lines(&url)[0], format!("Host: {host}"), "{written}");
+        assert!(link_lines(&url).iter().all(|l| l.is_ascii()), "{written}");
+    }
+    // 1,516 bytes as written, 2,716 once every label is punycode (`xn--80ac`).
+    let long = format!("https://{}example/", "\u{430}\u{431}.".repeat(300));
+    assert!(long.len() <= MAX_LINK_BYTES);
+    assert!(safe_link(&long).is_none());
+}
+
+fn mail(address: &str) -> Vec<String> {
+    link_lines(&safe_link(address).unwrap())
+}
+
+#[test]
+fn a_mailto_link_lists_every_recipient_and_warns_when_the_query_adds_some() {
+    let warning = "Warning: this link adds recipients beyond the address in its path.";
+    assert_eq!(
+        mail(
+            "mailto:boss@company.com?bcc=evil@x.example&CC=a@b.example,c@d.example&to=e@f.example"
+        ),
+        [
+            warning,
+            "To: boss@company.com",
+            "To: e@f.example",
+            "Cc: a@b.example",
+            "Cc: c@d.example",
+            "Bcc: evil@x.example",
+            "mailto:boss@company.com?bcc=evil@x.example&CC=a@b.example,c@d.example&to=e@f.example",
+        ]
+    );
+    // A subject is not a recipient.
+    assert!(
+        mail("mailto:a@b.example?subject=hi")
+            .iter()
+            .all(|l| !l.contains("Warning"))
+    );
+}
+
+#[test]
+fn a_mailto_link_with_an_unusual_parameter_warns_first_and_names_it() {
+    let lines = mail("mailto:a@b.example?subject=hi&Attach=/etc/passwd&body=x&attachment=y");
+    assert_eq!(
+        lines[0],
+        "Warning: this link sets unusual parameters: attach, attachment"
+    );
+    assert_eq!(lines[1], "To: a@b.example");
+    // The usual parameters, in any case, do not warn.
+    let usual = mail("mailto:a@b.example?SUBJECT=hi&Body=x&to=c@d.example");
+    assert!(usual.iter().all(|l| !l.contains("unusual")), "{usual:?}");
+    // Names are escaped and bounded, at most five, then a count.
+    let many: String = (0..8).map(|i| format!("&p{i}=1")).collect();
+    let lines = mail(&format!("mailto:a@b.example?x%1B%5B2J=1{many}"));
+    assert!(lines[0].ends_with("… and 4 more"), "{}", lines[0]);
+    assert!(!lines[0].contains('\u{1b}'));
+    assert!(width(&lines[0]) <= 150, "{}", lines[0]);
+}
+
+#[test]
+fn a_mailto_path_is_decoded_and_an_empty_one_says_so() {
+    assert_eq!(
+        mail("mailto:ceo%40bank.com@evil.example")[0],
+        "To: ceo@bank.com@evil.example"
+    );
+    assert_eq!(
+        mail("mailto:a@b.example,c@d.example")[..2],
+        ["To: a@b.example", "To: c@d.example"]
+    );
+    assert_eq!(mail("mailto:?subject=hi")[0], "To: (no recipient)");
+    assert_eq!(
+        mail("mailto:?bcc=x@y.example")[1..3],
+        ["To: (no recipient)", "Bcc: x@y.example"]
+    );
+}
+
+#[test]
+fn a_decoded_recipient_is_escaped_and_bad_utf8_never_panics() {
+    let lines = mail("mailto:a%1B%5B2J%E2%80%AEb@x.example,%FF@y.example");
+    assert_eq!(lines[0], "To: a\\u{1b}[2J\\u{202e}b@x.example");
+    assert_eq!(lines[1], "To: \u{fffd}@y.example");
+    let lines = mail("mailto:x@y.example?bcc=%0Aevil@z.example%E2%80%AE");
+    assert!(lines.iter().all(|l| !l.contains(['\n', '\u{202e}'])));
+}
+
+#[test]
+fn a_long_address_is_cut_after_the_lines_that_say_where_it_goes() {
+    let url = safe_link(&format!(
+        "https://bank.com@evil.example/{}",
+        "a".repeat(1_300)
+    ))
+    .unwrap();
+    let lines = link_lines(&url);
+    assert_eq!(lines.len(), 3);
+    assert!(lines[2].ends_with('…') && width(&lines[2]) <= 150);
+}
+
+#[test]
+fn percent_decode_leaves_a_plus_or_short_escape_literal() {
+    assert_eq!(super::text::percent_decode("a%+4b%4"), "a%+4b%4");
+    assert_eq!(super::text::percent_decode("a%41%2c"), "aA,");
+}
+
+#[test]
+fn a_long_host_is_shown_by_its_end_and_the_warning_names_the_whole_host() {
+    let label = "a".repeat(63);
+    let host = format!("bank.com.secure.{label}.{label}.{label}.evil.example");
+    let lines = link_lines(&safe_link(&format!("https://bank.com@{host}/")).unwrap());
+    assert!(lines[0].starts_with("Warning:") && lines[0].ends_with(".evil.example."));
+    assert!(lines[0].contains("goes to …"), "{}", lines[0]);
+    assert!(lines[1].starts_with("Host: …") && lines[1].ends_with("evil.example"));
+    assert!(width(&lines[1]) <= 106);
+    let warning = |address: &str| link_lines(&safe_link(address).unwrap())[0].clone();
+    assert!(
+        warning("https://bank.com@login.evil.co.uk/").ends_with("It goes to login.evil.co.uk.")
+    );
+    assert!(
+        warning("https://u@bank-login.github.io/").ends_with("It goes to bank-login.github.io.")
+    );
+    assert!(warning("https://bank.com@evil.example./").ends_with("It goes to evil.example.."));
+    assert!(warning("https://u@192.0.2.7/").ends_with("It goes to 192.0.2.7."));
+}
+
+#[test]
+fn recipients_are_capped_with_a_count_and_the_warning_comes_first() {
+    let bcc: String = (0..190).map(|_| "&bcc=u@x.y").collect();
+    let lines = mail(&format!("mailto:a@b.example?subject=s{bcc}"));
+    assert!(lines[0].starts_with("Warning: this link adds recipients"));
+    assert_eq!(lines.len(), 1 + 5 + 1 + 1);
+    assert_eq!(lines[6], "… and 186 more recipients");
+    let long = format!("mailto:a@b.example?bcc={}", "z".repeat(1_500));
+    assert!(mail(&long).iter().all(|l| width(l) <= 150));
+}
+
+#[test]
+fn an_input_row_puts_the_cursor_after_what_is_before_it_in_columns() {
+    // Wide characters take two columns; an escaped control takes its escape's columns.
+    assert_eq!(input_row(":", "日本語", 2, 40), (":日本語".to_string(), 5));
+    assert_eq!(
+        input_row("/", "a\u{1b}b", 2, 40),
+        ("/a\\u{1b}b".to_string(), 8)
+    );
+    assert_eq!(input_row("/", "abc", 0, 40), ("/abc".to_string(), 1));
+    // Past the last column the start is dropped, so the cursor stays in view.
+    assert_eq!(input_row(":", &"x".repeat(50), 50, 10), ("x".repeat(9), 9));
+    assert_eq!(input_row(":", "abc", 3, 0), (String::new(), 0));
 }

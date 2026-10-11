@@ -4,11 +4,15 @@ pub mod accounts;
 pub mod filter;
 pub mod migrations;
 mod rollup;
+#[cfg(test)]
+mod search_text_tests;
 pub mod sync_read;
 mod sync_write;
 #[cfg(test)]
 mod sync_write_tests;
 pub mod view;
+#[cfg(test)]
+mod view_sidebar_tests;
 #[cfg(test)]
 mod view_tests;
 
@@ -44,7 +48,9 @@ pub enum StoreError {
 }
 
 impl StoreError {
-    /// Busy or locked databases clear up on their own; everything else will not.
+    /// Busy or locked databases clear up on their own, and so does an older store: the
+    /// daemon's writer migrates it when it opens it. Everything else will not, a store newer
+    /// than this build included.
     pub fn class(&self) -> ErrorClass {
         match self {
             Self::Sqlite(e)
@@ -55,6 +61,7 @@ impl StoreError {
             {
                 ErrorClass::Transient
             }
+            Self::NotSetUp { found, expected } if found < expected => ErrorClass::Transient,
             Self::Sqlite(_)
             | Self::CreateDir { .. }
             | Self::TooNew { .. }
@@ -124,6 +131,18 @@ impl Store {
         Self::init(Connection::open_in_memory()?)
     }
 
+    /// A store at `path` migrated only up to `version`, as an older build left it, with no
+    /// version check. For upgrade tests here and in the binary's crate; never in a build that
+    /// ships (the `test-gates` feature).
+    #[cfg(any(test, feature = "test-gates"))]
+    pub fn open_at_version(path: &Path, version: i64) -> Result<Self, StoreError> {
+        let mut conn = Connection::open(path)?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        migrations::migrate_up_to(&mut conn, version)?;
+        Ok(Self { conn })
+    }
+
     /// A connection that can only read, for the sync engine and search. The database must
     /// already exist and be migrated (the daemon opens it with `Store::open` first); a missing
     /// file is an error, never a new empty database.
@@ -173,6 +192,8 @@ impl Store {
 mod tests {
     use super::*;
     use rusqlite::{OptionalExtension, params};
+
+    use crate::ops::OpError;
 
     fn table_names(store: &Store) -> Vec<String> {
         let mut stmt = store
@@ -274,8 +295,10 @@ mod tests {
         )
         .unwrap();
         c.execute(
-            "INSERT INTO messages (account_id, thread_id, remote_id, subject, from_json, body_text, internal_date)
-             VALUES (1, 1, 'm1', ?1, '[{\"name\":\"Dana\",\"address\":\"dana@example.com\"}]', 'hello world', 1000)",
+            "INSERT INTO messages (account_id, thread_id, remote_id, subject, from_json, from_text,
+               body_text, internal_date)
+             VALUES (1, 1, 'm1', ?1, '[{\"name\":\"Dana\",\"address\":\"dana@example.com\"}]',
+               'Dana dana@example.com', 'hello world', 1000)",
             params![subject],
         )
         .unwrap();
@@ -330,7 +353,7 @@ mod tests {
             )
             .unwrap();
         assert!(
-            sql.contains("AFTER UPDATE OF subject, from_json, to_json, body_text ON messages"),
+            sql.contains("AFTER UPDATE OF subject, from_text, to_text, body_text ON messages"),
             "{sql}"
         );
         // A flag change leaves the index alone and the message still matches.
@@ -391,6 +414,25 @@ mod tests {
             None,
         ));
         assert_eq!(constraint.class(), ErrorClass::Permanent);
+
+        // An older store is migrated by the daemon's writer when it opens it: waiting mends it.
+        let older = StoreError::NotSetUp {
+            found: 4,
+            expected: 5,
+        };
+        assert_eq!(older.class(), ErrorClass::Transient);
+        assert_eq!(OpError::from(older).class, ErrorClass::Transient);
+        let unmigrated = StoreError::NotSetUp {
+            found: 0,
+            expected: 5,
+        };
+        assert_eq!(unmigrated.class(), ErrorClass::Transient);
+        // A newer store needs a newer build; no retry mends that.
+        let newer = StoreError::NotSetUp {
+            found: 6,
+            expected: 5,
+        };
+        assert_eq!(newer.class(), ErrorClass::Permanent);
     }
 
     #[cfg(unix)]
@@ -499,7 +541,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!((version, migrations::LATEST_VERSION), (4, 4));
+        assert_eq!((version, migrations::LATEST_VERSION), (5, 5));
         let store = Store { conn };
         let state = store.sync_state(1).unwrap();
         assert_eq!(state.backfill_before, Some(1_700_000_000_000));
@@ -575,7 +617,7 @@ mod tests {
             .unwrap();
         }
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 4);
+        assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
         let n: i64 = store
             .conn()
             .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
