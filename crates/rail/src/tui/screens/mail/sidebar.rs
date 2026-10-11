@@ -1,6 +1,8 @@
 //! The sidebar: the unified inbox, each account's inbox, and each account's other folders,
 //! with unread counts, and a cursor that stays on its mailbox across re-reads.
 
+use rail_core::store::view::MAX_SIDEBAR_FOLDERS;
+
 use super::{AccountEntry, MailScreen};
 use crate::tui::app::Effect;
 use crate::tui::data::{ReadError, ScopeChoice, SidebarOutcome};
@@ -22,6 +24,8 @@ pub struct Sidebar {
     cursor: usize,
     /// The last read failed: the old items stay, under a note.
     failed: bool,
+    /// Accounts (by index) whose folder list was cut at `MAX_SIDEBAR_FOLDERS`.
+    capped: Vec<usize>,
 }
 
 impl Sidebar {
@@ -36,6 +40,7 @@ impl Sidebar {
     /// The items for `accounts` (in order) from fresh counts, the cursor kept on its scope.
     pub fn rebuild(&mut self, accounts: &[AccountEntry], outcome: &SidebarOutcome) {
         let at = self.items.get(self.cursor).map(|i| i.scope.clone());
+        let mut capped = Vec::new();
         let mut items = vec![SidebarItem {
             scope: ScopeChoice::Unified,
             label: "All inboxes".to_string(),
@@ -58,11 +63,17 @@ impl Sidebar {
                 depth: 0,
                 account: Some(index),
             });
-            let folders = outcome
-                .counts
-                .folders
-                .iter()
-                .filter(|f| Some(f.account_id) == id && f.kind != "inbox");
+            let own = || {
+                outcome
+                    .counts
+                    .folders
+                    .iter()
+                    .filter(|f| Some(f.account_id) == id)
+            };
+            if own().count() >= MAX_SIDEBAR_FOLDERS {
+                capped.push(index);
+            }
+            let folders = own().filter(|f| f.kind != "inbox");
             items.extend(folders.map(|f| SidebarItem {
                 scope: ScopeChoice::Folder {
                     account: index,
@@ -79,6 +90,7 @@ impl Sidebar {
             .and_then(|scope| items.iter().position(|i| i.scope == scope))
             .unwrap_or(0);
         self.items = items;
+        self.capped = capped;
         self.failed = false;
     }
 
@@ -108,6 +120,12 @@ impl Sidebar {
         if let Some(index) = self.items.iter().position(|i| i.scope == *scope) {
             self.cursor = index;
         }
+    }
+
+    /// True when `account`'s folder list reached the cap, so a folder missing from it may be
+    /// beyond the cap rather than deleted.
+    pub fn is_capped(&self, account: usize) -> bool {
+        self.capped.contains(&account)
     }
 
     /// The unread count shown for `scope`.
@@ -143,7 +161,8 @@ impl MailScreen {
     }
 
     /// After a rebuild: a label's scope takes the label's current name (renamed in Gmail),
-    /// or, when the label is gone, gives way to its account's inbox.
+    /// or, when the label is gone (or beyond the sidebar's cap), gives way to its account's
+    /// inbox.
     fn follow_scope(&mut self) -> Vec<Effect> {
         let ScopeChoice::Folder { account, .. } = self.scope else {
             return Vec::new();
@@ -152,10 +171,15 @@ impl MailScreen {
             self.scope = item.scope.clone();
             return Vec::new();
         }
-        self.status.notify(
-            "The label you had open is gone; showing the inbox.",
-            self.tick,
-        );
+        let notice = if self.sidebar.is_capped(account) {
+            format!(
+                "This account has more than {MAX_SIDEBAR_FOLDERS} labels and the one you had \
+                 open is not listed; showing the inbox."
+            )
+        } else {
+            "The label you had open is gone; showing the inbox.".to_string()
+        };
+        self.status.notify(notice, self.tick);
         self.set_scope(ScopeChoice::Account(account))
     }
 }

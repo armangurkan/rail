@@ -7,6 +7,7 @@ use rail_core::error::ErrorClass;
 use rail_core::ops::{ErrorCode, OpError, SyncPhase};
 use rail_core::provider::{FolderKind, RemoteFolder};
 use rail_core::store::view::HtmlBody;
+use rail_core::store::view::MAX_SIDEBAR_FOLDERS;
 use rail_core::sync::Batch;
 
 use super::{Fixture, feed, fixture, press, press_n, run_job, selected, store_changed, writer};
@@ -122,6 +123,36 @@ async fn a_selected_label_renamed_then_deleted_keeps_then_moves_the_cursor_safel
         "{:?}",
         f.screen.status.notice()
     );
+}
+
+#[tokio::test]
+async fn a_label_pushed_past_the_sidebar_cap_is_not_called_deleted() {
+    let mut f = fixture(3).await;
+    let mut store = writer(&f);
+    // Sidebar: All inboxes, work, Sent, Projects, home, Sent, Projects.
+    press(&mut f, KeyCode::Tab).await;
+    press_n(&mut f, KeyCode::Char('j'), 3).await;
+    press(&mut f, KeyCode::Enter).await;
+    assert!(matches!(
+        f.screen.scope,
+        ScopeChoice::Folder { account: 0, .. }
+    ));
+
+    // The label is renamed to sort last among more labels than the sidebar lists.
+    let others: Vec<(String, String)> = (0..MAX_SIDEBAR_FOLDERS + 20)
+        .map(|n| (format!("Other_{n}"), format!("L{n:04}")))
+        .collect();
+    let mut user: Vec<(&str, &str)> = others
+        .iter()
+        .map(|(id, name)| (id.as_str(), name.as_str()))
+        .collect();
+    user.push(("Label_1", "zzz"));
+    store.apply(&labels(&user), BASE_MS / 1000).unwrap();
+    store_changed(&mut f).await;
+    assert_eq!(f.screen.scope, ScopeChoice::Account(0));
+    let notice = f.screen.status.notice().unwrap_or_default().to_string();
+    assert!(notice.contains("more than 500 labels"), "{notice}");
+    assert!(!notice.contains("is gone"), "{notice}");
 }
 
 #[tokio::test]
