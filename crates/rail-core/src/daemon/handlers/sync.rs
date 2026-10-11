@@ -23,11 +23,9 @@ pub(super) async fn status(
 /// Subscribe first (when asked), so no progress of the woken pass is missed; a wake that
 /// fails takes the subscription back.
 pub(super) async fn now(call: Call, request: SyncNowRequest) -> Result<SyncNowResponse, OpError> {
-    let watch = if request.watch {
-        start_watch(&call.ctx.sync, &call.caller)
-    } else {
-        None
-    };
+    let watch = request
+        .watch
+        .then(|| start_watch(&call.ctx.sync, &call.caller));
     match call
         .ctx
         .sync
@@ -44,32 +42,30 @@ pub(super) async fn now(call: Call, request: SyncNowRequest) -> Result<SyncNowRe
     }
 }
 
-/// Give the connection one `sync.progress` subscriber, unless it has one already; the new
-/// subscriber's id, or `None`. The subscriber runs under the status board's lock: it only
-/// queues a frame on the connection's unbounded channel, never blocks and never calls back
-/// into the board. It drops itself once the connection goes or its id is no longer the
-/// connection's.
-fn start_watch(sync: &SyncManager, caller: &Caller) -> Option<u64> {
-    let id = NEXT_WATCH.fetch_add(1, Ordering::SeqCst);
-    caller
+/// Hold the connection's `sync.progress` watch, subscribing when it has none; the watch's
+/// id. The subscriber runs under the status board's lock: it only queues a frame on the
+/// connection's unbounded channel, never blocks and never calls back into the board (or takes
+/// the watch's lock). It drops itself once the connection goes or the watch ended.
+fn start_watch(sync: &SyncManager, caller: &Caller) -> u64 {
+    let (id, subscribe) = caller
         .watching()
-        .compare_exchange(0, id, Ordering::SeqCst, Ordering::SeqCst)
-        .ok()?;
-    let caller = caller.clone();
-    sync.subscribe(Box::new(move |status| {
-        if !caller.is_open() || caller.watching().load(Ordering::SeqCst) != id {
-            return false;
-        }
-        caller.notify(names::SYNC_PROGRESS, status);
-        true
-    }));
-    Some(id)
+        .join(NEXT_WATCH.fetch_add(1, Ordering::SeqCst));
+    if subscribe {
+        let caller = caller.clone();
+        sync.subscribe(Box::new(move |status| {
+            if !caller.is_open() || !caller.watching().is_live(id) {
+                return false;
+            }
+            caller.notify(names::SYNC_PROGRESS, status);
+            true
+        }));
+    }
+    id
 }
 
+/// A request whose wake failed lets go of the watch it held; another request's hold stays.
 fn stop_watch(caller: &Caller, id: u64) {
-    let _ = caller
-        .watching()
-        .compare_exchange(id, 0, Ordering::SeqCst, Ordering::SeqCst);
+    caller.watching().leave(id);
 }
 
 pub(super) async fn search(call: Call, request: SearchRequest) -> Result<SearchResponse, OpError> {
@@ -83,31 +79,59 @@ mod tests {
     use crate::ops::{AccountSyncStatus, BrowserEnv};
     use crate::test_support::offline_factory;
 
-    /// Fix round 1: repeated `sync.now { watch: true }` on one connection gives one
-    /// notification per change, and a taken-back watch sends nothing more.
-    #[test]
-    fn one_connection_has_one_progress_watch() {
+    fn setup() -> (
+        SyncManager,
+        Caller,
+        tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+        tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    ) {
         let sync = SyncManager::new(offline_factory());
         sync.board().insert(AccountSyncStatus::new(
             "w",
             "w@example.com",
             AccountKind::Gmail,
         ));
-        let (frames, mut sent) = tokio::sync::mpsc::unbounded_channel();
+        let (frames, sent) = tokio::sync::mpsc::unbounded_channel();
         let caller = Caller::new(frames.clone(), BrowserEnv::default());
-        let first = start_watch(&sync, &caller).expect("the first watch subscribes");
-        assert_eq!(start_watch(&sync, &caller.clone()), None);
+        (sync, caller, frames, sent)
+    }
+
+    fn change(sync: &SyncManager, n: u64) {
         sync.board()
-            .update("w@example.com", |s| s.passes_completed = 1);
+            .update("w@example.com", |s| s.passes_completed = n);
+    }
+
+    /// Fix round 1: repeated `sync.now { watch: true }` on one connection gives one
+    /// notification per change, and a watch every holder let go of sends nothing more.
+    #[test]
+    fn one_connection_has_one_progress_watch() {
+        let (sync, caller, _frames, mut sent) = setup();
+        let first = start_watch(&sync, &caller);
+        assert_eq!(
+            start_watch(&sync, &caller.clone()),
+            first,
+            "joined, not subscribed"
+        );
+        change(&sync, 1);
         assert!(sent.try_recv().is_ok());
         assert!(sent.try_recv().is_err(), "one notification per change");
         stop_watch(&caller, first);
-        sync.board()
-            .update("w@example.com", |s| s.passes_completed = 2);
-        assert!(sent.try_recv().is_err(), "a taken-back watch is silent");
-        assert!(
-            start_watch(&sync, &caller).is_some(),
-            "and can be asked again"
-        );
+        stop_watch(&caller, first);
+        change(&sync, 2);
+        assert!(sent.try_recv().is_err(), "a watch nobody holds is silent");
+        assert_ne!(start_watch(&sync, &caller), first, "and can be asked again");
+    }
+
+    /// Fix round 2: request A's failed wake cannot end the watch request B joined.
+    #[test]
+    fn a_failed_wake_does_not_cancel_another_requests_watch() {
+        let (sync, caller, _frames, mut sent) = setup();
+        let a = start_watch(&sync, &caller);
+        let b = start_watch(&sync, &caller);
+        assert_eq!(a, b);
+        stop_watch(&caller, a);
+        change(&sync, 1);
+        assert!(sent.try_recv().is_ok(), "B still watches");
+        assert!(sent.try_recv().is_err());
     }
 }

@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -31,6 +32,50 @@ pub(crate) struct Call {
     pub caller: Caller,
 }
 
+/// One connection's `sync.progress` watch: at most one live subscriber, held by every request
+/// that asked for it. A request whose wake failed lets go; the watch ends when the last
+/// holder lets go (a successful request never does: its watch lasts with the connection).
+#[derive(Default)]
+pub(crate) struct Watch {
+    /// The live subscriber's id, read by the subscriber itself; 0 when there is none.
+    live: AtomicU64,
+    /// The live id and how many requests hold it.
+    holders: Mutex<(u64, usize)>,
+}
+
+impl Watch {
+    /// Hold the watch. `(id, true)` when there was none and the caller must subscribe with
+    /// `fresh` as its id; `(id, false)` when it joined the live one.
+    pub(crate) fn join(&self, fresh: u64) -> (u64, bool) {
+        let mut holders = self.holders.lock().unwrap_or_else(PoisonError::into_inner);
+        if holders.1 > 0 {
+            holders.1 += 1;
+            return (holders.0, false);
+        }
+        *holders = (fresh, 1);
+        self.live.store(fresh, Ordering::SeqCst);
+        (fresh, true)
+    }
+
+    /// Let go of the watch `id`; the last holder ends it.
+    pub(crate) fn leave(&self, id: u64) {
+        let mut holders = self.holders.lock().unwrap_or_else(PoisonError::into_inner);
+        if holders.0 != id || holders.1 == 0 {
+            return;
+        }
+        holders.1 -= 1;
+        if holders.1 == 0 {
+            *holders = (0, 0);
+            self.live.store(0, Ordering::SeqCst);
+        }
+    }
+
+    /// True while `id` is the live subscriber. Lock-free: the board calls it under its lock.
+    pub(crate) fn is_live(&self, id: u64) -> bool {
+        id != 0 && self.live.load(Ordering::SeqCst) == id
+    }
+}
+
 /// The connection a request came from, for notifications.
 #[derive(Clone)]
 pub(crate) struct Caller {
@@ -39,9 +84,8 @@ pub(crate) struct Caller {
     frames: mpsc::WeakUnboundedSender<Vec<u8>>,
     /// The display and browser the connection's hello named (checked).
     browser: BrowserEnv,
-    /// The id of the connection's live `sync.progress` subscriber; 0 when it has none.
-    /// Shared by every request of one connection.
-    watching: Arc<AtomicU64>,
+    /// The connection's `sync.progress` watch, shared by every request of one connection.
+    watching: Arc<Watch>,
 }
 
 impl Caller {
@@ -54,12 +98,12 @@ impl Caller {
     }
 
     /// This caller, sharing the connection's `sync.progress` watch.
-    pub(crate) fn sharing_watch(mut self, watching: Arc<AtomicU64>) -> Self {
+    pub(crate) fn sharing_watch(mut self, watching: Arc<Watch>) -> Self {
         self.watching = watching;
         self
     }
 
-    pub(crate) fn watching(&self) -> &AtomicU64 {
+    pub(crate) fn watching(&self) -> &Watch {
         &self.watching
     }
 

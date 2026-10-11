@@ -35,7 +35,7 @@ impl SyncManager {
         let path = ctx.paths.config_file();
         let now = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
         let seen = *lock(&self.config_mtime);
-        let due = self.engines.lock().await.retry_due();
+        let due = self.writer_failure().is_none() && self.engines.lock().await.retry_due();
         if now != seen || due {
             self.reconcile(ctx).await;
         }

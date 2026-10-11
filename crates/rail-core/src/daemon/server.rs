@@ -300,9 +300,10 @@ impl Server {
     }
 
     /// The single shutdown point, in the one order that matters: stop listening; refuse new
-    /// logins; stop the sync engines and let the writer commit its batch; end the logins still waiting for a
-    /// browser; give running saves their time to finish; end every connection so none serves
-    /// a request after this; remove the socket; and only then release `daemon.lock`.
+    /// logins; stop the sync engines and let the writer commit its batch; end the logins
+    /// still waiting for a browser; give running saves their time to finish; end every
+    /// connection so none serves a request after this; remove the socket; and only then
+    /// release `daemon.lock`.
     async fn finish(mut self) -> Result<(), OpError> {
         drop(self.listener);
         self.ctx.pending.stop_new();

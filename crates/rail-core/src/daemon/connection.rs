@@ -4,7 +4,6 @@
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -14,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use super::context::DaemonContext;
-use super::registry::{Call, Caller, Registry};
+use super::registry::{Call, Caller, Registry, Watch};
 use super::server::ServerState;
 use super::wire::{
     INVALID_PARAMS, INVALID_REQUEST, Message, PARSE_ERROR, Response, RpcError, WireError,
@@ -93,7 +92,7 @@ impl Connection {
     ) {
         let mut reader = BufReader::new(read);
         let mut hello: Option<BrowserEnv> = None;
-        let watching = Arc::new(AtomicU64::new(0));
+        let watching = Arc::new(Watch::default());
         loop {
             let next = tokio::select! {
                 next = self.next_frame(&mut reader, hello.is_some()) => next,
@@ -137,7 +136,7 @@ impl Connection {
         &self,
         frame: &[u8],
         hello: &mut Option<BrowserEnv>,
-        watching: &Arc<AtomicU64>,
+        watching: &Arc<Watch>,
         frames: &mpsc::UnboundedSender<Vec<u8>>,
         tasks: &mut JoinSet<()>,
     ) -> ControlFlow<()> {

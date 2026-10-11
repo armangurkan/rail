@@ -128,9 +128,9 @@ async fn waking_an_account_that_failed_to_start_gives_its_start_error() {
     std::fs::create_dir_all(&paths.config_dir).unwrap();
     std::fs::write(paths.config_file(), WORK).unwrap();
     let (ctx, _) = daemon_context(&paths);
-    let ctx = ctx.with_provider_factory(Arc::new(|_| {
+    let ctx = Arc::new(ctx.with_provider_factory(Arc::new(|_| {
         Err(crate::ops::OpError::invalid_input("1Password is locked"))
-    }));
+    })));
     ctx.sync.reconcile(&ctx).await;
     let err = ctx.sync.wake(&ctx, Some("work")).await.unwrap_err();
     assert_eq!(err.message, "1Password is locked");
@@ -356,4 +356,120 @@ fn failed_starts_back_off_and_a_healthy_writer_resets_its_count() {
     assert_eq!(restarts_after(3, Some(minutes(61))), 0);
     assert_eq!(restarts_after(3, Some(minutes(5))), 3);
     assert_eq!(restarts_after(2, None), 2);
+}
+
+/// A factory: "slow" fails its first build, then each build waits on `gate`; others get `mock`.
+fn slow_factory(gate: &Arc<Gate>, mock: &MockProvider, fail_first: bool) -> super::ProviderFactory {
+    let (held, served) = (gate.clone(), mock.clone());
+    let failed_once = std::sync::atomic::AtomicBool::new(!fail_first);
+    Arc::new(move |request: super::ProviderRequest| {
+        if request.account.name == "slow" {
+            if !failed_once.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::ops::OpError::invalid_input("1Password is locked"));
+            }
+            held.wait();
+        }
+        Ok(Arc::new(served.clone()) as Arc<dyn crate::provider::Provider>)
+    })
+}
+
+fn slow_context(tmp: &tempfile::TempDir, factory: super::ProviderFactory) -> Arc<DaemonContext> {
+    let paths = Paths::all_in(tmp.path());
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    std::fs::write(paths.config_file(), WORK_AND_SLOW).unwrap();
+    let (ctx, _) = daemon_context(&paths);
+    Arc::new(ctx.with_provider_factory(factory))
+}
+
+async fn entered(gate: &Gate) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !gate.entered.load(std::sync::atomic::Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the slow build began");
+}
+
+async fn reconciles_done(ctx: &DaemonContext) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while ctx.sync.reconciling.try_lock().is_err() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the reconcile ended");
+}
+
+/// Fix round 2: `sync.now` for every account wakes the healthy engines at once while a failed
+/// account's retry waits on 1Password.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn waking_every_account_does_not_wait_for_a_failed_ones_retry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gate = Arc::new(Gate::default());
+    let ctx = slow_context(&tmp, slow_factory(&gate, &MockProvider::new(), true));
+    ctx.sync.reconcile(&ctx).await;
+    until(&ctx, |s| s.passes_completed >= 1 && !s.pass_running).await;
+    super::SyncManager::reconcile_in_background(ctx.clone());
+    entered(&gate).await;
+    let woken = tokio::time::timeout(Duration::from_secs(2), ctx.sync.wake(&ctx, None))
+        .await
+        .expect("sync.now did not wait for the retry")
+        .unwrap();
+    assert_eq!(woken.len(), 1);
+    assert_eq!(woken[0].name, "work");
+    let target = woken[0].pass;
+    until(&ctx, |s| s.passes_completed >= target).await;
+    gate.release();
+    reconciles_done(&ctx).await;
+    ctx.sync.shutdown(Duration::from_secs(5)).await;
+}
+
+/// Fix round 2: an account removed from `config.toml` while its provider was being built
+/// gets no engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_account_removed_while_building_gets_no_engine() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gate = Arc::new(Gate::default());
+    let ctx = slow_context(&tmp, slow_factory(&gate, &MockProvider::new(), false));
+    super::SyncManager::reconcile_in_background(ctx.clone());
+    entered(&gate).await;
+    std::fs::write(ctx.paths.config_file(), WORK).unwrap();
+    gate.release();
+    reconciles_done(&ctx).await;
+    let engines = ctx.sync.engines.lock().await;
+    let running: Vec<&String> = engines.running.keys().collect();
+    assert_eq!(
+        running,
+        ["me@example.com"],
+        "only the account still configured"
+    );
+    drop(engines);
+    ctx.sync.shutdown(Duration::from_secs(5)).await;
+}
+
+/// Fix round 2: an invalid `config.toml` with a failed account due another try is warned
+/// about once, not at every check.
+#[tokio::test(start_paused = true)]
+async fn an_invalid_config_is_warned_about_once_even_with_a_retry_due() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    std::fs::write(paths.config_file(), WORK).unwrap();
+    let (ctx, _) = daemon_context(&paths);
+    let ctx = Arc::new(ctx.with_provider_factory(Arc::new(|_| {
+        Err(crate::ops::OpError::invalid_input("1Password is locked"))
+    })));
+    ctx.sync.reconcile(&ctx).await;
+    std::fs::write(paths.config_file(), "[[accounts]\nbroken").unwrap();
+    tokio::time::advance(Duration::from_secs(61)).await;
+    for _ in 0..10 {
+        ctx.sync.refresh_if_changed(&ctx).await;
+        tokio::time::advance(super::CONFIG_CHECK).await;
+    }
+    let failed = ctx
+        .sync
+        .failed_reconciles
+        .load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(failed, 1, "one warning over ten checks");
 }

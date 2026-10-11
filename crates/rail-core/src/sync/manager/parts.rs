@@ -80,6 +80,13 @@ pub(super) struct Failed {
     pub(super) retry_at: Instant,
 }
 
+/// An account `plan` decided to start, with what it was planned from.
+pub(super) struct PlannedAccount {
+    pub(super) account: AccountConfig,
+    pub(super) key: EngineKey,
+    pub(super) settings: SyncSettings,
+}
+
 /// Everything a new engine needs that is slow to get (the store rows, the provider, which may
 /// run `op read`), gathered without the engines lock.
 pub(super) struct Prepared {
@@ -110,6 +117,17 @@ impl Engines {
         let retry_at = Instant::now() + retry_delay(*attempts);
         self.failed
             .insert(address.to_string(), Failed { error, retry_at });
+    }
+
+    /// Push every failed account's next try out by its backoff again (a reconcile that
+    /// failed as a whole, or a writer given up), so the checks do not retry, and warn,
+    /// every `CONFIG_CHECK`.
+    pub(super) fn postpone_retries(&mut self) {
+        let now = Instant::now();
+        for (address, failed) in &mut self.failed {
+            let attempts = self.attempts.get(address).copied().unwrap_or(1);
+            failed.retry_at = now + retry_delay(attempts);
+        }
     }
 
     pub(super) fn retry_due(&self) -> bool {
