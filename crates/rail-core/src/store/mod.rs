@@ -1,8 +1,14 @@
 //! The local SQLite store. One file, WAL mode, FTS5.
 
 pub mod accounts;
+mod apply_local;
+#[cfg(test)]
+mod apply_local_tests;
 pub mod filter;
 pub mod migrations;
+pub mod outbox;
+#[cfg(test)]
+mod outbox_tests;
 mod rollup;
 #[cfg(test)]
 mod search_text_tests;
@@ -418,19 +424,19 @@ mod tests {
         // An older store is migrated by the daemon's writer when it opens it: waiting mends it.
         let older = StoreError::NotSetUp {
             found: 4,
-            expected: 5,
+            expected: 6,
         };
         assert_eq!(older.class(), ErrorClass::Transient);
         assert_eq!(OpError::from(older).class, ErrorClass::Transient);
         let unmigrated = StoreError::NotSetUp {
             found: 0,
-            expected: 5,
+            expected: 6,
         };
         assert_eq!(unmigrated.class(), ErrorClass::Transient);
         // A newer store needs a newer build; no retry mends that.
         let newer = StoreError::NotSetUp {
-            found: 6,
-            expected: 5,
+            found: 7,
+            expected: 6,
         };
         assert_eq!(newer.class(), ErrorClass::Permanent);
     }
@@ -541,7 +547,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!((version, migrations::LATEST_VERSION), (5, 5));
+        assert_eq!((version, migrations::LATEST_VERSION), (6, 6));
         let store = Store { conn };
         let state = store.sync_state(1).unwrap();
         assert_eq!(state.backfill_before, Some(1_700_000_000_000));
@@ -634,6 +640,48 @@ mod tests {
             .conn()
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'threads_by_date'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
+    }
+
+    /// 0006 adds the outbox's scheduling columns to a version-5 store and keeps its rows.
+    #[test]
+    fn version_6_adds_the_outbox_columns_and_keeps_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rail.db");
+        {
+            let store = Store::open_at_version(&path, 5).unwrap();
+            store
+                .conn()
+                .execute_batch(
+                    "INSERT INTO accounts (name, kind, address) VALUES ('a', 'gmail', 'a@example.com');
+                     INSERT INTO outbox (account_id, kind, payload, client_token)
+                       VALUES (1, 'move', '{\"kind\":\"archive\"}', 'tok');",
+                )
+                .unwrap();
+            assert_eq!(store.schema_version().unwrap(), 5);
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 6);
+        let (not_before, threads, inflight, reversal): (i64, String, Option<i64>, String) = store
+            .conn()
+            .query_row(
+                "SELECT not_before, thread_ids, inflight_at, reversal FROM outbox",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (not_before, threads.as_str(), inflight, reversal.as_str()),
+            (0, "[]", None, "[]")
+        );
+        let index: i64 = store
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'outbox_by_due'",
                 [],
                 |r| r.get(0),
             )

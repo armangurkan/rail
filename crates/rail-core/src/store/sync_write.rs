@@ -78,7 +78,11 @@ impl Store {
         if let Some(prune) = batch.prune {
             outcome.pruned = prune_old(&tx, account, prune, &mut touched)?;
         }
+        // The conflict rule: actions still waiting for Gmail stay on top of what it said.
+        super::apply_local::reapply_live(&tx, account, &touched)?;
         rollup::refresh(&tx, &touched)?;
+        // A thread the rollup deleted leaves the outbox before its rowid can be reused.
+        super::apply_local::forget_threads(&tx, &touched)?;
         update_state(&tx, account, &batch.state)?;
         #[cfg(test)]
         if batch.poison {
