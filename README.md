@@ -62,7 +62,7 @@ up without ever seeing your secrets.
   governed by the per-account `ai_send` policy.
 - Then: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
   sync and are searched locally only.
-- Later: search operators, layout and theme options, inline images, display-quality HTML in the
+- Later: search operators, layout options, inline images, display-quality HTML in the
   terminal.
 
 **Pre-1.0 caveats.** Config keys, command output and the store's schema may change between
@@ -316,6 +316,27 @@ notices. When the daemon cannot be reached the list still reads from the store; 
 reconnects (and starts a sync) and resumes live updates. A store read that fails says so where it
 was shown (the list, the top of the sidebar, or the reader's title) and in the status bar;
 `:errors` keeps it.
+
+### Themes
+
+Rail paints itself from a colour scheme of its own, on any terminal that shows 24-bit colour
+(`COLORTERM` is `truecolor` or `24bit`). `:theme` lists the 769 schemes of the
+[iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes) collection (MIT),
+`Rail default` first; letters filter, `↓`/`↑` and `Ctrl-n`/`Ctrl-p` move, and the screen takes
+each scheme as the highlight reaches it. `Enter` keeps it and writes `theme = "Name"` under
+`[general]` in `config.toml` (choosing `Rail default` removes the key); `Esc` puts the previous
+look back. `:accent` does the same for the accent (box borders, titles and headings, what you
+type in the palette and the filter, the sync spinner): `scheme default` or one of the scheme's
+sixteen palette slots, saved as `accent = N`. The status bar confirms `theme: Dracula` or
+`accent: 5 magenta`; a save that fails says `Could not save the theme: …` (`:errors` keeps it)
+and keeps the look for this session.
+
+Without truecolor Rail keeps the terminal's own colours and the status bar says
+`theme needs a truecolor terminal` when a theme is configured and when `:theme` opens. `:theme`
+then does not preview (its hint row says `no preview without truecolor`) and `Enter` still saves
+the choice; `:accent` still previews a palette slot, which uses the terminal's own colours there.
+Inside tmux, `COLORTERM` must reach the inner shell (see Troubleshooting). An account's own
+`color` in `config.toml` is kept whatever the theme.
 
 ## Doing things to mail
 
@@ -645,6 +666,8 @@ running syncs carry on unchanged.
 | `history_days` | `0` | How many days of mail the store keeps; `0` is the whole mailbox. |
 | `body_cache_days` | `30` | Bodies of threads with mail this recent are fetched ahead of time. |
 | `icons` | `"unicode"` | `"unicode"` or `"ascii"`. The mail screen's glyphs; `"ascii"` swaps them for `*`, `+`, `@`, `ok`, `~`, `|`, `v` and `>`, for fonts without them. |
+| `theme` | unset | A scheme name as `:theme` lists it (case does not matter; names may contain spaces). Checked when the mail screen starts; a misspelling names the nearest scheme. |
+| `accent` | unset | The accent colour: a palette slot `0` to `15` of the scheme (a number, or a string such as `"5"`), a colour name such as `"blue"`, or `"#rrggbb"`. Without truecolor a `"#rrggbb"` accent is not applied. |
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | Reserved for composing; accepted but no effect yet. |
@@ -798,7 +821,7 @@ pass in.
 | `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves them there (`--no-migrate`: setting only; each account then needs `rail account login`). Asks `Change? [y/N]`; interactive only. |
 | `rail sync [<account>] [--no-wait]` | Wakes the sync for one account or all and shows progress until caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs `rail account login`, 130 on Ctrl-C. If nothing changes for 10 minutes it stops watching (the sync goes on). If the daemon restarts, or restarts its sync, during the watch, it says which and waits for the new pass. `--no-wait` wakes it and exits 0. |
 | `rail search <query> [--account <account>] [--limit N]` | Searches the local store and, for Gmail, the whole mailbox. One line per thread: date (UTC), account, sender, subject; never a snippet or body. `--limit` is 1 to 100 (default 20). Results go to stdout, notes to stderr. Exits 1 for an unknown account, or when nothing was found and a Gmail search failed. |
-| `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit; notes a `general.layout` this version treats as `auto`. Exits non-zero for config, store, token-backend and token-read errors, and for a Gmail account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
+| `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit; notes a `general.layout` this version treats as `auto`, and prints a `theme` line when `general.theme` is set. Exits non-zero for config, store, token-backend and token-read errors, and for a Gmail account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
 | `rail daemon status` | Shows whether the daemon runs, with pid, version, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any save in flight is written; waits up to 35 seconds. |
 | `rail daemon run` | Runs the daemon in the foreground (Ctrl-C or SIGTERM stops it cleanly). Rarely needed. |
@@ -824,6 +847,7 @@ their own.
 | `rail daemon install` says no user service manager answers | Some containers have no `systemctl --user`; the daemon still starts on demand. |
 | `rail doctor` warns that the login unit does not match this binary | You moved or reinstalled `rail` elsewhere; run `rail daemon install` again. |
 | A first sync is taking hours | Expected for a large mailbox; set `history_days` to sync only recent mail. `rail doctor` and `rail_sync_status` show progress. |
+| Colours look wrong or a theme does nothing inside tmux | Add `set -as terminal-features ",xterm-256color:RGB"` (tmux 3.2+) or `set -ga terminal-overrides ",*:Tc"` to `~/.tmux.conf`, and make sure `COLORTERM=truecolor` reaches the shell inside tmux. |
 | The login URL did not open in a browser | Select it on screen and open it while Rail is still running. |
 
 ### Microsoft sign-in errors
@@ -854,3 +878,7 @@ Licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 at your option.
+
+The colour schemes behind `:theme` are the
+[iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes) collection,
+© 2011 to present Mark Badolato, MIT licence.
