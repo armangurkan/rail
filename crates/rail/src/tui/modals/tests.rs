@@ -5,6 +5,7 @@ use rail_core::config::Icons;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Position;
+use ratatui::style::Style;
 
 use super::*;
 use crate::tui::data::ScopeChoice;
@@ -564,6 +565,46 @@ fn a_scheme_row_draws_its_swatch_in_the_scheme_colours() {
         buffer[(first, row)].fg,
         ratatui::style::Color::Rgb(0x28, 0x2a, 0x36)
     );
+}
+
+#[test]
+fn a_modal_paints_the_themes_background_over_cells_no_span_covers() {
+    use crate::tui::theme::choice::{Accent, ColorDepth, ThemeChoice};
+    use crate::tui::theme::scheme::scheme;
+    let theme = Theme::from_choice(
+        ThemeChoice {
+            scheme: scheme("Dracula"),
+            accent: Accent::SchemeDefault,
+        },
+        ColorDepth::TrueColor,
+    );
+    let other = ratatui::style::Color::Rgb(1, 2, 3);
+    let picker = theme_picker(true);
+    let mut terminal = Terminal::new(TestBackend::new(90, 24)).unwrap();
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            frame.buffer_mut().set_style(area, Style::new().bg(other));
+            picker.render(frame, area, &theme);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let input_row = (0..buffer.area.height)
+        .find(|&y| buffer[(0, y)].symbol() == " " && row_text(buffer, y).contains("> "))
+        .expect("the input row is drawn");
+    let x = (0..buffer.area.width)
+        .find(|&x| buffer[(x, input_row)].symbol() == ">")
+        .expect("the prompt");
+    // The row under the input is a blank line: no span styles its cells.
+    let blank = &buffer[(x + 3, input_row + 1)];
+    assert_eq!(blank.symbol(), " ");
+    assert_eq!(blank.bg, ratatui::style::Color::Rgb(0x28, 0x2a, 0x36));
+}
+
+fn row_text(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
+    (0..buffer.area.width)
+        .map(|x| buffer[(x, y)].symbol())
+        .collect()
 }
 
 #[test]
