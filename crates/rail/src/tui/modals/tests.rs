@@ -263,7 +263,7 @@ fn the_scroll_window_hints_only_at_hidden_rows() {
     };
     assert_eq!(window(5, 0, 10), w(0, 5, false, false), "everything fits");
     assert_eq!(window(30, 0, 10), w(0, 9, false, true));
-    assert_eq!(window(30, 5, 10), w(5, 8, true, true));
+    assert_eq!(window(30, 5, 10), w(6, 8, true, true));
     assert_eq!(
         window(30, 99, 10),
         w(21, 9, true, false),
@@ -275,6 +275,37 @@ fn the_scroll_window_hints_only_at_hidden_rows() {
         "no room for hints"
     );
     assert_eq!(window(0, 3, 0), w(0, 0, false, false));
+}
+
+#[test]
+fn every_scroll_step_down_reveals_a_new_row() {
+    use super::scroll::window;
+    let (total, height) = (30, 10);
+    let bottom = |offset| {
+        let w = window(total, offset, height);
+        w.first + w.rows - 1
+    };
+    let end = window(total, 1_000, height).first;
+    let mut offset = 0;
+    while window(total, offset, height).first < end {
+        assert!(
+            bottom(offset + 1) > bottom(offset),
+            "offset {offset} to {} shows no new row",
+            offset + 1
+        );
+        offset += 1;
+    }
+    assert_eq!(
+        bottom(offset),
+        total - 1,
+        "the last step ends at the last row"
+    );
+    assert_eq!(window(total, 0, height).first, 0);
+    assert_eq!(
+        window(total, 1, height).first,
+        2,
+        "the hint takes row 1's place"
+    );
 }
 
 #[test]
@@ -360,7 +391,7 @@ fn errors_scroll_with_the_help_keys_and_hint_at_hidden_rows() {
     assert_eq!(list.key(key(KeyCode::Char('j'))), ModalOutcome::Stay);
     let rows = draw(&list);
     assert!(rows[3].contains("^ more"), "{}", rows[3]);
-    assert!(!shows(&rows, 0) && shows(&rows, 1) && shows(&rows, 16));
+    assert!(!shows(&rows, 0) && !shows(&rows, 1) && shows(&rows, 2) && shows(&rows, 17));
     list.key(key(KeyCode::Down));
     list.key(key(KeyCode::Char('k')));
     list.key(key(KeyCode::Up));

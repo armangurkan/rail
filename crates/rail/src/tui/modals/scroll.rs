@@ -26,7 +26,8 @@ pub(super) struct Window {
 /// The part of `total` rows a box of `height` rows shows from `offset`. A hint takes the top
 /// row while rows are hidden above and the bottom row while rows are hidden below; the offset
 /// is clamped so the last position ends at the last row. Under three rows there is no room
-/// for hints.
+/// for hints. Once the top hint appears (offset 1 and later) the first row shown is `offset + 1`,
+/// so each step down brings one new row at the bottom despite the row the hint took.
 pub(super) fn window(total: usize, offset: usize, height: usize) -> Window {
     if total <= height || height < 3 {
         let first = offset.min(total.saturating_sub(height));
@@ -38,7 +39,12 @@ pub(super) fn window(total: usize, offset: usize, height: usize) -> Window {
             below: false,
         };
     }
-    let first = offset.min(total - (height - 1));
+    let last_first = total - (height - 1);
+    let first = if offset == 0 {
+        0
+    } else {
+        (offset + 1).min(last_first)
+    };
     let above = first > 0;
     let room = height - usize::from(above);
     let below = first + room < total;
@@ -80,7 +86,9 @@ impl ScrollBox {
     /// Draw the visible part of `rows` in `area`, with the hints.
     pub(super) fn render(&self, frame: &mut Frame, area: Rect, rows: Vec<Line<'_>>, theme: &Theme) {
         let shown = window(rows.len(), self.offset.get(), usize::from(area.height));
-        self.offset.set(shown.first);
+        // With the top hint `first` is one past the offset (see `window`).
+        self.offset
+            .set(shown.first.saturating_sub(usize::from(shown.above)));
         let (up, down) = match self.icons {
             Icons::Unicode => ("↑ more", "↓ more"),
             Icons::Ascii => ("^ more", "v more"),
