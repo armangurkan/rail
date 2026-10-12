@@ -43,7 +43,11 @@ fn mailboxes(recipients: &[Recipient]) -> Vec<Mailbox> {
 /// provider id; the name of a part whose message left the store.
 type Listed = (Vec<FileRef>, Vec<PartRef>, Option<String>);
 
-fn listed(store: &Store, attachments: &[Attachment]) -> Result<Listed, StoreError> {
+fn listed(
+    store: &Store,
+    account_id: i64,
+    attachments: &[Attachment],
+) -> Result<Listed, StoreError> {
     let (mut files, mut parts, mut part_gone) = (Vec::new(), Vec::new(), None);
     for attachment in attachments {
         match attachment {
@@ -60,7 +64,7 @@ fn listed(store: &Store, attachments: &[Attachment]) -> Result<Listed, StoreErro
                 name,
                 mime,
                 ..
-            } => match store.message_remote_id(*message)? {
+            } => match store.message_remote_id(account_id, *message)? {
                 Some(remote) => parts.push(PartRef {
                     message_remote: remote,
                     part: part.clone(),
@@ -82,7 +86,7 @@ pub(super) fn outgoing_for(
     from: &str,
     from_name: Option<&str>,
 ) -> Result<Assembly, StoreError> {
-    let (files, parts, part_gone) = listed(store, &draft.attachments)?;
+    let (files, parts, part_gone) = listed(store, draft.account_id, &draft.attachments)?;
     let references = draft
         .references
         .as_deref()

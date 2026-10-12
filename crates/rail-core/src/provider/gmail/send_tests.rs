@@ -23,10 +23,35 @@ async fn send_posts_raw_base64url_with_the_thread_id_and_returns_the_receipt() {
     assert_eq!(
         receipt,
         SentReceipt {
-            message_id: "m9".into(),
-            thread_id: "t1".into()
+            message_id: Some("m9".into()),
+            thread_id: Some("t1".into())
         }
     );
+}
+
+/// Fix round 1: a 2xx Rail cannot read is still a send, never an error the user would retry.
+#[tokio::test]
+async fn a_2xx_with_an_unreadable_answer_is_a_send_with_unknown_ids() {
+    let gmail = Gmail::start().await;
+    let provider = gmail.provider();
+    let unknown = SentReceipt {
+        message_id: None,
+        thread_id: None,
+    };
+    for answer in [
+        ResponseTemplate::new(200).set_body_json(json!({"nope": 1})),
+        ResponseTemplate::new(200).set_body_json(json!({"id": "bad id", "threadId": "t1"})),
+        ResponseTemplate::new(200).set_body_string("not json"),
+    ] {
+        gmail.server.reset().await;
+        Mock::given(method("POST"))
+            .and(path(format!("{API_PATH}/messages/send")))
+            .respond_with(answer)
+            .expect(1)
+            .mount(&gmail.server)
+            .await;
+        assert_eq!(provider.send(b"Hello", None).await.unwrap(), unknown);
+    }
 }
 
 #[tokio::test]

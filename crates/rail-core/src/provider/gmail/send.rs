@@ -41,6 +41,47 @@ fn safe_header_id(id: &str) -> bool {
             .all(|b| b.is_ascii_graphic() && !b"\"'\\ ()".contains(&b))
 }
 
+/// The ids of an accepted send, or `None`s (logged with the reason, never the body) when the
+/// answer was too large, not the expected JSON, or carried ids Rail does not use.
+fn receipt(answer: Option<&[u8]>) -> SentReceipt {
+    let unknown = SentReceipt {
+        message_id: None,
+        thread_id: None,
+    };
+    let Some(bytes) = answer else {
+        tracing::warn!(
+            reason = "too large",
+            "Gmail accepted a send with an unreadable answer"
+        );
+        return unknown;
+    };
+    match serde_json::from_slice::<SentWire>(bytes) {
+        Ok(sent)
+            if safe_id(&sent.id, MAX_THREAD_ID_BYTES)
+                && safe_id(&sent.thread_id, MAX_THREAD_ID_BYTES) =>
+        {
+            SentReceipt {
+                message_id: Some(sent.id),
+                thread_id: Some(sent.thread_id),
+            }
+        }
+        Ok(_) => {
+            tracing::warn!(
+                reason = "unsafe ids",
+                "Gmail accepted a send with an unreadable answer"
+            );
+            unknown
+        }
+        Err(_) => {
+            tracing::warn!(
+                reason = "malformed",
+                "Gmail accepted a send with an unreadable answer"
+            );
+            unknown
+        }
+    }
+}
+
 impl GmailProvider {
     pub(crate) async fn send_raw(
         &self,
@@ -58,20 +99,13 @@ impl GmailProvider {
         if let Some(thread) = thread_id {
             body["threadId"] = json!(thread);
         }
-        let sent: SentWire = self
+        let answer = self
             .api
-            .post_json_value("messages/send", Some(&body), COST_MESSAGE_SEND, false)
+            .post_json_bytes("messages/send", Some(&body), COST_MESSAGE_SEND, false)
             .await?;
-        if !safe_id(&sent.id, MAX_THREAD_ID_BYTES) || !safe_id(&sent.thread_id, MAX_THREAD_ID_BYTES)
-        {
-            return Err(ProviderError::permanent(
-                "Gmail's answer did not have the expected shape",
-            ));
-        }
-        Ok(SentReceipt {
-            message_id: sent.id,
-            thread_id: sent.thread_id,
-        })
+        // A 2xx is a send, whatever its body: an unreadable answer must not read as a failure,
+        // or the retry it invites would send the message again.
+        Ok(receipt(answer.as_deref()))
     }
 
     pub(crate) async fn find_by_header_id(

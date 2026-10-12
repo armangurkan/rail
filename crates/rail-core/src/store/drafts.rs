@@ -160,6 +160,8 @@ pub struct Draft {
     pub remote_message_id: Option<String>,
     pub state: DraftState,
     pub updated_at: i64,
+    /// Set before the first send call: Gmail may hold the message from then on.
+    pub send_attempted_at: Option<i64>,
 }
 
 impl std::fmt::Debug for Draft {
@@ -281,7 +283,7 @@ impl std::fmt::Debug for ReplySource {
 
 const DRAFT_COLUMNS: &str = "id, account_id, kind, thread_id, remote_thread_id, in_reply_to, \
     references_ids, to_json, cc_json, bcc_json, subject, body, attachments_json, message_id, \
-    remote_draft_id, remote_message_id, state, updated_at";
+    remote_draft_id, remote_message_id, state, updated_at, send_attempted_at";
 
 /// Rail's own types as JSON; serialising them cannot fail.
 fn json<T: Serialize>(value: &T) -> String {
@@ -314,6 +316,7 @@ fn read_draft(r: &Row<'_>) -> rusqlite::Result<Draft> {
         remote_message_id: r.get(15)?,
         state: DraftState::parse(&text(16)?),
         updated_at: r.get(17)?,
+        send_attempted_at: r.get(18)?,
     })
 }
 
@@ -480,13 +483,19 @@ impl Store {
         Ok(())
     }
 
-    /// The provider id of a stored message: where a forwarded part is fetched from.
-    pub fn message_remote_id(&self, message: i64) -> Result<Option<String>, StoreError> {
+    /// The provider id of one of the account's stored messages: where a forwarded part is
+    /// fetched from.
+    pub fn message_remote_id(
+        &self,
+        account_id: i64,
+        message: i64,
+    ) -> Result<Option<String>, StoreError> {
         Ok(self
             .conn
             .query_row(
-                "SELECT remote_id FROM messages WHERE id = ?1",
-                [message],
+                "SELECT m.remote_id FROM messages m JOIN threads t ON t.id = m.thread_id
+                 WHERE m.id = ?1 AND t.account_id = ?2",
+                params![message, account_id],
                 |r| r.get(0),
             )
             .optional()?)

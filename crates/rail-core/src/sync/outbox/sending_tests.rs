@@ -477,6 +477,8 @@ async fn a_send_still_goes_out_when_the_replied_message_is_gone() {
         Some("t-gone"),
         "the saved thread id is used as is"
     );
+    let raw = String::from_utf8_lossy(&sent[0].raw);
+    assert!(raw.contains("In-Reply-To: <gone@example.com>"), "{raw}");
 }
 
 #[tokio::test]
@@ -530,4 +532,106 @@ async fn shutdown_waits_for_a_send_in_flight() {
     assert_eq!(h.mock.with(|m| m.sent.len()), 1);
     assert!(h.row(row).await.is_none(), "recorded as sent");
     assert!(h.with_store(|s| s.draft(draft).unwrap()).is_none());
+}
+
+/// Fix round 1: the stamp makes the check survive a retry that resets the attempt count. The
+/// 20th transient attempt of a send that did reach Gmail gives up; the user's retry looks the
+/// message up and does not send it again.
+#[tokio::test]
+async fn a_retry_after_giving_up_looks_the_message_up_and_does_not_send_twice() {
+    let h = Harness::new().await;
+    let (draft, row) = queued_draft(&h, 17, vec![]).await;
+    h.with_store(|s| {
+        s.conn()
+            .execute("UPDATE outbox SET attempts = 19 WHERE id = ?1", [row])
+            .unwrap();
+    });
+    h.mock
+        .fail_next(Call::Send, ProviderError::transient("timed out"));
+    h.step().await;
+    assert_eq!(h.failures().len(), 1, "gave up");
+    assert!(
+        h.with_store(|s| s.draft(draft).unwrap().unwrap().send_attempted_at)
+            .is_some(),
+        "stamped before the send call, kept through the failure"
+    );
+    let retried = h
+        .rig
+        .writer
+        .outbox(OutboxWrite::Retry {
+            id: row,
+            client_token: "tok-17".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(retried, OutboxOutcome::Retried(true));
+    assert_eq!(h.row(row).await.unwrap().attempts, 0);
+    // Gmail did get it.
+    h.mock.with(|m| {
+        m.known_header_ids.insert("<d17@example.com>".into());
+    });
+    h.step().await;
+    let calls = h.mock.calls();
+    let looked = calls.iter().position(|c| *c == Call::FindByHeader);
+    assert!(looked.is_some(), "{calls:?}");
+    assert_eq!(sends(&h), 1, "never sent a second time");
+    assert!(h.row(row).await.is_none(), "completed as sent");
+    assert!(h.with_store(|s| s.draft(draft).unwrap()).is_none());
+}
+
+/// Fix round 1: a permanent failure after Gmail accepted the message, then a new `Send` row for
+/// the same draft (a new token, attempts 0): the lookup runs first.
+#[tokio::test]
+async fn a_new_send_row_after_a_permanent_failure_looks_the_message_up_first() {
+    let h = Harness::new().await;
+    let (draft, first) = queued_draft(&h, 18, vec![]).await;
+    h.mock
+        .fail_next(Call::Send, ProviderError::permanent("Gmail refused"));
+    h.step().await;
+    assert_eq!(
+        h.with_store(|s| s.draft(draft).unwrap().unwrap().state),
+        DraftState::Editing
+    );
+    h.mock.with(|m| {
+        m.known_header_ids.insert("<d18@example.com>".into());
+    });
+    let again = h
+        .enqueue(NewAction {
+            account_id: h.account_id,
+            action: Action::Send { draft },
+            threads: vec![],
+            not_before: 0,
+            client_token: "tok-18-again".into(),
+        })
+        .await;
+    assert_ne!(again, first);
+    h.step().await;
+    assert!(h.mock.calls().contains(&Call::FindByHeader));
+    assert_eq!(sends(&h), 1, "never sent a second time");
+    assert!(h.row(again).await.is_none());
+    assert!(h.with_store(|s| s.draft(draft).unwrap()).is_none());
+}
+
+/// Fix round 1: Gmail answers a send with a 2xx Rail cannot read: still sent, the row completes
+/// and the draft is gone (no failure for the user to retry into a second send).
+#[tokio::test]
+async fn a_2xx_with_an_unreadable_answer_completes_the_send() {
+    use crate::provider::gmail::fixtures::{API_PATH, Gmail};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+    let h = Harness::new().await;
+    let gmail = Gmail::start().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{API_PATH}/messages/send")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"nope": 1})))
+        .expect(1)
+        .mount(&gmail.server)
+        .await;
+    let (draft, row) = queued_draft(&h, 19, vec![]).await;
+    let sync_wake = Arc::new(Notify::new());
+    let worker = h.rig.worker_on(Arc::new(gmail.provider()), None, sync_wake);
+    worker.step().await;
+    assert!(h.row(row).await.is_none(), "completed");
+    assert!(h.with_store(|s| s.draft(draft).unwrap()).is_none());
+    assert!(h.failures().is_empty());
 }

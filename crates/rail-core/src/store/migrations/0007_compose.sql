@@ -18,6 +18,9 @@ CREATE TABLE drafts (
   remote_draft_id   TEXT,
   remote_message_id TEXT,
   state             TEXT NOT NULL DEFAULT 'editing' CHECK (state IN ('editing','queued')),
+  -- When Rail first handed this draft to Gmail's send: from then on, every send of it looks
+  -- the Message-ID up first (a failure after Gmail accepted it must not send it twice).
+  send_attempted_at INTEGER,
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL
 );

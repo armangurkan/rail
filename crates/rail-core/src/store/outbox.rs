@@ -102,6 +102,11 @@ pub enum OutboxWrite {
     Recover {
         account_id: i64,
     },
+    /// The draft is about to be handed to Gmail's send: stamp `send_attempted_at` (kept once
+    /// set) so every later send of it looks the message up first.
+    DraftSendAttempted {
+        draft: DraftId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -570,6 +575,14 @@ impl Store {
             }
             OutboxWrite::Recover { account_id } => {
                 OutboxOutcome::Recovered(recover(&tx, *account_id)?)
+            }
+            OutboxWrite::DraftSendAttempted { draft } => {
+                tx.execute(
+                    "UPDATE drafts SET send_attempted_at = ?2
+                     WHERE id = ?1 AND send_attempted_at IS NULL",
+                    params![draft, now],
+                )?;
+                OutboxOutcome::Done
             }
         };
         tx.commit()?;

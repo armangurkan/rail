@@ -156,8 +156,13 @@ fn a_deleted_drafts_id_is_never_reused() -> Result<(), StoreError> {
 fn a_messages_remote_id_is_read_and_an_unknown_message_is_none() -> Result<(), StoreError> {
     let (mut store, account) = store_with_account();
     let (m1, _) = seed_two_messages(&mut store, account);
-    assert_eq!(store.message_remote_id(m1)?.as_deref(), Some("m1"));
-    assert_eq!(store.message_remote_id(9_999)?, None);
+    assert_eq!(store.message_remote_id(account, m1)?.as_deref(), Some("m1"));
+    assert_eq!(store.message_remote_id(account, 9_999)?, None);
+    assert_eq!(
+        store.message_remote_id(account + 1, m1)?,
+        None,
+        "another account's message is not this draft's to forward"
+    );
     Ok(())
 }
 

@@ -99,11 +99,21 @@ impl Rig {
     }
 
     pub(super) fn worker_with(&self, from_name: Option<String>, sync_wake: Arc<Notify>) -> Worker {
+        self.worker_on(Arc::new(self.mock.clone()), from_name, sync_wake)
+    }
+
+    /// A worker over another provider (a fake Gmail).
+    pub(super) fn worker_on(
+        &self,
+        provider: Arc<dyn crate::provider::Provider>,
+        from_name: Option<String>,
+        sync_wake: Arc<Notify>,
+    ) -> Worker {
         Worker::new(WorkerParts {
             name: "work".into(),
             address: ADDRESS.into(),
             account_id: 1,
-            provider: Arc::new(self.mock.clone()),
+            provider,
             writer: self.writer.clone(),
             reader: Store::open_reader(&self.db).unwrap(),
             board: self.board.clone(),

@@ -260,9 +260,10 @@ impl std::fmt::Debug for OutgoingAttachment {
     }
 }
 
-/// What the provider answers to an accepted send.
+/// What the provider answers to an accepted send. `None`s when it accepted the message but
+/// its answer could not be read: still a send.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SentReceipt {
-    pub message_id: RemoteId,
-    pub thread_id: RemoteId,
+    pub message_id: Option<RemoteId>,
+    pub thread_id: Option<RemoteId>,
 }

@@ -551,8 +551,8 @@ impl Provider for MockProvider {
         }
         let n = m.sent.len();
         Ok(SentReceipt {
-            message_id: format!("sent-{n}"),
-            thread_id: thread_id.map_or_else(|| format!("t-sent-{n}"), str::to_string),
+            message_id: Some(format!("sent-{n}")),
+            thread_id: Some(thread_id.map_or_else(|| format!("t-sent-{n}"), str::to_string)),
         })
     }
 
@@ -609,8 +609,8 @@ mod tests {
             None
         );
         let receipt = mock.send(raw, None).await.unwrap();
-        assert_eq!(receipt.message_id, "sent-1");
-        assert_eq!(receipt.thread_id, "t-sent-1");
+        assert_eq!(receipt.message_id.as_deref(), Some("sent-1"));
+        assert_eq!(receipt.thread_id.as_deref(), Some("t-sent-1"));
         assert_eq!(
             mock.message_by_header_id("<abc@example.com>")
                 .await
@@ -619,7 +619,10 @@ mod tests {
         );
         let again = mock.send(raw, Some("t9")).await.unwrap();
         assert_eq!(
-            (again.message_id.as_str(), again.thread_id.as_str()),
+            (
+                again.message_id.as_deref().unwrap(),
+                again.thread_id.as_deref().unwrap()
+            ),
             ("sent-2", "t9")
         );
         let calls: Vec<Call> = mock.with(|m| m.calls.iter().map(|(c, _)| *c).collect());

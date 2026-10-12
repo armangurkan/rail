@@ -1,8 +1,10 @@
 //! The send path of a `Send` row, and the one place that decides whether a message may go out
-//! again. Before any attempt but the first, and for a row found in flight at start (the
-//! recovered set), the worker asks Gmail for the draft's `Message-ID`: found means it was
-//! sent, and the row completes as if this send succeeded; not found means it sends, with the
-//! same `Message-ID`. `Provider::send` is never retried inside the HTTP layer.
+//! again. Before its first send call the draft is stamped (`send_attempted_at`, kept through a
+//! failure, a retry or a new `Send` row). A stamped draft, a row with an attempt counted, and a
+//! row found in flight at start (the recovered set) all ask Gmail for the draft's `Message-ID`
+//! first: found means it was sent, and the row completes as if this send succeeded; not found
+//! means it sends, with the same `Message-ID`. `Provider::send` is never retried inside the
+//! HTTP layer, and any 2xx answer to it is a send.
 
 use std::collections::HashSet;
 use std::sync::PoisonError;
@@ -18,6 +20,7 @@ use crate::store::outbox::{OutboxOutcome, OutboxRow, OutboxWrite};
 struct Loaded {
     message_id: String,
     remote_thread: Option<String>,
+    send_attempted: bool,
     attachments_readable: bool,
     assembly: Assembly,
 }
@@ -55,9 +58,18 @@ impl Worker {
         self.recovered_ids().remove(&id);
     }
 
-    /// True when an earlier attempt of the row may have reached Gmail.
-    fn may_have_been_sent(&self, row: &OutboxRow) -> bool {
-        row.attempts > 0 || self.recovered_ids().contains(&row.id)
+    /// True when an earlier send of the draft may have reached Gmail.
+    fn may_have_been_sent(&self, row: &OutboxRow, loaded: &Loaded) -> bool {
+        loaded.send_attempted || row.attempts > 0 || self.recovered_ids().contains(&row.id)
+    }
+
+    /// Stamp the draft before its send call; no send without the stamp.
+    async fn stamp(&self, draft: DraftId) -> Result<(), ProviderError> {
+        self.writer
+            .outbox(OutboxWrite::DraftSendAttempted { draft })
+            .await
+            .map(|_| ())
+            .map_err(|e| ProviderError::transient(&e.message))
     }
 
     /// Send the draft of a `Send` row, unless Gmail already holds it.
@@ -67,7 +79,7 @@ impl Worker {
         draft: DraftId,
     ) -> Result<(), ProviderError> {
         let loaded = self.load(draft).await?;
-        if self.may_have_been_sent(row)
+        if self.may_have_been_sent(row, &loaded)
             && self
                 .provider
                 .message_by_header_id(&loaded.message_id)
@@ -84,6 +96,7 @@ impl Worker {
         }
         let outgoing = compose::attach(loaded.assembly, self.provider.as_ref()).await?;
         let raw = build_message(&outgoing)?;
+        self.stamp(draft).await?;
         self.provider
             .send(&raw, loaded.remote_thread.as_deref())
             .await?;
@@ -106,6 +119,7 @@ impl Worker {
                 Ok(Some(Loaded {
                     message_id: d.message_id,
                     remote_thread: d.remote_thread_id,
+                    send_attempted: d.send_attempted_at.is_some(),
                     attachments_readable,
                     assembly,
                 }))
