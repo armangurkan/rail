@@ -979,9 +979,10 @@ environment. A command whose `RAIL_*_DIR` settings differ from the running daemo
 "a Rail daemon is already running with different directories".
 
 A client replaces a daemon from an older version *or an earlier build of the same version* (each
-build carries the time it was made), so reinstalling `rail` while a daemon runs is enough. A
+build carries the time it was made; a `SOURCE_DATE_EPOCH` exported in the build environment
+replaces that time, so exporting it permanently makes every build look alike), so reinstalling `rail` while a daemon runs is enough. A
 program that is itself older than the running daemon, such as a long-lived `rail mcp` after an
-upgrade or rebuild, never stops its successor: it says "Rail was upgraded; restart this program".
+upgrade or rebuild, never stops its successor: it says "Rail was upgraded; restart this program" (after a rebuild the hint adds that `rail daemon stop` lets a new command use the running build).
 
 The login unit written by `rail daemon install` runs the exact `rail` binary you installed it with
 (install again after moving it) and pins the `RAIL_*` directories your shell resolved at install

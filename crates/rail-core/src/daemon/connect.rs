@@ -61,22 +61,21 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// When this Rail was built, in unix seconds; orders two builds of the same version.
 pub const BUILD: u64 = parse_build(env!("RAIL_BUILD"));
 
-/// `text` as a number, at compile time; 0 if it holds anything but digits (or overflows).
+/// `text` as a number, at compile time; anything but digits, or an overflow, stops the build.
 const fn parse_build(text: &str) -> u64 {
     let bytes = text.as_bytes();
     let mut value: u64 = 0;
     let mut i = 0;
     while i < bytes.len() {
         let digit = bytes[i];
-        if !digit.is_ascii_digit() {
-            return 0;
-        }
-        value = match value.checked_mul(10) {
-            Some(shifted) => match shifted.checked_add((digit - b'0') as u64) {
-                Some(next) => next,
-                None => return 0,
-            },
-            None => return 0,
+        assert!(digit.is_ascii_digit(), "RAIL_BUILD must be digits");
+        let next = match value.checked_mul(10) {
+            Some(shifted) => shifted.checked_add((digit - b'0') as u64),
+            None => None,
+        };
+        value = match next {
+            Some(next) => next,
+            None => panic!("RAIL_BUILD overflows u64"),
         };
         i += 1;
     }
@@ -486,7 +485,7 @@ fn rebuilt_error(ours: &str) -> OpError {
         "Rail was upgraded; restart this program",
     )
     .with_hint(format!(
-        "the running daemon is a newer build of Rail {ours}; restart this program"
+        "the running daemon is a newer build of Rail {ours}; restart this program, or run `rail daemon stop` to use this build"
     ))
 }
 

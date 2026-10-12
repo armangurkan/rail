@@ -24,10 +24,10 @@ const OURS: u64 = 1_000;
 
 /// The hello a daemon of this version sends; `build` is left out when `None`, as a daemon
 /// from before the stamp does.
-fn hello(paths: &Paths, build: Option<u64>) -> Value {
+fn hello(paths: &Paths, build: Option<u64>, version: &str) -> Value {
     let mut hello = json!({
         "protocol": PROTOCOL_VERSION,
-        "version": VERSION,
+        "version": version,
         "pid": 1,
         "config_dir": paths.config_dir,
         "data_dir": paths.data_dir,
@@ -41,7 +41,7 @@ fn hello(paths: &Paths, build: Option<u64>) -> Value {
 
 /// Listen on the socket and answer until `daemon.stop`, which removes the socket. Anything
 /// but the hello and the stop is an unknown method.
-async fn fake_daemon(paths: Paths, build: Option<u64>) {
+async fn fake_daemon(paths: Paths, build: Option<u64>, version: String) {
     create_private_dir(&paths.runtime_dir).unwrap();
     let socket = paths.socket_file();
     let listener = UnixListener::bind(&socket).unwrap();
@@ -51,7 +51,11 @@ async fn fake_daemon(paths: Paths, build: Option<u64>) {
             accepted = listener.accept() => accepted.unwrap(),
             () = stopped.notified() => break,
         };
-        let (stopped, socket, hello) = (stopped.clone(), socket.clone(), hello(&paths, build));
+        let (stopped, socket, hello) = (
+            stopped.clone(),
+            socket.clone(),
+            hello(&paths, build, &version),
+        );
         tokio::spawn(async move {
             let (read, mut write) = stream.into_split();
             let mut reader = BufReader::new(read);
@@ -84,7 +88,7 @@ fn connector(paths: &Paths) -> (Connector, Arc<AtomicUsize>) {
     let (count, fake) = (spawned.clone(), paths.clone());
     let spawn: SpawnFn = Arc::new(move || {
         count.fetch_add(1, Ordering::SeqCst);
-        tokio::spawn(fake_daemon(fake.clone(), Some(OURS)));
+        tokio::spawn(fake_daemon(fake.clone(), Some(OURS), VERSION.to_string()));
         Ok(())
     });
     (
@@ -95,7 +99,12 @@ fn connector(paths: &Paths) -> (Connector, Arc<AtomicUsize>) {
 
 /// Start a fake of `build` and wait until its socket exists.
 async fn running(paths: &Paths, build: Option<u64>) {
-    tokio::spawn(fake_daemon(paths.clone(), build));
+    running_as(paths, build, VERSION).await;
+}
+
+/// `running`, announcing `version` (another spelling of this one, say).
+async fn running_as(paths: &Paths, build: Option<u64>, version: &str) {
+    tokio::spawn(fake_daemon(paths.clone(), build, version.to_string()));
     for _ in 0..100 {
         if paths.socket_file().exists() {
             return;
@@ -113,6 +122,17 @@ async fn a_daemon_from_an_earlier_build_is_replaced() {
     let (connector, spawned) = connector(&paths);
     let client = connector.connect().await.unwrap();
     assert_eq!(client.daemon().build, Some(OURS));
+    assert_eq!(spawned.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_daemon_of_equal_version_spelled_differently_is_ordered_by_build() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    running_as(&paths, Some(OURS - 1), &format!("{VERSION}+x")).await;
+    let (connector, spawned) = connector(&paths);
+    let client = connector.connect().await.unwrap();
+    assert_eq!(client.daemon().version, VERSION);
     assert_eq!(spawned.load(Ordering::SeqCst), 1);
 }
 
@@ -141,7 +161,7 @@ async fn a_daemon_from_a_later_build_is_refused_and_left_running() {
     assert_eq!(
         err.hint.as_deref(),
         Some(
-            format!("the running daemon is a newer build of Rail {VERSION}; restart this program")
+            format!("the running daemon is a newer build of Rail {VERSION}; restart this program, or run `rail daemon stop` to use this build")
                 .as_str()
         )
     );
