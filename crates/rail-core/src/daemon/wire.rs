@@ -151,7 +151,13 @@ impl RpcError {
             INVALID_PARAMS => ErrorCode::InvalidInput,
             _ => ErrorCode::Daemon,
         };
-        OpError::new(code, ErrorClass::Permanent, self.message)
+        let error = OpError::new(code, ErrorClass::Permanent, self.message);
+        if self.code == METHOD_NOT_FOUND {
+            return error.with_hint(
+                "the daemon is older than this Rail: run `rail daemon stop`, then try again",
+            );
+        }
+        error
     }
 }
 

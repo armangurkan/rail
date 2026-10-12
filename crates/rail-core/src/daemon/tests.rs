@@ -248,6 +248,7 @@ async fn a_connected_client_keeps_the_daemon_alive() {
         .await
         .unwrap();
     assert_eq!(info.clients, 1);
+    assert_eq!(info.build, Some(crate::daemon::BUILD));
     drop(client);
     let result = tokio::time::timeout(Duration::from_secs(5), daemon).await;
     result

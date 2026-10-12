@@ -260,6 +260,10 @@ async fn a_failing_attachment_fetch_fails_the_import_and_leaves_nothing() {
         "{}",
         error.message
     );
+    assert_eq!(
+        error.message,
+        "an attachment of this draft is no longer in Gmail"
+    );
     assert!(!h.paths.draft_files_dir().join("i1").exists());
     assert_eq!(h.drafts_count(), 0);
 }

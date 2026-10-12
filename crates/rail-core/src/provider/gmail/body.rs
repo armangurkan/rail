@@ -22,7 +22,7 @@ use crate::provider::{AttachmentMeta, Body, ProviderError};
 pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 /// The end of a body Rail cut at `MAX_BODY_BYTES`.
 pub const TRUNCATED_MARKER: &str = "\n\n[Rail kept only the first 10 MiB of this message.]";
-const MAX_PART_DEPTH: usize = 32;
+pub(super) const MAX_PART_DEPTH: usize = 32;
 const MAX_ATTACHMENTS: usize = 100;
 const MAX_FILENAME_CHARS: usize = 255;
 const MAX_MIME_CHARS: usize = 255;

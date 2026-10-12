@@ -14,7 +14,8 @@ use tokio::task::JoinSet;
 use tokio::time::{Instant, MissedTickBehavior, interval, interval_at};
 
 use super::connect::{
-    START_TIMEOUT, VERSION, check_socket_path, open_lock_file, remove_stale_socket, socket_answers,
+    BUILD, START_TIMEOUT, VERSION, check_socket_path, open_lock_file, remove_stale_socket,
+    socket_answers,
 };
 use super::connection::Connection;
 use super::context::DaemonContext;
@@ -40,6 +41,8 @@ pub struct ServeConfig {
     pub hello_timeout: Duration,
     /// The Rail version the daemon announces in the hello.
     pub version: String,
+    /// The build (unix seconds) the daemon announces in the hello.
+    pub build: u64,
     /// Let the daemon idle out even with accounts configured; a debug-build test hook.
     pub idle_with_accounts: bool,
 }
@@ -50,6 +53,7 @@ impl Default for ServeConfig {
             idle: IDLE_TIMEOUT,
             hello_timeout: START_TIMEOUT,
             version: VERSION.to_string(),
+            build: BUILD,
             idle_with_accounts: false,
         }
     }
@@ -145,6 +149,7 @@ impl ServerState {
         DaemonInfo {
             pid: std::process::id(),
             version: self.config.version.clone(),
+            build: Some(self.config.build),
             protocol: PROTOCOL_VERSION,
             socket: self.socket.clone(),
             started_at: self.started_at,

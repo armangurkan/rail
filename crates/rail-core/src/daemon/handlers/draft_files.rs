@@ -12,8 +12,8 @@ use super::drafts::token_used;
 use crate::daemon::DaemonContext;
 use crate::ops::{ErrorCode, OpError};
 use crate::paths::{Paths, create_private_dir};
-use crate::provider::Provider;
 use crate::provider::gmail::mime::sanitize_filename;
+use crate::provider::{Provider, ProviderError};
 use crate::store::Store;
 use crate::store::drafts::{Attachment, ReplyAttachment};
 
@@ -87,9 +87,16 @@ async fn fetch_all(
 ) -> Result<Vec<Fetched>, OpError> {
     let mut fetched = Vec::with_capacity(parts.len());
     for meta in parts {
+        // The name is Gmail's text and stays out of the message.
         let bytes = provider
             .attachment(&remote.to_string(), &meta.part_id)
-            .await?;
+            .await
+            .map_err(|e| match e {
+                ProviderError::NotFound => {
+                    OpError::not_found("an attachment of this draft is no longer in Gmail")
+                }
+                other => other.into(),
+            })?;
         fetched.push(Fetched { meta, bytes });
     }
     Ok(fetched)

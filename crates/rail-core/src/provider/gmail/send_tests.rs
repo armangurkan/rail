@@ -1,4 +1,4 @@
-//! `messages.send`, the `rfc822msgid` lookup and attachment bytes against fake Gmail.
+//! `messages.send` and the `rfc822msgid` lookup against fake Gmail.
 
 use serde_json::json;
 use wiremock::matchers::{body_json, method, path, query_param};
@@ -157,34 +157,5 @@ async fn message_by_header_id_queries_rfc822msgid_and_maps_an_empty_list_to_none
     assert!(
         matches!(error, ProviderError::Permanent { .. }),
         "a header id with a quote is refused"
-    );
-}
-
-#[tokio::test]
-async fn attachment_bytes_are_decoded_from_base64url() {
-    let gmail = Gmail::start().await;
-    let provider = gmail.provider();
-    Mock::given(method("GET"))
-        .and(path(format!("{API_PATH}/messages/m1/attachments/p1")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"size": 3, "data": "AQID"})))
-        .expect(1)
-        .mount(&gmail.server)
-        .await;
-    assert_eq!(
-        provider.attachment(&"m1".to_string(), "p1").await.unwrap(),
-        [1, 2, 3]
-    );
-    gmail.server.reset().await;
-    Mock::given(method("GET"))
-        .and(path(format!("{API_PATH}/messages/m1/attachments/p2")))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({"size": 4, "data": "AQIDBA=="})),
-        )
-        .mount(&gmail.server)
-        .await;
-    assert_eq!(
-        provider.attachment(&"m1".to_string(), "p2").await.unwrap(),
-        [1, 2, 3, 4],
-        "padding is accepted"
     );
 }

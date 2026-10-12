@@ -75,6 +75,10 @@ pub struct HelloResponse {
     /// The daemon's Rail version.
     pub version: String,
     pub pid: u32,
+    /// When the daemon's Rail was built, in unix seconds; orders two builds of one version.
+    /// `None` from a daemon older than the field, which a client treats as the oldest build.
+    #[serde(default)]
+    pub build: Option<u64>,
     /// The directories the daemon works on. A client whose own differ must not use it: it
     /// would read and write another configuration than the one it thinks it has. Empty when an
     /// older daemon did not send them; the client then cannot tell, and treats it as a mismatch
@@ -95,6 +99,10 @@ pub struct DaemonInfoRequest {}
 pub struct DaemonInfo {
     pub pid: u32,
     pub version: String,
+    /// When the daemon's Rail was built, in unix seconds; `None` from a daemon older than the
+    /// field.
+    #[serde(default)]
+    pub build: Option<u64>,
     pub protocol: u32,
     pub socket: PathBuf,
     /// Unix seconds.

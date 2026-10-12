@@ -20,6 +20,7 @@ pub(super) async fn hello(call: Call, request: HelloRequest) -> Result<HelloResp
         protocol: PROTOCOL_VERSION,
         version: call.server.config.version.clone(),
         pid: std::process::id(),
+        build: Some(call.server.config.build),
         config_dir: call.ctx.paths.config_dir.clone(),
         data_dir: call.ctx.paths.data_dir.clone(),
         state_dir: call.ctx.paths.state_dir.clone(),

@@ -86,9 +86,10 @@ cargo install --locked --path crates/rail
 ```
 
 This puts `rail` in `~/.cargo/bin`. To upgrade, pull and run the same command; the first command
-of the new version replaces any older daemon still running. When an upgrade changes the store,
-the new daemon migrates it the first time it starts (rebuilding the search index can take a
-moment on a large mailbox); until then the mail screen says the store is not set up.
+of the new version replaces any older daemon still running, including one from an earlier build
+of the same version. When an upgrade changes the store, the new daemon migrates it the first time
+it starts (rebuilding the search index can take a moment on a large mailbox); until then the mail
+screen says the store is not set up.
 
 ## Quick start
 
@@ -977,6 +978,14 @@ The daemon keeps the environment of the command that started it (notably `PATH` 
 environment. A command whose `RAIL_*_DIR` settings differ from the running daemon's is refused with
 "a Rail daemon is already running with different directories".
 
+A client replaces a daemon from an older version *or an earlier build of the same version* (each
+build carries the time `rail-core` was last built; a `SOURCE_DATE_EPOCH` exported in the build
+environment replaces that time, so exporting it permanently makes every build look alike), so
+reinstalling `rail` while a daemon runs is enough. A program that is itself older than the running
+daemon, such as a long-lived `rail mcp` after an upgrade or rebuild, never stops its successor: it
+says "Rail was upgraded; restart this program". After a rebuild the hint adds that
+`rail daemon stop` lets this program start a daemon of its own build.
+
 The login unit written by `rail daemon install` runs the exact `rail` binary you installed it with
 (install again after moving it) and pins the `RAIL_*` directories your shell resolved at install
 time. It restarts the daemon if it fails, at most five times in five minutes, and not after a clean
@@ -1000,7 +1009,7 @@ pass in.
 | `rail sync [<account>] [--no-wait]` | Wakes the sync for one account or all and shows progress until caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs `rail account login`, 130 on Ctrl-C. If nothing changes for 10 minutes it stops watching (the sync goes on). If the daemon restarts, or restarts its sync, during the watch, it says which and waits for the new pass. `--no-wait` wakes it and exits 0. |
 | `rail search <query> [--account <account>] [--limit N]` | Searches the local store and, for Gmail, the whole mailbox. One line per thread: date (UTC), account, sender, subject; never a snippet or body. `--limit` is 1 to 100 (default 20). Results go to stdout, notes to stderr. Exits 1 for an unknown account, or when nothing was found and a Gmail search failed. |
 | `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit; notes a `general.layout` this version treats as `auto`, and prints a `theme` line when `general.theme` is set. Exits non-zero for config, store, token-backend and token-read errors, and for a Gmail account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
-| `rail daemon status` | Shows whether the daemon runs, with pid, version, load and socket. Exits 1 when none runs; never starts one. |
+| `rail daemon status` | Shows whether the daemon runs, with pid, version and build, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any save in flight is written; waits up to 35 seconds. |
 | `rail daemon run` | Runs the daemon in the foreground (Ctrl-C or SIGTERM stops it cleanly). Rarely needed. |
 | `rail daemon install` | Writes and enables a systemd user unit (Linux) or launchd agent (macOS) for the user running it that starts the daemon at login; stops a daemon already running first. If enabling fails it puts the previous state back and exits 1; if the daemon does not answer within 10 seconds it exits 1 with the unit's state (the unit stays installed). |
@@ -1019,9 +1028,10 @@ their own.
 | Gmail asks you to log in again every week | The OAuth consent screen is still in "Testing"; publish it ("In production"). |
 | No Secret Service (tty-only Linux, containers) | Set `secrets = "file"` under `[general]` before adding accounts, or move existing tokens with `rail secrets set file`. |
 | "1Password is locked" or `op` not signed in | Unlock the app, or turn on its CLI integration; `rail doctor` checks with `op whoami`. |
+| `no operation named "…"` | The daemon is from an earlier build. Rail now replaces an older build by itself; if you still see this, run `rail daemon stop`. |
 | `rail doctor` fails because the daemon cannot start, e.g. the socket path is too long | Set `RAIL_RUNTIME_DIR` to a shorter directory. |
 | "a Rail daemon is already running with different directories" | Run `rail daemon stop` from the shell that started it, or use the same `RAIL_*` settings. |
-| "Rail was upgraded; restart this program" | An older `rail mcp` or wizard is still open after an upgrade; restart it. |
+| "Rail was upgraded; restart this program" | An older `rail mcp` or wizard is still open after an upgrade; restart it. After a rebuild, if restarting does not help, this `rail` is the older build: run `rail daemon stop` (or use the newer binary). |
 | `rail daemon install` says no user service manager answers | Some containers have no `systemctl --user`; the daemon still starts on demand. |
 | `rail doctor` warns that the login unit does not match this binary | You moved or reinstalled `rail` elsewhere; run `rail daemon install` again. |
 | A first sync is taking hours | Expected for a large mailbox; set `history_days` to sync only recent mail. `rail doctor` and `rail_sync_status` show progress. |

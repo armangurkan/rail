@@ -1,4 +1,4 @@
-//! Sending, the "is it there already" lookup, and attachment bytes.
+//! Sending and the "is it there already" lookup.
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -131,21 +131,5 @@ impl GmailProvider {
                 "Gmail's answer did not have the expected shape",
             )),
         }
-    }
-
-    pub(crate) async fn attachment_bytes(
-        &self,
-        message: &str,
-        part: &str,
-    ) -> Result<Vec<u8>, ProviderError> {
-        if !safe_id(message, MAX_THREAD_ID_BYTES) {
-            return Err(ProviderError::permanent(
-                "a message id is not one Rail sends to Gmail",
-            ));
-        }
-        let data = self.attachment_data(message, part).await?;
-        URL_SAFE_NO_PAD
-            .decode(data.trim_end_matches('='))
-            .map_err(|_| ProviderError::permanent("Rail could not read this attachment"))
     }
 }
