@@ -88,11 +88,12 @@ pub(super) enum Next {
 /// Set the account's `outbox` depth on the board from `store`.
 pub fn publish_depth(board: &StatusBoard, address: &str, store: &Store, account_id: i64) {
     match store.outbox_depth(account_id) {
-        Ok((pending, failed, sending)) => board.update(address, |s| {
+        Ok(counts) => board.update(address, |s| {
             s.outbox = OutboxDepth {
-                pending,
-                failed,
-                sending,
+                pending: counts.pending,
+                failed: counts.failed,
+                sending: counts.sending,
+                saving: counts.saving,
             }
         }),
         Err(error) => {

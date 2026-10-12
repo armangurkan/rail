@@ -160,7 +160,8 @@ impl Rig {
     }
 
     fn depth(&self) -> (u64, u64, u64) {
-        self.store().outbox_depth(1).unwrap()
+        let counts = self.store().outbox_depth(1).unwrap();
+        (counts.pending, counts.failed, counts.sending)
     }
 }
 

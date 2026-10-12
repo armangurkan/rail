@@ -13,6 +13,12 @@ use crate::test_support::{seed_two_messages, store_with_account};
 
 const NOW: i64 = 1_760_000_000;
 
+/// `(waiting, failed, sending)` of the account's outbox.
+fn depth(store: &Store, account_id: i64) -> (u64, u64, u64) {
+    let counts = store.outbox_depth(account_id).unwrap();
+    (counts.pending, counts.failed, counts.sending)
+}
+
 fn claim(store: &mut super::Store, at: i64) -> Option<super::outbox::OutboxRow> {
     match store
         .outbox_write(&OutboxWrite::Claim { account_id: 1 }, at)
@@ -168,7 +174,7 @@ fn transient_failures_back_off_and_give_up_after_the_cap() {
             .unwrap()
             .starts_with("gave up after 20 attempts")
     );
-    assert_eq!(store.outbox_depth(1).unwrap(), (0, 1, 0));
+    assert_eq!(depth(&store, 1), (0, 1, 0));
 }
 
 #[test]
@@ -219,7 +225,7 @@ fn depth_due_and_reads_follow_the_rows() {
     let t1 = thread(&store, "t1");
     assert_eq!(store.outbox_next_due(1).unwrap(), None);
     enqueue(&mut store, Action::Archive {}, vec![t1], "a");
-    assert_eq!(store.outbox_depth(1).unwrap(), (1, 0, 0));
+    assert_eq!(depth(&store, 1), (1, 0, 0));
     assert_eq!(store.outbox_next_due(1).unwrap(), Some(NOW + 10));
     assert_eq!(store.pending_for(&[t1]).unwrap().len(), 1);
     assert!(store.failed_rows(1).unwrap().is_empty());
@@ -313,8 +319,8 @@ fn enqueue_of_threads_no_longer_held_writes_nothing() {
             applied: 0
         }
     );
-    assert_eq!(store.outbox_depth(1).unwrap(), (0, 0, 0));
-    assert_eq!(store.outbox_depth(2).unwrap(), (0, 0, 0));
+    assert_eq!(depth(&store, 1), (0, 0, 0));
+    assert_eq!(depth(&store, 2), (0, 0, 0));
     assert!(!starred(&store, foreign));
 }
 
@@ -351,23 +357,19 @@ fn a_sync_of_the_thread_clears_its_failed_row() {
     fail_for_good(&mut store, a);
     let b = enqueue(&mut store, Action::Archive {}, vec![t2], "b");
     fail_for_good(&mut store, b);
-    assert_eq!(store.outbox_depth(1).unwrap(), (0, 2, 0));
+    assert_eq!(depth(&store, 1), (0, 2, 0));
     let body = Batch {
         bodies: vec![("m1".into(), crate::provider::Body::default())],
         ..Batch::new(1)
     };
     assert_eq!(store.apply(&body, NOW).unwrap().failed_cleared, 0);
-    assert_eq!(
-        store.outbox_depth(1).unwrap(),
-        (0, 2, 0),
-        "a body is not a sync"
-    );
+    assert_eq!(depth(&store, 1), (0, 2, 0), "a body is not a sync");
     let synced = Batch {
         upserts: vec![crate::provider::mock::envelope("m1", "t1", 1_000)],
         ..Batch::new(1)
     };
     assert_eq!(store.apply(&synced, NOW).unwrap().failed_cleared, 1);
-    assert_eq!(store.outbox_depth(1).unwrap(), (0, 1, 0));
+    assert_eq!(depth(&store, 1), (0, 1, 0));
     let left = store.failed_rows(1).unwrap();
     assert_eq!(left.iter().map(|r| r.id).collect::<Vec<_>>(), vec![b]);
 }
@@ -440,7 +442,7 @@ fn a_send_row_queues_the_draft_and_undo_or_a_permanent_failure_returns_it_to_edi
     );
     let stored = store.failed_rows(account_id).unwrap();
     assert!(stored.is_empty());
-    assert_eq!(store.outbox_depth(account_id).unwrap(), (1, 0, 0));
+    assert_eq!(depth(&store, account_id), (1, 0, 0));
     // Undo with the right token.
     let undo = OutboxWrite::Undo {
         rows: vec![RowToken {
@@ -463,11 +465,7 @@ fn a_send_row_queues_the_draft_and_undo_or_a_permanent_failure_returns_it_to_edi
     assert!(
         matches!(claimed, OutboxOutcome::Claimed(Some(ref r)) if r.id == row && r.draft_id == Some(draft) && r.client_token == "tok-2")
     );
-    assert_eq!(
-        store.outbox_depth(account_id).unwrap(),
-        (1, 0, 1),
-        "sending"
-    );
+    assert_eq!(depth(&store, account_id), (1, 0, 1), "sending");
     let fail = OutboxWrite::Fail {
         id: row,
         failure: Failure::Permanent("refused".into()),
@@ -510,7 +508,7 @@ fn a_send_row_queues_the_draft_and_undo_or_a_permanent_failure_returns_it_to_edi
         .outbox_write(&OutboxWrite::Complete { id: row }, 401)
         .unwrap();
     assert!(store.draft(draft).unwrap().is_none());
-    assert_eq!(store.outbox_depth(account_id).unwrap(), (0, 0, 0));
+    assert_eq!(depth(&store, account_id), (0, 0, 0));
 }
 
 #[test]
@@ -705,7 +703,7 @@ fn a_failed_send_row_cannot_be_retried_after_its_draft_was_resent_and_deleted() 
         store.draft(newer).unwrap().unwrap().state,
         DraftState::Editing
     );
-    assert_eq!(store.outbox_depth(account_id).unwrap(), (0, 0, 0));
+    assert_eq!(depth(&store, account_id), (0, 0, 0));
 }
 
 /// Even with the row kept (as by a hand-edited store), a retry needs its draft `editing`.
@@ -746,7 +744,7 @@ fn a_second_send_for_a_queued_draft_is_refused() {
         matches!(outcome, OutboxOutcome::Enqueued { ref rows, .. } if rows.is_empty()),
         "{outcome:?}"
     );
-    assert_eq!(store.outbox_depth(account_id).unwrap(), (1, 0, 0));
+    assert_eq!(depth(&store, account_id), (1, 0, 0));
 }
 
 /// Deleting a draft takes its rows with it (the foreign key's cascade, as well as
@@ -760,5 +758,5 @@ fn a_deleted_draft_takes_its_outbox_rows_with_it() {
         .conn()
         .execute("DELETE FROM drafts WHERE id = ?1", [draft])
         .unwrap();
-    assert_eq!(store.outbox_depth(account_id).unwrap(), (0, 0, 0));
+    assert_eq!(depth(&store, account_id), (0, 0, 0));
 }

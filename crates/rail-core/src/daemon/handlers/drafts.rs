@@ -7,17 +7,18 @@ use std::path::Path;
 
 use crate::auth::unix_now;
 use crate::daemon::registry::Call;
+use crate::error::ErrorClass;
 use crate::ops::drafts::{AttachmentSummary, CheckedRecipients, DraftAttachment};
 use crate::ops::{
     Action, DraftDiscardRequest, DraftDiscardResponse, DraftId, DraftSaveRequest,
-    DraftSaveResponse, DraftSendRequest, DraftSendResponse, MAX_ATTACHMENTS, MAX_MESSAGE_BYTES,
-    OpError, ReplyTo, UNDO_GRACE, checked_token, estimated_raw_size, new_message_id,
-    too_large_text,
+    DraftSaveResponse, DraftSendRequest, DraftSendResponse, ErrorCode, MAX_ATTACHMENTS,
+    MAX_MESSAGE_BYTES, OpError, ReplyTo, UNDO_GRACE, checked_token, estimated_raw_size,
+    new_message_id, too_large_text,
 };
 use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
-use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
+use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
 
 fn unexpected() -> OpError {
     OpError::internal("the store answered a draft write unexpectedly")
@@ -29,6 +30,16 @@ fn no_such_draft() -> OpError {
 
 fn being_sent() -> OpError {
     OpError::invalid_input("draft: this draft is being sent; undo first")
+}
+
+/// A push of the draft is in flight: its Gmail id may be about to change, so a discard now
+/// could leave the Gmail copy behind. It clears up once the push lands.
+fn being_pushed() -> OpError {
+    OpError::new(
+        ErrorCode::InvalidInput,
+        ErrorClass::Transient,
+        "draft: saving to Gmail, try again in a moment",
+    )
 }
 
 fn checked_id(draft: DraftId) -> Result<(), OpError> {
@@ -507,8 +518,9 @@ pub(super) async fn discard(
         .outbox(OutboxWrite::DraftDelete(request.draft))
         .await?;
     match outcome {
-        OutboxOutcome::DraftDeleted(true) => {}
-        OutboxOutcome::DraftDeleted(false) => return Err(being_sent()),
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::Deleted) => {}
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingSent) => return Err(being_sent()),
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingPushed) => return Err(being_pushed()),
         _ => return Err(unexpected()),
     }
     tracing::info!(draft = request.draft, "a draft was discarded");

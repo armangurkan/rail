@@ -313,6 +313,7 @@ async fn the_status_bar_shows_queued_and_failed_rows() {
         pending: 2,
         failed: 1,
         sending: 0,
+        saving: 0,
     };
     let effects = f
         .screen

@@ -237,7 +237,8 @@ async fn a_send_row_builds_the_message_sends_it_deletes_the_draft_and_wakes_sync
         OutboxDepth {
             pending: 0,
             failed: 0,
-            sending: 0
+            sending: 0,
+            saving: 0,
         }
     );
 }

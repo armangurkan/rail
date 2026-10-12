@@ -291,7 +291,7 @@ fn json<T: Serialize>(value: &T) -> String {
 }
 
 /// Rail's own JSON; an unreadable value (a hand-edited store) reads as empty.
-fn parsed<T: serde::de::DeserializeOwned + Default>(text: &str) -> T {
+pub(super) fn parsed<T: serde::de::DeserializeOwned + Default>(text: &str) -> T {
     serde_json::from_str(text).unwrap_or_default()
 }
 
@@ -432,7 +432,7 @@ pub enum DraftSaved {
 }
 
 /// True while the draft is being sent: `queued`, or a live `send` row names it.
-fn being_sent(conn: &Connection, id: DraftId) -> Result<bool, StoreError> {
+pub(super) fn being_sent(conn: &Connection, id: DraftId) -> Result<bool, StoreError> {
     Ok(conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM drafts WHERE id = ?1 AND state = 'queued')
              OR EXISTS (SELECT 1 FROM outbox WHERE draft_id = ?1 AND kind = 'send'
@@ -480,16 +480,24 @@ pub(super) fn save_in(
     Ok(DraftSaved::Saved(conn.last_insert_rowid()))
 }
 
-/// `draft_delete` in the writer's outbox transaction, unless the draft is being sent (its
-/// send row pending or inflight): false then, and nothing changes. A missing draft is gone
-/// already: true.
-pub(super) fn delete_in(conn: &Connection, id: DraftId) -> Result<bool, StoreError> {
-    if being_sent(conn, id)? {
-        return Ok(false);
-    }
-    conn.execute("DELETE FROM outbox WHERE draft_id = ?1", [id])?;
-    conn.execute("DELETE FROM drafts WHERE id = ?1", [id])?;
-    Ok(true)
+/// The stored attachments of `message`, in part order.
+pub(super) fn attachments_of(
+    conn: &Connection,
+    message: i64,
+) -> Result<Vec<ReplyAttachment>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT remote_part_id, filename, mime_type, size FROM attachments
+         WHERE message_id = ?1 ORDER BY id",
+    )?;
+    let rows = stmt.query_map([message], |r| {
+        Ok(ReplyAttachment {
+            part_id: r.get(0)?,
+            filename: r.get(1)?,
+            mime_type: r.get(2)?,
+            size: r.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 impl Store {
@@ -610,20 +618,7 @@ impl Store {
         let Some(mut source) = head else {
             return Ok(None);
         };
-        let mut stmt = self.conn.prepare(
-            "SELECT remote_part_id, filename, mime_type, size FROM attachments
-             WHERE message_id = ?1 ORDER BY id",
-        )?;
-        source.attachments = stmt
-            .query_map([message], |r| {
-                Ok(ReplyAttachment {
-                    part_id: r.get(0)?,
-                    filename: r.get(1)?,
-                    mime_type: r.get(2)?,
-                    size: r.get(3)?,
-                })
-            })?
-            .collect::<Result<_, _>>()?;
+        source.attachments = attachments_of(&self.conn, message)?;
         Ok(Some(source))
     }
 
