@@ -240,7 +240,6 @@ impl DaemonLink {
     }
 
     /// Save `draft` to Gmail's Drafts under `client_token` (which `z` names the push by).
-    #[allow(dead_code, reason = "the Drafts screens call it")]
     pub fn draft_push(&self, seq: u64, draft: DraftId, client_token: String) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {

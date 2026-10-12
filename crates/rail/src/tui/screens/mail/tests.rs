@@ -26,6 +26,7 @@ use crate::tui::theme::choice::{ColorDepth, ThemeChoice};
 mod actions;
 mod compose;
 mod compose_edges;
+mod compose_gmail;
 mod pickers;
 mod state;
 mod themes;

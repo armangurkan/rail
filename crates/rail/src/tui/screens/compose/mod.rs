@@ -26,6 +26,8 @@ pub enum ComposeOutcome {
     Stay,
     Edit,
     Send,
+    /// Save the draft to Gmail's Drafts.
+    Push,
     /// Close the review and keep the draft.
     Close,
     /// Discard the draft (already confirmed); also Esc in the opening prompts of a new
@@ -139,9 +141,9 @@ impl Composer {
         composer
     }
 
-    /// Name these keys on the bottom row: the labels of send, edit, headers, attach, remove,
-    /// keep and discard, in that order.
-    pub fn with_hint(mut self, labels: &[String; 7]) -> Self {
+    /// Name these keys on the bottom row: the labels of send, push, edit, headers, attach,
+    /// remove, keep and discard, in that order.
+    pub fn with_hint(mut self, labels: &[String; 8]) -> Self {
         self.hint = review::hint(labels);
         self
     }
@@ -238,6 +240,7 @@ impl Composer {
     fn review_action(&mut self, action: Action) -> ComposeOutcome {
         match action {
             Action::ComposeSend => return ComposeOutcome::Send,
+            Action::ComposePush => return ComposeOutcome::Push,
             Action::ComposeEdit => return ComposeOutcome::Edit,
             Action::ComposeClose => return ComposeOutcome::Close,
             Action::ComposeRemove => {

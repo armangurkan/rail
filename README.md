@@ -227,6 +227,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `reader.top` | reader | `home` `g g` | First line. |
 | `reader.bottom` | reader | `end` `G` | Last line. |
 | `compose.send` | compose | `y` | Send. |
+| `compose.push` | compose | `s` | Save to Gmail's Drafts. |
 | `compose.edit` | compose | `e` | Edit in your editor. |
 | `compose.headers` | compose | `t` | Change To, Cc, Bcc or Subject. |
 | `compose.attach` | compose | `a` | Attach a file. |
@@ -461,6 +462,7 @@ the mail system sees. The bottom row names the keys:
 | Key | What it does |
 |---|---|
 | `y` | Send. |
+| `s` | Save the draft to Gmail's Drafts. |
 | `e` | Edit again in your editor. |
 | `t` | Change `To`, `Cc`, `Bcc` and `Subject`, one prompt after another. |
 | `a` | Attach a file: type its path (`~` works, `Tab` completes names from the folder, relative paths are made absolute) and press `Enter`. |
@@ -489,8 +491,11 @@ error (`Could not send: Gmail refused the request (HTTP 400)`) and the failure i
 local store, so a crash or a closed terminal loses nothing. `:drafts` (`Open a draft` in the
 palette) lists the account's saved drafts, newest first (in the unified inbox, every account's);
 `Enter` reopens one at its review. A reply whose original message has since left the store keeps
-its threading. Drafts stay on this machine: pushing them to Gmail's Drafts folder is not in this
-version, and no other mail program sees them.
+its threading. A draft stays on this machine until you press `s` on its review: Rail saves any
+text not stored yet, saves the draft to Gmail's Drafts ten seconds later, closes the review and
+says `saved to Gmail · z undoes`; `z` inside that window cancels it (`kept on this computer`). A
+push Gmail refuses keeps the review open (`Could not save to Gmail: …`); one that fails later is
+listed in `:errors` (`Could not save the draft to Gmail: …`), where `Enter` retries it.
 
 **Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
 limit), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger

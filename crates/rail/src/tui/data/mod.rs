@@ -132,7 +132,6 @@ pub enum MailEvent {
     DraftPushed {
         seq: u64,
         draft: DraftId,
-        #[allow(dead_code, reason = "the composer and the Drafts screen read it")]
         client_token: String,
         result: Result<DraftPushResponse, OpError>,
     },

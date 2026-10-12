@@ -677,5 +677,8 @@ async fn the_review_names_the_users_keys() {
         f.screen.view(frame, &Theme::default());
     });
     let hint = &rows[28];
-    assert!(hint.starts_with("S send · e edit · t headers"), "{hint}");
+    assert!(
+        hint.starts_with("S send · s save to Gmail · e edit · t headers"),
+        "{hint}"
+    );
 }

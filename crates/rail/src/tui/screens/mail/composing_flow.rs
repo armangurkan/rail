@@ -3,7 +3,7 @@
 //! and the editor round trip with its failure paths.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use rail_core::ops::client_token;
+use rail_core::ops::{DraftId, client_token};
 use rail_core::store::drafts::{DraftKind, ReplySource};
 
 use super::composing::{After, BUSY, OPENING_PROMPTS, Pending, attachable};
@@ -232,6 +232,7 @@ impl MailScreen {
             ComposeOutcome::Stay => Vec::new(),
             ComposeOutcome::Edit => self.open_editor(),
             ComposeOutcome::Send => self.send_draft(),
+            ComposeOutcome::Push => self.push_draft(),
             ComposeOutcome::Close => self.close_compose(),
             ComposeOutcome::Discard => self.discard_compose(),
             ComposeOutcome::Attach(path) => self.attach(path),
@@ -362,6 +363,34 @@ impl MailScreen {
         let seq = self.next_compose_seq();
         self.composing.pending = Some(Pending::Sending { seq });
         vec![self.ctx.link.draft_send(seq, draft, client_token())]
+    }
+
+    /// `s`: save text not stored yet, then save the draft to Gmail's Drafts; the review
+    /// closes when the daemon has queued the push.
+    fn push_draft(&mut self) -> Vec<Effect> {
+        let Some(draft) = self.compose.as_ref().map(|c| c.composing().draft) else {
+            return Vec::new();
+        };
+        if self.composing.pending.is_some() {
+            self.status.notify("Wait for the draft to save.", self.tick);
+            return Vec::new();
+        }
+        match draft {
+            Some(draft) if !self.composing.unsaved => self.start_push(draft),
+            _ => self.save_draft(After::Push, None),
+        }
+    }
+
+    /// Ask the daemon to save `draft` to Gmail under a fresh token.
+    pub(super) fn start_push(&mut self, draft: DraftId) -> Vec<Effect> {
+        let seq = self.next_compose_seq();
+        let client_token = client_token();
+        self.composing.pending = Some(Pending::Pushing {
+            seq,
+            draft,
+            client_token: client_token.clone(),
+        });
+        vec![self.ctx.link.draft_push(seq, draft, client_token)]
     }
 
     /// The editor exited (or could not start).

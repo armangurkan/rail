@@ -1,8 +1,10 @@
 //! The answers composing waits for: `draft.save`, `draft.send` (and its undo reopening the
-//! review), `draft.discard`, the address suggestions, a send the daemon gave up on, and the
+//! review), `draft.push`, `draft.discard`, the address suggestions, a send the daemon gave up on, and the
 //! drafts picker with the draft it resumes.
 
-use rail_core::ops::{DraftId, DraftSaveResponse, DraftSendResponse, OpError, RowToken};
+use rail_core::ops::{
+    DraftId, DraftPushResponse, DraftSaveResponse, DraftSendResponse, OpError, RowToken,
+};
 use rail_core::store::drafts::{Draft, DraftSummary};
 
 use super::composing::{After, BUSY, Pending};
@@ -25,6 +27,12 @@ impl MailScreen {
                 client_token,
                 result,
             } => self.draft_sent(seq, draft, client_token, result),
+            MailEvent::DraftPushed {
+                seq,
+                draft,
+                client_token,
+                result,
+            } => self.draft_pushed(seq, draft, client_token, result),
             MailEvent::DraftDiscarded { draft, result } => self.draft_discarded(draft, result),
             MailEvent::Suggestions { seq, result } => {
                 match (result, self.compose.as_mut()) {
@@ -56,23 +64,30 @@ impl MailScreen {
             return Vec::new();
         }
         self.composing.pending = None;
-        match result {
-            Ok(answer) => self.save_answered(answer),
-            Err(error) => self.save_failed(&error, before),
-        }
+        let saved = match result {
+            Ok(answer) => Some(self.save_answered(answer)),
+            Err(error) => {
+                self.save_failed(&error, before);
+                None
+            }
+        };
         match after {
             // Nothing is lost when the save failed: the editor works on the text in memory.
             After::Edit => self.open_editor(),
             After::Review => Vec::new(),
+            // A failed save pushes nothing: its error is on the review.
+            After::Push => saved.map_or_else(Vec::new, |draft| self.start_push(draft)),
         }
     }
 
-    fn save_answered(&mut self, answer: DraftSaveResponse) {
+    /// The saved draft's id.
+    fn save_answered(&mut self, answer: DraftSaveResponse) -> DraftId {
         self.status.answered();
         self.composing.unsaved = false;
         self.remove_compose_file();
+        let draft = answer.draft;
         let Some(composer) = self.compose.as_mut() else {
-            return;
+            return draft;
         };
         let composing = composer.composing_mut();
         composing.draft = Some(answer.draft);
@@ -90,6 +105,7 @@ impl MailScreen {
                 part: a.part,
             })
             .collect();
+        draft
     }
 
     fn save_failed(&mut self, error: &OpError, before: Option<Vec<AttachmentRow>>) {
@@ -148,6 +164,51 @@ impl MailScreen {
                     composer.set_error(line.clone());
                 }
                 let text = format!("Could not send: {line}");
+                self.status.error(text, self.ctx.clock.now(), self.tick);
+            }
+        }
+        Vec::new()
+    }
+
+    fn draft_pushed(
+        &mut self,
+        seq: u64,
+        draft: DraftId,
+        client_token: String,
+        result: Result<DraftPushResponse, OpError>,
+    ) -> Vec<Effect> {
+        let wanted = Pending::Pushing {
+            seq,
+            draft,
+            client_token: client_token.clone(),
+        };
+        if self.composing.pending.as_ref() != Some(&wanted) {
+            return Vec::new();
+        }
+        self.composing.pending = None;
+        let ours = self
+            .compose
+            .as_ref()
+            .is_some_and(|c| c.composing().draft == Some(draft));
+        match result {
+            Ok(answer) => {
+                self.status.answered();
+                if ours {
+                    self.hide_composer();
+                }
+                self.pushed_record(RowToken {
+                    row: answer.row,
+                    client_token,
+                });
+            }
+            Err(error) => {
+                tracing::warn!(code = ?error.code, "draft.push failed");
+                self.status.failed(&error);
+                let line = error_line(&error);
+                if let Some(composer) = self.compose.as_mut().filter(|_| ours) {
+                    composer.set_error(line.clone());
+                }
+                let text = format!("Could not save to Gmail: {line}");
                 self.status.error(text, self.ctx.clock.now(), self.tick);
             }
         }

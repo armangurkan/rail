@@ -351,6 +351,7 @@ fn shown(c: &Composer, w: u16, h: u16) -> String {
 fn review_keys_map_to_outcomes() {
     let mut c = Composer::new(composing());
     assert_eq!(press(&mut c, Action::ComposeSend), ComposeOutcome::Send);
+    assert_eq!(press(&mut c, Action::ComposePush), ComposeOutcome::Push);
     assert_eq!(press(&mut c, Action::ComposeEdit), ComposeOutcome::Edit);
     assert_eq!(press(&mut c, Action::ComposeClose), ComposeOutcome::Close);
     assert_eq!(
@@ -495,7 +496,9 @@ fn the_review_renders_at_both_sizes_with_folded_quotes_and_the_total() {
     );
     assert!(text.contains("[5 quoted lines]"), "{text}");
     assert!(
-        text.contains("y send · e edit · t headers · a attach · x remove · q keep · d discard"),
+        text.contains(
+            "y send · s save to Gmail · e edit · t headers · a attach · x remove · q keep · d discard"
+        ),
         "{text}"
     );
     let mut with_error = Composer::new(composing());
