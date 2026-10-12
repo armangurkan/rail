@@ -159,10 +159,11 @@ pub(super) fn complete_push(
     Ok(())
 }
 
-/// The import of a Gmail draft: the account's draft of that Gmail message when one exists,
-/// else a new draft (by `drafts::save_in`, so a replayed token answers the draft it made)
-/// that keeps Gmail's ids. An import only creates: a write naming a draft is `Missing`, and
-/// a draft that already has a Gmail identity (a replayed token of an earlier save) keeps it.
+/// The import of a Gmail draft: the account's draft of that Gmail message, or of that Gmail
+/// draft (edited elsewhere since Rail took it: Rail's version wins), when one exists; else a
+/// new draft (by `drafts::save_in`, so a replayed token answers the draft it made) that keeps
+/// Gmail's ids. An import only creates: a write naming a draft is `Missing`, and a draft that
+/// already has a Gmail identity (a replayed token of an earlier save) keeps it.
 pub(super) fn import_in(
     tx: &Transaction,
     write: &DraftWrite,
@@ -176,9 +177,10 @@ pub(super) fn import_in(
     }
     let known: Option<DraftId> = tx
         .query_row(
-            "SELECT id FROM drafts WHERE account_id = ?1 AND remote_message_id = ?2
+            "SELECT id FROM drafts WHERE account_id = ?1
+               AND (remote_message_id = ?2 OR remote_draft_id = ?3)
              ORDER BY id LIMIT 1",
-            params![write.account_id, remote_message_id],
+            params![write.account_id, remote_message_id, remote_draft_id],
             |r| r.get(0),
         )
         .optional()?;

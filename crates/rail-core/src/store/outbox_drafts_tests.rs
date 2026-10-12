@@ -521,3 +521,27 @@ fn the_depth_counts_a_push_in_flight_as_saving() {
         .unwrap();
     assert_eq!(counts(&store).saving, 1, "a delete in flight is not saving");
 }
+
+/// Gmail's draft r1 now holds dm2 (edited elsewhere) while Rail's draft of r1 still names
+/// dm1: an import of dm2 answers Rail's draft ("Rail's version wins") and writes nothing.
+#[test]
+fn an_import_of_a_gmail_draft_another_draft_holds_answers_that_draft() {
+    let (mut store, account) = store_with_account();
+    let DraftSaved::Saved(mine) = import(&mut store, write(account, 1), ("r1", "dm1"), "i1") else {
+        panic!("imported");
+    };
+    let again = import(&mut store, write(account, 2), ("r1", "dm2"), "i2");
+    assert_eq!(again, DraftSaved::Saved(mine));
+    let count: i64 = store
+        .conn()
+        .query_row("SELECT count(*) FROM drafts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 1, "no second draft of r1");
+    let draft = store.draft(mine).unwrap().unwrap();
+    assert_eq!(draft.subject, "draft 1", "Rail's text is kept");
+    assert_eq!(draft.remote_message_id.as_deref(), Some("dm1"));
+    assert_eq!(
+        store.draft_client_token(mine).unwrap().as_deref(),
+        Some("i1")
+    );
+}

@@ -236,16 +236,26 @@ struct ImportWrite {
     dir: PathBuf,
 }
 
-/// The stored draft is the one this import wrote: it holds `remote`. `dir` goes unless the
-/// draft names it.
-fn verified(db: &Path, id: DraftId, remote: &str, dir: PathBuf) -> Result<DraftId, OpError> {
+/// The Gmail ids an import names: the draft's and its message's.
+struct RemoteIds {
+    draft: String,
+    message: String,
+}
+
+/// The stored draft is the one this import answers: it holds the Gmail message, or the Gmail
+/// draft (Rail's copy of a draft edited elsewhere). `dir` goes unless the draft names it.
+fn verified(db: &Path, id: DraftId, remote: &RemoteIds, dir: PathBuf) -> Result<DraftId, OpError> {
     let draft = Store::open_reader(db)?.draft(id)?;
     let owns = |d: &Draft| owned_dirs_contain(d, &dir);
     if !draft.as_ref().is_some_and(owns) {
         remove_dirs(std::slice::from_ref(&dir));
     }
+    let holds = |d: &Draft| {
+        d.remote_message_id.as_deref() == Some(remote.message.as_str())
+            || d.remote_draft_id.as_deref() == Some(remote.draft.as_str())
+    };
     match draft {
-        Some(d) if d.remote_message_id.as_deref() == Some(remote) => Ok(id),
+        Some(d) if holds(&d) => Ok(id),
         Some(_) => Err(token_used()),
         None => Err(no_such_draft()),
     }
@@ -273,7 +283,7 @@ async fn write_import(ctx: &DaemonContext, import: ImportWrite) -> Result<DraftI
             .await?
             .outbox(OutboxWrite::DraftImport {
                 write: Box::new(write),
-                remote_draft_id,
+                remote_draft_id: remote_draft_id.clone(),
                 remote_message_id: remote_message_id.clone(),
                 client_token,
             })
@@ -289,31 +299,60 @@ async fn write_import(ctx: &DaemonContext, import: ImportWrite) -> Result<DraftI
         }
     };
     let db = ctx.paths.db_file();
-    ctx.blocking(move || verified(&db, id, &remote_message_id, dir))
-        .await
+    let remote = RemoteIds {
+        draft: remote_draft_id,
+        message: remote_message_id,
+    };
+    ctx.blocking(move || verified(&db, id, &remote, dir)).await
 }
 
-/// Everything Gmail holds of the import: the draft's id, the body (fetched when the store
-/// has none) and the attachments as files under the token's directory.
-async fn from_gmail(
+/// The Gmail draft that holds `source`, or the account's local draft already bound to it
+/// (Rail's version wins over an edit made elsewhere: nothing is fetched for it).
+enum Found {
+    Held(DraftId),
+    Gmail(Arc<dyn Provider>, String),
+}
+
+async fn find_gmail_draft(
     ctx: &DaemonContext,
     account: &str,
-    source: ImportSource,
-    token: &str,
-) -> Result<(String, ImportSource, Vec<Attachment>, PathBuf), OpError> {
+    account_id: i64,
+    source: &ImportSource,
+) -> Result<Found, OpError> {
     let provider = provider_of(ctx, account).await?;
     let remote_draft_id = provider
         .draft_find(&source.remote_id)
         .await?
         .ok_or_else(|| OpError::not_found("Gmail no longer has this draft"))?;
+    let (db, held) = (ctx.paths.db_file(), remote_draft_id.clone());
+    let bound = ctx
+        .blocking(move || -> Result<Option<DraftId>, OpError> {
+            Ok(Store::open_reader(&db)?.draft_by_remote_draft(account_id, &held)?)
+        })
+        .await?;
+    Ok(match bound {
+        Some(draft) => Found::Held(draft),
+        None => Found::Gmail(provider, remote_draft_id),
+    })
+}
+
+/// Everything Gmail holds of the import: the body (fetched when the store has none) and the
+/// attachments as files under the token's directory.
+async fn from_gmail(
+    ctx: &DaemonContext,
+    account: &str,
+    provider: &dyn Provider,
+    source: ImportSource,
+    token: &str,
+) -> Result<(ImportSource, Vec<Attachment>, PathBuf), OpError> {
     let mut source = with_body(ctx, account, source).await?;
     let (dir, parts) = (
         import_dir(&ctx.paths, token),
         std::mem::take(&mut source.attachments),
     );
     let remote = source.remote_id.clone();
-    let files = fetch_into(ctx, provider.as_ref(), &remote, parts, dir.clone()).await?;
-    Ok((remote_draft_id, source, files, dir))
+    let files = fetch_into(ctx, provider, &remote, parts, dir.clone()).await?;
+    Ok((source, files, dir))
 }
 
 pub(super) async fn import(
@@ -336,8 +375,13 @@ pub(super) async fn import(
     {
         return Ok(DraftImportResponse { draft });
     }
-    let (remote_draft_id, source, files, dir) =
-        from_gmail(ctx, &request.account, source, &token).await?;
+    let (provider, remote_draft_id) =
+        match find_gmail_draft(ctx, &request.account, account_id, &source).await? {
+            Found::Held(draft) => return Ok(DraftImportResponse { draft }),
+            Found::Gmail(provider, id) => (provider, id),
+        };
+    let (source, files, dir) =
+        from_gmail(ctx, &request.account, provider.as_ref(), source, &token).await?;
     let count = files.len();
     let remote_message_id = source.remote_id.clone();
     let import = ImportWrite {

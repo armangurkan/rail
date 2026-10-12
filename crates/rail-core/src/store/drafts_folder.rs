@@ -180,6 +180,24 @@ impl Store {
             .optional()?)
     }
 
+    /// The account's local draft bound to the Gmail draft `remote_draft_id` (pushed or
+    /// imported), whatever message Gmail holds under it now.
+    pub fn draft_by_remote_draft(
+        &self,
+        account_id: i64,
+        remote_draft_id: &str,
+    ) -> Result<Option<DraftId>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id FROM drafts WHERE account_id = ?1 AND remote_draft_id = ?2
+                 ORDER BY id LIMIT 1",
+                params![account_id, remote_draft_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     /// The draft `token` made, in any account (tokens are unique across accounts), and the
     /// Gmail message it holds, if any.
     pub fn draft_token_owner(

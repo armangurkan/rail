@@ -391,6 +391,51 @@ async fn importing_twice_answers_one_draft() {
     assert_eq!(h.drafts_count(), 1);
 }
 
+/// Gmail's r1 is edited elsewhere after Rail imported it: it now holds d2, which sync brings
+/// as a draft message no local draft names. Importing d2 answers Rail's draft of r1 (Rail's
+/// version wins), fetches no file and makes no second draft bound to r1.
+#[tokio::test]
+async fn importing_a_gmail_draft_rail_already_holds_answers_rails_draft() {
+    let h = with_gmail_drafts().await;
+    let first = h.import(h.message_id("d1"), "i1").await.unwrap();
+    let edited = Envelope {
+        is_draft: true,
+        folders: vec!["DRAFT".into()],
+        ..envelope("d2", "t1", h.now() * 1000)
+    };
+    h.mock.seed(edited.clone());
+    h.mock.with(|m| {
+        m.drafts.get_mut("r1").unwrap().message_id = "d2".into();
+        let mut body = m.bodies.get("d1").cloned().unwrap();
+        body.text = "edited on the phone".into();
+        m.bodies.insert("d2".into(), body);
+        m.attachment_bytes
+            .insert(("d2".into(), "p1".into()), PLAN.to_vec());
+    });
+    {
+        let mut store = Store::open(&h.paths.db_file()).unwrap();
+        let batch = crate::sync::batch::Batch {
+            upserts: vec![edited],
+            ..crate::sync::batch::Batch::new(h.work_id())
+        };
+        store.apply(&batch, h.now()).unwrap();
+    }
+    let attachments = |h: &DaemonHarness| {
+        h.mock
+            .calls()
+            .into_iter()
+            .filter(|c| *c == Call::Attachment)
+            .count()
+    };
+    let fetched = attachments(&h);
+    let second = h.import(h.message_id("d2"), "i2").await.unwrap();
+    assert_eq!(second, first, "Rail's draft of r1");
+    assert_eq!(attachments(&h), fetched, "no file fetched for it");
+    assert_eq!(h.drafts_count(), 1, "one local draft of r1");
+    let draft = h.store(|s| s.draft(first).unwrap().unwrap());
+    assert_eq!(draft.body, "the draft's text", "Rail's text is kept");
+}
+
 #[tokio::test]
 async fn an_import_is_refused_for_a_message_that_is_not_a_draft_or_not_this_accounts() {
     let h = with_gmail_drafts().await;
