@@ -1,0 +1,45 @@
+---
+source: crates/rail/src/tui/screens/compose/tests.rs
+assertion_line: 430
+expression: "shown(&c, w, h)"
+---
+Reply · me@example.com
+
+From: me@example.com
+To: Dana Reyes <dana@example.com>
+Cc: lee@example.com
+Subject: Re: Lunch?
+📎  2 attachments, 10.3 KB
+  menu.pdf  application/pdf  10.0 KB
+  notes.txt  text/plain  300 B
+
+Yes please.
+
+On Thu, 9 Oct 2025, Dana Reyes wrote:
+[5 quoted lines]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+y send · e edit · t headers · a attach · x remove · q keep · d discard

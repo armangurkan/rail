@@ -1,0 +1,193 @@
+//! What a reply or a forward starts with: recipients, subject, the quoted or forwarded text,
+//! and the signature.
+
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
+use rail_core::provider::Mailbox;
+use rail_core::store::drafts::ReplySource;
+
+use super::model::Headers;
+
+const FORWARD_BAR: &str = "---------- Forwarded message ---------";
+/// Characters that make a display name need quotes.
+const NAME_SPECIALS: [char; 3] = [',', '<', '>'];
+
+/// `Name <address>`, or `address` alone when there is no name. Quotes and backslashes are
+/// dropped from the name (a quoted name may not hold them) and a name holding `,`, `<` or `>`
+/// is quoted.
+pub fn display_parts(name: Option<&str>, address: &str) -> String {
+    let cleaned: String = name
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\\'))
+        .collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        return address.to_string();
+    }
+    if cleaned.contains(NAME_SPECIALS) || name.is_some_and(|n| n.contains('"')) {
+        format!("\"{cleaned}\" <{address}>")
+    } else {
+        format!("{cleaned} <{address}>")
+    }
+}
+
+/// A mailbox as a recipient line shows it.
+pub fn display(m: &Mailbox) -> String {
+    display_parts(m.name.as_deref(), &m.address)
+}
+
+fn starts_with_any(subject: &str, prefixes: &[&str]) -> bool {
+    let lower = subject.trim_start().to_lowercase();
+    prefixes.iter().any(|p| lower.starts_with(p))
+}
+
+/// `Re: ` once: a subject already starting with `Re:` in any case is kept.
+pub fn re_subject(subject: &str) -> String {
+    if starts_with_any(subject, &["re:"]) {
+        subject.to_string()
+    } else {
+        format!("Re: {subject}")
+    }
+}
+
+/// `Fwd: ` once: a subject already starting with `Fwd:` or `Fw:` in any case is kept.
+pub fn fwd_subject(subject: &str) -> String {
+    if starts_with_any(subject, &["fwd:", "fw:"]) {
+        subject.to_string()
+    } else {
+        format!("Fwd: {subject}")
+    }
+}
+
+/// Every line with `> ` in front (`>` alone before an already quoted or an empty line), ending
+/// in a newline; empty text stays empty.
+pub fn quoted(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        if line.is_empty() {
+            out.push('>');
+        } else if line.starts_with('>') {
+            out.push('>');
+            out.push_str(line);
+        } else {
+            out.push_str("> ");
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// `body`, then a blank line, `-- ` and the signature's lines, when there is a signature.
+pub fn with_signature(body: &str, signature: Option<&str>) -> String {
+    let Some(signature) = signature.map(|s| s.trim_end_matches(['\n', '\r'])) else {
+        return body.to_string();
+    };
+    if signature.trim().is_empty() {
+        return body.to_string();
+    }
+    let mut out = body.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("\n-- \n");
+    out.push_str(signature);
+    out.push('\n');
+    out
+}
+
+/// `date` RFC 2822 style in `tz`: `Thu, 9 Oct 2025 08:53:20 +0000`.
+fn rfc2822(date: i64, tz: &TimeZone) -> String {
+    Timestamp::from_second(date).map_or_else(
+        |_| "an unknown date".to_string(),
+        |t| {
+            t.to_zoned(tz.clone())
+                .strftime("%a, %-d %b %Y %H:%M:%S %z")
+                .to_string()
+        },
+    )
+}
+
+/// Add each mailbox not `me` and not already in `seen` (both compared in lower case).
+fn add_unique(out: &mut Vec<String>, seen: &mut Vec<String>, from: &[Mailbox], me: &str) {
+    for m in from {
+        let key = m.address.to_lowercase();
+        if key == me || seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        out.push(display(m));
+    }
+}
+
+/// A reply's headers and body: to the `Reply-To` (else the `From`); with `all`, the original
+/// `To` and `Cc` too, minus `me` and duplicates, what was in `Cc` staying in `Cc`. The body
+/// leaves two lines to type in above `On <date>, <name> wrote:` and the quoted text.
+pub fn reply(source: &ReplySource, all: bool, me: &str, tz: &TimeZone) -> (Headers, String) {
+    let targets = if source.reply_to.is_empty() {
+        &source.from
+    } else {
+        &source.reply_to
+    };
+    let (mut to, mut cc) = (Vec::new(), Vec::new());
+    if all {
+        let me = me.to_lowercase();
+        let mut seen = Vec::new();
+        add_unique(&mut to, &mut seen, targets, &me);
+        add_unique(&mut to, &mut seen, &source.to, &me);
+        add_unique(&mut cc, &mut seen, &source.cc, &me);
+    } else {
+        to = targets.iter().map(display).collect();
+    }
+    let who = targets.first().map_or_else(String::new, |m| {
+        m.name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .unwrap_or(&m.address)
+            .to_string()
+    });
+    let body = format!(
+        "\n\nOn {}, {who} wrote:\n{}",
+        rfc2822(source.date, tz),
+        quoted(source.body_text.as_deref().unwrap_or(""))
+    );
+    let headers = Headers {
+        to,
+        cc,
+        bcc: Vec::new(),
+        subject: re_subject(&source.subject),
+    };
+    (headers, body)
+}
+
+fn joined(list: &[Mailbox]) -> String {
+    list.iter().map(display).collect::<Vec<_>>().join(", ")
+}
+
+/// A forward's headers (no recipients) and body: the forwarded-message block, then the
+/// original text. Its date is in UTC, with the offset written.
+pub fn forward(source: &ReplySource) -> (Headers, String) {
+    let mut body = format!(
+        "\n\n{FORWARD_BAR}\nFrom: {}\nDate: {}\nSubject: {}\nTo: {}\n",
+        joined(&source.from),
+        rfc2822(source.date, &TimeZone::UTC),
+        source.subject,
+        joined(&source.to),
+    );
+    if !source.cc.is_empty() {
+        body.push_str(&format!("Cc: {}\n", joined(&source.cc)));
+    }
+    body.push('\n');
+    let text = source.body_text.as_deref().unwrap_or("");
+    body.push_str(text);
+    if !text.is_empty() && !text.ends_with('\n') {
+        body.push('\n');
+    }
+    let headers = Headers {
+        subject: fwd_subject(&source.subject),
+        ..Headers::default()
+    };
+    (headers, body)
+}

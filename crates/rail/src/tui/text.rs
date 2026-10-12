@@ -310,6 +310,20 @@ pub fn link_lines(url: &Url) -> Vec<String> {
     lines
 }
 
+/// Characters that would make `host` more than a host inside `http://<host>/`.
+const NOT_IN_HOST: [char; 9] = ['/', '?', '#', '@', ':', '[', ']', '\\', '%'];
+
+/// `host` (a mail domain or a link's host) as a URL carries it: an international name in its
+/// ASCII `xn--` form, lower-cased, escaped; the same form `link_lines` shows, so a look-alike
+/// host is visible. `None` when `host` is not a valid host name.
+pub fn shown_host(host: &str) -> Option<String> {
+    if host.is_empty() || host.contains(NOT_IN_HOST) || host.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let url = Url::parse(&format!("http://{host}/")).ok()?;
+    url.host_str().map(escape)
+}
+
 /// `text` escaped and, when wider than `cols`, cut from the left with a leading `…`.
 fn fit_end(text: &str, cols: usize) -> String {
     let escaped = escape(text);
