@@ -88,12 +88,15 @@ impl GmailProvider {
             ("maxResults", "1".to_string()),
         ];
         let list: ListWire = self.api.get_json("messages", &query, COST_LIST).await?;
-        Ok(list
-            .messages
-            .into_iter()
-            .next()
-            .map(|m| m.id)
-            .filter(|id| safe_id(id, MAX_THREAD_ID_BYTES)))
+        // A found message with an unusable id is an error, never "not there": the caller
+        // would send the message a second time.
+        match list.messages.into_iter().next() {
+            None => Ok(None),
+            Some(found) if safe_id(&found.id, MAX_THREAD_ID_BYTES) => Ok(Some(found.id)),
+            Some(_) => Err(ProviderError::permanent(
+                "Gmail's answer did not have the expected shape",
+            )),
+        }
     }
 
     pub(crate) async fn attachment_bytes(

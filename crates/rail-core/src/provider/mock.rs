@@ -585,8 +585,10 @@ fn header_message_id(raw: &[u8]) -> Option<String> {
         if line.is_empty() {
             return None;
         }
-        if line.len() > 11 && line[..11].eq_ignore_ascii_case("message-id:") {
-            return Some(line[11..].trim().to_string());
+        if let (Some(name), Some(value)) = (line.get(..11), line.get(11..))
+            && name.eq_ignore_ascii_case("message-id:")
+        {
+            return Some(value.trim().to_string());
         }
     }
     None
