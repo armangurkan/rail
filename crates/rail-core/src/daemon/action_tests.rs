@@ -489,3 +489,16 @@ fn tokens(rows: &[i64], token: &str) -> Vec<RowToken> {
         })
         .collect()
 }
+
+#[tokio::test]
+async fn a_draft_action_cannot_go_through_action_apply() {
+    let d = daemon(WORK).await;
+    let t1 = d.thread("t1");
+    let error = d
+        .apply(vec![t1], Action::Send { draft: 1 }, true, "a")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert_eq!(error.message, "a draft action goes through draft.send");
+    assert_eq!(d.depth().await.pending, 0);
+}

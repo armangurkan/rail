@@ -67,7 +67,6 @@ pub(super) async fn apply(
         account_id: target.account_id,
         action: request.action,
         threads,
-        draft: None,
         not_before: unix_now() + grace,
         client_token: request.client_token,
     };

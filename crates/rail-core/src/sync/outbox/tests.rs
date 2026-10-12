@@ -117,7 +117,6 @@ impl Rig {
             account_id: 1,
             action,
             threads,
-            draft: None,
             not_before: 0,
             client_token: token.into(),
         };
@@ -451,7 +450,6 @@ async fn a_blocked_row_does_not_make_the_worker_poll() {
         account_id: 1,
         action: Action::Star { on: true },
         threads: vec![t1],
-        draft: None,
         not_before,
         client_token: token.into(),
     };

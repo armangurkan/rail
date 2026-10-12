@@ -29,7 +29,6 @@ fn applying(f: &Fixture) {
             account_id: account,
             action: call.action.clone(),
             threads: call.threads.clone(),
-            draft: None,
             not_before: i64::MAX,
             client_token: rail_core::ops::client_token(),
         };

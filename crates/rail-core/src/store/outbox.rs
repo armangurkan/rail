@@ -59,9 +59,6 @@ pub struct NewAction {
     /// Checked by the caller: this account's threads, deduplicated. The enqueue keeps only
     /// those the store still holds for the account when it writes.
     pub threads: Vec<i64>,
-    /// The draft of a draft action (`threads` is then empty); checked against the account
-    /// when the row is written.
-    pub draft: Option<DraftId>,
     pub not_before: i64,
     pub client_token: String,
 }
@@ -243,7 +240,7 @@ pub(crate) fn enqueue(
     if let Some(id) = known {
         return Ok(Some((id, threads.len())));
     }
-    if let Some(draft) = new.draft {
+    if let Some(draft) = new.action.draft_id() {
         return enqueue_draft(tx, new, draft);
     }
     if threads.is_empty() {
@@ -269,18 +266,17 @@ pub(crate) fn enqueue(
 }
 
 /// A draft row for one of the account's drafts; `None` (nothing written) when the account
-/// holds no such draft. A `send` row queues the draft.
+/// holds no such draft, or for a `send` of a draft that is not `editing` (already queued). A
+/// `send` row queues the draft.
 fn enqueue_draft(
     tx: &Transaction,
     new: &NewAction,
     draft: DraftId,
 ) -> Result<Option<(OutboxId, usize)>, StoreError> {
-    let exists: bool = tx.query_row(
-        "SELECT EXISTS (SELECT 1 FROM drafts WHERE id = ?1 AND account_id = ?2)",
-        params![draft, new.account_id],
-        |r| r.get(0),
-    )?;
-    if !exists {
+    let Some(state) = draft_state(tx, draft, Some(new.account_id))? else {
+        return Ok(None);
+    };
+    if matches!(new.action, Action::Send { .. }) && state != "editing" {
         return Ok(None);
     }
     tx.execute(
@@ -301,6 +297,21 @@ fn enqueue_draft(
         set_draft_state(tx, draft, "queued")?;
     }
     Ok(Some((id, 1)))
+}
+
+/// The draft's state, when it exists (and is `account`'s, when given).
+fn draft_state(
+    tx: &Transaction,
+    draft: DraftId,
+    account: Option<i64>,
+) -> Result<Option<String>, StoreError> {
+    Ok(tx
+        .query_row(
+            "SELECT state FROM drafts WHERE id = ?1 AND (?2 IS NULL OR account_id = ?2)",
+            params![draft, account],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 /// The draft's `editing` or `queued`.
@@ -351,12 +362,24 @@ pub(crate) fn claim_next(
     }
 }
 
-/// The row is done: it leaves the outbox, and a sent draft leaves the store.
+/// The row is done: it leaves the outbox, and a sent draft leaves the store with every other
+/// row of it (a failed earlier send among them), so none can act on the draft again.
 pub(crate) fn complete(tx: &Transaction, id: OutboxId) -> Result<(), StoreError> {
-    tx.execute(
-        "DELETE FROM drafts WHERE id = (SELECT draft_id FROM outbox WHERE id = ?1 AND kind = 'send')",
-        [id],
-    )?;
+    let sent: Option<DraftId> = tx
+        .query_row(
+            "SELECT draft_id FROM outbox WHERE id = ?1 AND kind = 'send'",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    if let Some(draft) = sent {
+        tx.execute(
+            "DELETE FROM outbox WHERE draft_id = ?1 AND id != ?2",
+            params![draft, id],
+        )?;
+        tx.execute("DELETE FROM drafts WHERE id = ?1", [draft])?;
+    }
     tx.execute("DELETE FROM outbox WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -445,7 +468,8 @@ pub(crate) fn remove_pending(
 }
 
 /// `failed` → `pending` now, its change applied again in order (a sent draft is `queued`
-/// again). False for any other row, or a token that is not the row's.
+/// again). False for any other row, a token that is not the row's, or a `send` whose draft
+/// is gone or not `editing`.
 pub(crate) fn retry(
     tx: &Transaction,
     id: OutboxId,
@@ -458,6 +482,9 @@ pub(crate) fn retry(
         return Ok(false);
     };
     if let Some(draft) = sent_draft(&row) {
+        if draft_state(tx, draft, Some(row.account_id))?.as_deref() != Some("editing") {
+            return Ok(false);
+        }
         set_draft_state(tx, draft, "queued")?;
     }
     tx.execute(

@@ -324,7 +324,6 @@ mod tests {
             account_id: 1,
             action: Action::Read { on: true },
             threads: vec![1],
-            draft: None,
             not_before: 0,
             client_token: "t".into(),
         };

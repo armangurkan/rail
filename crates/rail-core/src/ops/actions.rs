@@ -266,6 +266,11 @@ impl ActionApplyRequest {
             return Err(OpError::invalid_input("a thread id is a positive number"));
         }
         checked_token(&self.client_token)?;
+        if self.action.draft_id().is_some() {
+            return Err(OpError::invalid_input(
+                "a draft action goes through draft.send",
+            ));
+        }
         check_labels(&self.action)?;
         let mut seen = HashSet::new();
         Ok(self
@@ -390,6 +395,17 @@ mod tests {
         };
         assert!(request(vec![1], many).checked().is_err());
         assert!(request(vec![1], Action::Move { to: 0 }).checked().is_err());
+        for draft in [
+            Action::Send { draft: 1 },
+            Action::PushDraft { draft: 1 },
+            Action::DeleteDraft {
+                draft: 1,
+                remote_draft_id: "r".into(),
+            },
+        ] {
+            let error = request(vec![1], draft).checked().unwrap_err();
+            assert_eq!(error.message, "a draft action goes through draft.send");
+        }
     }
 
     /// A repeated label id inside one list is refused (not silently deduplicated).

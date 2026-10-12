@@ -379,14 +379,14 @@ fn insert_draft(conn: &Connection, w: &DraftWrite, now: i64) -> Result<(), Store
     Ok(())
 }
 
-/// Rewrite one of the account's drafts; another account's id changes nothing.
+/// Rewrite one of the account's drafts; how many rows changed (0: no such draft there).
 fn update_draft(
     conn: &Connection,
     id: DraftId,
     w: &DraftWrite,
     now: i64,
-) -> Result<(), StoreError> {
-    conn.execute(
+) -> Result<usize, StoreError> {
+    Ok(conn.execute(
         "UPDATE drafts SET kind = ?2, thread_id = ?3, remote_thread_id = ?4, in_reply_to = ?5,
            references_ids = ?6, to_json = ?7, cc_json = ?8, bcc_json = ?9, subject = ?10,
            body = ?11, attachments_json = ?12, updated_at = ?13
@@ -407,22 +407,23 @@ fn update_draft(
             now,
             w.account_id
         ],
-    )?;
-    Ok(())
+    )?)
 }
 
 impl Store {
-    /// Create (`id: None`) or update one of the account's drafts; the draft's id. An update
-    /// leaves `message_id`, the remote ids and the state as they are.
-    pub fn draft_upsert(&mut self, w: &DraftWrite, now: i64) -> Result<DraftId, StoreError> {
+    /// Create (`id: None`) or update one of the account's drafts; the draft's id, or `None` when
+    /// `id` names no draft of that account. An update leaves `message_id`, the remote ids and
+    /// the state as they are.
+    pub fn draft_upsert(
+        &mut self,
+        w: &DraftWrite,
+        now: i64,
+    ) -> Result<Option<DraftId>, StoreError> {
         match w.id {
-            Some(id) => {
-                update_draft(&self.conn, id, w, now)?;
-                Ok(id)
-            }
+            Some(id) => Ok((update_draft(&self.conn, id, w, now)? > 0).then_some(id)),
             None => {
                 insert_draft(&self.conn, w, now)?;
-                Ok(self.conn.last_insert_rowid())
+                Ok(Some(self.conn.last_insert_rowid()))
             }
         }
     }

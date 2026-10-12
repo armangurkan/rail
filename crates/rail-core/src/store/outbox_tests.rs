@@ -269,7 +269,6 @@ fn enqueue_raw(store: &mut super::Store, threads: Vec<i64>, token: &str) -> Outb
         account_id: 1,
         action: Action::Star { on: true },
         threads,
-        draft: None,
         not_before: NOW + 10,
         client_token: token.into(),
     });
@@ -413,7 +412,7 @@ fn draft_in(store: &mut Store, account_id: i64, n: i64) -> DraftId {
         attachments: vec![],
         message_id: format!("<d{n}@example.com>"),
     };
-    store.draft_upsert(&write, 1).unwrap()
+    store.draft_upsert(&write, 1).unwrap().unwrap()
 }
 
 fn send_row(store: &mut Store, account_id: i64, draft: DraftId, token: &str, now: i64) -> OutboxId {
@@ -421,7 +420,6 @@ fn send_row(store: &mut Store, account_id: i64, draft: DraftId, token: &str, now
         account_id,
         action: Action::Send { draft },
         threads: vec![],
-        draft: Some(draft),
         not_before: now + 10,
         client_token: token.into(),
     };
@@ -600,7 +598,6 @@ fn a_second_row_for_the_same_draft_waits_for_the_first() {
         account_id,
         action: Action::PushDraft { draft: d },
         threads: vec![],
-        draft: Some(d),
         not_before: 0,
         client_token: "p1".into(),
     };
@@ -614,7 +611,6 @@ fn a_second_row_for_the_same_draft_waits_for_the_first() {
             remote_draft_id: "r".into(),
         },
         threads: vec![],
-        draft: Some(d),
         not_before: 0,
         client_token: "p2".into(),
     };
@@ -648,10 +644,121 @@ fn a_draft_row_names_no_threads_and_a_missing_draft_is_refused() {
         account_id,
         action: Action::Send { draft: 999 },
         threads: vec![],
-        draft: Some(999),
         not_before: 0,
         client_token: "x".into(),
     };
     let outcome = store.outbox_write(&OutboxWrite::Enqueue(new), 100).unwrap();
     assert!(matches!(outcome, OutboxOutcome::Enqueued { ref rows, .. } if rows.is_empty()));
+}
+
+fn retry(store: &mut Store, row: OutboxId, token: &str, now: i64) -> bool {
+    let write = OutboxWrite::Retry {
+        id: row,
+        client_token: token.into(),
+    };
+    match store.outbox_write(&write, now).unwrap() {
+        OutboxOutcome::Retried(done) => done,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A failed send of a draft the user then sent again: while the second send waits the old
+/// row cannot requeue the draft, and once the second completes the old row is gone with the
+/// draft, so a newer draft (never given the old id) is not sent by it.
+#[test]
+fn a_failed_send_row_cannot_be_retried_after_its_draft_was_resent_and_deleted() {
+    let (mut store, account_id) = store_with_account();
+    let draft = draft_in(&mut store, account_id, 1);
+    let old = send_row(&mut store, account_id, draft, "tok-a", 100);
+    store
+        .outbox_write(&OutboxWrite::Claim { account_id }, 200)
+        .unwrap();
+    let fail = OutboxWrite::Fail {
+        id: old,
+        failure: Failure::Permanent("refused".into()),
+    };
+    store.outbox_write(&fail, 201).unwrap();
+    assert_eq!(
+        store.draft(draft).unwrap().unwrap().state,
+        DraftState::Editing
+    );
+    let again = send_row(&mut store, account_id, draft, "tok-b", 300);
+    assert!(
+        !retry(&mut store, old, "tok-a", 301),
+        "the draft is queued by the second send"
+    );
+    store
+        .outbox_write(&OutboxWrite::Claim { account_id }, 400)
+        .unwrap();
+    store
+        .outbox_write(&OutboxWrite::Complete { id: again }, 401)
+        .unwrap();
+    assert!(store.draft(draft).unwrap().is_none());
+    assert!(
+        store.failed_rows(account_id).unwrap().is_empty(),
+        "the old failed row left with its draft"
+    );
+    let newer = draft_in(&mut store, account_id, 2);
+    assert_ne!(newer, draft, "a draft id is never reused");
+    assert!(!retry(&mut store, old, "tok-a", 402));
+    assert_eq!(
+        store.draft(newer).unwrap().unwrap().state,
+        DraftState::Editing
+    );
+    assert_eq!(store.outbox_depth(account_id).unwrap(), (0, 0, 0));
+}
+
+/// Even with the row kept (as by a hand-edited store), a retry needs its draft `editing`.
+#[test]
+fn a_failed_send_row_whose_draft_is_gone_is_not_retried() {
+    let (mut store, account_id) = store_with_account();
+    let draft = draft_in(&mut store, account_id, 1);
+    let row = send_row(&mut store, account_id, draft, "tok-a", 100);
+    store
+        .conn()
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF; DELETE FROM drafts; PRAGMA foreign_keys = ON;
+             UPDATE outbox SET state = 'failed';",
+        )
+        .unwrap();
+    assert!(!retry(&mut store, row, "tok-a", 200));
+    assert_eq!(
+        store.failed_rows(account_id).unwrap().len(),
+        1,
+        "left as it was"
+    );
+}
+
+#[test]
+fn a_second_send_for_a_queued_draft_is_refused() {
+    let (mut store, account_id) = store_with_account();
+    let draft = draft_in(&mut store, account_id, 1);
+    send_row(&mut store, account_id, draft, "tok-1", 100);
+    let new = NewAction {
+        account_id,
+        action: Action::Send { draft },
+        threads: vec![],
+        not_before: 110,
+        client_token: "tok-2".into(),
+    };
+    let outcome = store.outbox_write(&OutboxWrite::Enqueue(new), 100).unwrap();
+    assert!(
+        matches!(outcome, OutboxOutcome::Enqueued { ref rows, .. } if rows.is_empty()),
+        "{outcome:?}"
+    );
+    assert_eq!(store.outbox_depth(account_id).unwrap(), (1, 0, 0));
+}
+
+/// Deleting a draft takes its rows with it (the foreign key's cascade, as well as
+/// `draft_delete`'s own delete).
+#[test]
+fn a_deleted_draft_takes_its_outbox_rows_with_it() {
+    let (mut store, account_id) = store_with_account();
+    let draft = draft_in(&mut store, account_id, 1);
+    send_row(&mut store, account_id, draft, "tok-1", 100);
+    store
+        .conn()
+        .execute("DELETE FROM drafts WHERE id = ?1", [draft])
+        .unwrap();
+    assert_eq!(store.outbox_depth(account_id).unwrap(), (0, 0, 0));
 }

@@ -1,7 +1,7 @@
 -- Rail schema v7: drafts, a stored Reply-To, and outbox rows keyed by draft. Additive only.
 
 CREATE TABLE drafts (
-  id                INTEGER PRIMARY KEY,
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
   account_id        INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   kind              TEXT NOT NULL CHECK (kind IN ('new','reply','reply_all','forward')),
   thread_id         INTEGER REFERENCES threads(id) ON DELETE SET NULL,
@@ -25,5 +25,7 @@ CREATE INDEX drafts_by_account ON drafts(account_id, updated_at);
 
 ALTER TABLE messages ADD COLUMN reply_to_json TEXT NOT NULL DEFAULT '[]';
 
-ALTER TABLE outbox ADD COLUMN draft_id INTEGER;
+-- AUTOINCREMENT above: a draft id is never reused, so a row left for a deleted draft can never
+-- act on a newer one; the cascade removes such rows anyway.
+ALTER TABLE outbox ADD COLUMN draft_id INTEGER REFERENCES drafts(id) ON DELETE CASCADE;
 CREATE INDEX outbox_by_draft ON outbox(draft_id);

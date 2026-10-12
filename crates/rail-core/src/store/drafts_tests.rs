@@ -35,7 +35,9 @@ fn write(account_id: i64) -> DraftWrite {
 #[test]
 fn a_draft_round_trips_and_updates_in_place() -> Result<(), StoreError> {
     let (mut store, account_id) = store_with_account();
-    let id = store.draft_upsert(&write(account_id), 1_000)?;
+    let id = store
+        .draft_upsert(&write(account_id), 1_000)?
+        .expect("created");
     let draft = store.draft(id)?.expect("stored");
     assert_eq!(draft.kind, DraftKind::New);
     assert_eq!(draft.to[0].address, "dana@example.com");
@@ -47,7 +49,7 @@ fn a_draft_round_trips_and_updates_in_place() -> Result<(), StoreError> {
         subject: "Hello again".into(),
         ..write(account_id)
     };
-    assert_eq!(store.draft_upsert(&again, 2_000)?, id, "same row");
+    assert_eq!(store.draft_upsert(&again, 2_000)?, Some(id), "same row");
     let draft = store.draft(id)?.expect("stored");
     assert_eq!(draft.subject, "Hello again");
     assert_eq!(draft.updated_at, 2_000);
@@ -67,7 +69,7 @@ fn a_draft_round_trips_and_updates_in_place() -> Result<(), StoreError> {
 #[test]
 fn a_draft_debug_shows_no_content() {
     let (mut store, account_id) = store_with_account();
-    let id = store.draft_upsert(&write(account_id), 1).unwrap();
+    let id = store.draft_upsert(&write(account_id), 1).unwrap().unwrap();
     let shown = format!("{:?}", store.draft(id).unwrap().unwrap());
     for secret in ["dana", "Hello", "Hi Dana", "a.pdf"] {
         assert!(!shown.contains(secret), "{shown}");
@@ -96,12 +98,56 @@ fn reply_source_carries_the_headers_the_daemon_needs() -> Result<(), StoreError>
 #[test]
 fn draft_state_and_remote_ids_are_set_in_place() -> Result<(), StoreError> {
     let (mut store, account_id) = store_with_account();
-    let id = store.draft_upsert(&write(account_id), 1)?;
+    let id = store.draft_upsert(&write(account_id), 1)?.expect("created");
     store.draft_set_state(id, DraftState::Queued)?;
     assert_eq!(store.draft(id)?.unwrap().state, DraftState::Queued);
     store.draft_set_remote(id, "d9", "m9")?;
     let draft = store.draft(id)?.unwrap();
     assert_eq!(draft.remote_draft_id.as_deref(), Some("d9"));
     assert_eq!(draft.remote_message_id.as_deref(), Some("m9"));
+    Ok(())
+}
+
+#[test]
+fn an_update_of_a_draft_the_account_does_not_hold_writes_nothing() -> Result<(), StoreError> {
+    let (mut store, account_id) = store_with_account();
+    let id = store.draft_upsert(&write(account_id), 1)?.expect("created");
+    let missing = DraftWrite {
+        id: Some(id + 100),
+        ..write(account_id)
+    };
+    assert_eq!(store.draft_upsert(&missing, 2)?, None, "no such draft");
+    store.conn().execute(
+        "INSERT INTO accounts (name, kind, address) VALUES ('o', 'gmail', 'o@example.com')",
+        [],
+    )?;
+    let other = store.conn().last_insert_rowid();
+    let foreign = DraftWrite {
+        id: Some(id),
+        subject: "taken over".into(),
+        ..write(other)
+    };
+    assert_eq!(
+        store.draft_upsert(&foreign, 3)?,
+        None,
+        "another account's draft"
+    );
+    let draft = store.draft(id)?.expect("stored");
+    assert_eq!((draft.subject.as_str(), draft.updated_at), ("Hello", 1));
+    Ok(())
+}
+
+/// Ids are never reused (AUTOINCREMENT), so nothing left for a deleted draft names a new one.
+#[test]
+fn a_deleted_drafts_id_is_never_reused() -> Result<(), StoreError> {
+    let (mut store, account_id) = store_with_account();
+    let first = store.draft_upsert(&write(account_id), 1)?.expect("created");
+    store.draft_delete(first)?;
+    let next = DraftWrite {
+        message_id: "<other@example.com>".into(),
+        ..write(account_id)
+    };
+    let second = store.draft_upsert(&next, 2)?.expect("created");
+    assert!(second > first, "{second} after {first}");
     Ok(())
 }

@@ -108,7 +108,6 @@ pub(super) fn enqueue(store: &mut Store, action: Action, threads: Vec<i64>, toke
         account_id: 1,
         action,
         threads,
-        draft: None,
         not_before: NOW + 10,
         client_token: token.into(),
     });
@@ -218,7 +217,6 @@ fn a_failed_apply_leaves_no_row() {
         account_id: 1,
         action: Action::Star { on: true },
         threads: vec![t1],
-        draft: None,
         not_before: 0,
         client_token: "other".into(),
     });
