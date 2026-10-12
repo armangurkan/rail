@@ -8,6 +8,9 @@ use crate::provider::{Mailbox, Outgoing, ProviderError};
 /// Gmail's limit for a message and its attachments.
 pub const MAX_MESSAGE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_FILENAME_BYTES: usize = 255;
+/// RFC 5322 specials an address-list parser reads as structure (`.` and the one `@` are
+/// fine): one of these inside an address could end it and start another recipient.
+const ADDRESS_SPECIALS: [char; 11] = ['(', ')', '<', '>', '[', ']', ':', ';', '\\', ',', '"'];
 const MIB: usize = 1024 * 1024;
 const DEFAULT_FILENAME: &str = "attachment";
 /// Base64 grows data by 4/3; this is the per-part allowance for headers and boundaries.
@@ -125,6 +128,7 @@ fn valid_address(address: &str) -> bool {
         (parts.next(), parts.next(), parts.next()),
         (Some(local), Some(domain), None) if !local.is_empty() && !domain.is_empty()
     ) && plain_text(address)
+        && !address.contains(ADDRESS_SPECIALS)
 }
 
 fn valid_message_id(id: &str) -> bool {

@@ -229,3 +229,77 @@ fn file_names_lose_paths_controls_and_bidi_and_keep_a_length() {
     assert_eq!(sanitize_filename("   "), "attachment");
     assert!(sanitize_filename(&"x".repeat(400)).len() <= 255);
 }
+
+const SPECIAL_ADDRESSES: [&str; 9] = [
+    "x,attacker@evil.com",
+    "x;attacker@evil.com",
+    "x>attacker@evil.com",
+    "x<attacker@evil.com",
+    "x:attacker@evil.com",
+    "x\"attacker@evil.com",
+    "(c)a@example.com",
+    "a\\b@example.com",
+    "a[b]@example.com",
+];
+
+#[test]
+fn address_list_specials_are_refused_in_to_and_from() {
+    for bad in SPECIAL_ADDRESSES {
+        let mut to = outgoing();
+        to.to[0].address = bad.into();
+        let error = build(&to).unwrap_err();
+        assert!(
+            matches!(error, ProviderError::Permanent { .. }),
+            "to {bad}: {error:?}"
+        );
+        let mut from = outgoing();
+        from.from = bad.into();
+        let error = build(&from).unwrap_err();
+        assert!(
+            matches!(error, ProviderError::Permanent { .. }),
+            "from {bad}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn message_ids_with_address_list_specials_are_refused() {
+    for bad in ["<a,b@c.com>", "<a;b@c.com>"] {
+        let reply = Outgoing {
+            in_reply_to: Some(bad.into()),
+            ..outgoing()
+        };
+        assert!(
+            matches!(build(&reply).unwrap_err(), ProviderError::Permanent { .. }),
+            "{bad}"
+        );
+        let refs = Outgoing {
+            references: vec![bad.into()],
+            ..outgoing()
+        };
+        assert!(
+            matches!(build(&refs).unwrap_err(), ProviderError::Permanent { .. }),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn plain_addresses_and_display_names_with_specials_still_build() {
+    for good in ["a.b+tag@example.com", "a_b-c@sub.example.co.uk"] {
+        let mut ok = outgoing();
+        ok.to[0].address = good.into();
+        let raw = build(&ok).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        let to = parsed
+            .to()
+            .and_then(|a| a.first())
+            .and_then(|a| a.address());
+        assert_eq!(to, Some(good));
+    }
+    let mut named = outgoing();
+    named.to[0].name = Some("\"Name\", <Sam> (x); y".into());
+    let raw = build(&named).unwrap();
+    let parsed = MessageParser::default().parse(&raw).unwrap();
+    assert_eq!(parsed.to().map(|a| a.iter().count()), Some(1));
+}

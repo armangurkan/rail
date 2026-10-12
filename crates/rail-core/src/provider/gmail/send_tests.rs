@@ -112,6 +112,22 @@ async fn message_by_header_id_queries_rfc822msgid_and_maps_an_empty_list_to_none
             .unwrap(),
         None
     );
+    gmail.server.reset().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{API_PATH}/messages")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"messages": [{"id": "bad id"}]})),
+        )
+        .mount(&gmail.server)
+        .await;
+    let error = provider
+        .message_by_header_id("<abc@example.com>")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, ProviderError::Permanent { .. }),
+        "a found message with an unusable id is an error, not None: {error:?}"
+    );
     let error = provider.message_by_header_id("abc\"def").await.unwrap_err();
     assert!(
         matches!(error, ProviderError::Permanent { .. }),
