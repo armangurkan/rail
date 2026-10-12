@@ -7,7 +7,7 @@ use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
-use super::{Command, ModalOutcome};
+use super::{Command, ModalOutcome, paint_background};
 use crate::tui::text::{escape, fit, input_row, width};
 use crate::tui::theme::Theme;
 use crate::tui::widgets::text_input::TextInput;
@@ -62,6 +62,7 @@ impl FilterLine {
             Span::styled(fit(&parsed, room), theme.muted),
         ]);
         frame.render_widget(Clear, row);
+        paint_background(frame, row, theme);
         frame.render_widget(Paragraph::new(line), row);
         if cols > 0 {
             let x = row

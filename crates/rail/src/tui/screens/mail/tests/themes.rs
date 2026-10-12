@@ -230,3 +230,49 @@ async fn a_thread_leaving_the_store_under_a_previewing_picker_restores_the_theme
     assert_eq!(applied_theme(&f), Some(kept), "the kept look is back");
     assert_eq!(f.screen.themes.before, None);
 }
+
+#[cfg(unix)]
+#[test]
+fn saving_through_a_symlinked_config_keeps_the_link() {
+    use crate::tui::screens::mail::themes::{Saved, write_general};
+    let real_dir = tempfile::tempdir().unwrap();
+    let link_dir = tempfile::tempdir().unwrap();
+    let real = real_dir.path().join("config.toml");
+    let link = link_dir.path().join("config.toml");
+    std::fs::write(&real, "[general]\neditor = \"vi\"\n").unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    write_general(&link, "theme", Saved::Text(Some("Dracula".into()))).unwrap();
+
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let text = std::fs::read_to_string(&real).unwrap();
+    assert!(text.contains("theme = \"Dracula\""), "{text}");
+    assert!(text.contains("editor = \"vi\""), "{text}");
+}
+
+#[test]
+fn two_saves_at_once_both_land_in_the_file() {
+    use crate::tui::screens::mail::themes::{Saved, write_general};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[general]\n").unwrap();
+    for _ in 0..20 {
+        std::fs::write(&path, "[general]\n").unwrap();
+        let (a, b) = (path.clone(), path.clone());
+        let theme = std::thread::spawn(move || {
+            write_general(&a, "theme", Saved::Text(Some("Dracula".into())))
+        });
+        let accent =
+            std::thread::spawn(move || write_general(&b, "accent", Saved::Number(Some(3))));
+        theme.join().unwrap().unwrap();
+        accent.join().unwrap().unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("theme = \"Dracula\""), "{text}");
+        assert!(text.contains("accent = 3"), "{text}");
+    }
+}

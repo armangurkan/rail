@@ -15,6 +15,7 @@ mod tests;
 use crossterm::event::KeyEvent;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Clear};
 use url::Url;
 
@@ -117,6 +118,13 @@ impl Modal {
     }
 }
 
+/// Give `area` the theme's background (after a `Clear`, which resets it); the default theme has none.
+pub(crate) fn paint_background(frame: &mut Frame, area: Rect, theme: &Theme) {
+    if let Some(bg) = theme.background {
+        frame.render_widget(Block::new().style(Style::new().bg(bg)), area);
+    }
+}
+
 /// A bordered box of `width` x `height` (at most the area) in the middle of `area`, cleared,
 /// with `title`; its inside.
 pub(crate) fn boxed(
@@ -140,6 +148,7 @@ pub(crate) fn boxed(
     ])
     .areas(row);
     frame.render_widget(Clear, cell);
+    paint_background(frame, cell, theme);
     let block = Block::new()
         .borders(Borders::ALL)
         .border_style(theme.accent)
