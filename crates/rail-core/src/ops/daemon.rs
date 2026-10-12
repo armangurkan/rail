@@ -99,6 +99,10 @@ pub struct DaemonInfoRequest {}
 pub struct DaemonInfo {
     pub pid: u32,
     pub version: String,
+    /// When the daemon's Rail was built, in unix seconds; `None` from a daemon older than the
+    /// field.
+    #[serde(default)]
+    pub build: Option<u64>,
     pub protocol: u32,
     pub socket: PathBuf,
     /// Unix seconds.

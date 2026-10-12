@@ -147,9 +147,23 @@ async fn a_part_id_not_in_the_message_is_a_permanent_error_without_a_fetch() {
 }
 
 #[tokio::test]
-async fn a_part_with_neither_data_nor_attachment_id_is_a_permanent_error() {
+async fn a_zero_byte_part_with_no_data_and_no_attachment_id_is_empty() {
     let gmail = Gmail::start().await;
     let payload = mixed(vec![file_part("1", json!({"size": 0}))]);
+    gmail.mount_message(full_json("m1", payload)).await;
+    let bytes = gmail
+        .provider()
+        .attachment(&"m1".to_string(), "1")
+        .await
+        .unwrap();
+    assert!(bytes.is_empty());
+    assert!(attachment_paths(&gmail).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_sized_part_with_neither_data_nor_attachment_id_is_not_found() {
+    let gmail = Gmail::start().await;
+    let payload = mixed(vec![file_part("1", json!({"size": 12}))]);
     gmail.mount_message(full_json("m1", payload)).await;
     let error = gmail
         .provider()

@@ -34,6 +34,8 @@ impl GmailProvider {
         let data = match (&found.body.data, &found.body.attachment_id) {
             (Some(data), _) => data.clone(),
             (None, Some(attachment)) => self.attachment_data(message, attachment).await?,
+            // Gmail sends a 0-byte part as `{"size":0}`: an empty attachment, not a lost one.
+            (None, None) if found.body.size == 0 => return Ok(Vec::new()),
             (None, None) => return Err(ProviderError::NotFound),
         };
         URL_SAFE_NO_PAD

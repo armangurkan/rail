@@ -149,6 +149,7 @@ impl ServerState {
         DaemonInfo {
             pid: std::process::id(),
             version: self.config.version.clone(),
+            build: Some(self.config.build),
             protocol: PROTOCOL_VERSION,
             socket: self.socket.clone(),
             started_at: self.started_at,

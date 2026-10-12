@@ -153,7 +153,9 @@ impl RpcError {
         };
         let error = OpError::new(code, ErrorClass::Permanent, self.message);
         if self.code == METHOD_NOT_FOUND {
-            return error.with_hint("the daemon is older than this rail: run `rail daemon stop`");
+            return error.with_hint(
+                "the daemon is older than this Rail: run `rail daemon stop`, then try again",
+            );
         }
         error
     }

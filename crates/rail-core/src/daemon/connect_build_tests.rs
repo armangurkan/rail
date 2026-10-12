@@ -207,7 +207,7 @@ async fn a_call_the_daemon_does_not_know_says_to_stop_it() {
     );
     assert_eq!(
         err.hint.as_deref(),
-        Some("the daemon is older than this rail: run `rail daemon stop`")
+        Some("the daemon is older than this Rail: run `rail daemon stop`, then try again")
     );
 }
 

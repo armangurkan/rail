@@ -74,8 +74,11 @@ pub async fn status(paths: &Paths) -> color_eyre::Result<ExitCode> {
 }
 
 pub fn describe(info: &DaemonInfo) -> String {
+    let build = info
+        .build
+        .map_or_else(String::new, |build| format!(" (build {build})"));
     format!(
-        "rail daemon running: pid {}, Rail {}, protocol {}, {} pending, {} connected (including this one), socket {}",
+        "rail daemon running: pid {}, Rail {}{build}, protocol {}, {} pending, {} connected (including this one), socket {}",
         info.pid,
         info.version,
         info.protocol,
@@ -135,6 +138,7 @@ mod tests {
         let info = DaemonInfo {
             pid: 42,
             version: "0.1.0".into(),
+            build: Some(1760270000),
             protocol: 1,
             socket: "/run/user/1000/rail/rail.sock".into(),
             started_at: 0,
@@ -143,8 +147,23 @@ mod tests {
         };
         assert_eq!(
             describe(&info),
-            "rail daemon running: pid 42, Rail 0.1.0, protocol 1, 2 pending, 3 connected (including this one), socket /run/user/1000/rail/rail.sock"
+            "rail daemon running: pid 42, Rail 0.1.0 (build 1760270000), protocol 1, 2 pending, 3 connected (including this one), socket /run/user/1000/rail/rail.sock"
         );
+    }
+
+    #[test]
+    fn describe_leaves_the_build_out_when_the_daemon_sent_none() {
+        let info = DaemonInfo {
+            pid: 42,
+            version: "0.1.0".into(),
+            build: None,
+            protocol: 1,
+            socket: "/run/rail.sock".into(),
+            started_at: 0,
+            clients: 1,
+            pending: 0,
+        };
+        assert!(describe(&info).contains("Rail 0.1.0, protocol 1"));
     }
 
     #[test]
