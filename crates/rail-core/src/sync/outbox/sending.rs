@@ -7,12 +7,13 @@
 //! HTTP layer, and any 2xx answer to it is a send.
 
 use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::PoisonError;
 
 use super::Worker;
 use super::compose::{self, Assembly};
 use crate::ops::{DraftId, OutboxId};
+use crate::paths::{import_dir_in, remove_dir_if_present};
 use crate::provider::ProviderError;
 use crate::provider::gmail::build_message;
 use crate::store::outbox::{OutboxOutcome, OutboxRow, OutboxWrite};
@@ -162,22 +163,12 @@ impl Worker {
     }
 }
 
-/// `root/<token>`, when `token` is exactly one plain path segment.
-pub(super) fn import_dir_in(root: &Path, token: &str) -> Option<PathBuf> {
-    let mut parts = Path::new(token).components();
-    match (parts.next(), parts.next()) {
-        (Some(Component::Normal(name)), None) if name == token => Some(root.join(name)),
-        _ => None,
-    }
-}
-
 /// Remove a sent draft's import directory. Best effort: the send is done, and the sweep at the
 /// next daemon start takes what is left. A failure is logged by draft id, never the path.
 pub(super) async fn remove_import_dir(draft: DraftId, dir: PathBuf) {
-    let removed = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(dir)).await;
+    let removed = tokio::task::spawn_blocking(move || remove_dir_if_present(&dir)).await;
     match removed {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(Ok(_)) => {}
         Ok(Err(e)) => {
             tracing::warn!(draft, error_kind = ?e.kind(), "a sent draft's files could not be removed");
         }

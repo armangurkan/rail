@@ -708,21 +708,34 @@ async fn files_that_cannot_be_removed_do_not_fail_the_send() {
     let h = Harness::new().await;
     let (draft, dir) = imported_draft(&h, 1, "imp-1").await;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let restore = || std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    // Root ignores the mode and could remove the files: nothing to prove then.
+    if std::fs::write(dir.join("probe"), b"").is_ok() {
+        restore().unwrap();
+        return;
+    }
     h.step().await;
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    restore().unwrap();
     assert_eq!(sends(&h), 1);
+    assert!(dir.join("plan.pdf").exists(), "the removal failed");
     assert!(h.with_store(|s| s.draft(draft).unwrap()).is_none());
     assert!(h.failures().is_empty());
 }
 
-#[test]
-fn only_a_plain_token_names_an_import_directory() {
-    let root = std::path::Path::new("/d/draft-files");
-    assert_eq!(
-        super::sending::import_dir_in(root, "a-1_B"),
-        Some(root.join("a-1_B"))
-    );
-    for bad in ["", ".", "..", "../x", "a/b", "/abs"] {
-        assert_eq!(super::sending::import_dir_in(root, bad), None, "{bad}");
-    }
+/// A token directory that is a symlink is removed as a link; its target is never followed.
+#[tokio::test]
+async fn a_token_directory_that_is_a_symlink_never_touches_its_target() {
+    let h = Harness::new().await;
+    let (_, dir) = imported_draft(&h, 1, "imp-1").await;
+    let outside = h.rig.draft_files_dir().parent().unwrap().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("keep.pdf"), b"keep").unwrap();
+    let file = dir.join("plan.pdf");
+    std::fs::rename(&file, outside.join("plan.pdf")).unwrap();
+    std::fs::remove_dir(&dir).unwrap();
+    std::os::unix::fs::symlink(&outside, &dir).unwrap();
+    h.step().await;
+    assert_eq!(sends(&h), 1);
+    assert!(outside.join("keep.pdf").exists(), "the target is untouched");
+    assert!(outside.join("plan.pdf").exists());
 }
