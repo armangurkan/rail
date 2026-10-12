@@ -642,7 +642,8 @@ impl MailScreen {
         if !self.actions.selection.is_empty() {
             line = format!("{} selected  ·  {line}", self.actions.selection.len());
         }
-        if self.filter.is_empty() {
+        // The Drafts folder's pane is not filtered.
+        if self.filter.is_empty() || self.in_drafts() {
             return line;
         }
         let parsed = crate::tui::text::escape(&self.filter.describe().join(" · "));

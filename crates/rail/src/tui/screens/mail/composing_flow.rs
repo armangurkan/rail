@@ -34,11 +34,7 @@ impl MailScreen {
 
     /// `c`: the scope's account, or the account picker in the unified inbox.
     pub(super) fn start_compose(&mut self) -> Vec<Effect> {
-        // An import's answer opens a review: a new message must not take its place.
-        if self.compose.is_some()
-            || matches!(self.composing.pending, Some(Pending::Importing { .. }))
-        {
-            self.status.notify(BUSY, self.tick);
+        if self.import_blocks() {
             return Vec::new();
         }
         if self.accounts.is_empty() {
@@ -67,6 +63,17 @@ impl MailScreen {
         self.start_new(index)
     }
 
+    /// A message is being written, or an import's answer is to open a review: a new message
+    /// must not take its place. Says so.
+    fn import_blocks(&mut self) -> bool {
+        let busy = self.compose.is_some()
+            || matches!(self.composing.pending, Some(Pending::Importing { .. }));
+        if busy {
+            self.status.notify(BUSY, self.tick);
+        }
+        busy
+    }
+
     /// A new message from account `index`: the `To` and `Subject` prompts first.
     pub(super) fn start_new(&mut self, index: usize) -> Vec<Effect> {
         if self.compose.is_some() || index >= self.accounts.len() {
@@ -81,8 +88,7 @@ impl MailScreen {
 
     /// `r`, `R`, `f`: the open thread's latest message, else the cursor thread's.
     fn start_reply(&mut self, kind: DraftKind) -> Vec<Effect> {
-        if self.compose.is_some() {
-            self.status.notify(BUSY, self.tick);
+        if self.import_blocks() {
             return Vec::new();
         }
         let target = match (self.focus, self.reader.as_ref()) {

@@ -65,10 +65,16 @@ impl MailScreen {
         self.ctx.store.drafts_folder(seq, self.scope_account_ids())
     }
 
-    /// The Drafts folder was opened.
+    /// The Drafts folder was opened: a thread of the old scope closes, so no key acts on it.
     pub(super) fn open_drafts_pane(&mut self) -> Vec<Effect> {
+        let mut effects = if self.reader.is_some() {
+            self.close_reader()
+        } else {
+            Vec::new()
+        };
         self.drafts.pane = DraftsPane::opened();
-        vec![self.read_drafts_pane()]
+        effects.push(self.read_drafts_pane());
+        effects
     }
 
     /// The list's keys while it shows the Drafts folder; `None` for the keys that work there
@@ -91,13 +97,14 @@ impl MailScreen {
             Action::ListPageUp => pane.move_by(-page),
             Action::ListTop => pane.top(),
             Action::ListBottom => pane.bottom(),
+            // Nothing is selected in the pane: there is nothing to clear.
+            Action::ListClearSelection => {}
             Action::ListArchive
             | Action::ListStar
             | Action::ListRead
             | Action::ListLabels
             | Action::ListMove
             | Action::ListSelect
-            | Action::ListClearSelection
             | Action::ListReply
             | Action::ListReplyAll
             | Action::ListForward

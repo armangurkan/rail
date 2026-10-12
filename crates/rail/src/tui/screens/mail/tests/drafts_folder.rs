@@ -3,11 +3,11 @@
 //! change, and `:drafts` reading the same rows for every account in the unified inbox.
 
 use rail_core::config::Icons;
-use rail_core::ops::{DraftImportResponse, ErrorCode};
+use rail_core::ops::{DraftImportResponse, DraftSaveResponse, ErrorCode};
 use rail_core::provider::{Envelope, FolderKind, Mailbox, RemoteFolder};
 use rail_core::store::drafts::{DraftKind, DraftWrite, Recipient};
 
-use super::compose::{calls_of, compose_open, composing};
+use super::compose::{calls_of, compose_open, composing, type_text};
 use super::*;
 use crate::tui::modals::Target;
 
@@ -348,6 +348,13 @@ async fn thread_actions_are_not_available_on_drafts() {
         assert!(!compose_open(&f), "{c:?} opens nothing");
     }
     assert!(f.screen.actions.selection.is_empty());
+    f.screen.status.notify("", f.screen.tick);
+    press(&mut f, KeyCode::Esc).await;
+    let line = f.screen.status_line();
+    assert!(
+        !line.contains("Not available on drafts"),
+        "Esc is silent: {line}"
+    );
     assert_eq!(f.fake.calls.lock().unwrap().len(), before, "no call");
     assert_eq!(pane_subjects(&f).len(), 3);
 }
@@ -506,4 +513,153 @@ async fn snapshot_drafts_folder_90_and_150_columns() {
         });
         insta::assert_snapshot!(format!("drafts_folder_{width}"), shot);
     }
+}
+
+/// Each `draft.save` written to the store as the daemon would, the request's subject and
+/// recipients kept.
+fn store_saves(f: &Fixture) {
+    let db = f.paths.db_file();
+    *f.fake.on_save.lock().unwrap() = Some(Box::new(move |call| {
+        let r = &call.request;
+        let write = DraftWrite {
+            id: r.draft,
+            account_id: 1,
+            kind: r.kind,
+            thread_id: None,
+            remote_thread_id: None,
+            in_reply_to: None,
+            references: None,
+            to: r.to.iter().map(|a| recipient(None, a)).collect(),
+            cc: vec![],
+            bcc: vec![],
+            subject: r.subject.clone(),
+            body: r.body.clone(),
+            attachments: vec![],
+            message_id: format!("<{}@example.com>", r.client_token),
+        };
+        let mut store = rail_core::store::Store::open(&db).unwrap();
+        let draft = store
+            .draft_upsert(&write, LOCAL_AT + 1_800)
+            .unwrap()
+            .unwrap();
+        Ok(DraftSaveResponse {
+            draft,
+            message_id: write.message_id.clone(),
+            attachments: vec![],
+        })
+    }));
+}
+
+#[tokio::test]
+async fn a_save_in_the_folder_reads_the_pane_again() {
+    let mut f = drafts_fixture().await;
+    store_saves(&f);
+    open_drafts(&mut f).await;
+    // A new message written from the folder.
+    press(&mut f, KeyCode::Char('c')).await;
+    type_text(&mut f, "zed@example.com").await;
+    press(&mut f, KeyCode::Enter).await;
+    type_text(&mut f, "Brand new").await;
+    press(&mut f, KeyCode::Enter).await;
+    assert!(compose_open(&f));
+    press(&mut f, KeyCode::Char('q')).await;
+    assert!(!compose_open(&f));
+    assert_eq!(pane_subjects(&f)[0], "Brand new", "{:?}", pane_subjects(&f));
+    // A local draft resumed and its subject changed in the editor.
+    f.editor.set(|path| {
+        let text = std::fs::read_to_string(path).unwrap();
+        std::fs::write(
+            path,
+            text.replace("Subject: Local plan", "Subject: Renamed plan"),
+        )
+        .unwrap();
+        Ok(0)
+    });
+    press(&mut f, KeyCode::End).await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(composing(&f).draft, Some(1));
+    press(&mut f, KeyCode::Char('e')).await;
+    assert_eq!(composing(&f).headers.subject, "Renamed plan");
+    press(&mut f, KeyCode::Char('q')).await;
+    let subjects = pane_subjects(&f);
+    assert!(
+        subjects.contains(&"Renamed plan".to_string()),
+        "{subjects:?}"
+    );
+    assert!(
+        !subjects.contains(&"Local plan".to_string()),
+        "{subjects:?}"
+    );
+}
+
+#[tokio::test]
+async fn entering_the_folder_closes_the_reader_of_the_old_scope() {
+    let mut f = drafts_fixture().await;
+    let _ = drawn(&f, 150, 30); // the split layout
+    press(&mut f, KeyCode::Enter).await;
+    assert!(f.screen.reader.is_some(), "a thread is open in the pane");
+    let scope = f.screen.sidebar.items()[drafts_item(&f)].scope.clone();
+    let effects = f.screen.set_scope(scope);
+    settle(&mut f.screen, effects).await;
+    assert!(f.screen.in_drafts());
+    assert!(
+        f.screen.reader.is_none(),
+        "the old scope's thread is closed"
+    );
+    press(&mut f, KeyCode::Char('c')).await;
+    press(&mut f, KeyCode::Esc).await;
+    assert!(!compose_open(&f));
+    assert_eq!(
+        f.screen.focus,
+        Focus::List,
+        "back to the pane, not a reader"
+    );
+    let before = f.fake.calls.lock().unwrap().len();
+    press(&mut f, KeyCode::Char('e')).await;
+    assert!(f.screen.status_line().contains("Not available on drafts"));
+    assert_eq!(
+        f.fake.calls.lock().unwrap().len(),
+        before,
+        "no thread acted on"
+    );
+}
+
+#[tokio::test]
+async fn the_bar_shows_no_filter_in_the_folder() {
+    let mut f = drafts_fixture().await;
+    f.screen.filter = rail_core::store::filter::parse("from:sender");
+    assert!(f.screen.status_line().contains("filter:"));
+    open_drafts(&mut f).await;
+    let line = f.screen.status_line();
+    assert!(!line.contains("filter:"), "{line}");
+    press(&mut f, KeyCode::Char('0')).await;
+    assert!(
+        f.screen.status_line().contains("filter:"),
+        "back in a thread list"
+    );
+}
+
+#[tokio::test]
+async fn a_reply_key_does_not_replace_a_pending_import() {
+    let mut f = drafts_fixture().await;
+    open_drafts(&mut f).await;
+    press(&mut f, KeyCode::Char('j')).await;
+    let pending = f.screen.update(Msg::Key(key(KeyCode::Enter)));
+    press(&mut f, KeyCode::Char('0')).await;
+    assert!(!f.screen.in_drafts());
+    for c in ['r', 'R', 'f'] {
+        let effects = f.screen.update(Msg::Key(key(KeyCode::Char(c))));
+        assert!(effects.is_empty(), "{c:?} starts nothing");
+        assert!(
+            matches!(
+                f.screen.composing.pending,
+                Some(composing::Pending::Importing { .. })
+            ),
+            "{c:?} keeps the import pending"
+        );
+        assert!(f.screen.status_line().contains(composing::BUSY));
+    }
+    *f.fake.import_answer.lock().unwrap() = Some(Ok(DraftImportResponse { draft: 2 }));
+    settle(&mut f.screen, pending).await;
+    assert!(compose_open(&f), "the import's answer still opens it");
 }

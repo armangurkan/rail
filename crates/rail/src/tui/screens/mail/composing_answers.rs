@@ -70,13 +70,17 @@ impl MailScreen {
                 None
             }
         };
-        match after {
+        // The daemon does not report a save: the Drafts folder reads its rows again here.
+        let reread = saved.and_then(|_| self.drafts_changed());
+        let mut effects = match after {
             // Nothing is lost when the save failed: the editor works on the text in memory.
             After::Edit => self.open_editor(),
             After::Review => Vec::new(),
             // A failed save pushes nothing: its error is on the review.
             After::Push => saved.map_or_else(Vec::new, |draft| self.start_push(draft)),
-        }
+        };
+        effects.extend(reread);
+        effects
     }
 
     /// The saved draft's id.
