@@ -613,6 +613,7 @@ impl MailScreen {
             DaemonEvent::Lost(error) => {
                 tracing::warn!(code = ?error.code, "the daemon link was lost");
                 self.status.lost(&error, self.ctx.clock.now(), self.tick);
+                self.queuing_lost(&error);
                 // A fetch that outlives the connection must not stay at "fetching…".
                 if let Some(reader) = self.reader.as_mut() {
                     reader.fetch_failed(&error);

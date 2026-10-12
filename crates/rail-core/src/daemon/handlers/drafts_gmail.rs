@@ -347,7 +347,7 @@ async fn from_gmail(
 ) -> Result<(ImportSource, Vec<Attachment>, PathBuf), OpError> {
     let mut source = with_body(ctx, account, source).await?;
     let (dir, parts) = (
-        import_dir(&ctx.paths, token),
+        import_dir(&ctx.paths, token)?,
         std::mem::take(&mut source.attachments),
     );
     let remote = source.remote_id.clone();

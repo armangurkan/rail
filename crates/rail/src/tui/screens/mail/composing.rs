@@ -29,7 +29,8 @@ pub(super) enum After {
     Push,
 }
 
-/// The one composing request in flight; an answer that does not match it is stale.
+/// The one composing request in flight; an answer that does not match it is stale. A send
+/// or a push is kept apart, in `ComposeState::queuing`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Pending {
     /// `r`, `R` or `f` asked the store for the message answered; `waiting` is the thread whose
@@ -49,8 +50,8 @@ pub(super) enum Pending {
     },
     /// The editor runs on the compose file.
     Editing,
-    /// `draft.send` is in flight.
-    Sending { seq: u64 },
+    /// `draft.send` is in flight for `draft`.
+    Sending { seq: u64, draft: DraftId },
     /// `draft.push` is in flight for `draft` under `client_token`.
     Pushing {
         seq: u64,
@@ -72,6 +73,10 @@ pub(super) enum Pending {
 pub(crate) struct ComposeState {
     pub(super) seq: u64,
     pub(super) pending: Option<Pending>,
+    /// The `draft.send` or `draft.push` in flight (`Sending` or `Pushing`). Kept apart from
+    /// `pending`: closing its review and starting another message must not drop its answer,
+    /// which makes the undo record.
+    pub(super) queuing: Option<Pending>,
     /// The draft of the last send, kept so an undo can reopen its review.
     pub(super) last_sent: Option<Composing>,
     /// The compose file the editor works on, until it is parsed.
@@ -83,6 +88,9 @@ pub(crate) struct ComposeState {
     /// The last `draft.save` failed: the store holds an older text than the review shows.
     pub(super) unsaved: bool,
 }
+
+/// Said when `y` or `s` is pressed while the last send or push is not answered yet.
+pub(super) const QUEUING: &str = "Wait for the last message to be queued.";
 
 /// Said when composing is asked for while a message is being written.
 pub(super) const BUSY: &str = "Finish or close the message being written first.";
@@ -193,12 +201,7 @@ impl MailScreen {
     pub(super) fn hide_composer(&mut self) {
         self.compose = None;
         self.composing.unsaved = false;
-        if !matches!(
-            self.composing.pending,
-            Some(Pending::Sending { .. } | Pending::Pushing { .. })
-        ) {
-            self.composing.pending = None;
-        }
+        self.composing.pending = None;
         self.remove_compose_file();
         self.focus_back();
     }

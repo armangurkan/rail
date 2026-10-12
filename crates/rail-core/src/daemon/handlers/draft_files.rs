@@ -2,8 +2,9 @@
 //! `Paths::draft_files_dir()/<client token>` (0700, files 0600), so later pushes and the send
 //! never depend on Gmail's copy of the source message, which the first push replaces.
 //! An import never takes a directory a draft names. `draft.discard` removes the directory
-//! the draft's own token names; at daemon start every directory no draft
-//! names is swept (a sent draft's files go that way). Logs carry counts, never a file name.
+//! the draft's own token names, and so does a completed send (the outbox
+//! worker, best effort); at daemon start every directory no draft names is swept, which
+//! catches what a failed removal left. Logs carry counts, never a file name.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -11,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 use super::drafts::token_used;
 use crate::daemon::DaemonContext;
 use crate::ops::{ErrorCode, OpError};
-use crate::paths::{Paths, create_private_dir};
+use crate::paths::{Paths, create_private_dir, remove_dir_if_present};
 use crate::provider::gmail::mime::sanitize_filename;
 use crate::provider::{Provider, ProviderError};
 use crate::store::Store;
@@ -44,10 +45,11 @@ pub(crate) fn file_name(name: &str, taken: &mut HashSet<String>) -> String {
     candidate
 }
 
-/// The directory an import with `token` fills. `token` passed `checked_token`: 1 to 64
-/// ASCII letters, digits, `-` or `_`, so it is one safe path segment.
-pub(crate) fn import_dir(paths: &Paths, token: &str) -> PathBuf {
-    paths.draft_files_dir().join(token)
+/// The directory an import with `token` fills; `token` passed `checked_token`.
+pub(crate) fn import_dir(paths: &Paths, token: &str) -> Result<PathBuf, OpError> {
+    paths
+        .import_dir(token)
+        .ok_or_else(|| OpError::invalid_input("client_token: not a valid token"))
 }
 
 /// The import directory `path` lies in: exactly `draft_files_dir()/<dir>/<file>`.
@@ -63,9 +65,8 @@ fn owning_dir(root: &Path, path: &Path) -> Option<PathBuf> {
 /// Remove `dirs`; how many went. A failure is logged and the sweep at the next start retries.
 pub(crate) fn remove_dirs(dirs: &[PathBuf]) -> usize {
     dirs.iter()
-        .filter(|dir| match std::fs::remove_dir_all(dir) {
-            Ok(()) => true,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        .filter(|dir| match remove_dir_if_present(dir) {
+            Ok(removed) => removed,
             Err(e) => {
                 tracing::warn!(error_kind = ?e.kind(), "a draft's files could not be removed");
                 false

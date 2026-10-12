@@ -388,7 +388,9 @@ After an action the status bar says what happened, for example `archived 3 · z 
 seconds `z` takes it back; afterwards it says `Too late to undo.`, and with nothing done,
 `Nothing to undo.` If the daemon has not answered yet, `z` says `undoing…` and finishes when it
 does. Only the most recent action can be undone, and marking a thread read by opening it has no
-undo. `z` works anywhere in the mail screen.
+undo. `z` works anywhere in the mail screen. An earlier action whose answer comes after a newer one
+still shows its error if it failed (its selected threads come back to the selection) and is still
+undone if `z` was pressed for it; that undo says only `too late to undo` when it came too late.
 
 Opening an unread thread marks it read at once in the reader; the list row and the unread counts
 follow a moment later. `u` marks it unread again.
@@ -480,7 +482,19 @@ changes discarded`; a message closed before anything was saved says `The message
 **Sending.** `y` hands the message to the daemon, which sends it ten seconds later. The status
 bar says `sent · z undoes` and `z` takes it back inside that window: the review opens again with
 the message as it was. After the ten seconds the account shows `sending…` and the message goes
-through Gmail like the actions in [Doing things to mail](#doing-things-to-mail). A message is
+through Gmail like the actions in [Doing things to mail](#doing-things-to-mail). Closing the
+review with `q` before the daemon has the message does not stop the send: its `sent · z undoes`
+(or `Could not send`) still comes, even if another message is open by then. `z` then cancels the
+send but cannot reopen its review; the draft stays in Drafts, to open from there. Until
+the last message is queued, `y` and `s` on any message are refused (`Wait for the last message
+to be queued.`), and so are `e`, `a` and `x` on the review being sent or saved to Gmail. A draft
+whose send or save to Gmail (`s`) is on its way does not open from the Drafts folder or `:drafts`
+(`This draft is being sent; wait for it to be queued.`, or `This draft is being saved to Gmail;
+wait a moment.`); other drafts do. If the connection to the daemon is lost first, Rail cannot tell
+whether the message was queued and says `Could not confirm the send: … · check Sent and Drafts`
+(`Could not confirm the save to Gmail: … · check Drafts` for `s`). If it is in Sent, it went; if
+it is still in Drafts, open it and press `y` again: that is safe, since the daemon refuses a draft
+it already has queued (`this draft is already being sent`) and a sent draft is gone. A message is
 never sent twice: before any later attempt (a retry, or a start after the daemon stopped
 mid-send) the daemon asks Gmail whether a message with that `Message-ID` is already there and, if
 so, counts it as sent. A reply whose conversation was deleted in Gmail meanwhile goes out on a
@@ -532,8 +546,8 @@ in view; in the unified inbox it merges every account's, and `Enter` opens one t
 **Files of an imported draft.** The attachments of a Gmail draft are fetched once, when you open
 it, into private files the daemon keeps in the `draft-files` folder of the data directory
 (folders 0700, files 0600). Later saves and the send use those files, not Gmail's copy. Discarding
-the draft removes its files; when the daemon starts it removes every file no draft refers to, which
-is also how the files of a draft that was sent go.
+the draft removes its files, and so does a completed send; when the daemon starts it removes every
+file no draft refers to, which catches any a removal could not.
 
 **Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
 limit), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger
@@ -542,7 +556,7 @@ a file that would take the message over is refused when you attach it, naming th
 message would have. File names are cleaned before they are sent. Attachments come from files you
 name by path; a forward carries the original's attachments along, and they count in the total. Only regular files can be attached, and
 they are read when the message goes out: one that was moved or deleted in the meantime fails the
-send (`Could not send: could not read the attachment "<name>"`) and the review opens again.
+send (`Could not send: could not read an attachment of this message`) and the review opens again.
 
 **Your address and signature.** `From:` is the account's address, with `from_name` before it when
 set. A `signature` file is added under `-- ` to every new message, reply and forward. Both are

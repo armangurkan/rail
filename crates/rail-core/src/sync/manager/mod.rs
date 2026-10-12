@@ -10,6 +10,7 @@ mod outbox;
 mod parts;
 mod supervise;
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -381,7 +382,7 @@ impl SyncManager {
         let account = &planned.account;
         let started = prepared.and_then(|prepared| {
             let writer = Self::writer_in(ctx, &mut engines)?;
-            Ok(self.spawn_engine(planned, prepared, writer))
+            Ok(self.spawn_engine(planned, prepared, writer, ctx.paths.draft_files_dir()))
         });
         match started {
             Ok(running) => {
@@ -436,6 +437,7 @@ impl SyncManager {
         planned: &PlannedAccount,
         prepared: Prepared,
         writer: WriterHandle,
+        draft_files_dir: PathBuf,
     ) -> Running {
         let account = &planned.account;
         self.board.insert(initial_status(account, &prepared.state));
@@ -464,6 +466,7 @@ impl SyncManager {
             clock: Arc::new(unix_now),
             from_name: account.from_name.clone(),
             sync_wake: wake.clone(),
+            draft_files_dir,
         });
         let (stop, stopped) = watch::channel(false);
         let outbox_task = tokio::spawn(worker.run(stopped.clone()));

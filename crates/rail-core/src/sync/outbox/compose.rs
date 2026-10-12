@@ -25,8 +25,8 @@ pub(super) struct Assembly {
     pub outgoing: Outgoing,
     pub files: Vec<FileRef>,
     pub parts: Vec<PartRef>,
-    /// The name of a `Part` attachment whose message is no longer in the store.
-    pub part_gone: Option<String>,
+    /// A `Part` attachment's message is no longer in the store.
+    pub part_gone: bool,
 }
 
 fn mailboxes(recipients: &[Recipient]) -> Vec<Mailbox> {
@@ -40,15 +40,15 @@ fn mailboxes(recipients: &[Recipient]) -> Vec<Mailbox> {
 }
 
 /// Where each attachment's bytes come from: files on disk, and parts by their message's
-/// provider id; the name of a part whose message left the store.
-type Listed = (Vec<FileRef>, Vec<PartRef>, Option<String>);
+/// provider id; whether a part's message left the store.
+type Listed = (Vec<FileRef>, Vec<PartRef>, bool);
 
 fn listed(
     store: &Store,
     account_id: i64,
     attachments: &[Attachment],
 ) -> Result<Listed, StoreError> {
-    let (mut files, mut parts, mut part_gone) = (Vec::new(), Vec::new(), None);
+    let (mut files, mut parts, mut part_gone) = (Vec::new(), Vec::new(), false);
     for attachment in attachments {
         match attachment {
             Attachment::File {
@@ -71,7 +71,7 @@ fn listed(
                     name: name.clone(),
                     mime: mime.clone(),
                 }),
-                None => part_gone = Some(name.clone()),
+                None => part_gone = true,
             },
         }
     }
@@ -115,15 +115,16 @@ pub(super) fn outgoing_for(
 }
 
 /// Read the files (on the blocking pool) and fetch the parts. A file or part that cannot be
-/// had is a permanent failure naming it (the user's own file name, shown back to the user).
+/// had is a permanent failure. The error leaves the attachment's name out: it is text from
+/// outside Rail, and the error is shown without the label that marks such text.
 pub(super) async fn attach(
     assembly: Assembly,
     provider: &dyn Provider,
 ) -> Result<Outgoing, ProviderError> {
-    if let Some(name) = assembly.part_gone {
-        return Err(ProviderError::permanent(&format!(
-            "the message that \"{name}\" was forwarded from is no longer in the store"
-        )));
+    if assembly.part_gone {
+        return Err(ProviderError::permanent(
+            "the message an attachment was forwarded from is no longer in the store",
+        ));
     }
     let mut outgoing = assembly.outgoing;
     for file in assembly.files {
@@ -132,11 +133,8 @@ pub(super) async fn attach(
             .await
             .map_err(|_| ProviderError::transient("could not read an attachment"))?
             .map_err(|e| {
-                ProviderError::permanent(&format!(
-                    "could not read the attachment \"{}\"",
-                    file.name
-                ))
-                .with_detail(e.to_string())
+                ProviderError::permanent("could not read an attachment of this message")
+                    .with_detail(e.to_string())
             })?;
         outgoing.attachments.push(OutgoingAttachment {
             name: file.name,
@@ -149,10 +147,9 @@ pub(super) async fn attach(
             .attachment(&part.message_remote, &part.part)
             .await
             .map_err(|e| match e {
-                ProviderError::NotFound => ProviderError::permanent(&format!(
-                    "the attachment \"{}\" is no longer in Gmail",
-                    part.name
-                )),
+                ProviderError::NotFound => {
+                    ProviderError::permanent("an attachment of this message is no longer in Gmail")
+                }
                 other => other,
             })?;
         outgoing.attachments.push(OutgoingAttachment {

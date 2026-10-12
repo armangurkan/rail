@@ -29,6 +29,7 @@ mod compose_edges;
 mod compose_gmail;
 mod drafts_folder;
 mod pickers;
+mod replaced;
 mod state;
 mod themes;
 

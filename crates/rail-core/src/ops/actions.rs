@@ -200,7 +200,7 @@ pub fn client_token() -> String {
     (0..24).map(|_| fastrand::alphanumeric()).collect()
 }
 
-fn safe_token(token: &str) -> bool {
+pub(crate) fn safe_token(token: &str) -> bool {
     !token.is_empty()
         && token.len() <= MAX_CLIENT_TOKEN_CHARS
         && token

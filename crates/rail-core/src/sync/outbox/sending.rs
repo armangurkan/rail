@@ -7,11 +7,13 @@
 //! HTTP layer, and any 2xx answer to it is a send.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::PoisonError;
 
 use super::Worker;
 use super::compose::{self, Assembly};
 use crate::ops::{DraftId, OutboxId};
+use crate::paths::{import_dir_in, remove_dir_if_present};
 use crate::provider::ProviderError;
 use crate::provider::gmail::build_message;
 use crate::store::outbox::{OutboxOutcome, OutboxRow, OutboxWrite};
@@ -114,6 +116,25 @@ impl Worker {
         Ok(())
     }
 
+    /// The import directory the draft owns: the one its own client token names under the draft
+    /// files root, when it exists. None for a draft composed in Rail, one that is gone, and a
+    /// token that is not one plain path segment. A path stored in the draft is never used.
+    pub(super) async fn import_dir_of(&self, draft: DraftId) -> Option<PathBuf> {
+        let root = self.draft_files_dir.clone();
+        let found = self
+            .read(move |store| {
+                Ok(store
+                    .draft_client_token(draft)?
+                    .and_then(|token| import_dir_in(&root, &token))
+                    .filter(|dir| dir.is_dir()))
+            })
+            .await;
+        found.unwrap_or_else(|e| {
+            tracing::warn!(draft, code = ?e.code, "a sent draft's files could not be looked up");
+            None
+        })
+    }
+
     pub(super) async fn load(&self, draft: DraftId) -> Result<Loaded, ProviderError> {
         let (account, from, from_name) = (
             self.account_id,
@@ -139,5 +160,18 @@ impl Worker {
             .await
             .map_err(|e| ProviderError::transient(&e.message))?;
         loaded.ok_or_else(|| ProviderError::permanent("the draft is gone"))
+    }
+}
+
+/// Remove a sent draft's import directory. Best effort: the send is done, and the sweep at the
+/// next daemon start takes what is left. A failure is logged by draft id, never the path.
+pub(super) async fn remove_import_dir(draft: DraftId, dir: PathBuf) {
+    let removed = tokio::task::spawn_blocking(move || remove_dir_if_present(&dir)).await;
+    match removed {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            tracing::warn!(draft, error_kind = ?e.kind(), "a sent draft's files could not be removed");
+        }
+        Err(_) => tracing::warn!(draft, "removing a sent draft's files did not run"),
     }
 }

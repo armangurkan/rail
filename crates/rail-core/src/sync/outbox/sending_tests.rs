@@ -380,10 +380,9 @@ async fn a_vanished_attachment_fails_the_send_permanently() {
         DraftState::Editing
     );
     let failed = h.failures();
-    assert!(
-        failed[0].error.message.contains("gone.pdf"),
-        "{}",
-        failed[0].error.message
+    assert_eq!(
+        failed[0].error.message,
+        "could not read an attachment of this message"
     );
     assert!(h.mock.with(|m| m.sent.is_empty()));
 }
@@ -433,7 +432,10 @@ async fn a_part_whose_message_is_gone_fails_the_send_permanently() {
         h.with_store(|s| s.draft(draft).unwrap().unwrap().state),
         DraftState::Editing
     );
-    assert!(h.failures()[0].error.message.contains("orig.pdf"));
+    assert_eq!(
+        h.failures()[0].error.message,
+        "the message an attachment was forwarded from is no longer in the store"
+    );
     assert!(!h.mock.calls().contains(&Call::Attachment));
     assert!(h.mock.with(|m| m.sent.is_empty()));
 }
@@ -638,4 +640,102 @@ async fn a_2xx_with_an_unreadable_answer_completes_the_send() {
     assert!(h.row(row).await.is_none(), "completed");
     assert!(h.with_store(|s| s.draft(draft).unwrap()).is_none());
     assert!(h.failures().is_empty());
+}
+
+/// An imported draft: `files` in the directory its token names under the rig's draft files
+/// root, queued to send.
+async fn imported_draft(h: &Harness, n: i64, token: &str) -> (DraftId, std::path::PathBuf) {
+    let dir = h.rig.draft_files_dir().join(token);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("plan.pdf");
+    std::fs::write(&file, b"%PDF-1.4 the plan").unwrap();
+    let attachment = Attachment::File {
+        path: file.to_str().unwrap().into(),
+        name: "plan.pdf".into(),
+        mime: "application/pdf".into(),
+        size: 17,
+    };
+    let (draft, _) = queued_draft(h, n, vec![attachment]).await;
+    h.with_store(|s| {
+        s.conn()
+            .execute(
+                "UPDATE drafts SET client_token = ?2 WHERE id = ?1",
+                rusqlite::params![draft, token],
+            )
+            .unwrap();
+    });
+    (draft, dir)
+}
+
+#[tokio::test]
+async fn a_sent_imported_drafts_files_are_removed_and_another_drafts_are_not() {
+    let h = Harness::new().await;
+    let (_, sent_dir) = imported_draft(&h, 1, "imp-1").await;
+    let other_dir = h.rig.draft_files_dir().join("imp-2");
+    std::fs::create_dir_all(&other_dir).unwrap();
+    std::fs::write(other_dir.join("keep.pdf"), b"keep").unwrap();
+    h.step().await;
+    assert_eq!(sends(&h), 1);
+    assert!(!sent_dir.exists(), "the sent draft's directory is gone");
+    assert!(other_dir.join("keep.pdf").exists(), "another draft's stays");
+}
+
+#[tokio::test]
+async fn a_draft_composed_in_rail_sends_and_leaves_the_files_root_alone() {
+    let h = Harness::new().await;
+    let other_dir = h.rig.draft_files_dir().join("imp-2");
+    std::fs::create_dir_all(&other_dir).unwrap();
+    queued_draft(&h, 1, vec![]).await;
+    h.step().await;
+    assert_eq!(sends(&h), 1);
+    assert!(other_dir.exists());
+}
+
+#[tokio::test]
+async fn a_failed_send_keeps_the_drafts_files() {
+    let h = Harness::new().await;
+    let (_, dir) = imported_draft(&h, 1, "imp-1").await;
+    h.mock
+        .fail_next(Call::Send, ProviderError::permanent("refused"));
+    h.step().await;
+    assert!(dir.join("plan.pdf").exists());
+}
+
+/// A directory that cannot be emptied is logged and left to the start sweep; the send stands.
+#[tokio::test]
+async fn files_that_cannot_be_removed_do_not_fail_the_send() {
+    use std::os::unix::fs::PermissionsExt;
+    let h = Harness::new().await;
+    let (draft, dir) = imported_draft(&h, 1, "imp-1").await;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let restore = || std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    // Root ignores the mode and could remove the files: nothing to prove then.
+    if std::fs::write(dir.join("probe"), b"").is_ok() {
+        restore().unwrap();
+        return;
+    }
+    h.step().await;
+    restore().unwrap();
+    assert_eq!(sends(&h), 1);
+    assert!(dir.join("plan.pdf").exists(), "the removal failed");
+    assert!(h.with_store(|s| s.draft(draft).unwrap()).is_none());
+    assert!(h.failures().is_empty());
+}
+
+/// A token directory that is a symlink is removed as a link; its target is never followed.
+#[tokio::test]
+async fn a_token_directory_that_is_a_symlink_never_touches_its_target() {
+    let h = Harness::new().await;
+    let (_, dir) = imported_draft(&h, 1, "imp-1").await;
+    let outside = h.rig.draft_files_dir().parent().unwrap().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("keep.pdf"), b"keep").unwrap();
+    let file = dir.join("plan.pdf");
+    std::fs::rename(&file, outside.join("plan.pdf")).unwrap();
+    std::fs::remove_dir(&dir).unwrap();
+    std::os::unix::fs::symlink(&outside, &dir).unwrap();
+    h.step().await;
+    assert_eq!(sends(&h), 1);
+    assert!(outside.join("keep.pdf").exists(), "the target is untouched");
+    assert!(outside.join("plan.pdf").exists());
 }

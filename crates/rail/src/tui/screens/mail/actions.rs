@@ -85,6 +85,10 @@ impl LastAction {
 pub(crate) struct ActionState {
     pub(crate) selection: Selection,
     last: Option<LastAction>,
+    /// Records a newer action replaced while some of their calls were unanswered, by seq:
+    /// their answers still put a failed call's selection back and honour a `z` pressed for
+    /// them, though only `last` is undoable now.
+    pub(super) replaced: BTreeMap<u64, LastAction>,
     seq: u64,
     /// Threads whose action failed: the row and the escaped line on their list row.
     pub(crate) failures: BTreeMap<i64, (RowToken, String)>,
@@ -108,6 +112,31 @@ pub(crate) fn verbs(action: &MailAction) -> (&'static str, &'static str) {
         MailAction::Send { .. } => ("sent", "send"),
         MailAction::PushDraft { .. } => ("saved to Gmail", "save the draft to Gmail"),
         MailAction::DeleteDraft { .. } => ("discarded", "discard the draft"),
+    }
+}
+
+/// The rows one call queued, each under that call's token.
+fn row_tokens(call: &ApplyCall, rows: Vec<OutboxId>) -> Vec<RowToken> {
+    rows.into_iter()
+        .map(|row| RowToken {
+            row,
+            client_token: call.client_token.clone(),
+        })
+        .collect()
+}
+
+/// A failed call's selected threads come back to the selection, if nothing was selected
+/// since (or an earlier failed call of the record already put its threads back).
+fn put_back(record: &mut LastAction, selection: &mut Selection, call: &ApplyCall) {
+    if record.restored || selection.is_empty() {
+        record.restored = true;
+        let back: Vec<(i64, Picked)> = record
+            .selected
+            .iter()
+            .filter(|(id, _)| call.threads.contains(id))
+            .copied()
+            .collect();
+        selection.restore(&back);
     }
 }
 
@@ -219,7 +248,7 @@ impl MailScreen {
                 Vec::new()
             };
             let until = self.tick + UNDO_TICKS;
-            self.actions.last = Some(LastAction::new(seq, targets.len(), until, selected));
+            self.replace_last(LastAction::new(seq, targets.len(), until, selected));
             if from_selection {
                 self.actions.selection.clear();
             }
@@ -242,6 +271,19 @@ impl MailScreen {
             }
         }
         closed.into_iter().chain(effects).collect()
+    }
+
+    /// `next` becomes the undo record; the one it replaces is kept while calls are unanswered.
+    fn replace_last(&mut self, next: LastAction) {
+        if let Some(old) = self
+            .actions
+            .last
+            .take()
+            .filter(|l| l.pending > 0 || l.undos > 0)
+        {
+            self.actions.replaced.insert(old.seq, old);
+        }
+        self.actions.last = Some(next);
     }
 
     /// The targets' thread ids by account; their old failure lines go.
@@ -444,14 +486,18 @@ impl MailScreen {
                 .last
                 .as_ref()
                 .is_some_and(|l| l.seq == call.seq);
+        let older = call.grace && !tracked && self.actions.replaced.contains_key(&call.seq);
         let mut effects = Vec::new();
         match result {
             Ok(answer) if tracked => effects = self.call_answered(call, answer.rows),
+            Ok(answer) if older => effects = self.older_answered(call, answer.rows),
             Ok(_) => {}
             Err(error) => {
                 self.action_error(verbs(&call.action).1, &error);
                 if tracked {
                     self.call_failed(call);
+                } else if older {
+                    self.older_failed(call);
                 }
             }
         }
@@ -465,13 +511,7 @@ impl MailScreen {
         let Some(last) = self.actions.last.as_mut() else {
             return Vec::new();
         };
-        let rows: Vec<RowToken> = rows
-            .into_iter()
-            .map(|row| RowToken {
-                row,
-                client_token: call.client_token.clone(),
-            })
-            .collect();
+        let rows = row_tokens(call, rows);
         last.pending = last.pending.saturating_sub(1);
         if last.undo_wanted {
             if rows.is_empty() {
@@ -497,20 +537,68 @@ impl MailScreen {
             return;
         };
         last.pending = last.pending.saturating_sub(1);
-        if last.restored || self.actions.selection.is_empty() {
-            last.restored = true;
-            let back: Vec<(i64, Picked)> = last
-                .selected
-                .iter()
-                .filter(|(id, _)| call.threads.contains(id))
-                .copied()
-                .collect();
-            self.actions.selection.restore(&back);
-        }
+        put_back(last, &mut self.actions.selection, call);
         if last.undo_wanted {
             self.finish_undo(false);
         } else if last.pending == 0 && last.rows.is_empty() && last.undos == 0 {
             self.actions.last = None;
+        }
+    }
+
+    /// A replaced record's call answered: its rows are undone if `z` was pressed for it, else
+    /// they stay queued (only the newest action is undoable). Nothing is said: the bar shows
+    /// the newer action.
+    fn older_answered(&mut self, call: &ApplyCall, rows: Vec<OutboxId>) -> Vec<Effect> {
+        let Some(old) = self.actions.replaced.get_mut(&call.seq) else {
+            return Vec::new();
+        };
+        old.pending = old.pending.saturating_sub(1);
+        let undo = old.undo_wanted && !rows.is_empty();
+        if undo {
+            old.undos += 1;
+        }
+        self.drop_older_if_done(call.seq);
+        if !undo {
+            return Vec::new();
+        }
+        vec![self.ctx.link.undo(call.seq, row_tokens(call, rows))]
+    }
+
+    /// A replaced record's call failed (its error is on the bar): its selected threads come
+    /// back to the selection, as for the newest action.
+    fn older_failed(&mut self, call: &ApplyCall) {
+        let Some(old) = self.actions.replaced.get_mut(&call.seq) else {
+            return;
+        };
+        old.pending = old.pending.saturating_sub(1);
+        put_back(old, &mut self.actions.selection, call);
+        self.drop_older_if_done(call.seq);
+    }
+
+    /// An undo of a replaced record answered: only `too late to undo` is said (the bar shows
+    /// the newer action otherwise; a failed undo has its error there already). True when the
+    /// seq was a replaced record's.
+    fn older_undone(&mut self, seq: u64, too_late: bool, failed: bool) -> bool {
+        let Some(old) = self.actions.replaced.get_mut(&seq) else {
+            return false;
+        };
+        old.undos = old.undos.saturating_sub(1);
+        if too_late && !failed {
+            self.status.notify("too late to undo", self.tick);
+        }
+        self.drop_older_if_done(seq);
+        true
+    }
+
+    /// A replaced record goes once its calls and undos have all answered.
+    fn drop_older_if_done(&mut self, seq: u64) {
+        let done = self
+            .actions
+            .replaced
+            .get(&seq)
+            .is_some_and(|old| old.pending == 0 && old.undos == 0);
+        if done {
+            self.actions.replaced.remove(&seq);
         }
     }
 
@@ -543,9 +631,12 @@ impl MailScreen {
         last.kind == Record::Sent && last.undid && !last.too_late
     }
 
-    /// An `action.undo` answered. An answer for another action than the newest is stale and
-    /// ignored. True when a send was undone.
+    /// An `action.undo` answered. An answer for a replaced record says only `too late to
+    /// undo`; one for no known record is stale and ignored. True when a send was undone.
     fn undone(&mut self, seq: u64, too_late: bool, failed: bool) -> bool {
+        if self.older_undone(seq, too_late, failed) {
+            return false;
+        }
         let Some(last) = self.actions.last.as_mut().filter(|l| l.seq == seq) else {
             return false;
         };
@@ -574,7 +665,7 @@ impl MailScreen {
         let mut last = LastAction::new(self.actions.seq, 1, until, Vec::new());
         last.rows.push(row);
         last.kind = kind;
-        self.actions.last = Some(last);
+        self.replace_last(last);
         let key = self.ctx.keymap.label(Action::GlobalUndo);
         self.status
             .notify_for(format!("{done} · {key} undoes"), self.tick, UNDO_TICKS);

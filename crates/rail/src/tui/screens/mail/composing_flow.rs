@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use rail_core::ops::{DraftId, client_token};
 use rail_core::store::drafts::{DraftKind, ReplySource};
 
-use super::composing::{After, BUSY, OPENING_PROMPTS, Pending, attachable};
+use super::composing::{After, BUSY, OPENING_PROMPTS, Pending, QUEUING, attachable};
 use super::{Focus, MailScreen};
 use crate::tui::app::Effect;
 use crate::tui::data::{ReadError, ReplyTarget, ScopeChoice};
@@ -237,6 +237,13 @@ impl MailScreen {
     }
 
     fn compose_outcome(&mut self, outcome: ComposeOutcome) -> Vec<Effect> {
+        let changes_draft = matches!(
+            outcome,
+            ComposeOutcome::Edit | ComposeOutcome::Attach(_) | ComposeOutcome::Remove(_)
+        );
+        if changes_draft && self.own_draft_queuing() {
+            return Vec::new();
+        }
         match outcome {
             ComposeOutcome::Stay => Vec::new(),
             ComposeOutcome::Edit => self.open_editor(),
@@ -350,8 +357,7 @@ impl MailScreen {
             self.status.notify("The draft is not saved yet.", self.tick);
             return Vec::new();
         };
-        if self.composing.pending.is_some() {
-            self.status.notify("Wait for the draft to save.", self.tick);
+        if self.queuing_or_saving() {
             return Vec::new();
         }
         if self
@@ -370,8 +376,21 @@ impl MailScreen {
             return Vec::new();
         }
         let seq = self.next_compose_seq();
-        self.composing.pending = Some(Pending::Sending { seq });
+        self.composing.queuing = Some(Pending::Sending { seq, draft });
         vec![self.ctx.link.draft_send(seq, draft, client_token())]
+    }
+
+    /// A send or a push is in flight, or a composing request is: `y` and `s` wait. Says so.
+    fn queuing_or_saving(&mut self) -> bool {
+        let text = if self.composing.queuing.is_some() {
+            QUEUING
+        } else if self.composing.pending.is_some() {
+            "Wait for the draft to save."
+        } else {
+            return false;
+        };
+        self.status.notify(text, self.tick);
+        true
     }
 
     /// `s`: save text not stored yet, then save the draft to Gmail's Drafts; the review
@@ -380,8 +399,7 @@ impl MailScreen {
         let Some(draft) = self.compose.as_ref().map(|c| c.composing().draft) else {
             return Vec::new();
         };
-        if self.composing.pending.is_some() {
-            self.status.notify("Wait for the draft to save.", self.tick);
+        if self.queuing_or_saving() {
             return Vec::new();
         }
         match draft {
@@ -394,7 +412,7 @@ impl MailScreen {
     pub(super) fn start_push(&mut self, draft: DraftId) -> Vec<Effect> {
         let seq = self.next_compose_seq();
         let client_token = client_token();
-        self.composing.pending = Some(Pending::Pushing {
+        self.composing.queuing = Some(Pending::Pushing {
             seq,
             draft,
             client_token: client_token.clone(),
