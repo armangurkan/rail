@@ -390,7 +390,7 @@ seconds `z` takes it back; afterwards it says `Too late to undo.`, and with noth
 does. Only the most recent action can be undone, and marking a thread read by opening it has no
 undo. `z` works anywhere in the mail screen. An earlier action whose answer comes after a newer one
 still shows its error if it failed (its selected threads come back to the selection) and is still
-undone if `z` was pressed for it.
+undone if `z` was pressed for it; that undo says only `too late to undo` when it came too late.
 
 Opening an unread thread marks it read at once in the reader; the list row and the unread counts
 follow a moment later. `u` marks it unread again.
@@ -485,7 +485,11 @@ the message as it was. After the ten seconds the account shows `sending…` and 
 through Gmail like the actions in [Doing things to mail](#doing-things-to-mail). Closing the
 review with `q` before the daemon has the message does not stop the send: its `sent · z undoes`
 (or `Could not send`) still comes, even if another message is open by then, and `y` or `s` on
-that other message waits (`Wait for the last message to be queued.`). A message is
+that other message waits (`Wait for the last message to be queued.`). The draft being sent does
+not open from the Drafts folder or `:drafts` until then (other drafts do). If the connection to the
+daemon is lost first, Rail cannot tell whether the message was queued and says `Could not confirm
+the send: …` (`Could not confirm the save to Gmail: …` for `s`); check the outbox or the Drafts
+folder before sending again. A message is
 never sent twice: before any later attempt (a retry, or a start after the daemon stopped
 mid-send) the daemon asks Gmail whether a message with that `Message-ID` is already there and, if
 so, counts it as sent. A reply whose conversation was deleted in Gmail meanwhile goes out on a

@@ -32,7 +32,7 @@ pub(crate) struct DraftsState {
     /// The newest pane read: an older answer is dropped.
     latest: u64,
     /// The rows `:drafts` lists, by the picker's item ids.
-    picked: Vec<DraftsRow>,
+    pub(super) picked: Vec<DraftsRow>,
     /// The row a yes on the discard question applies to.
     discarding: Option<DraftsRow>,
 }

@@ -88,7 +88,7 @@ pub(crate) struct ActionState {
     /// Records a newer action replaced while some of their calls were unanswered, by seq:
     /// their answers still put a failed call's selection back and honour a `z` pressed for
     /// them, though only `last` is undoable now.
-    replaced: BTreeMap<u64, LastAction>,
+    pub(super) replaced: BTreeMap<u64, LastAction>,
     seq: u64,
     /// Threads whose action failed: the row and the escaped line on their list row.
     pub(crate) failures: BTreeMap<i64, (RowToken, String)>,
@@ -113,12 +113,6 @@ pub(crate) fn verbs(action: &MailAction) -> (&'static str, &'static str) {
         MailAction::PushDraft { .. } => ("saved to Gmail", "save the draft to Gmail"),
         MailAction::DeleteDraft { .. } => ("discarded", "discard the draft"),
     }
-}
-
-/// What a replaced record's answer still needs of it.
-struct OlderCall {
-    seq: u64,
-    undo_wanted: bool,
 }
 
 /// The rows one call queued, each under that call's token.
@@ -281,7 +275,12 @@ impl MailScreen {
 
     /// `next` becomes the undo record; the one it replaces is kept while calls are unanswered.
     fn replace_last(&mut self, next: LastAction) {
-        if let Some(old) = self.actions.last.take().filter(|l| l.pending > 0) {
+        if let Some(old) = self
+            .actions
+            .last
+            .take()
+            .filter(|l| l.pending > 0 || l.undos > 0)
+        {
             self.actions.replaced.insert(old.seq, old);
         }
         self.actions.last = Some(next);
@@ -550,13 +549,19 @@ impl MailScreen {
     /// they stay queued (only the newest action is undoable). Nothing is said: the bar shows
     /// the newer action.
     fn older_answered(&mut self, call: &ApplyCall, rows: Vec<OutboxId>) -> Vec<Effect> {
-        let Some(old) = self.older_call_done(call.seq) else {
+        let Some(old) = self.actions.replaced.get_mut(&call.seq) else {
             return Vec::new();
         };
-        if !old.undo_wanted || rows.is_empty() {
+        old.pending = old.pending.saturating_sub(1);
+        let undo = old.undo_wanted && !rows.is_empty();
+        if undo {
+            old.undos += 1;
+        }
+        self.drop_older_if_done(call.seq);
+        if !undo {
             return Vec::new();
         }
-        vec![self.ctx.link.undo(old.seq, row_tokens(call, rows))]
+        vec![self.ctx.link.undo(call.seq, row_tokens(call, rows))]
     }
 
     /// A replaced record's call failed (its error is on the bar): its selected threads come
@@ -565,23 +570,36 @@ impl MailScreen {
         let Some(old) = self.actions.replaced.get_mut(&call.seq) else {
             return;
         };
+        old.pending = old.pending.saturating_sub(1);
         put_back(old, &mut self.actions.selection, call);
-        self.older_call_done(call.seq);
+        self.drop_older_if_done(call.seq);
     }
 
-    /// One call of the replaced record `seq` answered: what the answer still needs of the
-    /// record, which goes with its last call.
-    fn older_call_done(&mut self, seq: u64) -> Option<OlderCall> {
-        let old = self.actions.replaced.get_mut(&seq)?;
-        old.pending = old.pending.saturating_sub(1);
-        let done = OlderCall {
-            seq: old.seq,
-            undo_wanted: old.undo_wanted,
+    /// An undo of a replaced record answered: only `too late to undo` is said (the bar shows
+    /// the newer action otherwise; a failed undo has its error there already). True when the
+    /// seq was a replaced record's.
+    fn older_undone(&mut self, seq: u64, too_late: bool, failed: bool) -> bool {
+        let Some(old) = self.actions.replaced.get_mut(&seq) else {
+            return false;
         };
-        if old.pending == 0 {
+        old.undos = old.undos.saturating_sub(1);
+        if too_late && !failed {
+            self.status.notify("too late to undo", self.tick);
+        }
+        self.drop_older_if_done(seq);
+        true
+    }
+
+    /// A replaced record goes once its calls and undos have all answered.
+    fn drop_older_if_done(&mut self, seq: u64) {
+        let done = self
+            .actions
+            .replaced
+            .get(&seq)
+            .is_some_and(|old| old.pending == 0 && old.undos == 0);
+        if done {
             self.actions.replaced.remove(&seq);
         }
-        Some(done)
     }
 
     /// Once `z` was pressed and every call and undo of the record is answered, report the
@@ -613,9 +631,12 @@ impl MailScreen {
         last.kind == Record::Sent && last.undid && !last.too_late
     }
 
-    /// An `action.undo` answered. An answer for another action than the newest is stale and
-    /// ignored. True when a send was undone.
+    /// An `action.undo` answered. An answer for a replaced record says only `too late to
+    /// undo`; one for no known record is stale and ignored. True when a send was undone.
     fn undone(&mut self, seq: u64, too_late: bool, failed: bool) -> bool {
+        if self.older_undone(seq, too_late, failed) {
+            return false;
+        }
         let Some(last) = self.actions.last.as_mut().filter(|l| l.seq == seq) else {
             return false;
         };

@@ -134,7 +134,7 @@ impl MailScreen {
         client_token: String,
         result: Result<DraftSendResponse, OpError>,
     ) -> Vec<Effect> {
-        if self.composing.queuing != Some(Pending::Sending { seq }) {
+        if self.composing.queuing != Some(Pending::Sending { seq, draft }) {
             return Vec::new();
         }
         self.composing.queuing = None;
@@ -219,6 +219,26 @@ impl MailScreen {
         Vec::new()
     }
 
+    /// `draft` is the one a `draft.send` or `draft.push` in flight is for.
+    fn in_flight(&self, draft: DraftId) -> bool {
+        matches!(
+            self.composing.queuing,
+            Some(Pending::Sending { draft: d, .. } | Pending::Pushing { draft: d, .. }) if d == draft
+        )
+    }
+
+    /// The daemon link was lost with a send or a push unanswered: its answer will not come,
+    /// so `y` and `s` work again, and the bar says its outcome is not known.
+    pub(super) fn queuing_lost(&mut self, error: &OpError) {
+        let what = match self.composing.queuing.take() {
+            Some(Pending::Sending { .. }) => "the send",
+            Some(Pending::Pushing { .. }) => "the save to Gmail",
+            _ => return,
+        };
+        let text = format!("Could not confirm {what}: {}", error_line(error));
+        self.status.error(text, self.ctx.clock.now(), self.tick);
+    }
+
     /// A send was undone: its review opens again, unless another message is being written.
     pub(super) fn reopen_sent(&mut self) {
         if self.compose.is_some() {
@@ -262,9 +282,9 @@ impl MailScreen {
         self.resume_draft(draft)
     }
 
-    /// Open a stored draft in the composer.
+    /// Open a stored draft in the composer; not the one being sent or saved to Gmail.
     pub(super) fn resume_draft(&mut self, draft: DraftId) -> Vec<Effect> {
-        if self.compose.is_some() {
+        if self.compose.is_some() || self.in_flight(draft) {
             self.status.notify(BUSY, self.tick);
             return Vec::new();
         }

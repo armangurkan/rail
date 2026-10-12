@@ -50,8 +50,8 @@ pub(super) enum Pending {
     },
     /// The editor runs on the compose file.
     Editing,
-    /// `draft.send` is in flight.
-    Sending { seq: u64 },
+    /// `draft.send` is in flight for `draft`.
+    Sending { seq: u64, draft: DraftId },
     /// `draft.push` is in flight for `draft` under `client_token`.
     Pushing {
         seq: u64,

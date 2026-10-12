@@ -369,7 +369,7 @@ impl MailScreen {
             return Vec::new();
         }
         let seq = self.next_compose_seq();
-        self.composing.queuing = Some(Pending::Sending { seq });
+        self.composing.queuing = Some(Pending::Sending { seq, draft });
         vec![self.ctx.link.draft_send(seq, draft, client_token())]
     }
 

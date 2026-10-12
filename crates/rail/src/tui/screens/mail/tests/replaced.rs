@@ -7,8 +7,13 @@
 use rail_core::error::ErrorClass;
 use rail_core::ops::{ActionApplyResponse, ErrorCode, RowToken};
 
+use rail_core::store::drafts::{DraftKind, DraftWrite, Recipient};
+
 use super::compose::{calls_of, compose_fixture, compose_open, composing, editor_appends};
 use super::*;
+use crate::tui::data::DaemonEvent;
+use crate::tui::modals::Target;
+use rail_core::store::drafts_folder::DraftsRowKind;
 
 /// Run effects held back from a key, the way the app would once the daemon answers.
 async fn answer(f: &mut Fixture, held: Vec<Effect>) {
@@ -187,6 +192,11 @@ async fn z_pressed_for_an_older_action_still_undoes_it_when_it_answers() {
         .map(|r| r.iter().map(|t| t.row).collect())
         .collect();
     assert_eq!(rows, [vec![10]], "the z pressed for it is kept");
+    assert!(
+        f.screen.status_line().contains("starred 1 · z undoes"),
+        "its undo is done quietly: {}",
+        f.screen.status_line()
+    );
     press(&mut f, KeyCode::Char('z')).await;
     let rows: Vec<Vec<i64>> = undos(&f)
         .into_iter()
@@ -341,4 +351,121 @@ async fn y_on_another_review_waits_while_a_send_is_in_flight() {
     assert_eq!(draft_sends(&f).len(), 1);
     press(&mut f, KeyCode::Char('y')).await;
     assert_eq!(draft_sends(&f).len(), 2, "then the second one goes");
+}
+
+#[tokio::test]
+async fn a_too_late_undo_for_an_older_action_still_says_so() {
+    let mut f = fixture(3).await;
+    apply_answers(&f, Ok(vec![10]));
+    *f.fake.undo_answer.lock().unwrap() = Some(Ok(rail_core::ops::ActionUndoResponse {
+        undone: vec![],
+        too_late: vec![10],
+    }));
+    let first = press_held(&mut f, KeyCode::Char('e'));
+    press(&mut f, KeyCode::Char('z')).await;
+    assert!(f.screen.status_line().contains("undoing…"));
+    press(&mut f, KeyCode::Char('s')).await;
+    answer(&mut f, first).await;
+    assert!(
+        f.screen.status_line().contains("too late to undo"),
+        "{}",
+        f.screen.status_line()
+    );
+    assert!(
+        f.screen.actions.replaced.is_empty(),
+        "the record is done with"
+    );
+}
+
+// Drafts and the link while a send waits.
+
+/// A local draft of `work` written straight into the store; it must get `id`.
+fn seed(f: &Fixture, id: i64, subject: &str, at: i64) {
+    let write = DraftWrite {
+        id: None,
+        account_id: 1,
+        kind: DraftKind::New,
+        thread_id: None,
+        remote_thread_id: None,
+        in_reply_to: None,
+        references: None,
+        to: vec![Recipient {
+            name: None,
+            address: "lee@example.com".into(),
+        }],
+        cc: vec![],
+        bcc: vec![],
+        subject: subject.into(),
+        body: format!("body of {subject}\n"),
+        attachments: vec![],
+        message_id: format!("<d{id}@example.com>"),
+    };
+    let made = writer(f).draft_upsert(&write, at).unwrap();
+    assert_eq!(made, Some(id), "drafts are numbered in order");
+}
+
+/// `:drafts`, then Enter on the row of local draft `draft`.
+async fn open_from_drafts(f: &mut Fixture, draft: i64) {
+    let effects = f.screen.run_palette(Target::Drafts);
+    settle_capturing(&mut f.screen, effects, &f.last_theme, &f.editor).await;
+    let index = f
+        .screen
+        .drafts
+        .picked
+        .iter()
+        .position(|r| matches!(r.kind, DraftsRowKind::Local { draft: d, .. } if d == draft))
+        .unwrap();
+    for _ in 0..index {
+        press(f, KeyCode::Down).await;
+    }
+    press(f, KeyCode::Enter).await;
+}
+
+#[tokio::test]
+async fn the_draft_being_sent_does_not_open_but_another_one_does() {
+    let mut f = compose_fixture().await;
+    // The review's save answers draft 1, as the store holds it.
+    seed(&f, 1, "Being sent", BASE_MS / 1000 + 60);
+    seed(&f, 2, "Another", BASE_MS / 1000 + 120);
+    let held = send_then_close(&mut f).await;
+    open_from_drafts(&mut f, 1).await;
+    assert!(!compose_open(&f), "not while it is being sent");
+    assert!(
+        f.screen.status_line().contains(composing::BUSY),
+        "{}",
+        f.screen.status_line()
+    );
+    open_from_drafts(&mut f, 2).await;
+    assert!(compose_open(&f));
+    assert_eq!(composing(&f).draft, Some(2));
+    answer(&mut f, held).await;
+    assert!(f.screen.status_line().contains("sent · z undoes"));
+}
+
+#[tokio::test]
+async fn a_lost_link_while_a_send_waits_says_so_and_lets_y_send_again() {
+    let mut f = compose_fixture().await;
+    let _never = send_then_close(&mut f).await;
+    let lost = MailEvent::Daemon(DaemonEvent::Lost(OpError::new(
+        ErrorCode::Daemon,
+        ErrorClass::Transient,
+        "the connection to the daemon closed",
+    )));
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(lost)));
+    settle(&mut f.screen, effects).await;
+    let errors = f
+        .screen
+        .status
+        .errors()
+        .map(|e| e.text.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e == "Could not confirm the send: the connection to the daemon closed"),
+        "{errors:?}"
+    );
+    another_reply(&mut f).await;
+    press(&mut f, KeyCode::Char('y')).await;
+    assert_eq!(draft_sends(&f).len(), 1, "y sends again");
 }
