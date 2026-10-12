@@ -162,6 +162,14 @@ pub(super) fn attachable(path: &str, c: &Composing) -> Result<i64, String> {
     Ok(size)
 }
 
+/// A compose file already on disk when the editor round for a saved draft starts.
+enum Leftover {
+    /// It holds text the store does not.
+    Text(PathBuf),
+    /// It could not be read: the editor gets it unchanged, with no claim about its text.
+    Unreadable(PathBuf),
+}
+
 impl MailScreen {
     pub(super) fn next_compose_seq(&mut self) -> u64 {
         self.composing.seq += 1;
@@ -257,13 +265,42 @@ impl MailScreen {
         vec![self.ctx.link.draft_save(SaveCall { seq, request })]
     }
 
-    /// Write the compose file and hand the terminal to the editor.
+    /// The compose file a crashed session left for the saved draft in `c`, when it holds text
+    /// the store does not: the editor opens it as it is. A file this session wrote itself
+    /// (a reopen after a refused header or a failed save) is not a leftover. A file that
+    /// cannot be read is kept too, rather than overwritten.
+    fn leftover_file(&self, c: &Composing) -> Option<Leftover> {
+        let path = file::path_of(&self.ctx.paths.compose_dir(), &c.draft?.to_string());
+        if self.composing.file.as_ref() == Some(&path) {
+            return None;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(text) => (text != file::render(&c.headers, &c.body)).then_some(Leftover::Text(path)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "could not read the compose file");
+                Some(Leftover::Unreadable(path))
+            }
+        }
+    }
+
+    /// Write the compose file (or keep the text a crash left in it) and hand the terminal to
+    /// the editor.
     pub(super) fn open_editor(&mut self) -> Vec<Effect> {
         let Some(c) = self.compose.as_ref().map(Composer::composing) else {
             return Vec::new();
         };
         let key = c.draft.map_or_else(|| "new".to_string(), |d| d.to_string());
-        match file::write(&self.ctx.paths.compose_dir(), &key, &c.headers, &c.body) {
+        let written = match self.leftover_file(c) {
+            Some(Leftover::Text(path)) => {
+                let text = "opened the text from your last editor session";
+                self.status.notify(text, self.tick);
+                Ok(path)
+            }
+            Some(Leftover::Unreadable(path)) => Ok(path),
+            None => file::write(&self.ctx.paths.compose_dir(), &key, &c.headers, &c.body),
+        };
+        match written {
             Ok(path) => {
                 self.composing.file = Some(path.clone());
                 self.composing.pending = Some(Pending::Editing);

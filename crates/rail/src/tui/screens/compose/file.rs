@@ -16,11 +16,9 @@ pub struct ParseError {
     pub message: String,
 }
 
-/// Write `<dir>/<key>.eml` (directory 0700, file 0600) and return its path. The body is
-/// written as is (the editor needs the real text); each header value is kept to one line.
-pub fn write(dir: &Path, key: &str, headers: &Headers, body: &str) -> std::io::Result<PathBuf> {
-    create_private_dir(dir)?;
-    let path = dir.join(format!("{key}.eml"));
+/// The text of the compose file for `headers` and `body`: four header lines (each value kept
+/// to one line), an empty line, the body as is.
+pub fn render(headers: &Headers, body: &str) -> String {
     let list = |items: &[String]| {
         items
             .iter()
@@ -28,13 +26,26 @@ pub fn write(dir: &Path, key: &str, headers: &Headers, body: &str) -> std::io::R
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let text = format!(
+    format!(
         "To: {}\nCc: {}\nBcc: {}\nSubject: {}\n\n{body}",
         list(&headers.to),
         list(&headers.cc),
         list(&headers.bcc),
         one_line(&headers.subject),
-    );
+    )
+}
+
+/// Where the compose file of `key` lives in `dir`.
+pub fn path_of(dir: &Path, key: &str) -> PathBuf {
+    dir.join(format!("{key}.eml"))
+}
+
+/// Write `<dir>/<key>.eml` (directory 0700, file 0600) and return its path. The body is
+/// written as is (the editor needs the real text); each header value is kept to one line.
+pub fn write(dir: &Path, key: &str, headers: &Headers, body: &str) -> std::io::Result<PathBuf> {
+    create_private_dir(dir)?;
+    let path = path_of(dir, key);
+    let text = render(headers, body);
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
