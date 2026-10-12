@@ -453,8 +453,12 @@ a space continues the one before). Any other header, or a line that is not `Name
 refused: Rail names the line and opens the editor again on the same text. If the editor exits with
 a non-zero status Rail asks `Keep what you wrote?`: yes saves the text, no keeps the draft as it
 was. If the editor cannot start Rail says `cannot run …` and the review opens with the text it
-had. The file is kept until a save succeeds, so an error never loses what you typed (after a
-crash, for seven days).
+had. The file is kept until a save succeeds. If Rail stops before that (a crash, a closed
+terminal), the next editor round for that draft opens on the text from the file and says
+`opened the text from your last editor session`; quitting that editor with an error and answering
+no to `Keep what you wrote?` keeps the draft as it was. A new message that had not been saved yet
+is not recovered this way: its file (`new.eml` in Rail's `compose` cache folder) is removed after
+seven days.
 
 **The review.** When the editor returns, Rail shows the message as it will go: `From`, `To`, `Cc`
 and `Bcc` (when used), `Subject`, then the attachments with their count and total size, then the
