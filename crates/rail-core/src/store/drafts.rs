@@ -209,27 +209,6 @@ impl std::fmt::Debug for DraftWrite {
     }
 }
 
-/// A Drafts-folder row. `subject` and `to` are outside text.
-#[derive(Clone, PartialEq, Eq)]
-pub struct DraftSummary {
-    pub id: DraftId,
-    pub account_id: i64,
-    pub kind: DraftKind,
-    pub subject: String,
-    pub to: Vec<Recipient>,
-    pub state: DraftState,
-    pub updated_at: i64,
-}
-
-impl std::fmt::Debug for DraftSummary {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DraftSummary")
-            .field("id", &self.id)
-            .field("state", &self.state)
-            .finish_non_exhaustive()
-    }
-}
-
 /// A stored attachment of a message being replied to or forwarded. `filename` is outside text.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ReplyAttachment {
@@ -317,18 +296,6 @@ fn read_draft(r: &Row<'_>) -> rusqlite::Result<Draft> {
         state: DraftState::parse(&text(16)?),
         updated_at: r.get(17)?,
         send_attempted_at: r.get(18)?,
-    })
-}
-
-fn read_summary(r: &Row<'_>) -> rusqlite::Result<DraftSummary> {
-    Ok(DraftSummary {
-        id: r.get(0)?,
-        account_id: r.get(1)?,
-        kind: DraftKind::parse(&r.get::<_, String>(2)?),
-        subject: r.get(3)?,
-        to: parsed(&r.get::<_, String>(4)?),
-        state: DraftState::parse(&r.get::<_, String>(5)?),
-        updated_at: r.get(6)?,
     })
 }
 
@@ -529,16 +496,6 @@ impl Store {
                 read_draft,
             )
             .optional()?)
-    }
-
-    /// The account's drafts, newest first.
-    pub fn drafts_for_account(&self, account_id: i64) -> Result<Vec<DraftSummary>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, account_id, kind, subject, to_json, state, updated_at FROM drafts
-             WHERE account_id = ?1 ORDER BY updated_at DESC, id DESC",
-        )?;
-        let rows = stmt.query_map([account_id], read_summary)?;
-        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Delete the draft and its outbox rows.

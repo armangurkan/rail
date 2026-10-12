@@ -34,7 +34,10 @@ impl MailScreen {
 
     /// `c`: the scope's account, or the account picker in the unified inbox.
     pub(super) fn start_compose(&mut self) -> Vec<Effect> {
-        if self.compose.is_some() {
+        // An import's answer opens a review: a new message must not take its place.
+        if self.compose.is_some()
+            || matches!(self.composing.pending, Some(Pending::Importing { .. }))
+        {
             self.status.notify(BUSY, self.tick);
             return Vec::new();
         }
@@ -483,7 +486,8 @@ impl MailScreen {
     pub(super) fn compose_command(&mut self, command: Command) -> Result<Vec<Effect>, Command> {
         Ok(match command {
             Command::Account(index) => self.start_new(index),
-            Command::ResumeDraft(draft) => self.resume_draft(draft),
+            Command::DraftRow(index) => self.picked_draft(index),
+            Command::DiscardDraftRow => self.discard_draft_row(),
             Command::KeepText => match self.composing.kept.take() {
                 Some(text) => self.apply_file_text(text),
                 None => Vec::new(),
@@ -500,6 +504,7 @@ impl MailScreen {
 
     /// A modal closed without an answer: "Keep what you wrote?" answered no drops the text.
     pub(super) fn compose_modal_closed(&mut self) {
+        self.discard_row_closed();
         if self.composing.kept.take().is_some() {
             self.remove_compose_file();
         }

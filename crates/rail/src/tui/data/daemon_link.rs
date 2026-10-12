@@ -264,7 +264,6 @@ impl DaemonLink {
     }
 
     /// Make the stored Gmail draft `message` of `account` a local draft, under `client_token`.
-    #[allow(dead_code, reason = "the Drafts screens call it")]
     pub fn draft_import(
         &self,
         seq: u64,

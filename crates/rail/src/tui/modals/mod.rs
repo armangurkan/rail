@@ -60,8 +60,10 @@ pub enum Command {
     Accent(AccentAnswer),
     /// The account picker's answer: write a new message from account `n` (its position).
     Account(usize),
-    /// The drafts picker's answer: open this draft in the composer.
-    ResumeDraft(rail_core::ops::DraftId),
+    /// The drafts picker's answer: open the row at this position.
+    DraftRow(usize),
+    /// The Drafts folder's discard question was answered yes.
+    DiscardDraftRow,
     /// "Keep what you wrote?" was answered yes: use the text the editor left.
     KeepText,
     /// "Discard the unsaved changes?" was answered yes: close the composer.

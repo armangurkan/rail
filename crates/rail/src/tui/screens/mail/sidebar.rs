@@ -1,6 +1,8 @@
 //! The sidebar: the unified inbox, each account's inbox, and each account's other folders,
 //! with unread counts, and a cursor that stays on its mailbox across re-reads.
 
+use std::collections::HashSet;
+
 use rail_core::store::view::MAX_SIDEBAR_FOLDERS;
 
 use super::{AccountEntry, MailScreen};
@@ -26,6 +28,8 @@ pub struct Sidebar {
     failed: bool,
     /// Accounts (by index) whose folder list was cut at `MAX_SIDEBAR_FOLDERS`.
     capped: Vec<usize>,
+    /// The folders that are an account's Gmail Drafts.
+    drafts: HashSet<i64>,
 }
 
 impl Sidebar {
@@ -91,6 +95,13 @@ impl Sidebar {
             .unwrap_or(0);
         self.items = items;
         self.capped = capped;
+        self.drafts = outcome
+            .counts
+            .folders
+            .iter()
+            .filter(|f| f.kind == "drafts")
+            .map(|f| f.folder_id)
+            .collect();
         self.failed = false;
     }
 
@@ -126,6 +137,11 @@ impl Sidebar {
     /// beyond the cap rather than deleted.
     pub fn is_capped(&self, account: usize) -> bool {
         self.capped.contains(&account)
+    }
+
+    /// The folders (by store id) that are an account's Drafts: they show the drafts pane.
+    pub fn drafts_folder_ids(&self) -> &HashSet<i64> {
+        &self.drafts
     }
 
     /// The unread count shown for `scope`.

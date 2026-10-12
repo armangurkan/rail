@@ -762,10 +762,6 @@ async fn the_reader_answers_reply_sources_suggestions_and_drafts() {
         !entries.is_empty(),
         "the seeded senders are in the address book"
     );
-    let drafts = events(reader.drafts(5, vec![account]), 1, bound).await;
-    assert!(
-        matches!(drafts.as_slice(), [MailEvent::Drafts { seq: 5, result: Ok(list) }] if list.is_empty())
-    );
     let missing = events(reader.draft(6, 999), 1, bound).await;
     assert!(matches!(
         missing.as_slice(),

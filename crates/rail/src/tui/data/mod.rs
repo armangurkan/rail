@@ -19,7 +19,7 @@ use rail_core::ops::{
     DraftSendResponse, OpError, OutboxId,
 };
 use rail_core::store::AddressEntry;
-use rail_core::store::drafts::{Draft, DraftSummary, ReplySource};
+use rail_core::store::drafts::{Draft, ReplySource};
 use rail_core::store::drafts_folder::DraftsRow;
 use rail_core::store::view::{HtmlBody, LabelChoices, ThreadDetail};
 
@@ -156,11 +156,6 @@ pub enum MailEvent {
     ReplySource {
         seq: u64,
         result: Result<Option<Box<ReplySource>>, ReadError>,
-    },
-    /// The drafts of the accounts asked for.
-    Drafts {
-        seq: u64,
-        result: Result<Vec<DraftSummary>, ReadError>,
     },
     /// The Drafts folder of the accounts asked for: local drafts and Gmail's, newest first.
     DraftsFolder {
@@ -301,11 +296,6 @@ impl fmt::Debug for MailEvent {
                 .finish(),
             Self::ReplySource { seq, result } => f
                 .debug_struct("ReplySource")
-                .field("seq", seq)
-                .field("ok", &result.is_ok())
-                .finish(),
-            Self::Drafts { seq, result } => f
-                .debug_struct("Drafts")
                 .field("seq", seq)
                 .field("ok", &result.is_ok())
                 .finish(),

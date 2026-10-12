@@ -58,7 +58,7 @@ fn a_draft_round_trips_and_updates_in_place() -> Result<(), StoreError> {
         write(account_id).message_id,
         "fixed at creation"
     );
-    let listed = store.drafts_for_account(account_id)?;
+    let listed = store.drafts_folder(&[account_id])?;
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].subject, "Hello again");
     store.draft_delete(id)?;

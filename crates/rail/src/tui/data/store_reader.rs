@@ -297,25 +297,7 @@ impl StoreReader {
         })
     }
 
-    /// The drafts of these accounts, each account's newest first, in the accounts' order.
-    pub fn drafts(&self, seq: u64, account_ids: Vec<i64>) -> Effect {
-        let reader = self.clone();
-        job(move |sink| async move {
-            let result = reader
-                .read(move |store| {
-                    let mut all = Vec::new();
-                    for account_id in account_ids {
-                        all.extend(store.drafts_for_account(account_id)?);
-                    }
-                    Ok(all)
-                })
-                .await;
-            send(&sink, MailEvent::Drafts { seq, result });
-        })
-    }
-
     /// The Drafts folder of these accounts: local drafts and Gmail's, newest first.
-    #[allow(dead_code, reason = "the Drafts screens call it")]
     pub fn drafts_folder(&self, seq: u64, account_ids: Vec<i64>) -> Effect {
         let reader = self.clone();
         job(move |sink| async move {

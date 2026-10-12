@@ -61,6 +61,11 @@ pub(super) enum Pending {
     Resuming { seq: u64 },
     /// The drafts picker's list is read.
     Drafts { seq: u64 },
+    /// `draft.import` is in flight for a Gmail draft; `then` is what its answer is for.
+    Importing {
+        seq: u64,
+        then: super::drafts_flow::AfterImport,
+    },
 }
 
 #[derive(Debug, Default)]

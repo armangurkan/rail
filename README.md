@@ -488,14 +488,28 @@ error (`Could not send: Gmail refused the request (HTTP 400)`) and the failure i
 `:errors`.
 
 **Drafts.** Every editor round, header change and attachment change saves the message in the
-local store, so a crash or a closed terminal loses nothing. `:drafts` (`Open a draft` in the
-palette) lists the account's saved drafts, newest first (in the unified inbox, every account's);
-`Enter` reopens one at its review. A reply whose original message has since left the store keeps
-its threading. A draft stays on this machine until you press `s` on its review: Rail saves any
+local store, so a crash or a closed terminal loses nothing. A reply whose original message has
+since left the store keeps its threading. A draft stays on this machine until you press `s` on its review: Rail saves any
 text not stored yet, saves the draft to Gmail's Drafts ten seconds later, closes the review and
 says `saved to Gmail · z undoes`; `z` inside that window cancels it (`kept on this computer`). A
 push Gmail refuses keeps the review open (`Could not save to Gmail: …`); one that fails later is
 listed in `:errors` (`Could not save the draft to Gmail: …`), where `Enter` retries it.
+
+**The Drafts folder.** Each account's `Drafts` in the sidebar lists its drafts in one pane, newest
+first: the drafts saved on this computer and the Gmail drafts written elsewhere (on your phone, in
+the browser). A row shows the date, the recipients and the subject, like a thread; a draft kept
+only on this computer says `(local)` where the recipients go and has `✎` (`*` with ASCII icons)
+before its subject, and a draft saved to Gmail is listed once. `Enter` opens a draft at its
+review; a Gmail draft is fetched first (`fetching the draft…`) and from then on is a draft of
+this computer too, its Gmail copy updated by `s`. `d` asks `Discard this draft? (y/n)`; yes
+deletes it, and its Gmail copy with it. While a save to Gmail is still on its way the discard is
+refused (`draft: saving to Gmail, try again in a moment`): try again once it has landed. A Gmail
+draft that was deleted elsewhere in the meantime says `Gmail no longer has this draft`. Archive,
+star, read, labels, move, select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`,
+`space`, `r`, `R`, `f`, `/`) say `Not available on drafts`. The pane is read again whenever sync
+or the outbox changes something. `:drafts` (`Open a draft` in the palette) lists the same rows
+for the account in view; in the unified inbox it merges every account's, and `Enter` opens one
+the same way.
 
 **Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
 limit), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger
