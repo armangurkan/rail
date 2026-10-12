@@ -1,5 +1,6 @@
 //! The compose file: four headers, a blank line, the body.
 
+use std::borrow::Cow;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -16,8 +17,35 @@ pub struct ParseError {
     pub message: String,
 }
 
+/// `text` with every run of carriage returns before a line feed removed, so `\r\n` (what an
+/// editor set to Windows line ends writes) and the extra `\r` each round used to add become
+/// `\n`. A `\r` not followed by `\n` stays. Borrows when there is nothing to remove.
+pub fn plain_line_ends(text: &str) -> Cow<'_, str> {
+    if !text.contains("\r\n") {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut pending = 0;
+    for c in text.chars() {
+        match c {
+            '\r' => pending += 1,
+            '\n' => {
+                pending = 0;
+                out.push('\n');
+            }
+            _ => {
+                out.extend(std::iter::repeat_n('\r', pending));
+                pending = 0;
+                out.push(c);
+            }
+        }
+    }
+    out.extend(std::iter::repeat_n('\r', pending));
+    Cow::Owned(out)
+}
+
 /// The text of the compose file for `headers` and `body`: four header lines (each value kept
-/// to one line), an empty line, the body as is.
+/// to one line), an empty line, the body with plain line ends.
 pub fn render(headers: &Headers, body: &str) -> String {
     let list = |items: &[String]| {
         items
@@ -27,11 +55,12 @@ pub fn render(headers: &Headers, body: &str) -> String {
             .join(", ")
     };
     format!(
-        "To: {}\nCc: {}\nBcc: {}\nSubject: {}\n\n{body}",
+        "To: {}\nCc: {}\nBcc: {}\nSubject: {}\n\n{}",
         list(&headers.to),
         list(&headers.cc),
         list(&headers.bcc),
         one_line(&headers.subject),
+        plain_line_ends(body),
     )
 }
 
@@ -41,7 +70,8 @@ pub fn path_of(dir: &Path, key: &str) -> PathBuf {
 }
 
 /// Write `<dir>/<key>.eml` (directory 0700, file 0600) and return its path. The body is
-/// written as is (the editor needs the real text); each header value is kept to one line.
+/// written with plain line ends (the editor needs the real text); each header value is kept
+/// to one line.
 pub fn write(dir: &Path, key: &str, headers: &Headers, body: &str) -> std::io::Result<PathBuf> {
     create_private_dir(dir)?;
     let path = path_of(dir, key);
@@ -127,10 +157,11 @@ fn split(text: &str) -> (&str, &str) {
 }
 
 /// Headers up to the first empty line (names case-insensitive, continuation lines joined with
-/// a space), then the body verbatim. An unknown header or a line without `Name:` is an error
-/// naming its line.
+/// a space), then the body with plain line ends. An unknown header or a line without `Name:` is
+/// an error naming its line.
 pub fn parse(text: &str) -> Result<(Headers, String), ParseError> {
-    let (head, body) = split(text);
+    let text = plain_line_ends(text);
+    let (head, body) = split(&text);
     let mut fields: Vec<(usize, String, String)> = Vec::new();
     for (index, line) in head.lines().enumerate() {
         let number = index + 1;

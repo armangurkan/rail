@@ -281,6 +281,21 @@ async fn enter_resumes_a_local_draft_and_imports_a_gmail_one() {
 }
 
 #[tokio::test]
+async fn a_stored_draft_with_stray_carriage_returns_opens_with_plain_line_ends() {
+    let mut f = drafts_fixture().await;
+    writer(&f)
+        .conn()
+        .execute("UPDATE drafts SET body = ?1 WHERE id = 1", ["a\r\r\nb\r\n"])
+        .unwrap();
+    open_drafts(&mut f).await;
+    press_n(&mut f, KeyCode::Char('j'), 2).await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(composing(&f).draft, Some(1));
+    // What the review saves or sends comes from this body, with no editor round in between.
+    assert_eq!(composing(&f).body, "a\nb\n");
+}
+
+#[tokio::test]
 async fn trash_asks_then_discards_each_kind() {
     let mut f = drafts_fixture().await;
     open_drafts(&mut f).await;

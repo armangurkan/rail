@@ -3,7 +3,7 @@
 use rail_core::provider::Mailbox;
 use rail_core::store::drafts::{ReplyAttachment, ReplySource};
 
-use super::file::{ParseError, parse, write};
+use super::file::{ParseError, parse, render, write};
 use super::model::Headers;
 use super::prefill::{forward, fwd_subject, quoted, re_subject, reply, with_signature};
 
@@ -62,8 +62,44 @@ fn parsing_accepts_case_and_continuations_and_names_a_bad_line() {
     let (_, body) = parse("To: a@b.c\n\n").unwrap();
     assert_eq!(body, "");
     let (h, body) = parse("To: a@b.c\r\nSubject: crlf\r\n\r\nline\r\n").unwrap();
-    assert_eq!((h.subject.as_str(), body.as_str()), ("crlf", "line\r\n"));
+    assert_eq!((h.subject.as_str(), body.as_str()), ("crlf", "line\n"));
     assert_eq!(parse("  stray\n\nbody").unwrap_err().line, 1);
+}
+
+#[test]
+fn a_crlf_file_parses_to_plain_line_ends() {
+    let (h, body) = parse("To: a@b.c\r\nSubject: s\r\n\r\nline 1\r\nline 2\r\n").unwrap();
+    assert_eq!(
+        (h.to.as_slice(), h.subject.as_str()),
+        (&["a@b.c".to_string()][..], "s")
+    );
+    assert_eq!(body, "line 1\nline 2\n");
+}
+
+#[test]
+fn repeated_crlf_rounds_keep_the_body_stable() {
+    let original = "line 1\n\nline 3\n";
+    let mut body = original.to_string();
+    for round in 1..=4 {
+        // An editor with fileformat=dos writes every line end as CRLF, even after a CR.
+        let saved = render(&headers(), &body).replace('\n', "\r\n");
+        body = parse(&saved).unwrap().1;
+        assert_eq!(body, original, "after round {round}");
+    }
+}
+
+#[test]
+fn stray_carriage_returns_before_a_line_end_are_removed() {
+    let (_, body) = parse("To: a@b.c\n\na\r\r\r\nb\r\n").unwrap();
+    assert_eq!(body, "a\nb\n");
+    let (_, body) = parse("To: a@b.c\n\nx\ry\r\n").unwrap();
+    assert_eq!(body, "x\ry\n", "a lone CR inside a line is kept");
+}
+
+#[test]
+fn render_writes_plain_line_ends_for_a_stored_crlf_body() {
+    let text = render(&headers(), "a\r\r\nb\r\n");
+    assert!(text.ends_with("\n\na\nb\n"), "{text:?}");
 }
 
 fn source() -> ReplySource {
