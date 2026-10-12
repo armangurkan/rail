@@ -4,7 +4,6 @@
 
 use std::collections::VecDeque;
 use std::io;
-use std::path::Path;
 use std::sync::Arc;
 #[cfg(unix)]
 use std::sync::Mutex;
@@ -13,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
-use futures_util::{Stream, StreamExt};
+use futures_util::Stream;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use tokio::sync::mpsc;
@@ -21,7 +20,7 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use super::app::{App, Effect, Job, Msg, Osc52, TaggedResult, TaskResult, TaskSink, update, view};
-use super::editor;
+use super::handover::{Hand, Handover, Hands, Input, Suspend};
 use super::keys::Keymap;
 use super::screen::Screen;
 use super::terminal;
@@ -42,11 +41,10 @@ pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>, theme: Theme) ->
     let mut app = App::new(screen, Box::new(Osc52))
         .with_keymap(keymap)
         .with_theme(theme);
-    let events = Box::pin(EventStream::new());
     let result = run_loop(
         &mut tui.terminal,
         &mut app,
-        events,
+        || Box::pin(EventStream::new()),
         &mut Handover::default(),
     )
     .await;
@@ -61,67 +59,23 @@ pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>, theme: Theme) ->
     }
 }
 
-/// How the loop leaves the terminal to a child process (the editor) and takes it back.
-pub trait Suspend {
-    /// Give the terminal to the user.
-    fn suspend(&mut self) -> io::Result<()>;
-    /// Take it back.
-    fn resume(&mut self) -> io::Result<()>;
-    /// True once after each `resume`: the loop then repaints the whole screen.
-    fn take_returned(&mut self) -> bool;
-}
-
-/// The real terminal's hand-over; the guard in `terminal::enter` still restores it once.
-#[derive(Default)]
-pub struct Handover {
-    returned: bool,
-}
-
-impl Suspend for Handover {
-    fn suspend(&mut self) -> io::Result<()> {
-        terminal::suspend()
-    }
-
-    fn resume(&mut self) -> io::Result<()> {
-        terminal::resume()?;
-        self.returned = true;
-        Ok(())
-    }
-
-    fn take_returned(&mut self) -> bool {
-        std::mem::take(&mut self.returned)
-    }
-}
-
-/// No terminal to hand over (tests with a `TestBackend` that never run an editor).
-impl Suspend for () {
-    fn suspend(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-
-    fn resume(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-
-    fn take_returned(&mut self) -> bool {
-        false
-    }
-}
-
-/// Drive `app` until it quits or `events` ends. Tasks still running when this returns are
-/// aborted, because `Tasks` aborts on drop.
-pub async fn run_loop<B, S, E, X>(
+/// Drive `app` until it quits or the event stream `make` builds ends. `make` is called again
+/// after each editor, whose stream is dropped first. Tasks still running when this returns
+/// are aborted, because `Tasks` aborts on drop.
+pub async fn run_loop<B, S, E, F, X>(
     terminal: &mut Terminal<B>,
     app: &mut App<S>,
-    mut events: E,
+    make: F,
     suspend: &mut X,
 ) -> io::Result<()>
 where
     B: Backend,
     S: Screen,
     E: Stream<Item = io::Result<TermEvent>> + Unpin,
+    F: FnMut() -> E,
     X: Suspend,
 {
+    let mut input = Input::new(make);
     let (sink, mut results) = mpsc::unbounded_channel();
     let mut tasks = Tasks::new(sink);
     let mut tick = tokio::time::interval(TICK);
@@ -129,15 +83,31 @@ where
     let mut signals = QuitSignals::new()?;
     let mut pending: VecDeque<Msg> = VecDeque::new();
     for effect in app.screen.start() {
-        pending.extend(apply(effect, app, &mut tasks, suspend));
+        pending.extend(apply(
+            effect,
+            app,
+            &mut tasks,
+            &mut Hands {
+                suspend,
+                input: &mut input,
+            },
+        ));
     }
     for msg in pending {
-        dispatch(msg, app, &mut tasks, suspend);
+        dispatch(
+            msg,
+            app,
+            &mut tasks,
+            &mut Hands {
+                suspend,
+                input: &mut input,
+            },
+        );
     }
     redraw(terminal, app, suspend)?;
     while !app.quit {
         let msg = tokio::select! {
-            event = events.next() => match event {
+            event = input.next() => match event {
                 Some(Ok(event)) => match to_msg(event) {
                     Some(msg) => msg,
                     None => continue,
@@ -155,7 +125,15 @@ where
                 continue;
             }
         };
-        dispatch(msg, app, &mut tasks, suspend);
+        dispatch(
+            msg,
+            app,
+            &mut tasks,
+            &mut Hands {
+                suspend,
+                input: &mut input,
+            },
+        );
         redraw(terminal, app, suspend)?;
     }
     Ok(())
@@ -267,11 +245,11 @@ fn to_msg(event: TermEvent) -> Option<Msg> {
 
 /// Run `msg` through `update` and apply its effects. An effect that reports back (a copy)
 /// yields a follow-up message, which is handled before the next event.
-fn dispatch<S: Screen>(msg: Msg, app: &mut App<S>, tasks: &mut Tasks, suspend: &mut impl Suspend) {
+fn dispatch<S: Screen>(msg: Msg, app: &mut App<S>, tasks: &mut Tasks, hand: &mut impl Hand) {
     let mut pending = VecDeque::from([msg]);
     while let Some(msg) = pending.pop_front() {
         for effect in update(app, msg) {
-            pending.extend(apply(effect, app, tasks, suspend));
+            pending.extend(apply(effect, app, tasks, hand));
         }
     }
 }
@@ -280,7 +258,7 @@ fn apply<S: Screen>(
     effect: Effect,
     app: &mut App<S>,
     tasks: &mut Tasks,
-    suspend: &mut impl Suspend,
+    hand: &mut impl Hand,
 ) -> Option<Msg> {
     match effect {
         Effect::Quit => app.quit = true,
@@ -296,38 +274,11 @@ fn apply<S: Screen>(
         }
         Effect::RunEditor { command, path } => {
             // Nothing else runs while the editor has the terminal: the loop blocks here.
-            let result = run_editor_blocking(suspend, &command, &path);
+            let result = hand.run_editor(&command, &path);
             return Some(Msg::Task(TaskResult::EditorDone(result)));
         }
     }
     None
-}
-
-/// Hand the terminal to the editor, wait for it, take the terminal back. The event stream keeps
-/// its reader, but nothing is read while raw mode is off and the editor owns the tty.
-fn run_editor_blocking(
-    suspend: &mut impl Suspend,
-    command: &[String],
-    path: &Path,
-) -> Result<i32, String> {
-    suspend
-        .suspend()
-        .map_err(|e| format!("cannot leave the terminal for the editor: {e}"))?;
-    let ran = block_here(|| editor::run(command, path));
-    suspend
-        .resume()
-        .map_err(|e| format!("cannot take the terminal back from the editor: {e}"))?;
-    ran
-}
-
-/// Run blocking `work` without starving the runtime's other threads. A current-thread runtime
-/// (the tests') has no other threads to keep alive, so the work simply runs.
-fn block_here<T>(work: impl FnOnce() -> T) -> T {
-    use tokio::runtime::{Handle, RuntimeFlavor};
-    match Handle::try_current().map(|handle| handle.runtime_flavor()) {
-        Ok(RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
-        _ => work(),
-    }
 }
 
 /// Draw a frame; after the terminal came back from the editor, repaint all of it.
@@ -448,7 +399,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     use crate::tui::app::TaskResult;
-    use crate::tui::test_util::{Hello, RecordingClipboard, ctrl, key};
+    use crate::tui::test_util::{Hello, RecordingClipboard, ctrl, key, once};
     use ratatui::style::Color;
 
     #[test]
@@ -525,7 +476,7 @@ mod tests {
         let mut terminal = terminal();
         let mut app = App::new(Hello::default(), Box::new(RecordingClipboard::default()));
         let events = keys(vec![key(KeyCode::Char('x')), key(KeyCode::Char('q'))]);
-        run_loop(&mut terminal, &mut app, events, &mut ())
+        run_loop(&mut terminal, &mut app, once(events), &mut ())
             .await
             .unwrap();
         assert!(app.quit);
@@ -545,7 +496,7 @@ mod tests {
         };
         let mut app = App::new(screen, Box::new(RecordingClipboard::default()));
         let events = keys(vec![key(KeyCode::Char('x'))]);
-        run_loop(&mut terminal, &mut app, events, &mut ())
+        run_loop(&mut terminal, &mut app, once(events), &mut ())
             .await
             .unwrap();
         assert!(app.quit);
@@ -570,7 +521,7 @@ mod tests {
         let mut terminal = terminal();
         let mut app = App::new(screen, Box::new(RecordingClipboard::default()));
         let events = keys(vec![key(KeyCode::Char('s')), ctrl('c')]);
-        run_loop(&mut terminal, &mut app, events, &mut ())
+        run_loop(&mut terminal, &mut app, once(events), &mut ())
             .await
             .unwrap();
         assert!(
@@ -668,7 +619,7 @@ mod tests {
         let mut terminal = terminal();
         let mut app = App::new(screen, Box::new(clipboard.clone()));
         let events = keys(vec![key(KeyCode::Char('y')), key(KeyCode::Char('q'))]);
-        run_loop(&mut terminal, &mut app, events, &mut ())
+        run_loop(&mut terminal, &mut app, once(events), &mut ())
             .await
             .unwrap();
         assert_eq!(
@@ -676,77 +627,5 @@ mod tests {
             vec!["consent url".to_string()]
         );
         assert_eq!(app.screen.copied, vec![Ok(())]);
-    }
-
-    /// Records the order of hand-over calls.
-    #[derive(Default)]
-    struct Recorder {
-        calls: Vec<&'static str>,
-        returned: bool,
-    }
-
-    impl Suspend for Recorder {
-        fn suspend(&mut self) -> io::Result<()> {
-            self.calls.push("suspend");
-            Ok(())
-        }
-
-        fn resume(&mut self) -> io::Result<()> {
-            self.calls.push("resume");
-            self.returned = true;
-            Ok(())
-        }
-
-        fn take_returned(&mut self) -> bool {
-            std::mem::take(&mut self.returned)
-        }
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn an_editor_effect_hands_over_the_terminal_and_reports_the_exit_code() {
-        let screen = Hello {
-            on_key: Box::new(|k| {
-                if k.code == KeyCode::Char('e') {
-                    vec![Effect::RunEditor {
-                        command: vec!["/bin/true".to_string()],
-                        path: std::path::PathBuf::from("/dev/null"),
-                    }]
-                } else {
-                    Vec::new()
-                }
-            }),
-            ..Hello::default()
-        };
-        let mut terminal = terminal();
-        let mut app = App::new(screen, Box::new(RecordingClipboard::default()));
-        let mut recorder = Recorder::default();
-        let events = keys(vec![key(KeyCode::Char('e')), key(KeyCode::Char('q'))]);
-        run_loop(&mut terminal, &mut app, events, &mut recorder)
-            .await
-            .unwrap();
-        assert_eq!(app.screen.edited, vec![Ok(0)]);
-        assert_eq!(recorder.calls, ["suspend", "resume"]);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn an_editor_runs_on_a_multi_thread_runtime_too() {
-        let mut recorder = Recorder::default();
-        let ran = run_editor_blocking(&mut recorder, &["/bin/false".to_string()], Path::new("x"));
-        assert_eq!(ran, Ok(1));
-        assert_eq!(recorder.calls, ["suspend", "resume"]);
-    }
-
-    #[test]
-    fn an_editor_that_cannot_start_is_reported_after_the_terminal_is_back() {
-        let mut recorder = Recorder::default();
-        let ran = run_editor_blocking(
-            &mut recorder,
-            &["/no/such/editor".to_string()],
-            Path::new("x"),
-        );
-        assert!(ran.unwrap_err().contains("cannot run"));
-        assert_eq!(recorder.calls, ["suspend", "resume"]);
     }
 }

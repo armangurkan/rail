@@ -501,6 +501,12 @@ pub fn status(name: &str, address: &str, phase: SyncPhase) -> AccountSyncStatus 
     }
 }
 
+/// A stream factory that hands out `stream` once (for `run_loop` tests that run no editor).
+pub fn once<E>(stream: E) -> impl FnMut() -> E {
+    let mut slot = Some(stream);
+    move || slot.take().expect("the test stream was made once")
+}
+
 /// What a fake editor does to the draft file and what it exits with.
 type EditorHook = Box<dyn FnMut(&Path) -> Result<i32, String> + Send>;
 

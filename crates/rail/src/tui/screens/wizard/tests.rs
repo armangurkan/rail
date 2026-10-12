@@ -311,7 +311,12 @@ async fn cancel_during_login_leaves_no_config_tokens_or_store_row() {
     };
     let mut handover = ();
     let (result, _keys) = tokio::join!(
-        run_loop(&mut terminal, &mut app, events, &mut handover),
+        run_loop(
+            &mut terminal,
+            &mut app,
+            crate::tui::test_util::once(events),
+            &mut handover,
+        ),
         driver
     );
     result.unwrap();
