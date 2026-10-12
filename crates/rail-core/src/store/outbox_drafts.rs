@@ -27,7 +27,8 @@ fn push_row(tx: &Transaction, draft: DraftId, state: &str) -> Result<Option<Outb
 /// A draft row for one of the account's drafts; `None` (nothing written) when the account
 /// holds no such draft, for a `send` of a draft that is not `editing` (already queued), or a
 /// push of a draft being sent. A push while one of the draft's pushes still waits answers
-/// that row: the worker pushes the newest text once. A `send` row queues the draft.
+/// that row (the worker pushes the newest text once) and takes it over: its token undoes it
+/// and its grace starts again. A `send` row queues the draft.
 pub(super) fn enqueue_draft(
     tx: &Transaction,
     new: &NewAction,
@@ -41,6 +42,7 @@ pub(super) fn enqueue_draft(
         Action::PushDraft { .. } if state == "queued" => return Ok(None),
         Action::PushDraft { .. } => {
             if let Some(row) = push_row(tx, draft, "pending")? {
+                fold_push(tx, row, new)?;
                 return Ok(Some((row, 1)));
             }
         }
@@ -64,6 +66,18 @@ pub(super) fn enqueue_draft(
         set_draft_state(tx, draft, "queued")?;
     }
     Ok(Some((id, 1)))
+}
+
+/// The newest push owns the pending row: its token and its `not_before`. A replayed older
+/// push (its token gone from the outbox, its `not_before` earlier) is answered the row
+/// without taking it back.
+fn fold_push(tx: &Transaction, row: OutboxId, new: &NewAction) -> Result<(), StoreError> {
+    tx.execute(
+        "UPDATE outbox SET client_token = ?2, not_before = ?3
+         WHERE id = ?1 AND state = 'pending' AND not_before <= ?3",
+        params![row, new.client_token, new.not_before],
+    )?;
+    Ok(())
 }
 
 /// A pending Gmail delete of `remote_draft_id`, due `now`. Keyed by no draft (`draft_id`
@@ -147,7 +161,8 @@ pub(super) fn complete_push(
 
 /// The import of a Gmail draft: the account's draft of that Gmail message when one exists,
 /// else a new draft (by `drafts::save_in`, so a replayed token answers the draft it made)
-/// that keeps Gmail's ids.
+/// that keeps Gmail's ids. An import only creates: a write naming a draft is `Missing`, and
+/// a draft that already has a Gmail identity (a replayed token of an earlier save) keeps it.
 pub(super) fn import_in(
     tx: &Transaction,
     write: &DraftWrite,
@@ -156,6 +171,9 @@ pub(super) fn import_in(
     token: &str,
     now: i64,
 ) -> Result<DraftSaved, StoreError> {
+    if write.id.is_some() {
+        return Ok(DraftSaved::Missing);
+    }
     let known: Option<DraftId> = tx
         .query_row(
             "SELECT id FROM drafts WHERE account_id = ?1 AND remote_message_id = ?2
@@ -170,7 +188,8 @@ pub(super) fn import_in(
     let saved = drafts::save_in(tx, write, token, now)?;
     if let DraftSaved::Saved(id) = saved {
         tx.execute(
-            "UPDATE drafts SET remote_draft_id = ?2, remote_message_id = ?3 WHERE id = ?1",
+            "UPDATE drafts SET remote_draft_id = ?2, remote_message_id = ?3
+             WHERE id = ?1 AND remote_message_id IS NULL",
             params![id, remote_draft_id, remote_message_id],
         )?;
     }

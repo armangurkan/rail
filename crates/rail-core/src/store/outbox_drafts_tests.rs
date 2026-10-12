@@ -139,12 +139,83 @@ fn a_second_push_in_the_grace_answers_the_pending_row() {
     assert_eq!(first.len(), 1);
     assert_eq!(push(&mut store, account, d, "p2", 105), first, "folded");
     assert_eq!(rows(&store).len(), 1, "one push_draft row");
-    assert_eq!(claim(&mut store, account, 110), first[0]);
-    let third = push(&mut store, account, d, "p3", 111);
+    let (_, _, token, not_before, _) = rows(&store)[0].clone();
+    assert_eq!(
+        (token.as_str(), not_before),
+        ("p2", 115),
+        "the newest push owns the undo and restarts the grace"
+    );
+    assert_eq!(
+        push(&mut store, account, d, "p1", 100),
+        first,
+        "a replay of the first token answers the row"
+    );
+    assert_eq!(
+        push(&mut store, account, d, "p2", 105),
+        first,
+        "and of the second"
+    );
+    assert_eq!(
+        rows(&store)[0].2,
+        "p2",
+        "a replay does not take the undo back"
+    );
+    assert_eq!(rows(&store)[0].3, 115);
+    let too_late = undo(&mut store, first[0], "p1");
+    assert_eq!(
+        too_late,
+        (vec![], vec![first[0]]),
+        "the first token no longer undoes it"
+    );
+    assert_eq!(rows(&store).len(), 1);
+    assert!(
+        matches!(
+            store
+                .outbox_write(
+                    &OutboxWrite::Claim {
+                        account_id: account
+                    },
+                    110
+                )
+                .unwrap(),
+            OutboxOutcome::Claimed(None)
+        ),
+        "not due before the second push's grace ends"
+    );
+    assert_eq!(claim(&mut store, account, 115), first[0]);
+    assert_eq!(
+        push(&mut store, account, d, "p2", 105),
+        first,
+        "a replay of the second token while inflight is that row"
+    );
+    let third = push(&mut store, account, d, "p3", 116);
     assert_eq!(third.len(), 1);
     assert_ne!(third, first, "the inflight row is not folded into");
     let kinds: Vec<String> = rows(&store).into_iter().map(|r| r.0).collect();
     assert_eq!(kinds, vec!["push_draft", "push_draft"]);
+}
+
+#[test]
+fn the_second_pushs_token_undoes_the_folded_row() {
+    let (mut store, account) = store_with_account();
+    let d = draft_in(&mut store, account, 1);
+    let row = push(&mut store, account, d, "p1", 100)[0];
+    push(&mut store, account, d, "p2", 105);
+    assert_eq!(undo(&mut store, row, "p2"), (vec![row], vec![]));
+    assert!(rows(&store).is_empty());
+}
+
+fn undo(store: &mut Store, row: OutboxId, token: &str) -> (Vec<OutboxId>, Vec<OutboxId>) {
+    let write = OutboxWrite::Undo {
+        rows: vec![crate::ops::RowToken {
+            row,
+            client_token: token.into(),
+        }],
+    };
+    match store.outbox_write(&write, 0).unwrap() {
+        OutboxOutcome::Undone { undone, too_late } => (undone, too_late),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]
@@ -356,6 +427,44 @@ fn an_import_makes_one_draft_with_its_gmail_identity() {
         matches!(theirs, DraftSaved::Saved(t) if t != id),
         "{theirs:?}"
     );
+}
+
+#[test]
+fn an_import_never_rewrites_a_draft_or_its_gmail_identity() {
+    let (mut store, account) = store_with_account();
+    // A draft saved earlier with token "t1", then pushed (its own Gmail identity).
+    let saved = DraftWrite {
+        message_id: "<saved@example.com>".into(),
+        ..write(account, 1)
+    };
+    let save = OutboxWrite::DraftSave {
+        write: Box::new(saved),
+        client_token: "t1".into(),
+    };
+    let OutboxOutcome::DraftSaved(DraftSaved::Saved(mine)) = store.outbox_write(&save, 10).unwrap()
+    else {
+        panic!("saved");
+    };
+    store.draft_set_remote(mine, "r-mine", "dm-mine").unwrap();
+    // An import replaying that token answers that draft and leaves its Gmail ids alone.
+    let replayed = import(&mut store, write(account, 2), ("r9", "dm9"), "t1");
+    assert_eq!(replayed, DraftSaved::Saved(mine));
+    let draft = store.draft(mine).unwrap().unwrap();
+    assert_eq!(draft.remote_draft_id.as_deref(), Some("r-mine"));
+    assert_eq!(draft.remote_message_id.as_deref(), Some("dm-mine"));
+    // An import naming a draft id is refused: it never updates an existing draft.
+    let named = DraftWrite {
+        id: Some(mine),
+        subject: "rewritten".into(),
+        ..write(account, 3)
+    };
+    assert_eq!(
+        import(&mut store, named, ("r8", "dm8"), "t3"),
+        DraftSaved::Missing
+    );
+    let draft = store.draft(mine).unwrap().unwrap();
+    assert_eq!(draft.subject, "draft 1");
+    assert_eq!(draft.remote_message_id.as_deref(), Some("dm-mine"));
 }
 
 #[test]

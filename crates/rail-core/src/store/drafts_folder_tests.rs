@@ -188,6 +188,26 @@ fn the_folder_is_filtered_by_account_and_capped() {
 }
 
 #[test]
+fn another_accounts_draft_does_not_hide_a_gmail_draft() {
+    let (mut store, first) = store_with_account();
+    let second = second_account(&store);
+    sync(&mut store, first, vec![gmail_draft("dm1", 50)], vec![]);
+    let dm1 = message(&store, first, "dm1");
+    let theirs = local(&mut store, second, 1, 10);
+    store.draft_set_remote(theirs, "r1", "dm1").unwrap();
+    assert_eq!(
+        store
+            .drafts_folder(&[first])
+            .unwrap()
+            .iter()
+            .map(|r| r.kind)
+            .collect::<Vec<_>>(),
+        vec![DraftsRowKind::Gmail { message: dm1 }],
+        "the same Gmail id in another account is not this message"
+    );
+}
+
+#[test]
 fn a_draft_is_found_by_its_gmail_message_in_its_account_only() {
     let (mut store, first) = store_with_account();
     let second = second_account(&store);
