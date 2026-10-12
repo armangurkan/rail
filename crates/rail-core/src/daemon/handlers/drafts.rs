@@ -1,9 +1,12 @@
-//! `draft.save`, `draft.send` and `draft.discard`. Front-end operations only: no MCP tool
+//! `draft.save`, `draft.send` and `draft.discard` (which removes an imported draft's files).
+//! Front-end operations only: no MCP tool
 //! reaches them. Reads open a reader; every write goes through the writer's outbox path, so
 //! the store keeps one writer. Logs carry ids and counts, never an address, a subject or a
 //! file name (a file name appears only in the refusal the user reads).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use super::draft_files::{owned_dirs, remove_dirs};
 
 use crate::auth::unix_now;
 use crate::daemon::registry::Call;
@@ -15,6 +18,7 @@ use crate::ops::{
     MAX_MESSAGE_BYTES, OpError, ReplyTo, UNDO_GRACE, checked_token, estimated_raw_size,
     new_message_id, too_large_text,
 };
+use crate::paths::Paths;
 use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
@@ -28,7 +32,7 @@ pub(super) fn no_such_draft() -> OpError {
     OpError::not_found("draft: no such draft")
 }
 
-fn being_sent() -> OpError {
+pub(super) fn being_sent() -> OpError {
     OpError::invalid_input("draft: this draft is being sent; undo first")
 }
 
@@ -40,6 +44,15 @@ fn being_pushed() -> OpError {
         ErrorClass::Transient,
         "draft: saving to Gmail, try again in a moment",
     )
+}
+
+/// The request's client token, refused under its field's name.
+pub(super) fn checked_client_token(token: &str) -> Result<(), OpError> {
+    checked_token(token).map_err(|e| OpError::invalid_input(format!("client_token: {}", e.message)))
+}
+
+pub(super) fn token_used() -> OpError {
+    OpError::invalid_input("client_token: this token was used for another action")
 }
 
 pub(super) fn checked_id(draft: DraftId) -> Result<(), OpError> {
@@ -433,7 +446,7 @@ fn check_sendable(draft: &Draft) -> Result<(), OpError> {
 }
 
 /// Why an enqueue wrote no row: the draft is being sent, or it is gone.
-fn not_queued(db: &Path, id: DraftId) -> Result<OpError, OpError> {
+pub(super) fn not_queued(db: &Path, id: DraftId) -> Result<OpError, OpError> {
     let draft = Store::open_reader(db)?.draft(id)?;
     Ok(match draft {
         Some(d) if d.state == DraftState::Queued => {
@@ -449,9 +462,7 @@ pub(super) fn row_of_draft(db: &Path, row: i64, id: DraftId) -> Result<(), OpErr
         .outbox_row(row)?
         .and_then(|r| r.draft_id);
     if owner != Some(id) {
-        return Err(OpError::invalid_input(
-            "client_token: this token was used for another action",
-        ));
+        return Err(token_used());
     }
     Ok(())
 }
@@ -460,8 +471,7 @@ pub(super) async fn send(
     call: Call,
     request: DraftSendRequest,
 ) -> Result<DraftSendResponse, OpError> {
-    checked_token(&request.client_token)
-        .map_err(|e| OpError::invalid_input(format!("client_token: {}", e.message)))?;
+    checked_client_token(&request.client_token)?;
     checked_id(request.draft)?;
     let (db, id) = (call.ctx.paths.db_file(), request.draft);
     let reader = db.clone();
@@ -505,11 +515,26 @@ pub(super) async fn send(
     Ok(DraftSendResponse { row })
 }
 
+/// The import directories the draft owns (none when it is gone).
+fn owned_files(db: &Path, paths: &Paths, id: DraftId) -> Result<Vec<PathBuf>, OpError> {
+    let draft = Store::open_reader(db)?.draft(id)?;
+    Ok(draft.map_or_else(Vec::new, |d| owned_dirs(paths, &d.attachments)))
+}
+
 pub(super) async fn discard(
     call: Call,
     request: DraftDiscardRequest,
 ) -> Result<DraftDiscardResponse, OpError> {
     checked_id(request.draft)?;
+    let (db, paths, id) = (
+        call.ctx.paths.db_file(),
+        call.ctx.paths.clone(),
+        request.draft,
+    );
+    let owned = call
+        .ctx
+        .blocking(move || owned_files(&db, &paths, id))
+        .await?;
     let outcome = call
         .ctx
         .sync
@@ -523,7 +548,8 @@ pub(super) async fn discard(
         OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingPushed) => return Err(being_pushed()),
         _ => return Err(unexpected()),
     }
-    tracing::info!(draft = request.draft, "a draft was discarded");
+    let files = remove_dirs(&owned);
+    tracing::info!(draft = request.draft, files, "a draft was discarded");
     call.ctx.sync.outbox_changed(&call.ctx).await;
     Ok(DraftDiscardResponse {})
 }

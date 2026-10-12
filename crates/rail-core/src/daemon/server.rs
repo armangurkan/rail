@@ -252,6 +252,10 @@ impl Server {
         let mut stop = std::pin::pin!(stop);
         self.ctx.sync.count_accounts(&self.ctx.paths);
         SyncManager::reconcile_in_background(self.ctx.clone());
+        // Start-up housekeeping: the files of imported drafts no draft names any more.
+        tokio::spawn(super::handlers::draft_files::sweep_at_start(
+            self.ctx.clone(),
+        ));
         // Intervals, not a sleep re-armed each turn: another arm firing more often than the
         // idle check would otherwise keep re-arming it, and the daemon would never idle out.
         // The first check waits one `CONFIG_CHECK`: the startup reconcile above covers now,

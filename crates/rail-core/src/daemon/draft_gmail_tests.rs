@@ -1,6 +1,7 @@
 //! `draft.push`, `draft.import` and the discard of a pushed draft through a real daemon over
 //! the fake Gmail, on Part A's harness: the grace and its undo, a second push folding into the
-//! first, the refusals, an import with and without its body, the import's refusals, and a
+//! first, the refusals, an import with and without its body (and one whose fetch fails), the
+//! import's refusals, a token another draft used, and a
 //! discard that deletes the Gmail copy and waits for a push in flight.
 
 use std::time::Duration;
@@ -14,10 +15,13 @@ use crate::ops::{
 };
 use crate::paths::Paths;
 use crate::provider::mock::{Call, MockDraft, MockProvider, envelope};
-use crate::provider::{AttachmentMeta, Body, Envelope, Mailbox};
+use crate::provider::{AttachmentMeta, Body, Envelope, Mailbox, ProviderError};
 use crate::store::Store;
 use crate::store::drafts::{Attachment, DraftKind, DraftWrite, Recipient};
 use crate::store::outbox::OutboxState;
+
+/// The bytes of d1's attachment `p1` at Gmail.
+pub(super) const PLAN: &[u8] = b"%PDF-1.4 the plan";
 
 fn mailbox(address: &str) -> Mailbox {
     Mailbox {
@@ -28,7 +32,7 @@ fn mailbox(address: &str) -> Mailbox {
 
 /// d1: a Gmail draft answering m1 in t1, with Cc, Bcc and one attachment; its Gmail draft is
 /// r1. d3: a draft message no Gmail draft names any more.
-fn seed_drafts(mock: &MockProvider) {
+pub(super) fn seed_drafts(mock: &MockProvider) {
     let now = crate::auth::unix_now() * 1000;
     mock.seed(Envelope {
         message_id: Some("m1@example.com".into()),
@@ -74,12 +78,14 @@ fn seed_drafts(mock: &MockProvider) {
                 thread_id: Some("t1".into()),
             },
         );
+        m.attachment_bytes
+            .insert(("d1".into(), "p1".into()), PLAN.to_vec());
         // The worker's creates are r2 onwards.
         m.next_draft = 1;
     });
 }
 
-async fn with_gmail_drafts() -> DaemonHarness {
+pub(super) async fn with_gmail_drafts() -> DaemonHarness {
     let tmp = tempfile::tempdir().unwrap();
     let paths = Paths::all_in(tmp.path());
     std::fs::create_dir_all(&paths.config_dir).unwrap();
@@ -90,7 +96,7 @@ async fn with_gmail_drafts() -> DaemonHarness {
 }
 
 impl DaemonHarness {
-    async fn push(&self, draft: DraftId, token: &str) -> Result<i64, OpError> {
+    pub(super) async fn push(&self, draft: DraftId, token: &str) -> Result<i64, OpError> {
         let request = DraftPushRequest {
             draft,
             client_token: token.into(),
@@ -98,7 +104,7 @@ impl DaemonHarness {
         Ok(self.call::<DraftPush>(&request).await?.row)
     }
 
-    async fn import(&self, message: i64, token: &str) -> Result<DraftId, OpError> {
+    pub(super) async fn import(&self, message: i64, token: &str) -> Result<DraftId, OpError> {
         let request = DraftImportRequest {
             account: "work".into(),
             message,
@@ -107,20 +113,20 @@ impl DaemonHarness {
         Ok(self.call::<DraftImport>(&request).await?.draft)
     }
 
-    async fn discard(&self, draft: DraftId) -> Result<(), OpError> {
+    pub(super) async fn discard(&self, draft: DraftId) -> Result<(), OpError> {
         self.call::<DraftDiscard>(&DraftDiscardRequest { draft })
             .await
             .map(|_| ())
     }
 
-    async fn saved(&self, token: &str) -> DraftId {
+    pub(super) async fn saved(&self, token: &str) -> DraftId {
         self.call::<DraftSave>(&save_request(None, token))
             .await
             .unwrap()
             .draft
     }
 
-    async fn undo(&self, row: i64, token: &str) -> crate::ops::ActionUndoResponse {
+    pub(super) async fn undo(&self, row: i64, token: &str) -> crate::ops::ActionUndoResponse {
         let request = ActionUndoRequest {
             rows: vec![RowToken {
                 row,
@@ -131,7 +137,7 @@ impl DaemonHarness {
     }
 
     /// Make `row` due now and wake the worker (a discard of no draft signals the outbox).
-    async fn due_now(&self, row: i64) {
+    pub(super) async fn due_now(&self, row: i64) {
         Store::open(&self.paths.db_file())
             .unwrap()
             .conn()
@@ -140,7 +146,7 @@ impl DaemonHarness {
         self.discard(999_999).await.unwrap();
     }
 
-    async fn until(&self, what: &str, done: impl Fn(&Self) -> bool) {
+    pub(super) async fn until(&self, what: &str, done: impl Fn(&Self) -> bool) {
         tokio::time::timeout(BOUND, async {
             while !done(self) {
                 tokio::time::sleep(Duration::from_millis(20)).await;
@@ -150,11 +156,11 @@ impl DaemonHarness {
         .unwrap_or_else(|_| panic!("{what}"));
     }
 
-    fn work_id(&self) -> i64 {
+    pub(super) fn work_id(&self) -> i64 {
         self.store(|s| s.list_accounts().unwrap()[0].id)
     }
 
-    fn body_calls(&self) -> usize {
+    pub(super) fn body_calls(&self) -> usize {
         self.mock
             .calls()
             .into_iter()
@@ -162,7 +168,7 @@ impl DaemonHarness {
             .count()
     }
 
-    fn drafts_count(&self) -> i64 {
+    pub(super) fn drafts_count(&self) -> i64 {
         self.store(|s| {
             s.conn()
                 .query_row("SELECT count(*) FROM drafts", [], |r| r.get(0))
@@ -219,7 +225,7 @@ async fn a_push_is_refused_for_a_draft_being_sent_an_empty_draft_and_another_acc
     let sending = h.saved("s1").await;
     h.send(sending, "send-1").await.unwrap();
     let error = h.push(sending, "p1").await.unwrap_err();
-    assert_eq!(error.message, "draft: it is being sent");
+    assert_eq!(error.message, "draft: this draft is being sent; undo first");
     let empty = DraftSaveRequest {
         to: vec![],
         subject: String::new(),
@@ -292,14 +298,14 @@ async fn an_import_with_its_body_stored_makes_a_draft_with_its_gmail_identity() 
     assert_eq!(addresses(&d.bcc), ["lee@example.com"]);
     assert_eq!(d.subject, "Re: plan");
     assert_eq!(d.body, "the draft's text");
+    let path = h.paths.draft_files_dir().join("i1").join("plan.pdf");
     assert_eq!(
         d.attachments,
-        [Attachment::Part {
-            message,
-            part: "p1".into(),
+        [Attachment::File {
+            path: path.to_str().unwrap().into(),
             name: "plan.pdf".into(),
             mime: "application/pdf".into(),
-            size: 1234,
+            size: i64::try_from(PLAN.len()).unwrap(),
         }]
     );
     assert_eq!(d.thread_id, Some(source.thread_id));
@@ -334,6 +340,44 @@ async fn an_import_without_its_body_fetches_it_first() {
     let d = h.store(|s| s.draft(id).unwrap().unwrap());
     assert_eq!(d.body, "fetched now");
     assert_eq!(d.attachments.len(), 1, "the fetch stored the attachment");
+}
+
+/// A body fetch that fails fails the import: nothing is written.
+#[tokio::test]
+async fn an_import_whose_body_fetch_fails_says_why_and_writes_nothing() {
+    let h = with_gmail_drafts().await;
+    let message = h.message_id("d1");
+    Store::open(&h.paths.db_file())
+        .unwrap()
+        .conn()
+        .execute(
+            "UPDATE messages SET body_text = NULL, body_fetched_at = NULL WHERE id = ?1",
+            [message],
+        )
+        .unwrap();
+    h.mock
+        .fail_next(Call::Body, ProviderError::transient("Gmail is busy"));
+    let error = h.import(message, "i1").await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::Network, "{}", error.message);
+    assert_eq!(h.drafts_count(), 0);
+    assert!(!h.paths.draft_files_dir().join("i1").exists());
+}
+
+/// A token `draft.save` used answers that draft; an import with it is refused.
+#[tokio::test]
+async fn an_import_with_a_token_a_save_used_is_refused() {
+    let h = with_gmail_drafts().await;
+    let saved = h.saved("t1").await;
+    let error = h.import(h.message_id("d1"), "t1").await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert_eq!(
+        error.message,
+        "client_token: this token was used for another action"
+    );
+    let d = h.store(|s| s.draft(saved).unwrap().unwrap());
+    assert_eq!((d.remote_draft_id, d.remote_message_id), (None, None));
+    assert_eq!(h.drafts_count(), 1);
+    assert!(!h.paths.draft_files_dir().join("t1").exists());
 }
 
 #[tokio::test]

@@ -141,6 +141,12 @@ impl Paths {
         self.cache_dir.join("attachments")
     }
 
+    /// The attachments imported Gmail drafts own: one private directory per import, named by
+    /// its client token. Data, not cache: a draft's files must outlive a cache clean.
+    pub fn draft_files_dir(&self) -> PathBuf {
+        self.data_dir.join("draft-files")
+    }
+
     pub fn log_dir(&self) -> &Path {
         &self.state_dir
     }
@@ -326,6 +332,7 @@ mod tests {
         assert_eq!(paths.secrets_file(), PathBuf::from("/d/secrets.json"));
         assert_eq!(paths.compose_dir(), PathBuf::from("/k/compose"));
         assert_eq!(paths.attachments_dir(), PathBuf::from("/k/attachments"));
+        assert_eq!(paths.draft_files_dir(), PathBuf::from("/d/draft-files"));
         assert_eq!(paths.log_dir(), Path::new("/s"));
         assert_eq!(paths.socket_file(), PathBuf::from("/r/rail.sock"));
         assert_eq!(paths.lock_file(), PathBuf::from("/r/rail.lock"));

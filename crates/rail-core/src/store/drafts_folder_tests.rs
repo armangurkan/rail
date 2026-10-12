@@ -3,7 +3,7 @@
 //! import source a Gmail draft is opened from.
 
 use super::Store;
-use super::drafts::{DraftKind, DraftWrite, Recipient};
+use super::drafts::{Attachment, DraftKind, DraftWrite, Recipient};
 use super::drafts_folder::{DraftsRowKind, MAX_DRAFTS_ROWS};
 use crate::ops::DraftId;
 use crate::provider::mock::envelope;
@@ -219,6 +219,79 @@ fn a_draft_is_found_by_its_gmail_message_in_its_account_only() {
     );
     assert_eq!(store.draft_by_remote_message(second, "dm1").unwrap(), None);
     assert_eq!(store.draft_by_remote_message(first, "dm2").unwrap(), None);
+}
+
+#[test]
+fn a_token_names_its_draft_and_its_gmail_message_in_its_account_only() {
+    let (mut store, first) = store_with_account();
+    let second = second_account(&store);
+    let plain = local(&mut store, first, 1, 10);
+    let pushed = local(&mut store, first, 2, 20);
+    store.draft_set_remote(pushed, "r1", "dm1").unwrap();
+    store
+        .conn()
+        .execute_batch(&format!(
+            "UPDATE drafts SET client_token = 'a' WHERE id = {plain};
+             UPDATE drafts SET client_token = 'b' WHERE id = {pushed};"
+        ))
+        .unwrap();
+    assert_eq!(
+        store.draft_token_owner(first, "a").unwrap(),
+        Some((plain, None))
+    );
+    assert_eq!(
+        store.draft_token_owner(first, "b").unwrap(),
+        Some((pushed, Some("dm1".into())))
+    );
+    assert_eq!(store.draft_token_owner(second, "a").unwrap(), None);
+    assert_eq!(store.draft_token_owner(first, "c").unwrap(), None);
+}
+
+#[test]
+fn every_drafts_file_paths_are_listed_and_an_unreadable_list_stops_the_answer() {
+    let (mut store, account) = store_with_account();
+    let a = local(&mut store, account, 1, 10);
+    let b = local(&mut store, account, 2, 20);
+    let file = |path: &str| Attachment::File {
+        path: path.into(),
+        name: "n".into(),
+        mime: "m".into(),
+        size: 1,
+    };
+    let part = Attachment::Part {
+        message: 1,
+        part: "p".into(),
+        name: "n".into(),
+        mime: "m".into(),
+        size: 1,
+    };
+    for (id, list) in [
+        (a, vec![file("/f/1"), part]),
+        (b, vec![file("/f/2"), file("/f/3")]),
+    ] {
+        store
+            .conn()
+            .execute(
+                "UPDATE drafts SET attachments_json = ?2 WHERE id = ?1",
+                rusqlite::params![id, serde_json::to_string(&list).unwrap()],
+            )
+            .unwrap();
+    }
+    let mut paths = store.draft_file_paths().unwrap().unwrap();
+    paths.sort();
+    assert_eq!(paths, ["/f/1", "/f/2", "/f/3"]);
+    store
+        .conn()
+        .execute(
+            "UPDATE drafts SET attachments_json = 'not json' WHERE id = ?1",
+            [a],
+        )
+        .unwrap();
+    assert_eq!(
+        store.draft_file_paths().unwrap(),
+        None,
+        "unreadable: no answer"
+    );
 }
 
 #[test]

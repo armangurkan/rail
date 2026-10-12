@@ -20,6 +20,8 @@ mod body_tests;
 #[cfg(test)]
 mod connect_tests;
 #[cfg(test)]
+mod draft_files_tests;
+#[cfg(test)]
 mod draft_gmail_tests;
 #[cfg(test)]
 mod draft_tests;

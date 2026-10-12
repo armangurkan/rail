@@ -2,6 +2,7 @@
 
 mod actions;
 mod body;
+pub(super) mod draft_files;
 mod drafts;
 mod drafts_gmail;
 mod guide;

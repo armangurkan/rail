@@ -4,7 +4,7 @@
 
 use rusqlite::{OptionalExtension, Row, params};
 
-use super::drafts::{Recipient, ReplyAttachment, attachments_of, parsed};
+use super::drafts::{Attachment, Recipient, ReplyAttachment, attachments_of, parsed};
 use super::{Store, StoreError};
 use crate::ops::DraftId;
 use crate::provider::Mailbox;
@@ -178,6 +178,40 @@ impl Store {
                 |r| r.get(0),
             )
             .optional()?)
+    }
+
+    /// The draft `token` made in the account, and the Gmail message it holds, if any.
+    pub fn draft_token_owner(
+        &self,
+        account_id: i64,
+        token: &str,
+    ) -> Result<Option<(DraftId, Option<String>)>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, remote_message_id FROM drafts WHERE account_id = ?1 AND client_token = ?2",
+                params![account_id, token],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    /// The path of every file attachment of every draft; `None` when a draft's list does not
+    /// parse, so a caller removing files nothing names stops instead of guessing.
+    pub fn draft_file_paths(&self) -> Result<Option<Vec<String>>, StoreError> {
+        let mut stmt = self.conn.prepare("SELECT attachments_json FROM drafts")?;
+        let lists = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut paths = Vec::new();
+        for list in lists {
+            let Ok(parsed) = serde_json::from_str::<Vec<Attachment>>(&list?) else {
+                return Ok(None);
+            };
+            paths.extend(parsed.into_iter().filter_map(|a| match a {
+                Attachment::File { path, .. } => Some(path),
+                Attachment::Part { .. } => None,
+            }));
+        }
+        Ok(Some(paths))
     }
 
     /// The headers, addresses, body and attachments an import of `message` needs; `None`

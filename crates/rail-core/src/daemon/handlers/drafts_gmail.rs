@@ -1,35 +1,32 @@
 //! `draft.push` and `draft.import`: a draft saved to Gmail's Drafts after the undo grace, and
-//! a Gmail draft made into a local one that keeps its Gmail ids. Front-end operations only:
-//! no MCP tool reaches them. Logs carry ids, never an address, a subject or a body.
+//! a Gmail draft made into a local one that keeps its Gmail ids and owns its attachments as
+//! files (`draft_files`). Front-end operations only: no MCP tool reaches them. Logs carry ids
+//! and counts, never an address, a subject, a body or a file name.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use super::draft_files::{IMPORTS, fetch_into, import_dir, remove_dirs};
 use super::drafts::{
-    checked_id, draft_and_address, header_id, no_such_draft, row_of_draft, saved_id, unexpected,
+    being_sent, checked_client_token, checked_id, draft_and_address, header_id, no_such_draft,
+    not_queued, row_of_draft, saved_id, token_used, unexpected,
 };
 use crate::auth::unix_now;
 use crate::daemon::DaemonContext;
 use crate::daemon::registry::Call;
 use crate::ops::{
-    Action, BodyFetchRequest, DraftId, DraftImportRequest, DraftImportResponse, DraftPushRequest,
-    DraftPushResponse, OpError, UNDO_GRACE, checked_token, new_message_id,
+    Action, BodyFetchRequest, BodyOutcome, DraftId, DraftImportRequest, DraftImportResponse,
+    DraftPushRequest, DraftPushResponse, OpError, UNDO_GRACE, new_message_id,
 };
+use crate::provider::Provider;
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftState, DraftWrite};
 use crate::store::drafts_folder::ImportSource;
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
 use crate::sync::manager::Reach;
 
-fn being_sent() -> OpError {
-    OpError::invalid_input("draft: it is being sent")
-}
-
 fn no_such_message() -> OpError {
     OpError::not_found("message: no such message")
-}
-
-fn checked(token: &str) -> Result<(), OpError> {
-    checked_token(token).map_err(|e| OpError::invalid_input(format!("client_token: {}", e.message)))
 }
 
 /// Nothing a Gmail draft would hold: no recipient, subject, text or attachment.
@@ -52,16 +49,6 @@ fn check_pushable(draft: &Draft) -> Result<(), OpError> {
     Ok(())
 }
 
-/// Why an enqueue wrote no row: the draft is being sent (its state changed in between), or
-/// it is gone.
-fn not_queued(db: &Path, id: DraftId) -> Result<OpError, OpError> {
-    let draft = Store::open_reader(db)?.draft(id)?;
-    Ok(match draft {
-        Some(d) if d.state == DraftState::Queued => being_sent(),
-        _ => no_such_draft(),
-    })
-}
-
 /// The draft's account, checked as a send checks it, and the draft pushable.
 async fn push_account(call: &Call, id: DraftId) -> Result<(i64, String), OpError> {
     let db = call.ctx.paths.db_file();
@@ -81,7 +68,7 @@ pub(super) async fn push(
     call: Call,
     request: DraftPushRequest,
 ) -> Result<DraftPushResponse, OpError> {
-    checked(&request.client_token)?;
+    checked_client_token(&request.client_token)?;
     checked_id(request.draft)?;
     let id = request.draft;
     let (account_id, name) = push_account(&call, id).await?;
@@ -120,8 +107,22 @@ fn read_source(db: &Path, message: i64) -> Result<Option<ImportSource>, OpError>
     Ok(Store::open_reader(db)?.import_source(message)?)
 }
 
-fn existing_import(db: &Path, account_id: i64, remote: &str) -> Result<Option<DraftId>, OpError> {
-    Ok(Store::open_reader(db)?.draft_by_remote_message(account_id, remote)?)
+/// What an earlier call left for this import: the draft that already holds the Gmail
+/// message `remote` (a replay), or a refusal when `token` made another draft.
+fn earlier_import(
+    db: &Path,
+    account_id: i64,
+    remote: &str,
+    token: &str,
+) -> Result<Option<DraftId>, OpError> {
+    let store = Store::open_reader(db)?;
+    if let Some(draft) = store.draft_by_remote_message(account_id, remote)? {
+        return Ok(Some(draft));
+    }
+    if store.draft_token_owner(account_id, token)?.is_some() {
+        return Err(token_used());
+    }
+    Ok(None)
 }
 
 /// The source of `message`: this account's, and a draft.
@@ -146,21 +147,16 @@ async fn import_source(
     Ok(source)
 }
 
-/// The Gmail draft whose message is `remote`.
-async fn gmail_draft(ctx: &DaemonContext, account: &str, remote: &str) -> Result<String, OpError> {
-    let target = match ctx.sync.body_target(account).await? {
-        Reach::Ready(target) => target,
-        Reach::Unavailable(error) => return Err(error),
-    };
-    target
-        .provider
-        .draft_find(remote)
-        .await?
-        .ok_or_else(|| OpError::not_found("Gmail no longer has this draft"))
+/// The account's provider, as a body fetch reaches it.
+async fn provider_of(ctx: &DaemonContext, account: &str) -> Result<Arc<dyn Provider>, OpError> {
+    match ctx.sync.body_target(account).await? {
+        Reach::Ready(target) => Ok(target.provider),
+        Reach::Unavailable(error) => Err(error),
+    }
 }
 
-/// `source` with its body: fetched first when the store has none. A body still missing
-/// after the fetch imports as empty text.
+/// `source` with its body: fetched first when the store has none. A fetch that fails fails
+/// the import; a body Gmail no longer has, or Rail cannot read, imports as empty text.
 async fn with_body(
     ctx: &DaemonContext,
     account: &str,
@@ -173,7 +169,11 @@ async fn with_body(
         account: account.to_string(),
         message_ids: vec![source.remote_id.clone()],
     };
-    crate::sync::body_fetch::run(ctx, request).await?;
+    let response = crate::sync::body_fetch::run(ctx, request).await?;
+    if let Some(BodyOutcome::Failed(error)) = response.results.into_iter().next().map(|r| r.outcome)
+    {
+        return Err(error);
+    }
     let (db, message) = (ctx.paths.db_file(), source.message);
     let fetched = ctx
         .blocking(move || read_source(&db, message))
@@ -189,10 +189,10 @@ async fn with_body(
     Ok(fetched)
 }
 
-/// The local draft an import writes: the source's recipients, text, threading and parts, and
-/// its own `Message-ID` when the MIME builder accepts it (`header_id` checks the inner part
+/// The local draft an import writes: the source's recipients, text and threading, the files
+/// fetched for its attachments, and its own `Message-ID` when the MIME builder accepts it (`header_id` checks the inner part
 /// with `valid_message_id_inner`), a fresh one otherwise.
-fn import_write(source: ImportSource, address: &str) -> DraftWrite {
+fn import_write(source: ImportSource, files: Vec<Attachment>, address: &str) -> DraftWrite {
     let in_reply_to = source.in_reply_to.as_deref().and_then(header_id);
     let references: Vec<String> = source
         .references
@@ -204,17 +204,6 @@ fn import_write(source: ImportSource, address: &str) -> DraftWrite {
         .as_deref()
         .and_then(header_id)
         .unwrap_or_else(|| new_message_id(address));
-    let attachments = source
-        .attachments
-        .into_iter()
-        .map(|a| Attachment::Part {
-            message: source.message,
-            part: a.part_id,
-            name: a.filename,
-            mime: a.mime_type,
-            size: a.size,
-        })
-        .collect();
     DraftWrite {
         id: None,
         account_id: source.account_id,
@@ -232,46 +221,134 @@ fn import_write(source: ImportSource, address: &str) -> DraftWrite {
         bcc: source.bcc.into_iter().map(Into::into).collect(),
         subject: source.subject,
         body: source.body_text.unwrap_or_default(),
-        attachments,
+        attachments: files,
         message_id,
     }
+}
+
+/// The import's write, with the Gmail ids. The draft the token answers must hold the
+/// imported message; `dir` is removed unless the stored draft names it.
+struct ImportWrite {
+    write: DraftWrite,
+    remote_draft_id: String,
+    remote_message_id: String,
+    client_token: String,
+    dir: PathBuf,
+}
+
+/// The stored draft is the one this import wrote: it holds `remote`. `dir` goes unless the
+/// draft names it.
+fn verified(db: &Path, id: DraftId, remote: &str, dir: PathBuf) -> Result<DraftId, OpError> {
+    let draft = Store::open_reader(db)?.draft(id)?;
+    let owns = |d: &Draft| owned_dirs_contain(d, &dir);
+    if !draft.as_ref().is_some_and(owns) {
+        remove_dirs(std::slice::from_ref(&dir));
+    }
+    match draft {
+        Some(d) if d.remote_message_id.as_deref() == Some(remote) => Ok(id),
+        Some(_) => Err(token_used()),
+        None => Err(no_such_draft()),
+    }
+}
+
+fn owned_dirs_contain(draft: &Draft, dir: &Path) -> bool {
+    draft.attachments.iter().any(|a| match a {
+        Attachment::File { path, .. } => Path::new(path).parent() == Some(dir),
+        Attachment::Part { .. } => false,
+    })
+}
+
+async fn write_import(ctx: &DaemonContext, import: ImportWrite) -> Result<DraftId, OpError> {
+    let ImportWrite {
+        write,
+        remote_draft_id,
+        remote_message_id,
+        client_token,
+        dir,
+    } = import;
+    let written = async {
+        let outcome = ctx
+            .sync
+            .writer(ctx)
+            .await?
+            .outbox(OutboxWrite::DraftImport {
+                write: Box::new(write),
+                remote_draft_id,
+                remote_message_id: remote_message_id.clone(),
+                client_token,
+            })
+            .await?;
+        saved_id(outcome)
+    }
+    .await;
+    let id = match written {
+        Ok(id) => id,
+        Err(e) => {
+            remove_dirs(std::slice::from_ref(&dir));
+            return Err(e);
+        }
+    };
+    let db = ctx.paths.db_file();
+    ctx.blocking(move || verified(&db, id, &remote_message_id, dir))
+        .await
+}
+
+/// Everything Gmail holds of the import: the draft's id, the body (fetched when the store
+/// has none) and the attachments as files under the token's directory.
+async fn from_gmail(
+    ctx: &DaemonContext,
+    account: &str,
+    source: ImportSource,
+    token: &str,
+) -> Result<(String, ImportSource, Vec<Attachment>, PathBuf), OpError> {
+    let provider = provider_of(ctx, account).await?;
+    let remote_draft_id = provider
+        .draft_find(&source.remote_id)
+        .await?
+        .ok_or_else(|| OpError::not_found("Gmail no longer has this draft"))?;
+    let mut source = with_body(ctx, account, source).await?;
+    let (dir, parts) = (
+        import_dir(&ctx.paths, token),
+        std::mem::take(&mut source.attachments),
+    );
+    let remote = source.remote_id.clone();
+    let files = fetch_into(ctx, provider.as_ref(), &remote, parts, dir.clone()).await?;
+    Ok((remote_draft_id, source, files, dir))
 }
 
 pub(super) async fn import(
     call: Call,
     request: DraftImportRequest,
 ) -> Result<DraftImportResponse, OpError> {
-    checked(&request.client_token)?;
+    checked_client_token(&request.client_token)?;
     if request.message <= 0 {
         return Err(no_such_message());
     }
-    let ctx = &call.ctx;
+    let (ctx, token) = (&call.ctx, request.client_token);
     let target = ctx.sync.action_target(ctx, &request.account).await?;
     let source = import_source(ctx, request.message, target.account_id).await?;
-    let (db, remote) = (ctx.paths.db_file(), source.remote_id.clone());
+    let _imports = IMPORTS.lock().await;
+    let (db, remote, held) = (ctx.paths.db_file(), source.remote_id.clone(), token.clone());
     let account_id = target.account_id;
     if let Some(draft) = ctx
-        .blocking(move || existing_import(&db, account_id, &remote))
+        .blocking(move || earlier_import(&db, account_id, &remote, &held))
         .await?
     {
         return Ok(DraftImportResponse { draft });
     }
-    let remote_draft_id = gmail_draft(ctx, &request.account, &source.remote_id).await?;
-    let source = with_body(ctx, &request.account, source).await?;
+    let (remote_draft_id, source, files, dir) =
+        from_gmail(ctx, &request.account, source, &token).await?;
+    let count = files.len();
     let remote_message_id = source.remote_id.clone();
-    let write = import_write(source, &target.address);
-    let outcome = ctx
-        .sync
-        .writer(ctx)
-        .await?
-        .outbox(OutboxWrite::DraftImport {
-            write: Box::new(write),
-            remote_draft_id,
-            remote_message_id,
-            client_token: request.client_token,
-        })
-        .await?;
-    let draft = saved_id(outcome)?;
-    tracing::info!(account = %target.name, draft, message = request.message, "a Gmail draft was imported");
+    let import = ImportWrite {
+        write: import_write(source, files, &target.address),
+        remote_draft_id,
+        remote_message_id,
+        client_token: token,
+        dir,
+    };
+    let draft = write_import(ctx, import).await?;
+    let message = request.message;
+    tracing::info!(account = %target.name, draft, message, files = count, "a Gmail draft was imported");
     Ok(DraftImportResponse { draft })
 }
