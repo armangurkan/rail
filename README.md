@@ -19,7 +19,7 @@ up without ever seeing your secrets.
 
 > **Rail is pre-1.0.** Account setup, background sync, search, reading mail, acting on threads
 > (archive, trash, star, read) and writing mail (new messages, replies and forwards, with undo
-> send) work today for Gmail; Microsoft 365 sync is next.
+> send) work today for Gmail; drafts pushed to Gmail come next, then Microsoft 365 sync.
 
 ## Contents
 
@@ -327,7 +327,7 @@ line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond th
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`
-for Microsoft 365 accounts). After the state come `2 queued` for actions on their way to Gmail
+for Microsoft 365 accounts). After the state come `sending…` while a message is on its way to Gmail, `2 queued` for actions on their way to Gmail
 and `1 failed` for actions Gmail refused; see [Doing things to mail](#doing-things-to-mail).
 With threads selected, `3 selected` leads the bar. Next to the accounts it shows whether the
 daemon can be reached (`connecting to the daemon…`, `daemon unreachable`, or
@@ -494,7 +494,7 @@ limit; an over-size message says its size), 10 MiB of text and a one-line subjec
 cleaned before they are sent. Attachments come from files you name by path; a forward carries the
 original's attachments along, and they count in the total. Only regular files can be attached, and
 they are read when the message goes out: one that was moved or deleted in the meantime fails the
-send (`the draft's attachments could not be read`) and the review opens again.
+send (`Could not send: could not read the attachment "<name>"`) and the review opens again.
 
 **Your address and signature.** `From:` is the account's address, with `from_name` before it when
 set. A `signature` file is added under `-- ` to every new message, reply and forward. Both are
@@ -730,8 +730,9 @@ so they must still be there then); the editor's working file lives in the `compo
 folder of the cache directory until a save succeeds. HTML bodies
 are converted to text by Rail's own scanner without running scripts or loading anything remote, so
 syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
-finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail does not
-change or delete mail on the server.
+finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail changes mail on
+the server only when you act on it (archive, trash, star, read, labels, move) or send; it never
+deletes mail permanently, and the daemon is the only process that talks to Gmail.
 
 Remote content in mail is loaded only by your browser, never by Rail, and only when you ask for
 it: `o` opens a message's HTML there, after you confirm once per session, and `g x` opens a link
@@ -974,7 +975,7 @@ their own.
 | The login URL did not open in a browser | Select it on screen and open it while Rail is still running. |
 | The editor opens and Rail comes straight back with the message unchanged | A graphical editor that returns at once. Give it its wait flag in `general.editor`, e.g. `editor = "code --wait"`. |
 | `cannot run "vi"` (or your editor's name) when writing | No editor was found: `general.editor`, `$VISUAL` and `$EDITOR` are unset or name a program that is not installed, and `vi` is missing. Set `general.editor`. |
-| `Could not send: Gmail refused the request (HTTP 400)` | Gmail rejected something in the message, most often a recipient. The review opens again: fix the address with `t` and send again. |
+| `Could not send: Gmail refused the request (HTTP 400)` | Gmail refused the message and did not say why. The review opens again: check the addresses with `t` and send again. |
 
 ### Microsoft sign-in errors
 
