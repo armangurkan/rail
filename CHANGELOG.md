@@ -12,7 +12,18 @@ All notable changes to Rail are recorded here. The format follows
   (`general.editor`, `$VISUAL`, `$EDITOR`, `vi`) and reviewed in Rail; `To:` completion from the
   addresses your mail has taught the store; attachments by path and forwarded attachments; send
   through the outbox with the 10 second `z` undo, never sent twice; local drafts kept on every
-  editor round and reopened with `:drafts`; `from_name` and `signature` per account.
+  editor round and reopened with `:drafts` or from the Drafts folder; `from_name` and `signature` per account.
+- Drafts on Gmail: `s` on the review saves the draft to Gmail's Drafts after the ten second undo
+  (`z` cancels it), creating the Gmail draft once and updating it after; Rail's version wins over
+  an edit made elsewhere. A draft that is sent has its Gmail copy deleted; a failed delete is
+  listed in `:errors`. A Gmail draft written elsewhere opens at its review, with its attachments
+  fetched once into private files the daemon owns (`draft-files` in the data directory, removed
+  when the draft is discarded and swept at daemon start).
+- The Drafts folder: each account's `Drafts` in the sidebar lists local and Gmail drafts in one
+  pane (`Enter` resumes or imports, `d` discards); `:drafts` lists the same rows and merges every
+  account's in the unified inbox. Thread actions there say `Not available on drafts`.
+- `draft.push` and `draft.import` operations (terminal only; the MCP tool list is unchanged).
+  `OutboxDepth` gains `saving`, the drafts being saved to Gmail, shown as `saving to Gmail…`.
 - Store schema v7: `drafts`, a stored `Reply-To`, outbox rows keyed by draft.
 - `draft.save`, `draft.send` and `draft.discard` operations (terminal only); `action.undo` and
   `action.retry` now take the client token of the row they act on.

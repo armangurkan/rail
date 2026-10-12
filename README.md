@@ -19,7 +19,7 @@ up without ever seeing your secrets.
 
 > **Rail is pre-1.0.** Account setup, background sync, search, reading mail, acting on threads
 > (archive, trash, star, read) and writing mail (new messages, replies and forwards, with undo
-> send) work today for Gmail; drafts pushed to Gmail come next, then Microsoft 365 sync.
+> send, and drafts saved to Gmail) work today for Gmail; Microsoft 365 sync comes next.
 
 ## Contents
 
@@ -57,16 +57,16 @@ up without ever seeing your secrets.
   [Doing things to mail](#doing-things-to-mail), including labelling (`l`) and moving (`m`).
 - Writing mail: a new message, a reply, a reply to everyone or a forward, written in your own
   editor, reviewed in Rail and sent through Gmail with a ten second undo; drafts kept on this
-  machine. See [Writing mail](#writing-mail).
+  machine or saved to Gmail's Drafts, and a Drafts folder that lists both. See
+  [Writing mail](#writing-mail).
 - `rail doctor`, a single health check for config, store, tokens, sync and the daemon.
 - An MCP server (`rail mcp`) for setting up and inspecting Rail from an AI agent.
 
 **Coming**
 
-- Next: drafts pushed to Gmail's Drafts folder, so a draft started in Rail opens on your phone.
-- Then: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
+- Next: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
   sync, cannot write mail and are searched locally only.
-- After that: agent tools for drafts and sends, governed by the per-account `ai_send` policy.
+- After that: agent tools for drafts and sends, the last piece of mail work, governed by the per-account `ai_send` policy.
 - Later: search operators, layout options, inline images, display-quality HTML in the
   terminal.
 
@@ -489,27 +489,47 @@ error (`Could not send: Gmail refused the request (HTTP 400)`) and the failure i
 
 **Drafts.** Every editor round, header change and attachment change saves the message in the
 local store, so a crash or a closed terminal loses nothing. A reply whose original message has
-since left the store keeps its threading. A draft stays on this machine until you press `s` on its review: Rail saves any
-text not stored yet, saves the draft to Gmail's Drafts ten seconds later, closes the review and
-says `saved to Gmail · z undoes`; `z` inside that window cancels it (`kept on this computer`). A
-push Gmail refuses keeps the review open (`Could not save to Gmail: …`); one that fails later is
-listed in `:errors` (`Could not save the draft to Gmail: …`), where `Enter` retries it.
+since left the store keeps its threading. A draft stays on this computer until you press `s` on
+its review: Rail saves any text not stored yet, saves the draft to Gmail's Drafts ten seconds
+later, closes the review and says `saved to Gmail · z undoes`. `z` inside that window cancels it
+(`kept on this computer`). Pressing `s` again inside the ten seconds makes one save with the newest
+text, and `z` after it cancels that save. `s` is refused when the message holds nothing at all.
+The status bar shows `saving to Gmail…` while a save is on its way. A save Gmail refuses on the
+spot keeps the review open (`Could not save to Gmail: …`); one that fails later is listed in
+`:errors` (`Could not save the draft to Gmail: …`), where `Enter` retries it. The first save
+creates the draft in Gmail and the next ones update it, so the draft keeps one place in Gmail's
+Drafts and opens on your phone. Rail's version wins: if the same draft was also edited in Gmail,
+the next `s` overwrites that edit. Sending a draft that was saved to Gmail deletes its Gmail copy
+once the message is sent; if that delete fails it is listed in `:errors`, where `Enter` retries it.
+
+Creating the Gmail draft is tried once and never repeated inside one attempt, as a send is. When
+that attempt may have reached Gmail but its answer was lost, the retry later can leave a second
+copy of the draft in Gmail's Drafts. Delete the extra one there; updating a draft, deleting it
+and listing drafts are retried freely and cannot do this.
 
 **The Drafts folder.** Each account's `Drafts` in the sidebar lists its drafts in one pane, newest
-first: the drafts saved on this computer and the Gmail drafts written elsewhere (on your phone, in
-the browser). A row shows the date, the recipients and the subject, like a thread; a draft kept
-only on this computer says `(local)` where the recipients go and has `✎` (`*` with ASCII icons)
-before its subject, and a draft saved to Gmail is listed once. `Enter` opens a draft at its
-review; a Gmail draft is fetched first (`fetching the draft…`) and from then on is a draft of
-this computer too, its Gmail copy updated by `s`. `d` asks `Discard this draft? (y/n)`; yes
-deletes it, and its Gmail copy with it. While a save to Gmail is still on its way the discard is
-refused (`draft: saving to Gmail, try again in a moment`): try again once it has landed. A Gmail
-draft that was deleted elsewhere in the meantime says `Gmail no longer has this draft`. Archive,
-star, read, labels, move, select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`,
-`space`, `r`, `R`, `f`, `/`) say `Not available on drafts`. The pane is read again whenever sync
-or the outbox changes something. `:drafts` (`Open a draft` in the palette) lists the same rows
-for the account in view; in the unified inbox it merges every account's, and `Enter` opens one
-the same way.
+first, up to 500: the drafts saved on this computer and the Gmail drafts written elsewhere (on
+your phone, in the browser). A row shows the date, the recipients and the subject, like a thread;
+a draft kept only on this computer says `(local)` where the recipients go and has `✎` (`*` with
+ASCII icons) before its subject, and a draft saved to Gmail is listed once. `Enter` opens a draft
+at its review. A Gmail draft is fetched first (`fetching the draft…`), together with its
+attachments, and from then on is a draft of this computer too, its Gmail copy updated by `s`. `d`
+asks `Discard this draft? (y/n)`; yes deletes it, and its Gmail copy with it. While a save to Gmail
+is still on its way the discard is refused (`draft: saving to Gmail, try again in a moment`): try
+again once it has landed. A Gmail draft that was deleted elsewhere before you opened or discarded
+it says `Gmail no longer has this draft`; one that cannot be fetched says `Could not open the
+draft: …` or `Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
+select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`, `space`, `r`, `R`, `f`, `/`) say
+`Not available on drafts`; `Esc` does nothing there and `c` writes a new message as everywhere.
+The filter line is hidden in this folder. The pane is read again whenever sync or the outbox
+changes something. `:drafts` (`Open a draft` in the palette) lists the same rows for the account
+in view; in the unified inbox it merges every account's, and `Enter` opens one the same way.
+
+**Files of an imported draft.** The attachments of a Gmail draft are fetched once, when you open
+it, into private files the daemon keeps in the `draft-files` folder of the data directory
+(folders 0700, files 0600). Later saves and the send use those files, not Gmail's copy. Discarding
+the draft removes its files; when the daemon starts it removes every file no draft refers to, which
+is also how the files of a draft that was sent go.
 
 **Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
 limit), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger
@@ -748,16 +768,21 @@ and written atomically.
 **What is stored locally.** For each Gmail account, `rail.db` holds every label; the envelope
 (sender, recipients, subject, date, flags, labels, snippet) of every message inside
 `history_days` (the whole mailbox by default); the text of bodies for threads with mail newer than
-`body_cache_days`; and attachment names, types and sizes (never attachment contents). Drafts you write are kept
+`body_cache_days`; and attachment names, types and sizes (never attachment contents, except those of a Gmail draft you open, below). Drafts you write are kept
 there too, with the paths of the files you attached (the files are read when the message is sent,
-so they must still be there then); the editor's working file lives in the `compose`
+so they must still be there then). A draft saved to Gmail also lives in Gmail's Drafts, which sync
+brings in like other mail. Opening a Gmail draft copies its attachments into private files owned by
+the daemon (the `draft-files` folder of the data directory, 0600 files in 0700 folders; see
+[Writing mail](#writing-mail)); discarding the draft removes them, and the daemon removes any no
+draft refers to when it starts. The editor's working file lives in the `compose`
 folder of the cache directory until a save succeeds, and one a crash left behind is removed when
 the mail screen next starts, once it is seven days old. HTML bodies
 are converted to text by Rail's own scanner without running scripts or loading anything remote, so
 syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
 finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail changes mail on
-the server only when you act on it (archive, trash, star, read, labels, move) or send; it never
-deletes mail permanently, and the daemon is the only process that talks to Gmail.
+the server only when you act on it (archive, trash, star, read, labels, move), send, or save or discard a
+draft. It never deletes mail permanently, except a Gmail draft you discard, and the daemon is the
+only process that talks to Gmail.
 
 Remote content in mail is loaded only by your browser, never by Rail, and only when you ask for
 it: `o` opens a message's HTML there, after you confirm once per session, and `g x` opens a link
@@ -880,8 +905,8 @@ ai_send = "confirm"
 - `client`: Rail relies on your MCP client's own per-call approval prompt. The weakest option.
 
 The policy will cover sending, replying, forwarding and deleting. The operations that save, send
-and discard a draft exist (`draft.save`, `draft.send`, `draft.discard`) and Rail's own terminal
-uses them, but they are not offered over MCP: no agent tool for mail exists yet, so today the key
+and discard a draft, save one to Gmail and import one from Gmail exist (`draft.save`,
+`draft.send`, `draft.discard`, `draft.push`, `draft.import`) and Rail's own terminal uses them, but they are not offered over MCP: no agent tool for mail exists yet, so today the key
 is only recorded and reported (`rail doctor`, `rail_status`, `rail_accounts_list`).
 
 ### Tokens in 1Password
@@ -926,6 +951,7 @@ in concealed fields. Values reach `op` only on its standard input, never as comm
 | Presets | `~/.config/rail/presets/*.toml`, `/etc/rail/presets/*.toml` | `~/Library/Application Support/rail/presets/*.toml`, `/etc/rail/presets/*.toml` |
 | Store | `~/.local/share/rail/rail.db` | `~/Library/Application Support/rail/rail.db` |
 | Token file (`secrets = "file"`) | `~/.local/share/rail/secrets.json` | `~/Library/Application Support/rail/secrets.json` |
+| Attachments of imported Gmail drafts | `~/.local/share/rail/draft-files/` | `~/Library/Application Support/rail/draft-files/` |
 | Log | `~/.local/state/rail/rail.log` | `~/Library/Application Support/rail/rail.log` |
 | Daemon socket | `$XDG_RUNTIME_DIR/rail/rail.sock` (the state directory when there is no runtime directory) | `~/Library/Application Support/rail/rail.sock` |
 | Login unit | `~/.config/systemd/user/rail.service` (under `$XDG_CONFIG_HOME` when set) | `~/Library/LaunchAgents/io.github.vitosans.rail.plist` |
@@ -997,6 +1023,9 @@ their own.
 | `rail doctor` warns that the login unit does not match this binary | You moved or reinstalled `rail` elsewhere; run `rail daemon install` again. |
 | A first sync is taking hours | Expected for a large mailbox; set `history_days` to sync only recent mail. `rail doctor` and `rail_sync_status` show progress. |
 | Colours look wrong or a theme does nothing inside tmux | Add `set -as terminal-features ",xterm-256color:RGB"` (tmux 3.2+) or `set -ga terminal-overrides ",*:Tc"` to `~/.tmux.conf`, and make sure `COLORTERM=truecolor` reaches the shell inside tmux. |
+| `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |
+| `draft: saving to Gmail, try again in a moment` | A save of this draft to Gmail is still on its way, so it cannot be discarded yet. Wait for `saving to Gmail…` to leave the status bar and press `d` again. |
+| Two copies of one draft in Gmail's Drafts | Creating a Gmail draft is tried once; a failure that hid a success can leave a second copy. Delete the extra one in Gmail. |
 | The login URL did not open in a browser | Select it on screen and open it while Rail is still running. |
 | The editor opens and Rail comes straight back with the message unchanged | A graphical editor that returns at once. Give it its wait flag in `general.editor`, e.g. `editor = "code --wait"`. |
 | `cannot run "vi"` (or your editor's name) when writing | No editor was found: `general.editor`, `$VISUAL` and `$EDITOR` are unset or name a program that is not installed, and `vi` is missing. Set `general.editor`. |
