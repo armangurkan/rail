@@ -9,11 +9,14 @@ use std::time::Duration;
 use rail_core::daemon::wire::Notification;
 use rail_core::daemon::{Connector, DaemonClient};
 use rail_core::error::ErrorClass;
-use rail_core::ops::op::{ActionApply, ActionRetry, ActionUndo, BodyFetch, SyncNow, SyncStatus};
+use rail_core::ops::op::{
+    ActionApply, ActionRetry, ActionUndo, BodyFetch, DraftDiscard, DraftSave, DraftSend, SyncNow,
+    SyncStatus,
+};
 use rail_core::ops::{
     AccountSyncStatus, ActionApplyRequest, ActionFailed, ActionRetryRequest, ActionUndoRequest,
-    BodyFetchRequest, ErrorCode, OpError, OutboxId, SyncNowRequest, SyncStatusRequest,
-    client_token, names,
+    BodyFetchRequest, DraftDiscardRequest, DraftId, DraftSaveRequest, DraftSendRequest, ErrorCode,
+    OpError, RowToken, SyncNowRequest, SyncStatusRequest, names,
 };
 use tokio::sync::broadcast::{self, error::RecvError};
 
@@ -34,6 +37,32 @@ pub struct ApplyCall {
     pub threads: Vec<i64>,
     pub action: rail_core::ops::Action,
     pub grace: bool,
+    /// Made by the screen, one per call, so a resend finds its row and undo or retry can name
+    /// the row with the token it was queued under.
+    pub client_token: String,
+}
+
+/// One `draft.save` the composer sends; `seq` ties the answer to the save that asked.
+#[derive(Clone)]
+pub struct SaveCall {
+    pub seq: u64,
+    pub request: DraftSaveRequest,
+}
+
+/// Counts and the kind only: a save carries the message being written.
+impl std::fmt::Debug for SaveCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let request = &self.request;
+        f.debug_struct("SaveCall")
+            .field("seq", &self.seq)
+            .field("kind", &request.kind)
+            .field(
+                "recipients",
+                &(request.to.len() + request.cc.len() + request.bcc.len()),
+            )
+            .field("attachments", &request.attachments.len())
+            .finish()
+    }
 }
 
 #[derive(Clone)]
@@ -111,7 +140,7 @@ impl DaemonLink {
         }
     }
 
-    /// Apply `call`'s action; a fresh client token per press, so a resend finds its row.
+    /// Apply `call`'s action under the call's client token.
     pub fn apply(&self, call: ApplyCall) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
@@ -120,10 +149,16 @@ impl DaemonLink {
                     threads: call.threads.clone(),
                     action: call.action.clone(),
                     grace: call.grace,
-                    client_token: client_token(),
+                    client_token: call.client_token.clone(),
                 };
                 let result = connector.call::<ActionApply>(&request).await;
-                send(&sink, MailEvent::Applied { call, result });
+                send(
+                    &sink,
+                    MailEvent::Applied {
+                        call: Box::new(call),
+                        result,
+                    },
+                );
             }),
             #[cfg(test)]
             Link::Fake(fake) => job(move |sink| async move { fake.apply(&sink, call) }),
@@ -131,7 +166,7 @@ impl DaemonLink {
     }
 
     /// Take back the rows of the action with this `seq`.
-    pub fn undo(&self, seq: u64, rows: Vec<OutboxId>) -> Effect {
+    pub fn undo(&self, seq: u64, rows: Vec<RowToken>) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
                 let result = connector
@@ -145,16 +180,76 @@ impl DaemonLink {
     }
 
     /// Send a failed row again.
-    pub fn retry(&self, row: OutboxId) -> Effect {
+    pub fn retry(&self, row: RowToken) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
-                let result = connector
-                    .call::<ActionRetry>(&ActionRetryRequest { row })
-                    .await;
-                send(&sink, MailEvent::Retried { row, result });
+                let id = row.row;
+                let request = ActionRetryRequest {
+                    row: row.row,
+                    client_token: row.client_token,
+                };
+                let result = connector.call::<ActionRetry>(&request).await;
+                send(&sink, MailEvent::Retried { row: id, result });
             }),
             #[cfg(test)]
             Link::Fake(fake) => job(move |sink| async move { fake.retry(&sink, row) }),
+        }
+    }
+
+    /// Create or update a draft in the daemon.
+    pub fn draft_save(&self, call: SaveCall) -> Effect {
+        match self.link.clone() {
+            Link::Daemon(connector) => job(move |sink| async move {
+                let result = connector.call::<DraftSave>(&call.request).await;
+                send(
+                    &sink,
+                    MailEvent::DraftSaved {
+                        seq: call.seq,
+                        result,
+                    },
+                );
+            }),
+            #[cfg(test)]
+            Link::Fake(fake) => job(move |sink| async move { fake.draft_save(&sink, call) }),
+        }
+    }
+
+    /// Queue `draft` to be sent under `client_token` (which `z` and a retry name it by).
+    pub fn draft_send(&self, seq: u64, draft: DraftId, client_token: String) -> Effect {
+        match self.link.clone() {
+            Link::Daemon(connector) => job(move |sink| async move {
+                let request = DraftSendRequest {
+                    draft,
+                    client_token: client_token.clone(),
+                };
+                let result = connector.call::<DraftSend>(&request).await;
+                let event = MailEvent::DraftSent {
+                    seq,
+                    draft,
+                    client_token,
+                    result,
+                };
+                send(&sink, event);
+            }),
+            #[cfg(test)]
+            Link::Fake(fake) => {
+                job(move |sink| async move { fake.draft_send(&sink, seq, draft, client_token) })
+            }
+        }
+    }
+
+    /// Delete `draft` (the daemon refuses while it is being sent).
+    pub fn draft_discard(&self, draft: DraftId) -> Effect {
+        match self.link.clone() {
+            Link::Daemon(connector) => job(move |sink| async move {
+                let result = connector
+                    .call::<DraftDiscard>(&DraftDiscardRequest { draft })
+                    .await
+                    .map(|_| ());
+                send(&sink, MailEvent::DraftDiscarded { draft, result });
+            }),
+            #[cfg(test)]
+            Link::Fake(fake) => job(move |sink| async move { fake.draft_discard(&sink, draft) }),
         }
     }
 }
@@ -268,6 +363,19 @@ pub struct FakeDaemon {
     pub retry_answer:
         std::sync::Mutex<Option<Result<rail_core::ops::ActionRetryResponse, OpError>>>,
     pub next_row: std::sync::atomic::AtomicI64,
+    /// Runs with each `draft.save` before the fake answers (a test checks or stores the draft
+    /// here); its answer is the fake's. A fresh draft id and `<fake@example.com>` when unset.
+    #[allow(clippy::type_complexity, reason = "a test hook, named once")]
+    pub on_save: std::sync::Mutex<
+        Option<
+            Box<dyn FnMut(&SaveCall) -> Result<rail_core::ops::DraftSaveResponse, OpError> + Send>,
+        >,
+    >,
+    /// The answer to the next `draft.send`; a fresh row when unset.
+    pub send_answer: std::sync::Mutex<Option<Result<rail_core::ops::DraftSendResponse, OpError>>>,
+    /// The answer to the next `draft.discard`; discarded when unset.
+    pub discard_answer: std::sync::Mutex<Option<Result<(), OpError>>>,
+    pub next_draft: std::sync::atomic::AtomicI64,
 }
 
 #[cfg(test)]
@@ -286,10 +394,23 @@ pub enum FakeCall {
         grace: bool,
     },
     Undo {
-        rows: Vec<OutboxId>,
+        rows: Vec<RowToken>,
     },
     Retry {
-        row: OutboxId,
+        row: RowToken,
+    },
+    DraftSave {
+        kind: rail_core::store::drafts::DraftKind,
+        to: Vec<String>,
+        subject: String,
+        attachments: usize,
+    },
+    DraftSend {
+        draft: DraftId,
+        client_token: String,
+    },
+    DraftDiscard {
+        draft: DraftId,
     },
 }
 
@@ -364,28 +485,103 @@ impl FakeDaemon {
             })
         });
         let result = if self.down() { Err(closed()) } else { result };
-        send(sink, MailEvent::Applied { call, result });
+        send(
+            sink,
+            MailEvent::Applied {
+                call: Box::new(call),
+                result,
+            },
+        );
     }
 
-    fn undo(&self, sink: &TaskSink, seq: u64, rows: Vec<OutboxId>) {
+    fn undo(&self, sink: &TaskSink, seq: u64, rows: Vec<RowToken>) {
         self.record(FakeCall::Undo { rows: rows.clone() });
+        let undone = rows.iter().map(|r| r.row).collect();
         let result = self.undo_answer.lock().unwrap().take().unwrap_or(Ok(
             rail_core::ops::ActionUndoResponse {
-                undone: rows,
+                undone,
                 too_late: vec![],
             },
         ));
         send(sink, MailEvent::Undone { seq, result });
     }
 
-    fn retry(&self, sink: &TaskSink, row: OutboxId) {
-        self.record(FakeCall::Retry { row });
+    fn retry(&self, sink: &TaskSink, row: RowToken) {
+        self.record(FakeCall::Retry { row: row.clone() });
         let result = self
             .retry_answer
             .lock()
             .unwrap()
             .take()
             .unwrap_or(Ok(rail_core::ops::ActionRetryResponse { retried: true }));
-        send(sink, MailEvent::Retried { row, result });
+        send(
+            sink,
+            MailEvent::Retried {
+                row: row.row,
+                result,
+            },
+        );
+    }
+
+    fn draft_save(&self, sink: &TaskSink, call: SaveCall) {
+        use std::sync::atomic::Ordering;
+        let request = &call.request;
+        self.record(FakeCall::DraftSave {
+            kind: request.kind,
+            to: request.to.clone(),
+            subject: request.subject.clone(),
+            attachments: request.attachments.len(),
+        });
+        let hooked = self
+            .on_save
+            .lock()
+            .unwrap()
+            .as_mut()
+            .map(|hook| hook(&call));
+        let result = hooked.unwrap_or_else(|| {
+            Ok(rail_core::ops::DraftSaveResponse {
+                draft: request
+                    .draft
+                    .unwrap_or_else(|| self.next_draft.fetch_add(1, Ordering::SeqCst) + 1),
+                message_id: "<fake@example.com>".to_string(),
+                attachments: Vec::new(),
+            })
+        });
+        let result = if self.down() { Err(closed()) } else { result };
+        send(
+            sink,
+            MailEvent::DraftSaved {
+                seq: call.seq,
+                result,
+            },
+        );
+    }
+
+    fn draft_send(&self, sink: &TaskSink, seq: u64, draft: DraftId, client_token: String) {
+        use std::sync::atomic::Ordering;
+        self.record(FakeCall::DraftSend {
+            draft,
+            client_token: client_token.clone(),
+        });
+        let result = self.send_answer.lock().unwrap().take().unwrap_or_else(|| {
+            Ok(rail_core::ops::DraftSendResponse {
+                row: self.next_row.fetch_add(1, Ordering::SeqCst) + 1,
+            })
+        });
+        let result = if self.down() { Err(closed()) } else { result };
+        let event = MailEvent::DraftSent {
+            seq,
+            draft,
+            client_token,
+            result,
+        };
+        send(sink, event);
+    }
+
+    fn draft_discard(&self, sink: &TaskSink, draft: DraftId) {
+        self.record(FakeCall::DraftDiscard { draft });
+        let result = self.discard_answer.lock().unwrap().take().unwrap_or(Ok(()));
+        let result = if self.down() { Err(closed()) } else { result };
+        send(sink, MailEvent::DraftDiscarded { draft, result });
     }
 }

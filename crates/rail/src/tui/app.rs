@@ -37,6 +37,8 @@ pub enum TaskResult {
     Copied(Result<(), String>),
     /// A mail-screen query or daemon call answered (see `tui::data`).
     Mail(crate::tui::data::MailEvent),
+    /// The editor `Effect::RunEditor` ran has exited: its exit code, or why it could not run.
+    EditorDone(Result<i32, String>),
 }
 
 /// A result tagged with the generation of the job that sent it (see `Tasks`).
@@ -81,6 +83,12 @@ pub enum Effect {
     Copy(String),
     /// Replace the theme (a picker's preview, choice or cancel).
     Theme(Theme),
+    /// Leave the terminal, run `command` on `path` until it exits, take the terminal back,
+    /// then report `TaskResult::EditorDone`. Nothing else runs meanwhile.
+    RunEditor {
+        command: Vec<String>,
+        path: std::path::PathBuf,
+    },
 }
 
 impl std::fmt::Debug for Effect {
@@ -91,6 +99,7 @@ impl std::fmt::Debug for Effect {
             Self::Spawn(_) => f.write_str("Spawn(..)"),
             Self::Copy(_) => f.write_str("Copy(..)"),
             Self::Theme(_) => f.write_str("Theme(..)"),
+            Self::RunEditor { .. } => f.write_str("RunEditor(..)"),
         }
     }
 }

@@ -46,7 +46,7 @@ pub enum Command {
     /// The trash confirmation was answered yes.
     Trash,
     /// Send this failed outbox row again.
-    Retry(rail_core::ops::OutboxId),
+    Retry(rail_core::ops::RowToken),
     /// The label picker's answer: labels to add and to remove.
     Labels {
         add: Vec<i64>,
@@ -58,6 +58,14 @@ pub enum Command {
     Theme(Option<usize>),
     /// `:accent`'s answer.
     Accent(AccentAnswer),
+    /// The account picker's answer: write a new message from account `n` (its position).
+    Account(usize),
+    /// The drafts picker's answer: open this draft in the composer.
+    ResumeDraft(rail_core::ops::DraftId),
+    /// "Keep what you wrote?" was answered yes: use the text the editor left.
+    KeepText,
+    /// "Discard the unsaved changes?" was answered yes: close the composer.
+    DiscardUnsaved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

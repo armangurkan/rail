@@ -11,7 +11,7 @@ use std::time::Duration;
 use super::http::{RetryPolicy, retry_policy_override};
 use super::{
     Body, ChangeSet, Envelope, EnvelopePage, IdPage, PageToken, Profile, Provider, ProviderError,
-    Relabel, RemoteFolder, RemoteId, SyncCursor, Window,
+    Relabel, RemoteFolder, RemoteId, SentReceipt, SyncCursor, Window,
 };
 use crate::provider::FolderKind;
 
@@ -26,12 +26,22 @@ pub(crate) enum Call {
     Envelopes,
     Modify,
     Trash,
+    Send,
+    FindByHeader,
+    Attachment,
 }
 
 pub(crate) enum Change {
     Added(String),
     Deleted(String),
     Relabel(Relabel),
+}
+
+/// One message the mock was asked to send.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SentRaw {
+    pub raw: Vec<u8>,
+    pub thread_id: Option<String>,
 }
 
 pub(crate) struct Mailbox {
@@ -85,6 +95,13 @@ pub(crate) struct Mailbox {
     pub trashed: Vec<RemoteId>,
     /// How long each modify or trash call takes.
     pub action_delay: Duration,
+    /// Every `send` call, in order.
+    pub sent: Vec<SentRaw>,
+    /// `Message-ID` headers the mailbox holds (`<id>`): a send adds its own.
+    pub known_header_ids: HashSet<String>,
+    /// Attachment bytes by (message id, part id).
+    pub attachment_bytes: HashMap<(String, String), Vec<u8>>,
+    pub missing_threads: HashSet<String>, // deleted at Gmail: a send naming one is `NotFound`
 }
 
 impl Default for Mailbox {
@@ -123,6 +140,10 @@ impl Default for Mailbox {
             modifies: Vec::new(),
             trashed: Vec::new(),
             action_delay: Duration::ZERO,
+            sent: Vec::new(),
+            known_header_ids: HashSet::new(),
+            attachment_bytes: HashMap::new(),
+            missing_threads: HashSet::new(),
         }
     }
 }
@@ -513,11 +534,133 @@ impl Provider for MockProvider {
         relabel_threads(&mut m, ids, &["TRASH".into()], &[super::INBOX_LABEL.into()]);
         Ok(())
     }
+
+    async fn send(
+        &self,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Result<SentReceipt, ProviderError> {
+        self.enter(Call::Send, None)?;
+        let delay = self.lock().action_delay;
+        tokio::time::sleep(delay).await;
+        let mut m = self.lock();
+        if thread_id.is_some_and(|t| m.missing_threads.contains(t)) {
+            return Err(ProviderError::NotFound);
+        }
+        m.sent.push(SentRaw {
+            raw: raw.to_vec(),
+            thread_id: thread_id.map(str::to_string),
+        });
+        if let Some(id) = header_message_id(raw) {
+            m.known_header_ids.insert(id);
+        }
+        let n = m.sent.len();
+        Ok(SentReceipt {
+            message_id: Some(format!("sent-{n}")),
+            thread_id: Some(thread_id.map_or_else(|| format!("t-sent-{n}"), str::to_string)),
+        })
+    }
+
+    async fn message_by_header_id(
+        &self,
+        rfc822_message_id: &str,
+    ) -> Result<Option<RemoteId>, ProviderError> {
+        self.enter(Call::FindByHeader, None)?;
+        let m = self.lock();
+        Ok(m.known_header_ids
+            .contains(rfc822_message_id)
+            .then(|| format!("found-{rfc822_message_id}")))
+    }
+
+    async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError> {
+        self.enter(Call::Attachment, None)?;
+        let m = self.lock();
+        m.attachment_bytes
+            .get(&(message.clone(), part.to_string()))
+            .cloned()
+            .ok_or(ProviderError::NotFound)
+    }
+}
+
+/// The `Message-ID` of raw bytes (brackets kept), by a line scan of the header block.
+fn header_message_id(raw: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(raw);
+    for line in text.lines() {
+        if line.is_empty() {
+            return None;
+        }
+        if let (Some(name), Some(value)) = (line.get(..11), line.get(11..))
+            && name.eq_ignore_ascii_case("message-id:")
+        {
+            return Some(value.trim().to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_sent_message_is_found_afterwards_by_its_header_id() {
+        let mock = MockProvider::new();
+        let raw = b"From: a@example.com\r\nMessage-ID: <abc@example.com>\r\n\r\nHi";
+        assert_eq!(
+            mock.message_by_header_id("<abc@example.com>")
+                .await
+                .unwrap(),
+            None
+        );
+        let receipt = mock.send(raw, None).await.unwrap();
+        assert_eq!(receipt.message_id.as_deref(), Some("sent-1"));
+        assert_eq!(receipt.thread_id.as_deref(), Some("t-sent-1"));
+        assert_eq!(
+            mock.message_by_header_id("<abc@example.com>")
+                .await
+                .unwrap(),
+            Some("found-<abc@example.com>".to_string())
+        );
+        let again = mock.send(raw, Some("t9")).await.unwrap();
+        assert_eq!(
+            (
+                again.message_id.as_deref().unwrap(),
+                again.thread_id.as_deref().unwrap()
+            ),
+            ("sent-2", "t9")
+        );
+        let calls: Vec<Call> = mock.with(|m| m.calls.iter().map(|(c, _)| *c).collect());
+        assert_eq!(
+            calls,
+            [
+                Call::FindByHeader,
+                Call::Send,
+                Call::FindByHeader,
+                Call::Send
+            ]
+        );
+        assert_eq!(
+            mock.with(|m| m.sent[1].thread_id.clone()),
+            Some("t9".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn the_mock_serves_attachment_bytes_or_not_found() {
+        let mock = MockProvider::new();
+        mock.with(|m| {
+            m.attachment_bytes
+                .insert(("m1".into(), "p1".into()), vec![1, 2])
+        });
+        assert_eq!(
+            mock.attachment(&"m1".to_string(), "p1").await.unwrap(),
+            [1, 2]
+        );
+        assert!(matches!(
+            mock.attachment(&"m1".to_string(), "p2").await,
+            Err(ProviderError::NotFound)
+        ));
+    }
 
     #[tokio::test]
     async fn the_mock_records_thread_changes_and_plays_them_as_history() {

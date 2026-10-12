@@ -11,6 +11,7 @@ use rail_core::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
 
 use super::*;
 use crate::tui::data::ApplyCall;
+use crate::tui::modals::Target;
 
 /// The fake applies each call to the store as the daemon would (rows ids from the store).
 fn applying(f: &Fixture) {
@@ -311,6 +312,7 @@ async fn the_status_bar_shows_queued_and_failed_rows() {
     s.outbox = OutboxDepth {
         pending: 2,
         failed: 1,
+        sending: 0,
     };
     let effects = f
         .screen
@@ -336,6 +338,8 @@ async fn a_failure_shows_on_the_row_and_in_errors_where_enter_retries() {
         action: MailAction::Archive {},
         error: OpError::not_found("the mail provider no longer has it")
             .with_detail("Not\u{1b}[31m Found"),
+        draft: None,
+        client_token: "tok".into(),
     };
     let effects = f
         .screen
@@ -357,7 +361,7 @@ async fn a_failure_shows_on_the_row_and_in_errors_where_enter_retries() {
             .calls
             .lock()
             .unwrap()
-            .contains(&FakeCall::Retry { row: 7 })
+            .contains(&FakeCall::Retry { row: token(7) })
     );
     assert!(
         !f.screen.actions.failures.contains_key(&top),
@@ -378,13 +382,15 @@ async fn a_failure_sent_again_on_a_reconnect_is_listed_once() {
             threads: vec![top],
             action: MailAction::Archive {},
             error: OpError::not_found("the mail provider no longer has it"),
+            draft: None,
+            client_token: "tok".into(),
         }))
     };
     let retries = |f: &Fixture| {
         f.screen
             .status
             .errors()
-            .filter(|e| e.retry == Some(7))
+            .filter(|e| e.retry == Some(token(7)))
             .count()
     };
     feed(&mut f, failure()).await;
@@ -398,7 +404,7 @@ async fn a_failure_sent_again_on_a_reconnect_is_listed_once() {
             .calls
             .lock()
             .unwrap()
-            .contains(&FakeCall::Retry { row: 7 })
+            .contains(&FakeCall::Retry { row: token(7) })
     );
     feed(&mut f, failure()).await;
     assert_eq!(
@@ -408,6 +414,13 @@ async fn a_failure_sent_again_on_a_reconnect_is_listed_once() {
     );
 }
 
+fn token(row: i64) -> rail_core::ops::RowToken {
+    rail_core::ops::RowToken {
+        row,
+        client_token: "tok".into(),
+    }
+}
+
 async fn feed(f: &mut Fixture, event: MailEvent) {
     let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
     settle(&mut f.screen, effects).await;
@@ -415,13 +428,14 @@ async fn feed(f: &mut Fixture, event: MailEvent) {
 
 fn applied(seq: u64, account: &str, row: i64) -> MailEvent {
     MailEvent::Applied {
-        call: ApplyCall {
+        call: Box::new(ApplyCall {
             seq,
             account: account.into(),
             threads: vec![1],
             action: MailAction::Archive {},
             grace: true,
-        },
+            client_token: format!("tok-{row}"),
+        }),
         result: Ok(ActionApplyResponse {
             rows: vec![row],
             applied: 1,
@@ -436,10 +450,33 @@ fn undo_calls(f: &Fixture) -> Vec<Vec<i64>> {
         .unwrap()
         .iter()
         .filter_map(|c| match c {
-            FakeCall::Undo { rows } => Some(rows.clone()),
+            FakeCall::Undo { rows } => Some(rows.iter().map(|r| r.row).collect()),
             _ => None,
         })
         .collect()
+}
+
+#[tokio::test]
+async fn z_names_each_row_with_the_token_its_call_was_sent_under() {
+    let mut f = fixture(2).await;
+    press(&mut f, KeyCode::Char(' ')).await;
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Char('e'))));
+    feed(&mut f, applied(1, "work", 10)).await;
+    press(&mut f, KeyCode::Char('z')).await;
+    let calls = f.fake.calls.lock().unwrap();
+    assert!(
+        calls.contains(&FakeCall::Undo {
+            rows: vec![token_of(10, "tok-10")]
+        }),
+        "{calls:?}"
+    );
+}
+
+fn token_of(row: i64, token: &str) -> rail_core::ops::RowToken {
+    rail_core::ops::RowToken {
+        row,
+        client_token: token.into(),
+    }
 }
 
 #[tokio::test]
@@ -531,26 +568,28 @@ async fn u_right_after_opening_marks_unread() {
 
 fn applied_rows(seq: u64, account: &str, rows: Vec<i64>) -> MailEvent {
     MailEvent::Applied {
-        call: ApplyCall {
+        call: Box::new(ApplyCall {
             seq,
             account: account.into(),
             threads: vec![1],
             action: MailAction::Archive {},
             grace: true,
-        },
+            client_token: "tok".into(),
+        }),
         result: Ok(ActionApplyResponse { rows, applied: 1 }),
     }
 }
 
 fn apply_failed(seq: u64, account: &str) -> MailEvent {
     MailEvent::Applied {
-        call: ApplyCall {
+        call: Box::new(ApplyCall {
             seq,
             account: account.into(),
             threads: vec![1],
             action: MailAction::Archive {},
             grace: true,
-        },
+            client_token: "tok".into(),
+        }),
         result: Err(OpError::not_found("gone")),
     }
 }

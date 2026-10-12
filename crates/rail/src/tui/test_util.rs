@@ -131,6 +131,8 @@ pub struct Hello {
     pub keys: Vec<KeyEvent>,
     /// Every `TaskResult::Copied` the screen was told about.
     pub copied: Vec<Result<(), String>>,
+    /// Every `TaskResult::EditorDone` the screen was told about.
+    pub edited: Vec<Result<i32, String>>,
     pub on_key: Box<dyn FnMut(KeyEvent) -> Vec<Effect>>,
     /// Quit before the first frame (see `Screen::start`).
     pub quit_at_start: bool,
@@ -143,6 +145,7 @@ impl Default for Hello {
             claims: false,
             keys: Vec::new(),
             copied: Vec::new(),
+            edited: Vec::new(),
             on_key: Box::new(|_| Vec::new()),
             quit_at_start: false,
         }
@@ -158,6 +161,10 @@ impl Screen for Hello {
             }
             Msg::Task(TaskResult::Copied(result)) => {
                 self.copied.push(result);
+                Vec::new()
+            }
+            Msg::Task(TaskResult::EditorDone(result)) => {
+                self.edited.push(result);
                 Vec::new()
             }
             _ => Vec::new(),
@@ -200,6 +207,7 @@ pub fn existing_config() -> Config {
             client_secret: None,
             tenant: None,
             signature: None,
+            from_name: None,
             ai_send: None,
             history_days: None,
             body_cache_days: None,
@@ -464,6 +472,8 @@ pub fn mail_ctx(paths: &Paths, fake: Arc<FakeDaemon>) -> MailContext {
         hyperlinks: false,
         depth: ColorDepth::TrueColor,
         theme_choice: ThemeChoice::default(),
+        editor: vec!["fake".into()],
+        signatures: vec![Some(Ok("work sig".into())), None],
     }
 }
 
@@ -493,17 +503,53 @@ pub fn status(name: &str, address: &str, phase: SyncPhase) -> AccountSyncStatus 
     }
 }
 
+/// A stream factory that hands out `stream` once (for `run_loop` tests that run no editor).
+pub fn once<E>(stream: E) -> impl FnMut() -> E {
+    let mut slot = Some(stream);
+    move || slot.take().expect("the test stream was made once")
+}
+
+/// What a fake editor does to the draft file and what it exits with.
+type EditorHook = Box<dyn FnMut(&Path) -> Result<i32, String> + Send>;
+
+/// The fake editor `settle_capturing` runs for an `Effect::RunEditor`: a test sets the hook,
+/// which may rewrite the file; unset, the editor leaves the file alone and exits 0.
+#[derive(Clone, Default)]
+pub struct Editor(Arc<Mutex<Option<EditorHook>>>);
+
+impl Editor {
+    /// Run `hook` for each `Effect::RunEditor` from now on.
+    pub fn set(&self, hook: impl FnMut(&Path) -> Result<i32, String> + Send + 'static) {
+        *self.0.lock().unwrap() = Some(Box::new(hook));
+    }
+
+    fn run(&self, path: &Path) -> Result<i32, String> {
+        match self.0.lock().unwrap().as_mut() {
+            Some(hook) => hook(path),
+            None => Ok(0),
+        }
+    }
+}
+
 /// Run every job `effects` start, feeding what each reports back to `screen`, until nothing
 /// is left. Each job must finish (the fake daemon's always do); timers really sleep.
 pub async fn settle<S: Screen>(screen: &mut S, effects: Vec<Effect>) {
-    settle_capturing(screen, effects, &Arc::new(Mutex::new(None))).await;
+    settle_capturing(
+        screen,
+        effects,
+        &Arc::new(Mutex::new(None)),
+        &Editor::default(),
+    )
+    .await;
 }
 
-/// `settle`, keeping the last `Effect::Theme` seen in `themes`.
+/// `settle`, keeping the last `Effect::Theme` seen in `themes` and answering each
+/// `Effect::RunEditor` with `editor` (as `TaskResult::EditorDone`).
 pub async fn settle_capturing<S: Screen>(
     screen: &mut S,
     effects: Vec<Effect>,
     themes: &Arc<Mutex<Option<Theme>>>,
+    editor: &Editor,
 ) {
     let mut queue: VecDeque<Effect> = effects.into();
     let mut ran = 0;
@@ -514,6 +560,11 @@ pub async fn settle_capturing<S: Screen>(
             Effect::Spawn(job) => job,
             Effect::Theme(theme) => {
                 *themes.lock().unwrap() = Some(theme);
+                continue;
+            }
+            Effect::RunEditor { path, .. } => {
+                let result = editor.run(&path);
+                queue.extend(screen.update(Msg::Task(TaskResult::EditorDone(result))));
                 continue;
             }
             _ => continue,

@@ -462,6 +462,8 @@ impl SyncManager {
             board: self.board.clone(),
             signal: outbox_signal.clone(),
             clock: Arc::new(unix_now),
+            from_name: account.from_name.clone(),
+            sync_wake: wake.clone(),
         });
         let (stop, stopped) = watch::channel(false);
         let outbox_task = tokio::spawn(worker.run(stopped.clone()));

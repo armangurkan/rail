@@ -31,6 +31,10 @@ pub enum Target {
     /// `:accent`: the accent slot picker.
     Accent,
     Scope(ScopeChoice),
+    /// Write a new message (`c`).
+    Compose,
+    /// `:drafts`: the drafts picker.
+    Drafts,
 }
 
 /// One entry: what it shows (raw: label names are outside text), what it is matched by, and

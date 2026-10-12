@@ -311,6 +311,26 @@ impl crate::provider::Provider for Panics {
     fn list_page_size(&self) -> usize {
         1
     }
+    async fn send(
+        &self,
+        _: &[u8],
+        _: Option<&str>,
+    ) -> Result<crate::provider::SentReceipt, crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
+    async fn message_by_header_id(
+        &self,
+        _: &str,
+    ) -> Result<Option<crate::provider::RemoteId>, crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
+    async fn attachment(
+        &self,
+        _: &crate::provider::RemoteId,
+        _: &str,
+    ) -> Result<Vec<u8>, crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
     async fn profile(&self) -> Result<crate::provider::Profile, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
@@ -635,6 +655,19 @@ impl crate::provider::Provider for RetryingSearch {
     }
     fn list_page_size(&self) -> usize {
         self.inner.list_page_size()
+    }
+    async fn send(
+        &self,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Answer<crate::provider::SentReceipt> {
+        self.inner.send(raw, thread_id).await
+    }
+    async fn message_by_header_id(&self, id: &str) -> Answer<Option<crate::provider::RemoteId>> {
+        self.inner.message_by_header_id(id).await
+    }
+    async fn attachment(&self, message: &crate::provider::RemoteId, part: &str) -> Answer<Vec<u8>> {
+        self.inner.attachment(message, part).await
     }
     async fn changes(
         &self,

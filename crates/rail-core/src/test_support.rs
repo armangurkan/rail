@@ -14,6 +14,7 @@ pub(crate) fn sample_account() -> AccountConfig {
         client_secret: None,
         tenant: None,
         signature: None,
+        from_name: None,
         ai_send: None,
         history_days: None,
         body_cache_days: None,
@@ -437,4 +438,56 @@ impl std::io::Write for Capture {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+/// An in-memory store with one Gmail account, `me@example.com`; the account's id.
+pub(crate) fn store_with_account() -> (crate::store::Store, i64) {
+    let store = crate::store::Store::open_in_memory().unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (name, kind, address) VALUES ('work', 'gmail', 'me@example.com')",
+            [],
+        )
+        .unwrap();
+    let id = store.conn().last_insert_rowid();
+    (store, id)
+}
+
+/// Messages `m1` and `m2` in thread `t1` (message ids `<m1@example.com>`, `<m2@example.com>`,
+/// from `sender@example.com`), and a body for `m1` with one attachment, part `p1`. The two
+/// local message ids.
+pub(crate) fn seed_two_messages(store: &mut crate::store::Store, account_id: i64) -> (i64, i64) {
+    use crate::provider::{AttachmentMeta, Body, mock::envelope};
+    let with_id = |id: &str, ms: i64| crate::provider::Envelope {
+        message_id: Some(format!("<{id}@example.com>")),
+        ..envelope(id, "t1", ms)
+    };
+    let body = Body {
+        text: "the text of m1".into(),
+        attachments: vec![AttachmentMeta {
+            part_id: "p1".into(),
+            filename: "a.pdf".into(),
+            mime_type: "application/pdf".into(),
+            size: 10,
+        }],
+        ..Body::default()
+    };
+    let batch = crate::sync::batch::Batch {
+        upserts: vec![with_id("m1", 1_000), with_id("m2", 2_000)],
+        bodies: vec![("m1".into(), body)],
+        ..crate::sync::batch::Batch::new(account_id)
+    };
+    store.apply(&batch, 1_760_000_000).unwrap();
+    let id = |remote: &str| -> i64 {
+        store
+            .conn()
+            .query_row(
+                "SELECT id FROM messages WHERE account_id = ?1 AND remote_id = ?2",
+                rusqlite::params![account_id, remote],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    (id("m1"), id("m2"))
 }

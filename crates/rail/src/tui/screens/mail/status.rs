@@ -32,7 +32,7 @@ pub struct ErrorEntry {
     pub at: i64,
     pub text: String,
     /// The failed outbox row `Enter` in `:errors` sends again.
-    pub retry: Option<rail_core::ops::OutboxId>,
+    pub retry: Option<rail_core::ops::RowToken>,
 }
 
 #[derive(Debug)]
@@ -141,7 +141,7 @@ impl StatusBar {
         text: String,
         now: i64,
         tick: usize,
-        row: rail_core::ops::OutboxId,
+        row: rail_core::ops::RowToken,
     ) {
         self.error(text, now, tick);
         if let Some(last) = self.errors.back_mut() {
@@ -151,12 +151,18 @@ impl StatusBar {
 
     /// Some `:errors` line still offers to retry `row`.
     pub fn offers_retry(&self, row: rail_core::ops::OutboxId) -> bool {
-        self.errors.iter().any(|e| e.retry == Some(row))
+        self.errors
+            .iter()
+            .any(|e| e.retry.as_ref().is_some_and(|t| t.row == row))
     }
 
     /// A retried row's `:errors` lines no longer offer a retry.
     pub fn retried(&mut self, row: rail_core::ops::OutboxId) {
-        for entry in self.errors.iter_mut().filter(|e| e.retry == Some(row)) {
+        for entry in self
+            .errors
+            .iter_mut()
+            .filter(|e| e.retry.as_ref().is_some_and(|t| t.row == row))
+        {
             entry.retry = None;
         }
     }
@@ -219,6 +225,9 @@ fn account_part(name: &str, status: Option<&AccountSyncStatus>, glyphs: &Glyphs)
         return format!("{name} …");
     };
     let mut part = sync_part(name, s, glyphs);
+    if s.outbox.sending > 0 {
+        part.push_str(" sending…");
+    }
     if s.outbox.pending > 0 {
         part.push_str(&format!(" {} queued", s.outbox.pending));
     }

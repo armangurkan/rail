@@ -95,6 +95,8 @@ pub struct Envelope {
     pub from: Vec<Mailbox>,
     pub to: Vec<Mailbox>,
     pub cc: Vec<Mailbox>,
+    /// The `Reply-To:` header's mailboxes; empty when it is missing.
+    pub reply_to: Vec<Mailbox>,
     pub bcc: Vec<Mailbox>,
     /// The `Date:` header in Unix seconds (the receive time when it is missing or absurd).
     pub date: i64,
@@ -211,4 +213,57 @@ mod tests {
         assert!(PageToken::checked(&"a".repeat(MAX_PAGE_TOKEN_BYTES)).is_some());
         assert!(PageToken::checked(&"a".repeat(MAX_PAGE_TOKEN_BYTES + 1)).is_none());
     }
+}
+
+/// What the daemon sends: every string is user or mail content.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Outgoing {
+    pub from_name: Option<String>,
+    pub from: String,
+    pub to: Vec<Mailbox>,
+    pub cc: Vec<Mailbox>,
+    pub bcc: Vec<Mailbox>,
+    pub subject: String,
+    pub message_id: String,
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
+    pub body: String,
+    pub attachments: Vec<OutgoingAttachment>,
+}
+
+impl std::fmt::Debug for Outgoing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Outgoing")
+            .field(
+                "recipients",
+                &(self.to.len() + self.cc.len() + self.bcc.len()),
+            )
+            .field("body_bytes", &self.body.len())
+            .field("attachments", &self.attachments.len())
+            .finish()
+    }
+}
+
+/// One file of an outgoing message.
+#[derive(Clone, PartialEq, Eq)]
+pub struct OutgoingAttachment {
+    pub name: String,
+    pub mime: String,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for OutgoingAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutgoingAttachment")
+            .field("bytes", &self.bytes.len())
+            .finish()
+    }
+}
+
+/// What the provider answers to an accepted send. `None`s when it accepted the message but
+/// its answer could not be read: still a send.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentReceipt {
+    pub message_id: Option<RemoteId>,
+    pub thread_id: Option<RemoteId>,
 }

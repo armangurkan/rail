@@ -13,14 +13,29 @@ use super::error::OpError;
 /// An outbox row's id.
 pub type OutboxId = i64;
 
+/// A local draft's id (the store's `drafts.id`).
+pub type DraftId = i64;
+
+/// A row id with the client token the caller used when it was queued: undo and retry act only
+/// when both match, so a reused row id can never be undone or resent by mistake.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RowToken {
+    pub row: OutboxId,
+    pub client_token: String,
+}
+
 /// How long an action waits in the outbox before it is sent, so `z` can take it back.
 pub const UNDO_GRACE: Duration = Duration::from_secs(10);
 
-/// An account's outbox: rows waiting (inflight ones too) and rows that failed.
+/// An account's outbox: rows waiting (inflight ones too), rows that failed, and `send` rows
+/// being sent now.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OutboxDepth {
     pub pending: u64,
     pub failed: u64,
+    #[serde(default)]
+    pub sending: u64,
 }
 
 /// The `action.failed` notification: an action Gmail refused for good, already reverted in the
@@ -33,6 +48,12 @@ pub struct ActionFailed {
     pub threads: Vec<i64>,
     pub action: Action,
     pub error: OpError,
+    /// The draft of a draft action.
+    #[serde(default)]
+    pub draft: Option<DraftId>,
+    /// The token the row was queued with, for `action.retry`.
+    #[serde(default)]
+    pub client_token: String,
 }
 
 /// One change to whole threads (every message in them, as Gmail does). Label ids are the
@@ -60,6 +81,19 @@ pub enum Action {
     Move {
         to: i64,
     },
+    /// Send this draft (the daemon builds the message when it sends).
+    Send {
+        draft: DraftId,
+    },
+    /// Create or update this draft in Gmail's Drafts.
+    PushDraft {
+        draft: DraftId,
+    },
+    /// Delete this draft from Gmail's Drafts.
+    DeleteDraft {
+        draft: DraftId,
+        remote_draft_id: String,
+    },
 }
 
 impl Action {
@@ -69,6 +103,23 @@ impl Action {
             Self::Archive {} | Self::Labels { .. } | Self::Move { .. } => "move",
             Self::Star { .. } | Self::Read { .. } => "set_flags",
             Self::Trash {} => "trash",
+            Self::Send { .. } => "send",
+            Self::PushDraft { .. } | Self::DeleteDraft { .. } => "save_draft",
+        }
+    }
+
+    /// The draft a draft action acts on; `None` for an action on threads.
+    pub fn draft_id(&self) -> Option<DraftId> {
+        match self {
+            Self::Send { draft } | Self::PushDraft { draft } | Self::DeleteDraft { draft, .. } => {
+                Some(*draft)
+            }
+            Self::Archive {}
+            | Self::Trash {}
+            | Self::Star { .. }
+            | Self::Read { .. }
+            | Self::Labels { .. }
+            | Self::Move { .. } => None,
         }
     }
 
@@ -117,7 +168,8 @@ pub struct ActionApplyResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ActionUndoRequest {
-    pub rows: Vec<OutboxId>,
+    /// 1 to `MAX_UNDO_ROWS` rows, each with the token it was queued with.
+    pub rows: Vec<RowToken>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -131,6 +183,8 @@ pub struct ActionUndoResponse {
 #[serde(deny_unknown_fields)]
 pub struct ActionRetryRequest {
     pub row: OutboxId,
+    /// The token the row was queued with.
+    pub client_token: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -150,6 +204,18 @@ fn safe_token(token: &str) -> bool {
         && token
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Refused (never quoting it) unless `token` is 1 to `MAX_CLIENT_TOKEN_CHARS` letters, digits,
+/// '-' or '_'.
+pub fn checked_token(token: &str) -> Result<(), OpError> {
+    if safe_token(token) {
+        Ok(())
+    } else {
+        Err(OpError::invalid_input(format!(
+            "a client token is 1 to {MAX_CLIENT_TOKEN_CHARS} letters, digits, '-' or '_'"
+        )))
+    }
 }
 
 /// True when no id appears twice in `ids`.
@@ -199,10 +265,11 @@ impl ActionApplyRequest {
         if self.threads.iter().any(|id| *id <= 0) {
             return Err(OpError::invalid_input("a thread id is a positive number"));
         }
-        if !safe_token(&self.client_token) {
-            return Err(OpError::invalid_input(format!(
-                "a client token is 1 to {MAX_CLIENT_TOKEN_CHARS} letters, digits, '-' or '_'"
-            )));
+        checked_token(&self.client_token)?;
+        if self.action.draft_id().is_some() {
+            return Err(OpError::invalid_input(
+                "a draft action goes through draft.send",
+            ));
         }
         check_labels(&self.action)?;
         let mut seen = HashSet::new();
@@ -234,6 +301,18 @@ mod tests {
                 r#"{"kind":"labels","add":[4],"remove":[5]}"#,
             ),
             (Action::Move { to: 4 }, r#"{"kind":"move","to":4}"#),
+            (Action::Send { draft: 5 }, r#"{"kind":"send","draft":5}"#),
+            (
+                Action::PushDraft { draft: 5 },
+                r#"{"kind":"push_draft","draft":5}"#,
+            ),
+            (
+                Action::DeleteDraft {
+                    draft: 5,
+                    remote_draft_id: "r1".into(),
+                },
+                r#"{"kind":"delete_draft","draft":5,"remote_draft_id":"r1"}"#,
+            ),
         ];
         for (action, json) in cases {
             assert_eq!(serde_json::to_string(&action).unwrap(), json);
@@ -259,6 +338,16 @@ mod tests {
         };
         assert_eq!(labels.label_ids(), [1, 2, 3]);
         assert_eq!(Action::Move { to: 9 }.label_ids(), [9]);
+        assert_eq!(Action::Send { draft: 1 }.kind_column(), "send");
+        assert_eq!(Action::PushDraft { draft: 1 }.kind_column(), "save_draft");
+        let delete = Action::DeleteDraft {
+            draft: 2,
+            remote_draft_id: "r".into(),
+        };
+        assert_eq!(delete.kind_column(), "save_draft");
+        assert_eq!(delete.draft_id(), Some(2));
+        assert_eq!(Action::Send { draft: 1 }.draft_id(), Some(1));
+        assert_eq!(Action::Archive {}.draft_id(), None);
     }
 
     fn request(threads: Vec<i64>, action: Action) -> ActionApplyRequest {
@@ -306,6 +395,17 @@ mod tests {
         };
         assert!(request(vec![1], many).checked().is_err());
         assert!(request(vec![1], Action::Move { to: 0 }).checked().is_err());
+        for draft in [
+            Action::Send { draft: 1 },
+            Action::PushDraft { draft: 1 },
+            Action::DeleteDraft {
+                draft: 1,
+                remote_draft_id: "r".into(),
+            },
+        ] {
+            let error = request(vec![1], draft).checked().unwrap_err();
+            assert_eq!(error.message, "a draft action goes through draft.send");
+        }
     }
 
     /// A repeated label id inside one list is refused (not silently deduplicated).
@@ -336,8 +436,24 @@ mod tests {
         let json =
             r#"{"account":"w","threads":[1],"action":{"kind":"archive"},"client_token":"t","x":1}"#;
         assert!(serde_json::from_str::<ActionApplyRequest>(json).is_err());
-        assert!(serde_json::from_str::<ActionUndoRequest>(r#"{"rows":[1],"x":1}"#).is_err());
-        assert!(serde_json::from_str::<ActionRetryRequest>(r#"{"row":1,"x":1}"#).is_err());
+        let undo = r#"{"rows":[{"row":1,"client_token":"t"}]}"#;
+        assert!(serde_json::from_str::<ActionUndoRequest>(undo).is_ok());
+        assert!(serde_json::from_str::<ActionUndoRequest>(r#"{"rows":[1]}"#).is_err());
+        let extra = r#"{"rows":[{"row":1,"client_token":"t","x":1}]}"#;
+        assert!(serde_json::from_str::<ActionUndoRequest>(extra).is_err());
+        let retry = r#"{"row":1,"client_token":"t"}"#;
+        assert!(serde_json::from_str::<ActionRetryRequest>(retry).is_ok());
+        assert!(
+            serde_json::from_str::<ActionRetryRequest>(r#"{"row":1,"client_token":"t","x":1}"#)
+                .is_err()
+        );
+        assert!(checked_token("tok_1-A").is_ok());
+        for bad in ["", "a b", "tok\n"] {
+            assert!(checked_token(bad).is_err(), "{bad:?}");
+        }
+        // An old depth without `sending` still reads.
+        let depth: OutboxDepth = serde_json::from_str(r#"{"pending":1,"failed":2}"#).unwrap();
+        assert_eq!(depth.sending, 0);
         let token = client_token();
         assert_eq!(token.len(), 24);
         assert!(token.bytes().all(|b| b.is_ascii_alphanumeric()));

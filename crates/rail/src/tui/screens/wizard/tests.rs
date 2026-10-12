@@ -309,7 +309,16 @@ async fn cancel_during_login_leaves_no_config_tokens_or_store_row() {
         key_tx.send(Ok(TermEvent::Key(ctrl('c')))).unwrap();
         key_tx
     };
-    let (result, _keys) = tokio::join!(run_loop(&mut terminal, &mut app, events), driver);
+    let mut handover = ();
+    let (result, _keys) = tokio::join!(
+        run_loop(
+            &mut terminal,
+            &mut app,
+            crate::tui::test_util::once(events),
+            &mut handover,
+        ),
+        driver
+    );
     result.unwrap();
     assert_eq!(ctx.settle().await, crate::tui::effects::Settled::Clean);
     assert!(app.quit);

@@ -5,7 +5,7 @@ use rusqlite::params;
 
 use super::Store;
 use super::outbox::{Failure, NewAction, OutboxOutcome, OutboxWrite};
-use crate::ops::Action;
+use crate::ops::{Action, RowToken};
 use crate::provider::mock::envelope;
 use crate::provider::{FolderKind, RemoteFolder};
 use crate::sync::batch::Batch;
@@ -117,8 +117,28 @@ pub(super) fn enqueue(store: &mut Store, action: Action, threads: Vec<i64>, toke
     }
 }
 
+/// The client token row `id` was queued with; empty for a row the outbox does not hold.
+pub(super) fn token_of(store: &Store, id: i64) -> String {
+    store
+        .conn()
+        .query_row("SELECT client_token FROM outbox WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .unwrap_or_default()
+}
+
+/// Undo `ids` with the tokens they were queued with.
 fn undo(store: &mut Store, ids: Vec<i64>) -> OutboxOutcome {
-    store.outbox_write(&OutboxWrite::Undo { ids }, NOW).unwrap()
+    let rows = ids
+        .into_iter()
+        .map(|row| RowToken {
+            row,
+            client_token: token_of(store, row),
+        })
+        .collect();
+    store
+        .outbox_write(&OutboxWrite::Undo { rows }, NOW)
+        .unwrap()
 }
 
 fn unread_count(store: &Store, t: i64) -> i64 {
@@ -250,7 +270,13 @@ fn a_permanent_failure_of_star_on_keeps_the_later_star_off() {
     assert!(!state(&store)[0].2, "undo of off: unstarred as seeded");
     // Retry brings the star back.
     let retried = store
-        .outbox_write(&OutboxWrite::Retry { id: on }, NOW + 30)
+        .outbox_write(
+            &OutboxWrite::Retry {
+                id: on,
+                client_token: token_of(&store, on),
+            },
+            NOW + 30,
+        )
         .unwrap();
     assert_eq!(retried, OutboxOutcome::Retried(true));
     assert!(state(&store)[0].2 && state(&store)[1].2);

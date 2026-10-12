@@ -10,15 +10,17 @@ pub enum View {
     List,
     Sidebar,
     Reader,
+    Compose,
     Wizard,
 }
 
 impl View {
-    pub const ALL: [View; 5] = [
+    pub const ALL: [View; 6] = [
         View::Global,
         View::List,
         View::Sidebar,
         View::Reader,
+        View::Compose,
         View::Wizard,
     ];
 
@@ -29,6 +31,7 @@ impl View {
             Self::List => "list",
             Self::Sidebar => "sidebar",
             Self::Reader => "reader",
+            Self::Compose => "compose",
             Self::Wizard => "wizard",
         }
     }
@@ -40,6 +43,7 @@ impl View {
             Self::List => "Thread list",
             Self::Sidebar => "Sidebar",
             Self::Reader => "Reader",
+            Self::Compose => "Composer",
             Self::Wizard => "Setup wizard",
         }
     }
@@ -119,6 +123,10 @@ actions! {
     ListRead => "list.read", [List, Reader], ["u"], "Mark read or unread";
     ListLabels => "list.labels", [List, Reader], ["l"], "Add or remove labels";
     ListMove => "list.move", [List, Reader], ["m"], "Move to a label (archives)";
+    ListCompose => "list.compose", [List, Reader], ["c"], "Write a new message";
+    ListReply => "list.reply", [List, Reader], ["r"], "Reply to the latest message";
+    ListReplyAll => "list.reply_all", [List, Reader], ["R"], "Reply to everyone";
+    ListForward => "list.forward", [List, Reader], ["f"], "Forward the latest message";
     ListSelect => "list.select", [List], ["space"], "Select or unselect the thread";
     ListClearSelection => "list.clear_selection", [List], ["esc"], "Clear the selection";
     SidebarFocus => "sidebar.focus", [List, Sidebar], ["tab"], "Move between the sidebar and the list";
@@ -139,6 +147,17 @@ actions! {
     ReaderPageUp => "reader.page_up", [Reader], ["pageup"], "One page up";
     ReaderTop => "reader.top", [Reader], ["home", "g g"], "First line";
     ReaderBottom => "reader.bottom", [Reader], ["end", "G"], "Last line";
+    ComposeSend => "compose.send", [Compose], ["y"], "Send";
+    ComposeEdit => "compose.edit", [Compose], ["e"], "Edit in your editor";
+    ComposeHeaders => "compose.headers", [Compose], ["t"], "Change To, Cc, Bcc or Subject";
+    ComposeAttach => "compose.attach", [Compose], ["a"], "Attach a file";
+    ComposeRemove => "compose.remove", [Compose], ["x"], "Remove the highlighted attachment";
+    ComposeClose => "compose.close", [Compose], ["q", "esc"], "Close and keep the draft";
+    ComposeDiscard => "compose.discard", [Compose], ["d"], "Discard the draft (asks first)";
+    ComposeDown => "compose.down", [Compose], ["j", "down"], "Next line";
+    ComposeUp => "compose.up", [Compose], ["k", "up"], "Previous line";
+    ComposePageDown => "compose.page_down", [Compose], ["pagedown", "space"], "One page down";
+    ComposePageUp => "compose.page_up", [Compose], ["pageup"], "One page up";
     WizardBack => "wizard.back", [Wizard], ["esc"], "Go back one step";
     WizardPortal => "wizard.portal", [Wizard], ["f1"], "Open the provider portal or the preset's help";
     WizardNextField => "wizard.next_field", [Wizard], ["tab"], "Next field";

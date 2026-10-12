@@ -29,6 +29,21 @@ impl Drop for Tui {
     }
 }
 
+/// Give the terminal back to the user (raw mode off, alternate screen left, cursor shown) so a
+/// child process can use it. The guard's once-flag is untouched: a later drop of the `Tui` still
+/// restores exactly once.
+pub fn suspend() -> io::Result<()> {
+    disable_raw_mode()?;
+    execute!(io::stdout(), LeaveAlternateScreen, Show)
+}
+
+/// Take the terminal back after `suspend`. The caller clears ratatui's buffers so the next
+/// frame repaints in full.
+pub fn resume() -> io::Result<()> {
+    enable_raw_mode()?;
+    execute!(io::stdout(), EnterAlternateScreen)
+}
+
 /// Enter raw mode and the alternate screen. The guard exists before the alternate screen
 /// is entered, so every later failure still restores the terminal.
 pub fn enter() -> io::Result<Tui> {

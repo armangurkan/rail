@@ -363,7 +363,18 @@ async fn no_tool_changes_mail() {
     .collect();
     assert_eq!(names, expected, "the tool list is the one pinned here");
     for tool in &tools {
-        let schema = serde_json::to_string(&tool.input_schema).unwrap();
+        // The JSON Schema dialect URI (`…/draft/2020-12/schema`) is not something a tool offers.
+        let mut offered = (*tool.input_schema).clone();
+        if let Some(dialect) = offered.remove("$schema") {
+            assert!(
+                dialect
+                    .as_str()
+                    .is_some_and(|d| d.starts_with("https://json-schema.org/")),
+                "{} hides {dialect} under $schema",
+                tool.name
+            );
+        }
+        let schema = serde_json::to_string(&offered).unwrap();
         for word in [
             "archive",
             "trash",
@@ -374,6 +385,9 @@ async fn no_tool_changes_mail() {
             "action",
             "undo",
             "retry",
+            "draft",
+            "send",
+            "compose",
         ] {
             assert!(
                 !tool.name.contains(word),

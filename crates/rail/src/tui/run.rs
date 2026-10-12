@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
-use futures_util::{Stream, StreamExt};
+use futures_util::Stream;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use tokio::sync::mpsc;
@@ -20,6 +20,7 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use super::app::{App, Effect, Job, Msg, Osc52, TaggedResult, TaskResult, TaskSink, update, view};
+use super::handover::{Hand, Handover, Hands, Input, Suspend};
 use super::keys::Keymap;
 use super::screen::Screen;
 use super::terminal;
@@ -40,8 +41,13 @@ pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>, theme: Theme) ->
     let mut app = App::new(screen, Box::new(Osc52))
         .with_keymap(keymap)
         .with_theme(theme);
-    let events = Box::pin(EventStream::new());
-    let result = run_loop(&mut tui.terminal, &mut app, events).await;
+    let result = run_loop(
+        &mut tui.terminal,
+        &mut app,
+        || Box::pin(EventStream::new()),
+        &mut Handover::default(),
+    )
+    .await;
     drop(tui);
     match result {
         Ok(()) => Ok(app.screen),
@@ -53,18 +59,23 @@ pub async fn run_app<S: Screen>(screen: S, keymap: Arc<Keymap>, theme: Theme) ->
     }
 }
 
-/// Drive `app` until it quits or `events` ends. Tasks still running when this returns are
-/// aborted, because `Tasks` aborts on drop.
-pub async fn run_loop<B, S, E>(
+/// Drive `app` until it quits or the event stream `make` builds ends. `make` is called again
+/// after each editor, whose stream is dropped first. Tasks still running when this returns
+/// are aborted, because `Tasks` aborts on drop.
+pub async fn run_loop<B, S, E, F, X>(
     terminal: &mut Terminal<B>,
     app: &mut App<S>,
-    mut events: E,
+    make: F,
+    suspend: &mut X,
 ) -> io::Result<()>
 where
     B: Backend,
     S: Screen,
     E: Stream<Item = io::Result<TermEvent>> + Unpin,
+    F: FnMut() -> E,
+    X: Suspend,
 {
+    let mut input = Input::new(make);
     let (sink, mut results) = mpsc::unbounded_channel();
     let mut tasks = Tasks::new(sink);
     let mut tick = tokio::time::interval(TICK);
@@ -72,15 +83,31 @@ where
     let mut signals = QuitSignals::new()?;
     let mut pending: VecDeque<Msg> = VecDeque::new();
     for effect in app.screen.start() {
-        pending.extend(apply(effect, app, &mut tasks));
+        pending.extend(apply(
+            effect,
+            app,
+            &mut tasks,
+            &mut Hands {
+                suspend,
+                input: &mut input,
+            },
+        ));
     }
     for msg in pending {
-        dispatch(msg, app, &mut tasks);
+        dispatch(
+            msg,
+            app,
+            &mut tasks,
+            &mut Hands {
+                suspend,
+                input: &mut input,
+            },
+        );
     }
-    draw(terminal, app)?;
+    redraw(terminal, app, suspend)?;
     while !app.quit {
         let msg = tokio::select! {
-            event = events.next() => match event {
+            event = input.next() => match event {
                 Some(Ok(event)) => match to_msg(event) {
                     Some(msg) => msg,
                     None => continue,
@@ -98,8 +125,16 @@ where
                 continue;
             }
         };
-        dispatch(msg, app, &mut tasks);
-        draw(terminal, app)?;
+        dispatch(
+            msg,
+            app,
+            &mut tasks,
+            &mut Hands {
+                suspend,
+                input: &mut input,
+            },
+        );
+        redraw(terminal, app, suspend)?;
     }
     Ok(())
 }
@@ -210,16 +245,21 @@ fn to_msg(event: TermEvent) -> Option<Msg> {
 
 /// Run `msg` through `update` and apply its effects. An effect that reports back (a copy)
 /// yields a follow-up message, which is handled before the next event.
-fn dispatch<S: Screen>(msg: Msg, app: &mut App<S>, tasks: &mut Tasks) {
+fn dispatch<S: Screen>(msg: Msg, app: &mut App<S>, tasks: &mut Tasks, hand: &mut impl Hand) {
     let mut pending = VecDeque::from([msg]);
     while let Some(msg) = pending.pop_front() {
         for effect in update(app, msg) {
-            pending.extend(apply(effect, app, tasks));
+            pending.extend(apply(effect, app, tasks, hand));
         }
     }
 }
 
-fn apply<S: Screen>(effect: Effect, app: &mut App<S>, tasks: &mut Tasks) -> Option<Msg> {
+fn apply<S: Screen>(
+    effect: Effect,
+    app: &mut App<S>,
+    tasks: &mut Tasks,
+    hand: &mut impl Hand,
+) -> Option<Msg> {
     match effect {
         Effect::Quit => app.quit = true,
         Effect::CancelAll => tasks.cancel_all(),
@@ -232,8 +272,27 @@ fn apply<S: Screen>(effect: Effect, app: &mut App<S>, tasks: &mut Tasks) -> Opti
             }
             return Some(Msg::Task(TaskResult::Copied(result)));
         }
+        Effect::RunEditor { command, path } => {
+            // Nothing else runs while the editor has the terminal: the loop blocks here.
+            let result = hand.run_editor(&command, &path);
+            return Some(Msg::Task(TaskResult::EditorDone(result)));
+        }
     }
     None
+}
+
+/// Draw a frame; after the terminal came back from the editor, repaint all of it.
+fn redraw<B: Backend, S: Screen>(
+    terminal: &mut Terminal<B>,
+    app: &App<S>,
+    suspend: &mut impl Suspend,
+) -> io::Result<()> {
+    if suspend.take_returned() {
+        terminal
+            .clear()
+            .map_err(|e| io::Error::other(e.to_string()))?;
+    }
+    draw(terminal, app)
 }
 
 fn draw<B: Backend, S: Screen>(terminal: &mut Terminal<B>, app: &App<S>) -> io::Result<()> {
@@ -340,7 +399,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     use crate::tui::app::TaskResult;
-    use crate::tui::test_util::{Hello, RecordingClipboard, ctrl, key};
+    use crate::tui::test_util::{Hello, RecordingClipboard, ctrl, key, once};
     use ratatui::style::Color;
 
     #[test]
@@ -351,7 +410,7 @@ mod tests {
             background: Some(Color::Rgb(9, 9, 9)),
             ..Theme::default()
         };
-        assert!(apply(Effect::Theme(theme), &mut app, &mut tasks).is_none());
+        assert!(apply(Effect::Theme(theme), &mut app, &mut tasks, &mut ()).is_none());
         assert_eq!(app.theme, theme);
     }
 
@@ -417,7 +476,9 @@ mod tests {
         let mut terminal = terminal();
         let mut app = App::new(Hello::default(), Box::new(RecordingClipboard::default()));
         let events = keys(vec![key(KeyCode::Char('x')), key(KeyCode::Char('q'))]);
-        run_loop(&mut terminal, &mut app, events).await.unwrap();
+        run_loop(&mut terminal, &mut app, once(events), &mut ())
+            .await
+            .unwrap();
         assert!(app.quit);
         assert_eq!(app.screen.keys, vec![key(KeyCode::Char('x'))]);
         let row: String = (0..15)
@@ -435,7 +496,9 @@ mod tests {
         };
         let mut app = App::new(screen, Box::new(RecordingClipboard::default()));
         let events = keys(vec![key(KeyCode::Char('x'))]);
-        run_loop(&mut terminal, &mut app, events).await.unwrap();
+        run_loop(&mut terminal, &mut app, once(events), &mut ())
+            .await
+            .unwrap();
         assert!(app.quit);
         assert!(app.screen.keys.is_empty(), "quit before reading a key");
     }
@@ -458,7 +521,9 @@ mod tests {
         let mut terminal = terminal();
         let mut app = App::new(screen, Box::new(RecordingClipboard::default()));
         let events = keys(vec![key(KeyCode::Char('s')), ctrl('c')]);
-        run_loop(&mut terminal, &mut app, events).await.unwrap();
+        run_loop(&mut terminal, &mut app, once(events), &mut ())
+            .await
+            .unwrap();
         assert!(
             becomes_true(&dropped).await,
             "the in-flight job was not aborted"
@@ -554,7 +619,9 @@ mod tests {
         let mut terminal = terminal();
         let mut app = App::new(screen, Box::new(clipboard.clone()));
         let events = keys(vec![key(KeyCode::Char('y')), key(KeyCode::Char('q'))]);
-        run_loop(&mut terminal, &mut app, events).await.unwrap();
+        run_loop(&mut terminal, &mut app, once(events), &mut ())
+            .await
+            .unwrap();
         assert_eq!(
             *clipboard.0.lock().unwrap(),
             vec!["consent url".to_string()]

@@ -66,7 +66,10 @@ impl MailScreen {
                         let glyphs = Glyphs::of(self.ctx.icons);
                         marked = self.mark_read_on_open(&mut detail);
                         self.reader = Some(Reader::new(detail, self.ctx.clock.clone(), glyphs));
-                        self.focus = Focus::Reader;
+                        // A read landing under an open composer leaves it the keys.
+                        if self.compose.is_none() {
+                            self.focus = Focus::Reader;
+                        }
                     }
                 }
                 let mut effects = self.fetch_wanted();
@@ -211,7 +214,12 @@ impl MailScreen {
         self.pending_open = None;
         // An answer to a read still in flight must not reopen the thread.
         self.latest_thread = self.next_seq();
-        self.focus = Focus::List;
+        // The composer stays over the list when the thread it answers goes.
+        self.focus = if self.compose.is_some() {
+            Focus::Compose
+        } else {
+            Focus::List
+        };
         self.restore_theme()
     }
 
@@ -434,11 +442,7 @@ impl MailScreen {
     pub(super) fn modal_outcome(&mut self, outcome: ModalOutcome) -> Vec<Effect> {
         match outcome {
             ModalOutcome::Stay => {}
-            ModalOutcome::Close => {
-                self.modal = None;
-                self.actions.picking = None;
-                return self.restore_theme();
-            }
+            ModalOutcome::Close => return self.close_modal(),
             ModalOutcome::Preview(Command::Theme(index)) => return self.preview_theme(index),
             ModalOutcome::Preview(Command::Accent(accent)) => return self.preview_accent(accent),
             ModalOutcome::Preview(_) => {}
@@ -487,6 +491,15 @@ impl MailScreen {
         Vec::new()
     }
 
+    /// A modal closed without an answer: what it was waiting to apply goes, and a previewing
+    /// picker puts the kept theme back.
+    fn close_modal(&mut self) -> Vec<Effect> {
+        self.modal = None;
+        self.actions.picking = None;
+        self.compose_modal_closed();
+        self.restore_theme()
+    }
+
     /// Run a palette action as if its own view had focus: global and reader actions leave the
     /// reader open; others close it and move focus to the list or the sidebar.
     fn focus_for(&mut self, action: Action) -> Vec<Effect> {
@@ -516,12 +529,14 @@ impl MailScreen {
                     .rev()
                     .map(|e| ErrorRow {
                         text: format!("{}  {}", self.ctx.clock.short(e.at), e.text),
-                        retry: e.retry,
+                        retry: e.retry.clone(),
                     })
                     .collect();
                 self.modal = Some(Modal::Errors(ErrorList::with_retries(rows, self.ctx.icons)));
                 Vec::new()
             }
+            Target::Compose => self.start_compose(),
+            Target::Drafts => self.drafts_picker(),
             Target::Theme => self.open_theme_picker(),
             Target::Accent => self.open_accent_picker(),
             Target::Scope(scope) => {

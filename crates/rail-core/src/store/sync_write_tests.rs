@@ -718,3 +718,31 @@ fn a_body_stores_its_links_as_json_and_none_as_null() {
     );
     assert_eq!(links("m2"), None);
 }
+
+#[test]
+fn reply_to_is_stored_as_json_and_replaced_by_the_next_upsert() {
+    let mut store = store();
+    let reply_to = |address: &str| crate::provider::Mailbox {
+        name: None,
+        address: address.into(),
+    };
+    let first = Envelope {
+        reply_to: vec![reply_to("list@example.com")],
+        ..envelope("m1", "t1", DAY_MS)
+    };
+    store.apply(&upserts(vec![first]), NOW).unwrap();
+    let stored = |store: &Store| -> String {
+        store
+            .conn()
+            .query_row("SELECT reply_to_json FROM messages", [], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(
+        stored(&store),
+        r#"[{"name":null,"address":"list@example.com"}]"#
+    );
+    store
+        .apply(&upserts(vec![envelope("m1", "t1", DAY_MS)]), NOW)
+        .unwrap();
+    assert_eq!(stored(&store), "[]", "no Reply-To any more");
+}

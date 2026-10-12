@@ -80,6 +80,10 @@ fn change_for(tx: &Transaction, account: i64, action: &Action) -> Result<Change,
             remove: inbox,
             ..Change::default()
         },
+        // Draft actions name no threads; the draft's state is the outbox's to set.
+        Action::Send { .. } | Action::PushDraft { .. } | Action::DeleteDraft { .. } => {
+            Change::default()
+        }
     })
 }
 

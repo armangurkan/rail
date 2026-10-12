@@ -18,12 +18,14 @@ use crate::tui::data::{DaemonEvent, FakeCall, FakeDaemon, MailEvent, Timer};
 use crate::tui::keys::Keymap;
 use crate::tui::screen::Screen;
 use crate::tui::test_util::{
-    BASE_MS, inbox_threads, key, mail_ctx, mail_envelope, seed_store, settle, settle_capturing,
-    status, work_and_home,
+    BASE_MS, Editor, inbox_threads, key, mail_ctx, mail_envelope, seed_store, settle,
+    settle_capturing, status, work_and_home,
 };
 use crate::tui::theme::choice::{ColorDepth, ThemeChoice};
 
 mod actions;
+mod compose;
+mod compose_edges;
 mod pickers;
 mod state;
 mod themes;
@@ -35,6 +37,8 @@ struct Fixture {
     screen: MailScreen,
     /// The last theme an effect applied.
     last_theme: Arc<Mutex<Option<Theme>>>,
+    /// What a fake editor does when the screen asks for one.
+    editor: Editor,
 }
 
 /// `work` with `n` inbox threads and `home` with two, the screen started and settled.
@@ -70,20 +74,22 @@ async fn fixture_with(n: usize, depth: ColorDepth, choice: ThemeChoice) -> Fixtu
     };
     let mut screen = MailScreen::new(ctx, work_and_home());
     let last_theme = Arc::new(Mutex::new(None));
+    let editor = Editor::default();
     let effects = screen.start();
-    settle_capturing(&mut screen, effects, &last_theme).await;
+    settle_capturing(&mut screen, effects, &last_theme, &editor).await;
     Fixture {
         _tmp: tmp,
         paths,
         fake,
         screen,
         last_theme,
+        editor,
     }
 }
 
 async fn press(f: &mut Fixture, code: KeyCode) {
     let effects = f.screen.update(Msg::Key(key(code)));
-    settle_capturing(&mut f.screen, effects, &f.last_theme).await;
+    settle_capturing(&mut f.screen, effects, &f.last_theme, &f.editor).await;
 }
 
 async fn press_n(f: &mut Fixture, code: KeyCode, times: usize) {

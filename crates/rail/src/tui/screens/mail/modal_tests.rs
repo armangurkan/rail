@@ -10,6 +10,7 @@ use rail_core::paths::Paths;
 use super::*;
 use crate::tui::app::{App, Msg, TaskResult, update};
 use crate::tui::data::{DaemonEvent, FakeDaemon, MailEvent, Timer};
+use crate::tui::modals::Target;
 use crate::tui::screen::Screen;
 use crate::tui::test_util::{
     RecordingClipboard, inbox_threads, key, mail_ctx, seed_store, settle, snapshot, status,

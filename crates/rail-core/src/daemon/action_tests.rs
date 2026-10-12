@@ -11,7 +11,7 @@ use super::{Connector, ServeConfig};
 use crate::ops::op::{ActionApply, ActionRetry, ActionUndo, SyncNow, SyncStatus};
 use crate::ops::{
     Action, ActionApplyRequest, ActionRetryRequest, ActionUndoRequest, ErrorCode, OpError,
-    SyncNowRequest, SyncStatusRequest, names,
+    RowToken, SyncNowRequest, SyncStatusRequest, names,
 };
 use crate::paths::Paths;
 use crate::provider::mock::{Call, MockProvider, envelope};
@@ -187,7 +187,7 @@ async fn a_grace_row_waits_and_undo_takes_it_back() {
     let undo = d
         .client
         .call::<ActionUndo>(&ActionUndoRequest {
-            rows: answer.rows.clone(),
+            rows: tokens(&answer.rows, "a"),
         })
         .await
         .unwrap();
@@ -279,7 +279,12 @@ async fn microsoft_365_is_unsupported() {
 #[tokio::test]
 async fn undo_and_retry_check_their_ids() {
     let d = daemon(WORK).await;
-    for rows in [vec![], vec![0], vec![-1], (1..=65).collect()] {
+    let bad_rows: [Vec<i64>; 4] = [vec![], vec![0], vec![-1], (1..=65).collect()];
+    let cases = bad_rows
+        .iter()
+        .map(|rows| tokens(rows, "t"))
+        .chain([tokens(&[1], ""), tokens(&[1], "a b")]);
+    for rows in cases {
         let error = d
             .client
             .call::<ActionUndo>(&ActionUndoRequest { rows })
@@ -287,16 +292,21 @@ async fn undo_and_retry_check_their_ids() {
             .unwrap_err();
         assert_eq!(error.code, ErrorCode::InvalidInput);
     }
-    let error = d
-        .client
-        .call::<ActionRetry>(&ActionRetryRequest { row: 0 })
-        .await
-        .unwrap_err();
-    assert_eq!(error.code, ErrorCode::InvalidInput);
+    for (row, token) in [(0, "t"), (1, ""), (1, "tok\n")] {
+        let error = d
+            .client
+            .call::<ActionRetry>(&ActionRetryRequest {
+                row,
+                client_token: token.into(),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidInput, "{token:?}");
+    }
     let unknown = d
         .client
         .call::<ActionUndo>(&ActionUndoRequest {
-            rows: vec![424_242],
+            rows: tokens(&[424_242], "t"),
         })
         .await
         .unwrap();
@@ -335,11 +345,24 @@ async fn a_refused_action_is_reverted_notified_and_can_be_retried() {
         (failed.row, failed.threads.clone()),
         (answer.rows[0], vec![t1])
     );
+    assert_eq!((failed.client_token.as_str(), failed.draft), ("a", None));
     assert!(d.in_inbox("m1"), "reverted");
     assert_eq!(d.depth().await.failed, 1);
+    let wrong = d
+        .client
+        .call::<ActionRetry>(&ActionRetryRequest {
+            row: failed.row,
+            client_token: "other".into(),
+        })
+        .await
+        .unwrap();
+    assert!(!wrong.retried, "another token retries nothing");
     let retried = d
         .client
-        .call::<ActionRetry>(&ActionRetryRequest { row: failed.row })
+        .call::<ActionRetry>(&ActionRetryRequest {
+            row: failed.row,
+            client_token: failed.client_token.clone(),
+        })
         .await
         .unwrap();
     assert!(retried.retried);
@@ -348,7 +371,10 @@ async fn a_refused_action_is_reverted_notified_and_can_be_retried() {
     assert!(!d.in_inbox("m1"), "applied again");
     let again = d
         .client
-        .call::<ActionRetry>(&ActionRetryRequest { row: failed.row })
+        .call::<ActionRetry>(&ActionRetryRequest {
+            row: failed.row,
+            client_token: failed.client_token,
+        })
         .await
         .unwrap();
     assert!(!again.retried, "no longer failed");
@@ -407,7 +433,10 @@ async fn a_failure_while_nobody_watched_is_sent_on_the_next_watch() {
     assert_eq!(failed.error.class, crate::error::ErrorClass::Permanent);
     later.call::<SyncNow>(&watch).await.unwrap();
     let retried = later
-        .call::<ActionRetry>(&ActionRetryRequest { row: failed.row })
+        .call::<ActionRetry>(&ActionRetryRequest {
+            row: failed.row,
+            client_token: failed.client_token.clone(),
+        })
         .await
         .unwrap();
     assert!(retried.retried);
@@ -449,4 +478,27 @@ async fn a_sync_of_the_thread_clears_its_failed_action() {
         .query_row("SELECT count(*) FROM outbox", [], |r| r.get(0))
         .unwrap();
     assert_eq!(failed, 0);
+}
+
+/// `rows`, each with `token`.
+fn tokens(rows: &[i64], token: &str) -> Vec<RowToken> {
+    rows.iter()
+        .map(|&row| RowToken {
+            row,
+            client_token: token.into(),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_draft_action_cannot_go_through_action_apply() {
+    let d = daemon(WORK).await;
+    let t1 = d.thread("t1");
+    let error = d
+        .apply(vec![t1], Action::Send { draft: 1 }, true, "a")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert_eq!(error.message, "a draft action goes through draft.send");
+    assert_eq!(d.depth().await.pending, 0);
 }

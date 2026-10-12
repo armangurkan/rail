@@ -114,7 +114,11 @@ impl GmailProvider {
     }
 
     /// A body part Gmail sent separately (`messages.attachments.get`, read only).
-    async fn attachment_data(&self, id: &str, attachment: &str) -> Result<String, ProviderError> {
+    pub(super) async fn attachment_data(
+        &self,
+        id: &str,
+        attachment: &str,
+    ) -> Result<String, ProviderError> {
         if !safe_id(attachment, MAX_ATTACHMENT_ID) {
             return Err(unreadable());
         }

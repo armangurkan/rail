@@ -12,9 +12,9 @@ use crate::sync::batch::{Batch, BatchOutcome, Origin, Prune, ResumeToken, StateU
 const UPSERT: &str = "INSERT INTO messages (account_id, thread_id, remote_id, message_id,
     in_reply_to, references_ids, subject, from_json, to_json, cc_json, bcc_json, date, snippet,
     is_read, is_starred, is_draft, size, internal_date, origin, searched_at, synced_at,
-    from_text, to_text)
+    from_text, to_text, reply_to_json)
   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-    ?20, ?21, ?22, ?23)
+    ?20, ?21, ?22, ?23, ?24)
   ON CONFLICT(account_id, remote_id) DO UPDATE SET
     thread_id = excluded.thread_id, message_id = excluded.message_id,
     in_reply_to = excluded.in_reply_to, references_ids = excluded.references_ids,
@@ -25,7 +25,8 @@ const UPSERT: &str = "INSERT INTO messages (account_id, thread_id, remote_id, me
     origin = CASE WHEN excluded.origin = 'sync' THEN 'sync' ELSE messages.origin END,
     searched_at = COALESCE(excluded.searched_at, messages.searched_at),
     synced_at = COALESCE(excluded.synced_at, messages.synced_at),
-    from_text = excluded.from_text, to_text = excluded.to_text";
+    from_text = excluded.from_text, to_text = excluded.to_text,
+    reply_to_json = excluded.reply_to_json";
 
 /// `[]`-style JSON of Rail's own types; serialising them cannot fail.
 fn json<T: serde::Serialize>(value: &T) -> String {
@@ -179,6 +180,7 @@ fn upsert(
     }
     let thread = thread_row(tx, account, &env.thread_id)?;
     write_envelope(tx, account, thread, env, origin, now)?;
+    super::addresses::remember(tx, env, now)?;
     let (message, _) = message_row(tx, account, &env.remote_id)?
         .ok_or(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
     tx.execute(
@@ -230,7 +232,8 @@ fn write_envelope(
             searched,
             synced,
             address_text(&env.from),
-            address_text(env.to.iter().chain(&env.cc).chain(&env.bcc))
+            address_text(env.to.iter().chain(&env.cc).chain(&env.bcc)),
+            json(&env.reply_to)
         ],
     )?;
     Ok(())

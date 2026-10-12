@@ -37,6 +37,8 @@ fastrand.workspace = true
 httpdate.workspace = true
 mail-parser.workspace = true
 base64.workspace = true
+mail-builder.workspace = true
+uuid.workspace = true
 futures-util.workspace = true
 
 [dev-dependencies]

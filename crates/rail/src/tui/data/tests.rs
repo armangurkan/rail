@@ -3,8 +3,11 @@
 use std::time::Duration;
 
 use rail_core::ops::op::DaemonStop;
-use rail_core::ops::{BodyOutcome, DaemonStopRequest};
+use rail_core::ops::{
+    BodyOutcome, DaemonStopRequest, DraftAttachment, DraftSaveRequest, ReplyTo, RowToken,
+};
 use rail_core::paths::Paths;
+use rail_core::store::drafts::DraftKind;
 use rail_core::store::filter::parse;
 use rail_core::store::view::PageAt;
 use tokio::sync::mpsc;
@@ -495,12 +498,17 @@ async fn the_fake_records_actions_and_answers_in_order() {
         threads: vec![4],
         action: Action::Archive {},
         grace: true,
+        client_token: "tok-1".into(),
     };
     let bound = Duration::from_secs(5);
     let applied = events(link.apply(call.clone()), 1, bound).await;
     assert!(matches!(&applied[..], [MailEvent::Applied { result: Ok(r), .. }] if r.rows == [1]));
-    events(link.undo(3, vec![1]), 1, bound).await;
-    events(link.retry(1), 1, bound).await;
+    let token = || RowToken {
+        row: 1,
+        client_token: "tok-1".into(),
+    };
+    events(link.undo(3, vec![token()]), 1, bound).await;
+    events(link.retry(token()), 1, bound).await;
     assert_eq!(
         *fake.calls.lock().unwrap(),
         [
@@ -510,8 +518,10 @@ async fn the_fake_records_actions_and_answers_in_order() {
                 action: Action::Archive {},
                 grace: true
             },
-            FakeCall::Undo { rows: vec![1] },
-            FakeCall::Retry { row: 1 }
+            FakeCall::Undo {
+                rows: vec![token()]
+            },
+            FakeCall::Retry { row: token() }
         ]
     );
 }
@@ -528,10 +538,240 @@ fn an_action_failure_debug_names_the_row_and_nothing_of_the_error() {
         threads: vec![1, 2],
         action: Action::Archive {},
         error,
+        draft: None,
+        client_token: "tok".into(),
     }));
     let text = format!("{event:?}");
     assert!(
         text.contains("row: 7") && !text.contains("SECRET"),
         "{text}"
     );
+}
+
+fn save_request(kind: DraftKind) -> DraftSaveRequest {
+    DraftSaveRequest {
+        account: "work".into(),
+        draft: None,
+        kind,
+        reply_to: (kind != DraftKind::New).then_some(ReplyTo { message: 3 }),
+        to: vec!["dana@example.com".into()],
+        cc: vec![],
+        bcc: vec![],
+        subject: "SECRET subject".into(),
+        body: "SECRET body".into(),
+        attachments: vec![DraftAttachment::File {
+            path: "/tmp/SECRET.pdf".into(),
+        }],
+        client_token: "tok-save".into(),
+    }
+}
+
+#[tokio::test]
+async fn the_fake_records_draft_calls_and_answers_them() {
+    let fake = std::sync::Arc::new(FakeDaemon::default());
+    let link = DaemonLink::fake(fake.clone());
+    let bound = Duration::from_secs(5);
+    let call = SaveCall {
+        seq: 2,
+        request: save_request(DraftKind::New),
+    };
+    let saved = events(link.draft_save(call.clone()), 1, bound).await;
+    let [
+        MailEvent::DraftSaved {
+            seq: 2,
+            result: Ok(first),
+        },
+    ] = saved.as_slice()
+    else {
+        panic!("{saved:?}");
+    };
+    assert_eq!(first.message_id, "<fake@example.com>");
+    let again = events(link.draft_save(call), 1, bound).await;
+    let [
+        MailEvent::DraftSaved {
+            result: Ok(second), ..
+        },
+    ] = again.as_slice()
+    else {
+        panic!("{again:?}");
+    };
+    assert_ne!(first.draft, second.draft, "a fresh draft each time");
+    let sent = events(link.draft_send(4, first.draft, "tok-send".into()), 1, bound).await;
+    assert!(
+        matches!(sent.as_slice(), [MailEvent::DraftSent { seq: 4, client_token, result: Ok(_), .. }] if client_token == "tok-send"),
+        "{sent:?}"
+    );
+    let gone = events(link.draft_discard(first.draft), 1, bound).await;
+    assert!(matches!(
+        gone.as_slice(),
+        [MailEvent::DraftDiscarded { result: Ok(()), .. }]
+    ));
+    assert_eq!(
+        fake.calls.lock().unwrap()[0],
+        FakeCall::DraftSave {
+            kind: DraftKind::New,
+            to: vec!["dana@example.com".into()],
+            subject: "SECRET subject".into(),
+            attachments: 1,
+        }
+    );
+    let calls = fake.calls.lock().unwrap();
+    assert_eq!(
+        calls[2..],
+        [
+            FakeCall::DraftSend {
+                draft: first.draft,
+                client_token: "tok-send".into()
+            },
+            FakeCall::DraftDiscard { draft: first.draft }
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_save_hook_and_the_scripted_answers_replace_the_defaults() {
+    let fake = std::sync::Arc::new(FakeDaemon::default());
+    let link = DaemonLink::fake(fake.clone());
+    let bound = Duration::from_secs(5);
+    *fake.on_save.lock().unwrap() = Some(Box::new(|call| {
+        Err(OpError::invalid_input(format!("hooked {}", call.seq)))
+    }));
+    *fake.send_answer.lock().unwrap() = Some(Err(OpError::internal("no send")));
+    *fake.discard_answer.lock().unwrap() = Some(Err(OpError::internal("no discard")));
+    let call = SaveCall {
+        seq: 9,
+        request: save_request(DraftKind::Reply),
+    };
+    let saved = events(link.draft_save(call), 1, bound).await;
+    assert!(matches!(
+        saved.as_slice(),
+        [MailEvent::DraftSaved {
+            seq: 9,
+            result: Err(_)
+        }]
+    ));
+    let sent = events(link.draft_send(1, 5, "t".into()), 1, bound).await;
+    assert!(matches!(
+        sent.as_slice(),
+        [MailEvent::DraftSent { result: Err(_), .. }]
+    ));
+    let gone = events(link.draft_discard(5), 1, bound).await;
+    assert!(matches!(
+        gone.as_slice(),
+        [MailEvent::DraftDiscarded {
+            draft: 5,
+            result: Err(_)
+        }]
+    ));
+}
+
+#[test]
+fn a_save_call_and_the_draft_events_debug_without_content() {
+    let call = SaveCall {
+        seq: 3,
+        request: save_request(DraftKind::Forward),
+    };
+    let shown = format!("{call:?}");
+    assert!(
+        !shown.contains("SECRET") && !shown.contains("dana"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("seq: 3") && shown.contains("Forward"),
+        "{shown}"
+    );
+    let saved = MailEvent::DraftSaved {
+        seq: 3,
+        result: Err(OpError::internal("SECRET detail")),
+    };
+    let sent = MailEvent::DraftSent {
+        seq: 4,
+        draft: 8,
+        client_token: "SECRET-token".into(),
+        result: Err(OpError::internal("SECRET detail")),
+    };
+    let edited = MailEvent::EditorDone(Err("cannot run SECRET".into()));
+    for event in [saved, sent, edited] {
+        let shown = format!("{event:?}");
+        assert!(!shown.contains("SECRET"), "{shown}");
+    }
+}
+
+#[tokio::test]
+async fn the_reader_answers_reply_sources_suggestions_and_drafts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let envelopes: Vec<_> = inbox_threads("w", 2).into_iter().map(|e| (0, e)).collect();
+    let mut store = seed_store(&paths, &[("work", "w@example.com")], &envelopes);
+    let (message, thread, account): (i64, i64, i64) = store
+        .conn()
+        .query_row(
+            "SELECT m.id, m.thread_id, m.account_id FROM messages m ORDER BY m.id LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    let _ = &mut store;
+    let reader = StoreReader::new(paths.db_file());
+    let bound = Duration::from_secs(5);
+    for target in [ReplyTarget::Message(message), ReplyTarget::Thread(thread)] {
+        let got = events(reader.reply_source(1, target), 1, bound).await;
+        let [
+            MailEvent::ReplySource {
+                seq: 1,
+                result: Ok(Some(source)),
+            },
+        ] = got.as_slice()
+        else {
+            panic!("{got:?}");
+        };
+        assert_eq!((source.message, source.account_id), (message, account));
+    }
+    let missing = events(
+        reader.reply_source(2, ReplyTarget::Message(9_999)),
+        1,
+        bound,
+    )
+    .await;
+    assert!(matches!(
+        missing.as_slice(),
+        [MailEvent::ReplySource {
+            result: Ok(None),
+            ..
+        }]
+    ));
+    let empty = events(reader.reply_source(3, ReplyTarget::Thread(9_999)), 1, bound).await;
+    assert!(matches!(
+        empty.as_slice(),
+        [MailEvent::ReplySource {
+            result: Ok(None),
+            ..
+        }]
+    ));
+    let found = events(reader.suggest(4, String::new()), 1, bound).await;
+    let [
+        MailEvent::Suggestions {
+            seq: 4,
+            result: Ok(entries),
+        },
+    ] = found.as_slice()
+    else {
+        panic!("{found:?}");
+    };
+    assert!(
+        !entries.is_empty(),
+        "the seeded senders are in the address book"
+    );
+    let drafts = events(reader.drafts(5, vec![account]), 1, bound).await;
+    assert!(
+        matches!(drafts.as_slice(), [MailEvent::Drafts { seq: 5, result: Ok(list) }] if list.is_empty())
+    );
+    let missing = events(reader.draft(6, 999), 1, bound).await;
+    assert!(matches!(
+        missing.as_slice(),
+        [MailEvent::Draft {
+            seq: 6,
+            result: Ok(None)
+        }]
+    ));
 }

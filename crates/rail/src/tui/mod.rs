@@ -5,7 +5,13 @@
 pub mod app;
 pub mod clock;
 pub mod data;
+pub mod editor;
+#[cfg(test)]
+mod editor_tests;
 pub mod effects;
+pub mod handover;
+#[cfg(test)]
+mod handover_tests;
 pub mod keys;
 pub mod modals;
 pub mod open;

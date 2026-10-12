@@ -8,6 +8,14 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- Writing mail: `c` new message, `r` reply, `R` reply-all, `f` forward, written in your editor
+  (`general.editor`, `$VISUAL`, `$EDITOR`, `vi`) and reviewed in Rail; `To:` completion from the
+  addresses your mail has taught the store; attachments by path and forwarded attachments; send
+  through the outbox with the 10 second `z` undo, never sent twice; local drafts kept on every
+  editor round and reopened with `:drafts`; `from_name` and `signature` per account.
+- Store schema v7: `drafts`, a stored `Reply-To`, outbox rows keyed by draft.
+- `draft.save`, `draft.send` and `draft.discard` operations (terminal only); `action.undo` and
+  `action.retry` now take the client token of the row they act on.
 - Two-crate Cargo workspace (`rail-core`, `rail`) on Rust 2024 with `unsafe_code = "forbid"`,
   clippy as errors, `cargo deny`, and CI for Linux and macOS.
 - XDG paths with `RAIL_CONFIG_DIR`, `RAIL_DATA_DIR`, `RAIL_CACHE_DIR` and `RAIL_STATE_DIR`

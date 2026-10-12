@@ -172,6 +172,7 @@ fn valid_details_ask_for_a_login_with_the_draft_account() {
         client_secret: Some("sec".into()),
         tenant: None,
         signature: None,
+        from_name: None,
         ai_send: None,
         history_days: None,
         body_cache_days: None,

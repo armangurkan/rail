@@ -209,6 +209,31 @@ async fn metadata_decodes_encoded_words_addresses_flags_and_references() {
     assert_eq!(env.size, 2048);
 }
 
+#[tokio::test]
+async fn reply_to_is_read_and_missing_means_empty() {
+    let gmail = Gmail::start().await;
+    gmail
+        .mount_message(message_json(
+            "m1",
+            "t1",
+            1_700_000_000_000,
+            &["INBOX"],
+            &[("Reply-To", "Other <other@example.com>")],
+        ))
+        .await;
+    gmail
+        .mount_message(message_json("m2", "t2", 1_700_000_000_000, &["INBOX"], &[]))
+        .await;
+    let page = gmail
+        .provider()
+        .metadata(&["m1".to_string(), "m2".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(page.envelopes[0].reply_to[0].address, "other@example.com");
+    assert_eq!(page.envelopes[0].reply_to[0].name.as_deref(), Some("Other"));
+    assert!(page.envelopes[1].reply_to.is_empty());
+}
+
 /// A `Date:` is believed only when every field is in range and it is not
 /// absurdly far before Gmail received the message.
 #[tokio::test]

@@ -10,6 +10,8 @@ mod html_tests;
 mod labels;
 pub(crate) mod list;
 pub(crate) mod metadata;
+pub mod mime;
+mod send;
 mod wire;
 
 #[cfg(test)]
@@ -23,12 +25,16 @@ mod history_tests;
 #[cfg(test)]
 mod live_tests;
 #[cfg(test)]
+mod mime_tests;
+#[cfg(test)]
+mod send_tests;
+#[cfg(test)]
 mod tests;
 
 use super::http::{ApiClient, is_bad_request};
 use super::{
     Body, ChangeSet, EnvelopePage, IdPage, PageToken, Profile, ProviderError, RemoteFolder,
-    RemoteId, SyncCursor, Window,
+    RemoteId, SentReceipt, SyncCursor, Window,
 };
 
 pub use body::{MAX_BODY_BYTES, TRUNCATED_MARKER};
@@ -37,6 +43,7 @@ pub use history::{MAX_CHANGES_ADDED, MAX_HISTORY_PAGES, MAX_HISTORY_RECORDS};
 pub use metadata::{
     MAX_ADDRESSES, MAX_HEADER_BYTES, MAX_SNIPPET_CHARS, MAX_SUBJECT_CHARS, METADATA_HEADERS,
 };
+pub use mime::{MAX_MESSAGE_BYTES, build as build_message, sanitize_filename};
 
 /// The API root every request is relative to; `users/me` is the authorised account.
 pub const GMAIL_API: &str = "https://gmail.googleapis.com/gmail/v1/users/me/";
@@ -58,6 +65,7 @@ pub(crate) const COST_HISTORY: u32 = 2;
 pub(crate) const COST_ATTACHMENT: u32 = 5;
 pub(crate) const COST_THREAD_MODIFY: u32 = 10;
 pub(crate) const COST_THREAD_TRASH: u32 = 20;
+pub(crate) const COST_MESSAGE_SEND: u32 = 100;
 /// Gmail's limit on each of `addLabelIds` and `removeLabelIds`.
 pub const MAX_LABELS_PER_MODIFY: usize = 100;
 
@@ -189,6 +197,25 @@ impl super::Provider for GmailProvider {
 
     async fn trash_threads(&self, ids: &[RemoteId]) -> Result<(), ProviderError> {
         self.trash(ids).await
+    }
+
+    async fn send(
+        &self,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Result<SentReceipt, ProviderError> {
+        self.send_raw(raw, thread_id).await
+    }
+
+    async fn message_by_header_id(
+        &self,
+        rfc822_message_id: &str,
+    ) -> Result<Option<RemoteId>, ProviderError> {
+        self.find_by_header_id(rfc822_message_id).await
+    }
+
+    async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError> {
+        self.attachment_bytes(message, part).await
     }
 }
 

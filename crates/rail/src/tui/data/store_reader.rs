@@ -7,10 +7,13 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rail_core::ops::OpError;
+use rail_core::ops::{DraftId, OpError};
 use rail_core::store::filter::Filter;
 use rail_core::store::view::{AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadPage};
 use rail_core::store::{Store, StoreError};
+
+/// How many address matches the recipient prompt shows at most.
+const SUGGESTION_LIMIT: usize = 8;
 
 use super::{MailEvent, job, refresh_job, send};
 use crate::tui::app::Effect;
@@ -87,6 +90,13 @@ pub struct ListOutcome {
 pub struct SidebarOutcome {
     pub counts: SidebarCounts,
     pub account_ids: Vec<Option<i64>>,
+}
+
+/// Which message a reply or forward answers: this one, or a thread's latest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyTarget {
+    Message(i64),
+    Thread(i64),
 }
 
 #[derive(Clone)]
@@ -253,6 +263,65 @@ impl StoreReader {
                 .read(move |store| store.label_choices(account_id, &threads))
                 .await;
             send(&sink, MailEvent::Labels { seq, result });
+        })
+    }
+
+    /// The reply source of `target`: a message, or the newest message of a thread.
+    pub fn reply_source(&self, seq: u64, target: ReplyTarget) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| {
+                    let message = match target {
+                        ReplyTarget::Message(id) => Some(id),
+                        ReplyTarget::Thread(thread) => store.latest_message_of(thread)?,
+                    };
+                    match message {
+                        Some(id) => Ok(store.reply_source(id)?.map(Box::new)),
+                        None => Ok(None),
+                    }
+                })
+                .await;
+            send(&sink, MailEvent::ReplySource { seq, result });
+        })
+    }
+
+    /// The best address-book matches for `prefix`.
+    pub fn suggest(&self, seq: u64, prefix: String) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| store.address_suggestions(&prefix, SUGGESTION_LIMIT))
+                .await;
+            send(&sink, MailEvent::Suggestions { seq, result });
+        })
+    }
+
+    /// The drafts of these accounts, each account's newest first, in the accounts' order.
+    pub fn drafts(&self, seq: u64, account_ids: Vec<i64>) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| {
+                    let mut all = Vec::new();
+                    for account_id in account_ids {
+                        all.extend(store.drafts_for_account(account_id)?);
+                    }
+                    Ok(all)
+                })
+                .await;
+            send(&sink, MailEvent::Drafts { seq, result });
+        })
+    }
+
+    /// One draft to resume. Its threading stays as stored: a save of it names no message.
+    pub fn draft(&self, seq: u64, id: DraftId) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| Ok(store.draft(id)?.map(Box::new)))
+                .await;
+            send(&sink, MailEvent::Draft { seq, result });
         })
     }
 }

@@ -6,7 +6,7 @@ use crate::auth::unix_now;
 use crate::daemon::registry::Call;
 use crate::ops::{
     Action, ActionApplyRequest, ActionApplyResponse, ActionRetryRequest, ActionRetryResponse,
-    ActionUndoRequest, ActionUndoResponse, MAX_UNDO_ROWS, OpError, UNDO_GRACE,
+    ActionUndoRequest, ActionUndoResponse, MAX_UNDO_ROWS, OpError, UNDO_GRACE, checked_token,
 };
 use crate::store::Store;
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
@@ -96,18 +96,21 @@ pub(super) async fn undo(
 ) -> Result<ActionUndoResponse, OpError> {
     if request.rows.is_empty()
         || request.rows.len() > MAX_UNDO_ROWS
-        || request.rows.iter().any(|r| *r <= 0)
+        || request.rows.iter().any(|r| r.row <= 0)
     {
         return Err(OpError::invalid_input(format!(
             "an undo takes 1 to {MAX_UNDO_ROWS} positive row ids"
         )));
+    }
+    for row in &request.rows {
+        checked_token(&row.client_token)?;
     }
     let outcome = call
         .ctx
         .sync
         .writer(&call.ctx)
         .await?
-        .outbox(OutboxWrite::Undo { ids: request.rows })
+        .outbox(OutboxWrite::Undo { rows: request.rows })
         .await?;
     let OutboxOutcome::Undone { undone, too_late } = outcome else {
         return Err(unexpected());
@@ -123,12 +126,16 @@ pub(super) async fn retry(
     if request.row <= 0 {
         return Err(OpError::invalid_input("a row id is a positive number"));
     }
+    checked_token(&request.client_token)?;
     let outcome = call
         .ctx
         .sync
         .writer(&call.ctx)
         .await?
-        .outbox(OutboxWrite::Retry { id: request.row })
+        .outbox(OutboxWrite::Retry {
+            id: request.row,
+            client_token: request.client_token,
+        })
         .await?;
     let OutboxOutcome::Retried(retried) = outcome else {
         return Err(unexpected());

@@ -441,3 +441,15 @@ fn an_input_row_puts_the_cursor_after_what_is_before_it_in_columns() {
     assert_eq!(input_row(":", &"x".repeat(50), 50, 10), ("x".repeat(9), 9));
     assert_eq!(input_row(":", "abc", 3, 0), (String::new(), 0));
 }
+
+#[test]
+fn an_international_host_is_shown_in_its_ascii_form() {
+    assert_eq!(
+        shown_host("bücher.example").as_deref(),
+        Some("xn--bcher-kva.example")
+    );
+    assert_eq!(shown_host("Example.COM").as_deref(), Some("example.com"));
+    assert_eq!(shown_host("evil.example/x"), None);
+    assert_eq!(shown_host("a b"), None);
+    assert_eq!(shown_host(""), None);
+}
