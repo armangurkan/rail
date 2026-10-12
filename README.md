@@ -17,8 +17,9 @@ terminal and want something in the spirit of mutt with threads, a unified inbox 
 readable HTML and a command palette. It also speaks MCP, so an AI coding agent can help you set it
 up without ever seeing your secrets.
 
-> **Rail is pre-1.0.** Account setup, background sync, search, reading mail and acting on threads
-> (archive, trash, star, read) work today; composing and replying are next.
+> **Rail is pre-1.0.** Account setup, background sync, search, reading mail, acting on threads
+> (archive, trash, star, read) and writing mail (new messages, replies and forwards, with undo
+> send) work today for Gmail; Microsoft 365 sync is next.
 
 ## Contents
 
@@ -27,6 +28,7 @@ up without ever seeing your secrets.
 - [Quick start](#quick-start)
 - [Reading mail](#reading-mail)
 - [Doing things to mail](#doing-things-to-mail)
+- [Writing mail](#writing-mail)
 - [Account setup](#account-setup)
 - [Using Rail from an AI agent (MCP)](#using-rail-from-an-ai-agent-mcp)
 - [Security and privacy](#security-and-privacy)
@@ -53,15 +55,18 @@ up without ever seeing your secrets.
   message's HTML in the browser. See [Reading mail](#reading-mail).
 - Archive, trash, star and mark read or unread, alone or as a selection, with undo. See
   [Doing things to mail](#doing-things-to-mail), including labelling (`l`) and moving (`m`).
+- Writing mail: a new message, a reply, a reply to everyone or a forward, written in your own
+  editor, reviewed in Rail and sent through Gmail with a ten second undo; drafts kept on this
+  machine. See [Writing mail](#writing-mail).
 - `rail doctor`, a single health check for config, store, tokens, sync and the daemon.
 - An MCP server (`rail mcp`) for setting up and inspecting Rail from an AI agent.
 
 **Coming**
 
-- Next: composing, replying and sending, with agent sends
-  governed by the per-account `ai_send` policy.
+- Next: drafts pushed to Gmail's Drafts folder, so a draft started in Rail opens on your phone.
 - Then: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
-  sync and are searched locally only.
+  sync, cannot write mail and are searched locally only.
+- After that: agent tools for drafts and sends, governed by the per-account `ai_send` policy.
 - Later: search operators, layout options, inline images, display-quality HTML in the
   terminal.
 
@@ -161,8 +166,8 @@ another action of the same view already uses (a key that starts another action's
 counts). They check before the terminal changes. A view's own key wins over a global one: `q`
 closes the reader but quits from the list.
 
-The `global.*`, `list.*`, `sidebar.*` and `reader.*` actions below take effect in the mail screen
-and the `wizard.*` ones in the setup wizard. In the mail screen `?` lists the keys of the view you
+The `global.*`, `list.*`, `sidebar.*`, `reader.*` and `compose.*` actions below take effect in the
+mail screen and the `wizard.*` ones in the setup wizard. In the mail screen `?` lists the keys of the view you
 are in, with `*` after the ones set in `config.toml`.
 
 | Action | Works in | Default keys | What it does |
@@ -197,6 +202,10 @@ are in, with `*` after the ones set in `config.toml`.
 | `list.read` | list, reader | `u` | Mark read or unread. |
 | `list.labels` | list, reader | `l` | Add or remove labels. |
 | `list.move` | list, reader | `m` | Move to a label (archives). |
+| `list.compose` | list, reader | `c` | Write a new message. |
+| `list.reply` | list, reader | `r` | Reply to the latest message. |
+| `list.reply_all` | list, reader | `R` | Reply to everyone. |
+| `list.forward` | list, reader | `f` | Forward the latest message. |
 | `list.select` | list | `space` | Select or unselect the thread. |
 | `list.clear_selection` | list | `esc` | Clear the selection. |
 | `sidebar.focus` | list, sidebar | `tab` | Move between the sidebar and the list. |
@@ -217,6 +226,17 @@ are in, with `*` after the ones set in `config.toml`.
 | `reader.page_up` | reader | `pageup` | One page up. |
 | `reader.top` | reader | `home` `g g` | First line. |
 | `reader.bottom` | reader | `end` `G` | Last line. |
+| `compose.send` | compose | `y` | Send. |
+| `compose.edit` | compose | `e` | Edit in your editor. |
+| `compose.headers` | compose | `t` | Change To, Cc, Bcc or Subject. |
+| `compose.attach` | compose | `a` | Attach a file. |
+| `compose.remove` | compose | `x` | Remove the highlighted attachment. |
+| `compose.close` | compose | `q` `esc` | Close and keep the draft. |
+| `compose.discard` | compose | `d` | Discard the draft (asks first). |
+| `compose.down` | compose | `j` `down` | Next line. |
+| `compose.up` | compose | `k` `up` | Previous line. |
+| `compose.page_down` | compose | `pagedown` `space` | One page down. |
+| `compose.page_up` | compose | `pageup` | One page up. |
 | `wizard.back` | wizard | `esc` | Go back one step. |
 | `wizard.portal` | wizard | `f1` | Open the provider portal or the preset's help. |
 | `wizard.next_field` | wizard | `tab` | Next field. |
@@ -383,6 +403,102 @@ list, shows "Could not archive: …" on the thread's row, and keeps the error in
 connects to the daemon, so one that happened while Rail was closed or disconnected is not lost.
 A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed`.
 Microsoft 365 accounts cannot be changed yet.
+
+## Writing mail
+
+From the thread list or the reader: `c` writes a new message, `r` replies to the latest message of
+the thread, `R` replies to everyone and `f` forwards it. In the list they act on the thread under
+the cursor; in the reader, on the open thread. In the unified inbox with more than one account,
+`c` first asks which account to write from; elsewhere it writes from the account you are looking
+at. One message is written at a time (`Finish or close the message being written first.`). A
+reply goes to the message's `Reply-To` when it has one, otherwise to its sender; `R` adds the
+other recipients except you, keeping the old `Cc` in `Cc`. A reply starts with `Re:` once and the
+quoted text under `On <date>, <name> wrote:`; a forward starts with `Fwd:`, no recipients, and the
+original under a `Forwarded message` line, with its attachments. If the message's text is not in
+the store yet, Rail fetches it first (`fetching the message…`). Microsoft 365 accounts cannot
+write mail yet: the first save is refused.
+
+**A new message** starts with two prompts on the bottom row. `To:` completes from the addresses
+your mail has taught Rail: type a few letters and matching addresses appear above; `Tab` and
+`Shift-Tab` (or `↓` and `↑`) move through them, `Enter` takes the highlighted one or the text you
+typed, and a comma takes the highlighted one and starts the next recipient. Then `Subject:`.
+Each address is checked as you press `Enter` and the prompt stays open with the reason when one
+is wrong. A recipient is a plain `user@domain` or `Name <user@domain>`; a quoted name with a comma
+(`"Reyes, Dana" <dana@example.com>`) is one recipient. `Esc` in either prompt cancels the
+message; nothing is saved. A reply or forward skips the prompts and opens the editor at once.
+
+**The editor.** Rail runs `general.editor`, else `$VISUAL`, else `$EDITOR`, else `vi`, on a
+file in its cache folder (`compose/<draft>.eml`, mode 0600). The command is split like a shell
+command line (quotes work) but no shell runs, so pipes and `~` are not interpreted. An editor that
+returns at once needs its wait flag: use `editor = "code --wait"`. While the editor runs Rail
+steps aside and ignores `Ctrl-C` and `Ctrl-\`; it takes the terminal back when the editor exits.
+The file holds four headers, a blank line and the body:
+
+```
+To: Dana Reyes <dana@example.com>
+Cc:
+Bcc:
+Subject: Lunch
+
+Are you free on Thursday?
+```
+
+`To`, `Cc` and `Bcc` take comma-separated recipients; a header is one line (a line starting with
+a space continues the one before). Any other header, or a line that is not `Name: value`, is
+refused: Rail names the line and opens the editor again on the same text. If the editor exits with
+a non-zero status Rail asks `Keep what you wrote?`: yes saves the text, no keeps the draft as it
+was. If the editor cannot start Rail says `cannot run …` and the review opens with the text it
+had. The file is kept until a save succeeds, so an error never loses what you typed.
+
+**The review.** When the editor returns, Rail shows the message as it will go: `From`, `To`, `Cc`
+and `Bcc` (when used), `Subject`, then the attachments with their count and total size, then the
+body, with long runs of quoted lines folded to `[n quoted lines]`. A recipient with an
+international domain is followed by the domain's ASCII form, as `xn--` addresses are what
+the mail system sees. The bottom row names the keys:
+
+| Key | What it does |
+|---|---|
+| `y` | Send. |
+| `e` | Edit again in your editor. |
+| `t` | Change `To`, `Cc`, `Bcc` and `Subject`, one prompt after another. |
+| `a` | Attach a file: type its path (`~` works, `Tab` completes names from the folder, relative paths are made absolute) and press `Enter`. |
+| `x` | Remove the attachment on the cursor row. |
+| `q` or `Esc` | Close and keep the draft: `draft kept`. |
+| `d` | Discard the draft after `Discard this draft? (y/n)`: `draft discarded`. |
+| `j` `k` `↑` `↓` `PageUp` `PageDown` `Space` | Move through the message. |
+
+These are the `compose.*` actions in the key table and can be changed. `y` is refused with a
+reason when there is no recipient (`Add a recipient first`), while a save is pending, or after a
+save failed. If a save failed, `q` asks `Discard the unsaved changes?` and then says `unsaved
+changes discarded`; a message closed before anything was saved says `The message was not saved.`
+
+**Sending.** `y` hands the message to the daemon, which sends it ten seconds later. The status
+bar says `sent · z undoes` and `z` takes it back inside that window: the review opens again with
+the message as it was. After the ten seconds the account shows `sending…` and the message goes
+through Gmail like the actions in [Doing things to mail](#doing-things-to-mail). A message is
+never sent twice: before any later attempt (a retry, or a start after the daemon stopped
+mid-send) the daemon asks Gmail whether a message with that `Message-ID` is already there and, if
+so, counts it as sent. When Gmail refuses a message for good, the review opens again with the
+error (`Could not send: Gmail refused the request (HTTP 400)`) and the failure is listed in
+`:errors`.
+
+**Drafts.** Every editor round, header change and attachment change saves the message in the
+local store, so a crash or a closed terminal loses nothing. `:drafts` (`Open a draft` in the
+palette) lists the account's saved drafts, newest first (in the unified inbox, every account's);
+`Enter` reopens one at its review. A reply whose original message has since left the store keeps
+its threading. Drafts stay on this machine: pushing them to Gmail's Drafts folder is not in this
+version, and no other mail program sees them.
+
+**Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
+limit; an over-size message says its size), 10 MiB of text and a one-line subject. File names are
+cleaned before they are sent. Attachments come from files you name by path; a forward carries the
+original's attachments along, and they count in the total. Only regular files can be attached, and
+they are read when the message goes out: one that was moved or deleted in the meantime fails the
+send (`the draft's attachments could not be read`) and the review opens again.
+
+**Your address and signature.** `From:` is the account's address, with `from_name` before it when
+set. A `signature` file is added under `-- ` to every new message, reply and forward. Both are
+described under [`[[accounts]]`](#accounts).
 
 ## Account setup
 
@@ -608,7 +724,10 @@ and written atomically.
 **What is stored locally.** For each Gmail account, `rail.db` holds every label; the envelope
 (sender, recipients, subject, date, flags, labels, snippet) of every message inside
 `history_days` (the whole mailbox by default); the text of bodies for threads with mail newer than
-`body_cache_days`; and attachment names, types and sizes (never attachment contents). HTML bodies
+`body_cache_days`; and attachment names, types and sizes (never attachment contents). Drafts you write are kept
+there too, with the paths of the files you attached (the files are read when the message is sent,
+so they must still be there then); the editor's working file lives in the `compose`
+folder of the cache directory until a save succeeds. HTML bodies
 are converted to text by Rail's own scanner without running scripts or loading anything remote, so
 syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
 finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail does not
@@ -670,7 +789,7 @@ running syncs carry on unchanged.
 | `accent` | unset | The accent colour: a palette slot `0` to `15` of the scheme (a number, or a string such as `"5"`), a colour name such as `"blue"`, or `"#rrggbb"`. Without truecolor a `"#rrggbb"` accent is not applied. |
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
-| `editor` | unset | Reserved for composing; accepted but no effect yet. |
+| `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 
 ### `[[accounts]]`
 
@@ -685,8 +804,8 @@ running syncs carry on unchanged.
 | `color` | no | Account colour in the UI. |
 | `history_days`, `body_cache_days` | no | Per-account overrides of the `[general]` values. |
 | `ai_send` | no | `"confirm"` (default), `"drafts"` or `"client"`; see below. |
-| `signature` | no | Reserved for composing; accepted but no effect yet. |
-| `from_name` | no | The name shown before `address` in `From:` of mail Rail sends (spaces allowed, at most 200 characters). Reserved for composing; accepted but no effect yet. |
+| `signature` | no | A text file whose contents go under `-- ` at the end of every new message, reply and forward from this account (`~` is your home directory; trailing blank lines are dropped; at most 4 KiB are used). Read when the mail screen starts; a file that cannot be read is noticed when you start writing, and the message goes without it. |
+| `from_name` | no | The name shown before `address` in `From:` of mail Rail sends (spaces allowed, at most 200 characters). |
 
 `address`, `color` and `tenant` must not contain spaces, control characters or Unicode format
 characters (such as U+202E); such a value is refused by `rail account add` and fails to load from
@@ -734,8 +853,10 @@ ai_send = "confirm"
 - `drafts`: the agent may create and edit drafts, never send.
 - `client`: Rail relies on your MCP client's own per-call approval prompt. The weakest option.
 
-The policy will cover sending, replying, forwarding and deleting. No mail tools exist yet, so today
-the key is only recorded and reported (`rail doctor`, `rail_status`, `rail_accounts_list`).
+The policy will cover sending, replying, forwarding and deleting. The operations that save, send
+and discard a draft exist (`draft.save`, `draft.send`, `draft.discard`) and Rail's own terminal
+uses them, but they are not offered over MCP: no agent tool for mail exists yet, so today the key
+is only recorded and reported (`rail doctor`, `rail_status`, `rail_accounts_list`).
 
 ### Tokens in 1Password
 
@@ -851,6 +972,9 @@ their own.
 | A first sync is taking hours | Expected for a large mailbox; set `history_days` to sync only recent mail. `rail doctor` and `rail_sync_status` show progress. |
 | Colours look wrong or a theme does nothing inside tmux | Add `set -as terminal-features ",xterm-256color:RGB"` (tmux 3.2+) or `set -ga terminal-overrides ",*:Tc"` to `~/.tmux.conf`, and make sure `COLORTERM=truecolor` reaches the shell inside tmux. |
 | The login URL did not open in a browser | Select it on screen and open it while Rail is still running. |
+| The editor opens and Rail comes straight back with the message unchanged | A graphical editor that returns at once. Give it its wait flag in `general.editor`, e.g. `editor = "code --wait"`. |
+| `cannot run "vi"` (or your editor's name) when writing | No editor was found: `general.editor`, `$VISUAL` and `$EDITOR` are unset or name a program that is not installed, and `vi` is missing. Set `general.editor`. |
+| `Could not send: Gmail refused the request (HTTP 400)` | Gmail rejected something in the message, most often a recipient. The review opens again: fix the address with `t` and send again. |
 
 ### Microsoft sign-in errors
 
