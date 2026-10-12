@@ -1,10 +1,12 @@
 //! The composer's edges: a reply whose message leaves the store, forwarded parts removed,
-//! the attachment size estimate, compose files swept at start, and a late thread read.
+//! the attachment size estimate, compose files swept at start, the text a crash left in a
+//! compose file, and a late thread read.
 
 use std::sync::{Arc, Mutex};
 
-use rail_core::ops::DraftSaveResponse;
+use rail_core::error::ErrorClass;
 use rail_core::ops::drafts::{AttachmentSummary, DraftAttachment};
+use rail_core::ops::{DraftSaveResponse, ErrorCode};
 
 use super::compose::{compose_fixture, composing, editor_appends, saves, type_text};
 use super::*;
@@ -241,4 +243,132 @@ async fn a_late_thread_read_leaves_the_focus_on_the_composer() {
         "the composer keeps the keys"
     );
     assert!(f.screen.compose.is_some());
+}
+
+/// The fake editor records the text it was opened on, leaves it alone and exits 0.
+fn editor_records(f: &Fixture) -> Arc<Mutex<Vec<String>>> {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    f.editor.set(move |path| {
+        log.lock()
+            .unwrap()
+            .push(std::fs::read_to_string(path).unwrap());
+        Ok(0)
+    });
+    seen
+}
+
+/// Leave `text` as the compose file `name` the way a crashed session would.
+fn leave_compose_file(f: &Fixture, name: &str, text: &str) {
+    let dir = f.paths.compose_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(name), text).unwrap();
+}
+
+const RECOVERED: &str = "opened the text from your last editor session";
+
+#[tokio::test]
+async fn a_leftover_compose_file_is_opened_not_overwritten() {
+    let mut f = compose_fixture().await;
+    let leftover = "To: a@b.c\nCc: \nBcc: \nSubject: typed before the crash\n\nProbe version 1.\n";
+    leave_compose_file(&f, "1.eml", leftover);
+    let seen = editor_records(&f);
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await; // saved as draft 1, then the editor opens
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [leftover],
+        "the editor got the leftover"
+    );
+    assert!(f.screen.status_line().contains(RECOVERED));
+    assert_eq!(composing(&f).headers.subject, "typed before the crash");
+    assert!(composing(&f).body.contains("Probe version 1."));
+}
+
+#[tokio::test]
+async fn a_compose_file_matching_the_store_is_written_as_usual() {
+    let mut f = compose_fixture().await;
+    let seen = editor_records(&f);
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await; // no file: written from the store
+    let stored = seen.lock().unwrap()[0].clone();
+    assert!(stored.contains("Subject: Re: "), "{stored}");
+    assert!(!f.screen.status_line().contains(RECOVERED));
+    // A new session finds the very text the store would give: no recovery.
+    let mut g = compose_fixture().await;
+    leave_compose_file(&g, "1.eml", &stored);
+    let seen = editor_records(&g);
+    press(&mut g, KeyCode::Enter).await;
+    press(&mut g, KeyCode::Char('r')).await;
+    assert_eq!(*seen.lock().unwrap(), [stored]);
+    assert!(!g.screen.status_line().contains(RECOVERED));
+}
+
+#[tokio::test]
+async fn a_leftover_new_message_file_is_not_reused() {
+    let mut f = compose_fixture().await;
+    leave_compose_file(&f, "new.eml", "To: x@y.z\n\nsomeone else's message\n");
+    // The first save fails, so the editor opens on a message with no draft id: `new.eml`.
+    *f.fake.on_save.lock().unwrap() = Some(Box::new(|_| {
+        Err(OpError::new(
+            ErrorCode::Daemon,
+            ErrorClass::Transient,
+            "the connection to the daemon closed",
+        ))
+    }));
+    let seen = editor_records(&f);
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    assert_eq!(composing(&f).draft, None);
+    let text = seen.lock().unwrap()[0].clone();
+    assert!(!text.contains("someone else's message"), "{text}");
+    assert!(!f.screen.status_line().contains(RECOVERED));
+}
+
+#[tokio::test]
+async fn a_reopen_after_a_refused_header_is_on_the_same_edited_file() {
+    let mut f = compose_fixture().await;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    f.editor.set(move |path| {
+        let mut text = std::fs::read_to_string(path).unwrap();
+        log.lock().unwrap().push(text.clone());
+        // The first round adds a header Rail refuses; the second takes it out again.
+        if log.lock().unwrap().len() == 1 {
+            text.insert_str(0, "X-Bogus: 1\n");
+        } else {
+            text = text.replacen("X-Bogus: 1\n", "", 1);
+        }
+        std::fs::write(path, text).unwrap();
+        Ok(0)
+    });
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "refused, then the editor again");
+    assert_eq!(seen[1], format!("X-Bogus: 1\n{}", seen[0]));
+    assert!(!f.screen.status_line().contains(RECOVERED));
+}
+
+#[tokio::test]
+async fn a_compose_file_that_cannot_be_read_is_kept_and_not_called_a_recovery() {
+    let mut f = compose_fixture().await;
+    // A directory at the path: reading it fails with something other than not found.
+    let at = f.paths.compose_dir().join("1.eml");
+    std::fs::create_dir_all(&at).unwrap();
+    let runs = Arc::new(Mutex::new(Vec::new()));
+    let log = runs.clone();
+    f.editor.set(move |path| {
+        log.lock().unwrap().push(path.to_path_buf());
+        Ok(0)
+    });
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    assert_eq!(
+        *runs.lock().unwrap(),
+        std::slice::from_ref(&at),
+        "the editor still ran"
+    );
+    assert!(at.is_dir(), "not overwritten");
+    assert!(!f.screen.status_line().contains(RECOVERED));
 }

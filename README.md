@@ -456,9 +456,9 @@ was. If the editor cannot start Rail says `cannot run …` and the review opens 
 had. The file is kept until a save succeeds. If Rail stops before that (a crash, a closed
 terminal), the next editor round for that draft opens on the text from the file and says
 `opened the text from your last editor session`; quitting that editor with an error and answering
-no to `Keep what you wrote?` keeps the draft as it was. A new message that had not been saved yet
-is not recovered this way: its file (`new.eml` in Rail's `compose` cache folder) is removed after
-seven days.
+no to `Keep what you wrote?` keeps the draft as it was. A new message is saved before its first
+editor round, so it is recovered like any other draft. Only a `new.eml` (left when that first save
+failed) is never reused for another message; it is removed after seven days.
 
 **The review.** When the editor returns, Rail shows the message as it will go: `From`, `To`, `Cc`
 and `Bcc` (when used), `Subject`, then the attachments with their count and total size, then the
