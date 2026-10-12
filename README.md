@@ -492,8 +492,9 @@ local store, so a crash or a closed terminal loses nothing. A reply whose origin
 since left the store keeps its threading. A draft stays on this computer until you press `s` on
 its review: Rail saves any text not stored yet, saves the draft to Gmail's Drafts ten seconds
 later, closes the review and says `saved to Gmail · z undoes`. `z` inside that window cancels it
-(`kept on this computer`). Pressing `s` again inside the ten seconds makes one save with the newest
-text, and `z` after it cancels that save. `s` is refused when the message holds nothing at all.
+(`kept on this computer`). The review closes after `s`, so pressing `s` again means opening the
+draft again from the Drafts folder or `:drafts`; done inside the ten seconds, it makes one save with
+the newest text, and `z` after it cancels that save. `s` is refused when the message holds nothing at all.
 The status bar shows `saving to Gmail…` while a save is on its way. A save Gmail refuses on the
 spot keeps the review open (`Could not save to Gmail: …`); one that fails later is listed in
 `:errors` (`Could not save the draft to Gmail: …`), where `Enter` retries it. The first save
@@ -513,7 +514,9 @@ your phone, in the browser). A row shows the date, the recipients and the subjec
 a draft kept only on this computer says `(local)` where the recipients go and has `✎` (`*` with
 ASCII icons) before its subject, and a draft saved to Gmail is listed once. `Enter` opens a draft
 at its review. A Gmail draft is fetched first (`fetching the draft…`), together with its
-attachments, and from then on is a draft of this computer too, its Gmail copy updated by `s`. `d`
+attachments, and from then on is a draft of this computer too, its Gmail copy updated by `s`.
+A Gmail draft Rail already holds that was edited elsewhere since is listed again as a Gmail row;
+opening it opens Rail's copy, as Rail's version wins. `d`
 asks `Discard this draft? (y/n)`; yes deletes it, and its Gmail copy with it. While a save to Gmail
 is still on its way the discard is refused (`draft: saving to Gmail, try again in a moment`): try
 again once it has landed. A Gmail draft that was deleted elsewhere before you opened or discarded
@@ -781,7 +784,7 @@ are converted to text by Rail's own scanner without running scripts or loading a
 syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
 finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail changes mail on
 the server only when you act on it (archive, trash, star, read, labels, move), send, or save or discard a
-draft. It never deletes mail permanently, except a Gmail draft you discard, and the daemon is the
+draft. It never deletes mail permanently, except a Gmail draft you discard or send, and the daemon is the
 only process that talks to Gmail.
 
 Remote content in mail is loaded only by your browser, never by Rail, and only when you ask for
