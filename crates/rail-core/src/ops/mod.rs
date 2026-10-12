@@ -45,8 +45,9 @@ pub use daemon::{
 };
 pub use drafts::{
     AttachmentSummary, DraftAttachment, DraftDiscardRequest, DraftDiscardResponse,
-    DraftSaveRequest, DraftSaveResponse, DraftSendRequest, DraftSendResponse, MAX_ADDRESS_CHARS,
-    MAX_ATTACHMENTS, MAX_BODY_BYTES, MAX_MESSAGE_BYTES, MAX_RECIPIENTS, MAX_SUBJECT_BYTES, ReplyTo,
+    DraftImportRequest, DraftImportResponse, DraftPushRequest, DraftPushResponse, DraftSaveRequest,
+    DraftSaveResponse, DraftSendRequest, DraftSendResponse, MAX_ADDRESS_CHARS, MAX_ATTACHMENTS,
+    MAX_BODY_BYTES, MAX_MESSAGE_BYTES, MAX_RECIPIENTS, MAX_SUBJECT_BYTES, ReplyTo,
     estimated_raw_size, new_message_id, parse_recipient, too_large_text,
 };
 pub(crate) use error::write_config_text;

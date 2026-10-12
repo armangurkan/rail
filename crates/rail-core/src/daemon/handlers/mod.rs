@@ -3,6 +3,7 @@
 mod actions;
 mod body;
 mod drafts;
+mod drafts_gmail;
 mod guide;
 mod login;
 mod pending;
@@ -43,5 +44,7 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::DraftSave, _, _>(drafts::save);
     registry.register::<op::DraftSend, _, _>(drafts::send);
     registry.register::<op::DraftDiscard, _, _>(drafts::discard);
+    registry.register::<op::DraftPush, _, _>(drafts_gmail::push);
+    registry.register::<op::DraftImport, _, _>(drafts_gmail::import);
     registry
 }

@@ -1,4 +1,4 @@
-//! `draft.save`, `draft.send`, `draft.discard`: the requests, their bounds, and the checks
+//! `draft.save`, `draft.send`, `draft.discard`, `draft.push`, `draft.import`: the requests, their bounds, and the checks
 //! that run before anything is stored. Every refusal names its field.
 
 use std::collections::HashSet;
@@ -125,6 +125,37 @@ pub struct DraftDiscardRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DraftDiscardResponse {}
+
+/// Save a draft to Gmail's Drafts once the undo grace is over.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DraftPushRequest {
+    pub draft: DraftId,
+    /// A fresh token per push; replayed, it answers the first row.
+    pub client_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DraftPushResponse {
+    /// The outbox row: `action.undo` with it and the token cancels the push in its grace.
+    pub row: OutboxId,
+}
+
+/// Make a local draft of a Gmail draft, keeping its Gmail identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DraftImportRequest {
+    /// An account's name or address.
+    pub account: String,
+    /// The stored message (`messages.id`) of a Gmail draft.
+    pub message: i64,
+    pub client_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DraftImportResponse {
+    pub draft: DraftId,
+}
 
 /// The checked recipients of one request (`Debug` shows no address).
 #[derive(Debug)]

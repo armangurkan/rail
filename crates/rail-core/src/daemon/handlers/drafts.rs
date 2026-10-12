@@ -20,11 +20,11 @@ use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
 use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
 
-fn unexpected() -> OpError {
+pub(super) fn unexpected() -> OpError {
     OpError::internal("the store answered a draft write unexpectedly")
 }
 
-fn no_such_draft() -> OpError {
+pub(super) fn no_such_draft() -> OpError {
     OpError::not_found("draft: no such draft")
 }
 
@@ -42,7 +42,7 @@ fn being_pushed() -> OpError {
     )
 }
 
-fn checked_id(draft: DraftId) -> Result<(), OpError> {
+pub(super) fn checked_id(draft: DraftId) -> Result<(), OpError> {
     if draft <= 0 {
         return Err(OpError::invalid_input(
             "draft: a draft id is a positive number",
@@ -131,7 +131,7 @@ struct Threading {
 /// A stored id as a threading header carries it: `<inner>`. Gmail's metadata keeps ids bare
 /// and either form is accepted. `None` when the inner part fails the MIME builder's rule: a bad
 /// id in received mail is left out of the headers rather than blocking the reply.
-fn header_id(id: &str) -> Option<String> {
+pub(super) fn header_id(id: &str) -> Option<String> {
     let id = id.trim();
     let inner = id.strip_prefix('<').unwrap_or(id);
     let inner = inner.strip_suffix('>').unwrap_or(inner);
@@ -335,7 +335,7 @@ fn saved(db: &Path, id: DraftId) -> Result<DraftSaveResponse, OpError> {
     })
 }
 
-fn saved_id(outcome: OutboxOutcome) -> Result<DraftId, OpError> {
+pub(super) fn saved_id(outcome: OutboxOutcome) -> Result<DraftId, OpError> {
     match outcome {
         OutboxOutcome::DraftSaved(DraftSaved::Saved(id)) => Ok(id),
         OutboxOutcome::DraftSaved(DraftSaved::Missing) => Err(no_such_draft()),
@@ -394,7 +394,7 @@ pub(super) async fn save(
 }
 
 /// The draft and its account's address.
-fn draft_and_address(db: &Path, id: DraftId) -> Result<(Draft, String), OpError> {
+pub(super) fn draft_and_address(db: &Path, id: DraftId) -> Result<(Draft, String), OpError> {
     let store = Store::open_reader(db)?;
     let draft = store.draft(id)?.ok_or_else(no_such_draft)?;
     if !store.draft_attachments_readable(id)? {
@@ -444,7 +444,7 @@ fn not_queued(db: &Path, id: DraftId) -> Result<OpError, OpError> {
 }
 
 /// A token already in the outbox answers its row: refuse it unless that row is this draft's.
-fn row_of_draft(db: &Path, row: i64, id: DraftId) -> Result<(), OpError> {
+pub(super) fn row_of_draft(db: &Path, row: i64, id: DraftId) -> Result<(), OpError> {
     let owner = Store::open_reader(db)?
         .outbox_row(row)?
         .and_then(|r| r.draft_id);

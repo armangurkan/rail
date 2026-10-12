@@ -20,22 +20,22 @@ use crate::store::Store;
 use crate::store::drafts::{Attachment, DraftKind, DraftState};
 use crate::test_support::{daemon_context, mock_factory, start_daemon};
 
-const WORK: &str = "[general]\nsecrets = \"file\"\npoll_interval = \"60s\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\n";
-const BOUND: Duration = Duration::from_secs(15);
+pub(super) const WORK: &str = "[general]\nsecrets = \"file\"\npoll_interval = \"60s\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\n";
+pub(super) const BOUND: Duration = Duration::from_secs(15);
 
 type DaemonTask = tokio::task::JoinHandle<Result<(), OpError>>;
 
-struct DaemonHarness {
+pub(super) struct DaemonHarness {
     tmp: tempfile::TempDir,
-    paths: Paths,
-    mock: MockProvider,
-    client: DaemonClient,
+    pub(super) paths: Paths,
+    pub(super) mock: MockProvider,
+    pub(super) client: DaemonClient,
     task: DaemonTask,
 }
 
 impl DaemonHarness {
     /// A synced daemon whose store holds m1 (thread t1), m2 and m3.
-    async fn new() -> Self {
+    pub(super) async fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let paths = Paths::all_in(tmp.path());
         std::fs::create_dir_all(&paths.config_dir).unwrap();
@@ -62,7 +62,7 @@ impl DaemonHarness {
     }
 
     /// `new`, with an attachment (part `p1`) stored for m1.
-    async fn with_messages() -> Self {
+    pub(super) async fn with_messages() -> Self {
         let h = Self::new().await;
         let message = h.message_id("m1");
         Store::open(&h.paths.db_file())
@@ -77,7 +77,7 @@ impl DaemonHarness {
         h
     }
 
-    async fn boot(tmp: tempfile::TempDir, paths: Paths, mock: MockProvider) -> Self {
+    pub(super) async fn boot(tmp: tempfile::TempDir, paths: Paths, mock: MockProvider) -> Self {
         let (ctx, _) = daemon_context(&paths);
         let task = start_daemon(
             ctx.with_provider_factory(mock_factory(&mock)),
@@ -100,7 +100,7 @@ impl DaemonHarness {
     }
 
     /// Stop the daemon, wait for it to end, and start another over the same files.
-    async fn restart(self) -> Self {
+    pub(super) async fn restart(self) -> Self {
         self.client
             .call::<DaemonStop>(&DaemonStopRequest {})
             .await
@@ -113,7 +113,7 @@ impl DaemonHarness {
         Self::boot(self.tmp, self.paths, self.mock).await
     }
 
-    async fn until_synced(&self) {
+    pub(super) async fn until_synced(&self) {
         tokio::time::timeout(BOUND, async {
             loop {
                 let request = SyncStatusRequest {
@@ -131,20 +131,23 @@ impl DaemonHarness {
         .expect("synced");
     }
 
-    async fn call<O: Operation>(&self, request: &O::Request) -> Result<O::Response, OpError> {
+    pub(super) async fn call<O: Operation>(
+        &self,
+        request: &O::Request,
+    ) -> Result<O::Response, OpError> {
         self.client.call::<O>(request).await
     }
 
-    fn store<R>(&self, read: impl FnOnce(&Store) -> R) -> R {
+    pub(super) fn store<R>(&self, read: impl FnOnce(&Store) -> R) -> R {
         read(&Store::open_reader(&self.paths.db_file()).unwrap())
     }
 
-    fn now(&self) -> i64 {
+    pub(super) fn now(&self) -> i64 {
         crate::auth::unix_now()
     }
 
     /// The store's id of the message Gmail calls `remote`.
-    fn message_id(&self, remote: &str) -> i64 {
+    pub(super) fn message_id(&self, remote: &str) -> i64 {
         self.store(|s| {
             s.conn()
                 .query_row(
@@ -156,7 +159,7 @@ impl DaemonHarness {
         })
     }
 
-    async fn send(&self, draft: DraftId, token: &str) -> Result<i64, OpError> {
+    pub(super) async fn send(&self, draft: DraftId, token: &str) -> Result<i64, OpError> {
         let request = DraftSendRequest {
             draft,
             client_token: token.into(),
@@ -184,7 +187,7 @@ impl DaemonHarness {
 }
 
 /// A new draft for `work` to sam@example.com.
-fn save_request(draft: Option<DraftId>, token: &str) -> DraftSaveRequest {
+pub(super) fn save_request(draft: Option<DraftId>, token: &str) -> DraftSaveRequest {
     DraftSaveRequest {
         account: "work".into(),
         draft,
