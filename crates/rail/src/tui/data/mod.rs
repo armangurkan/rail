@@ -15,13 +15,25 @@ use futures_util::FutureExt;
 
 use rail_core::ops::{
     AccountSyncStatus, ActionApplyResponse, ActionFailed, ActionRetryResponse, ActionUndoResponse,
-    BodyFetchResponse, OpError, OutboxId,
+    BodyFetchResponse, DraftId, DraftSaveResponse, DraftSendResponse, OpError, OutboxId,
 };
+use rail_core::store::AddressEntry;
+use rail_core::store::drafts::{DraftSummary, ReplySource};
 use rail_core::store::view::{HtmlBody, LabelChoices, ThreadDetail};
 
+#[cfg_attr(
+    not(test),
+    allow(unused_imports, reason = "the composer (Task 7) is the first user")
+)]
+pub use daemon_link::SaveCall;
 pub use daemon_link::{ApplyCall, DaemonLink};
 #[cfg(test)]
 pub use daemon_link::{FakeCall, FakeDaemon};
+#[cfg_attr(
+    not(test),
+    allow(unused_imports, reason = "the composer (Task 7) is the first user")
+)]
+pub use store_reader::ReplyTarget;
 pub use store_reader::{
     ListOutcome, ListRequest, ReadError, ScopeChoice, SidebarOutcome, StoreReader,
 };
@@ -53,6 +65,10 @@ pub enum DaemonEvent {
 }
 
 /// One answer to the mail screen.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the composer (Task 7) is the first caller")
+)]
 pub enum MailEvent {
     Listed {
         seq: u64,
@@ -76,8 +92,9 @@ pub enum MailEvent {
         result: Result<BodyFetchResponse, OpError>,
     },
     /// `action.apply` answered for `call`.
+    /// Boxed: with the token the call is large for an event.
     Applied {
-        call: ApplyCall,
+        call: Box<ApplyCall>,
         result: Result<ActionApplyResponse, OpError>,
     },
     /// `action.undo` answered for the action with this `seq`.
@@ -109,6 +126,41 @@ pub enum MailEvent {
         token: u64,
         kind: Timer,
     },
+    /// `draft.save` answered for the save with this `seq`.
+    DraftSaved {
+        seq: u64,
+        result: Result<DraftSaveResponse, OpError>,
+    },
+    /// `draft.send` answered for the send with this `seq`; the token it was sent with.
+    DraftSent {
+        seq: u64,
+        draft: DraftId,
+        client_token: String,
+        result: Result<DraftSendResponse, OpError>,
+    },
+    /// `draft.discard` answered.
+    DraftDiscarded {
+        draft: DraftId,
+        result: Result<(), OpError>,
+    },
+    /// The address book's matches for a recipient prefix.
+    Suggestions {
+        seq: u64,
+        result: Result<Vec<AddressEntry>, ReadError>,
+    },
+    /// The message a reply or forward is built from (`None`: it is no longer stored). Boxed:
+    /// it is the largest thing any event carries.
+    ReplySource {
+        seq: u64,
+        result: Result<Option<Box<ReplySource>>, ReadError>,
+    },
+    /// An account's drafts.
+    Drafts {
+        seq: u64,
+        result: Result<Vec<DraftSummary>, ReadError>,
+    },
+    /// The editor exited: its exit code, or why it could not run.
+    EditorDone(Result<i32, String>),
 }
 
 /// Names and numbers only: a `MailEvent` carries mail, which must never reach a log.
@@ -187,6 +239,43 @@ impl fmt::Debug for MailEvent {
                 .debug_struct("Timer")
                 .field("token", token)
                 .field("kind", kind)
+                .finish(),
+            Self::DraftSaved { seq, result } => f
+                .debug_struct("DraftSaved")
+                .field("seq", seq)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::DraftSent {
+                seq, draft, result, ..
+            } => f
+                .debug_struct("DraftSent")
+                .field("seq", seq)
+                .field("draft", draft)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::DraftDiscarded { draft, result } => f
+                .debug_struct("DraftDiscarded")
+                .field("draft", draft)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::Suggestions { seq, result } => f
+                .debug_struct("Suggestions")
+                .field("seq", seq)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::ReplySource { seq, result } => f
+                .debug_struct("ReplySource")
+                .field("seq", seq)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::Drafts { seq, result } => f
+                .debug_struct("Drafts")
+                .field("seq", seq)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::EditorDone(result) => f
+                .debug_struct("EditorDone")
+                .field("ok", &result.is_ok())
                 .finish(),
         }
     }

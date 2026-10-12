@@ -5,6 +5,9 @@
 pub mod app;
 pub mod clock;
 pub mod data;
+pub mod editor;
+#[cfg(test)]
+mod editor_tests;
 pub mod effects;
 pub mod keys;
 pub mod modals;

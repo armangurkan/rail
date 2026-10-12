@@ -200,10 +200,10 @@ fn a_view_key_shadows_a_global_one_and_chords_resolve() {
 
 #[test]
 fn an_override_replaces_the_defaults() {
-    let map = configured("[keys]\n\"list.filter\" = \"f\"\n").unwrap();
+    let map = configured("[keys]\n\"list.filter\" = \"v\"\n").unwrap();
     let list = [View::List, View::Global];
     assert_eq!(
-        resolve(&map, &list, &[press(KeyCode::Char('f'))]),
+        resolve(&map, &list, &[press(KeyCode::Char('v'))]),
         [Resolved::Action(Action::ListFilter)]
     );
     assert_eq!(
@@ -216,13 +216,13 @@ fn an_override_replaces_the_defaults() {
 
 #[test]
 fn an_unknown_action_is_refused_with_path_and_line() {
-    let text = "[general]\nsecrets = \"file\"\n\n[keys]\n\"list.filter\" = \"/\"\n\"list.compose\" = \"e\"\n";
+    let text = "[general]\nsecrets = \"file\"\n\n[keys]\n\"list.filter\" = \"/\"\n\"list.write\" = \"e\"\n";
     let error = configured(text).err().unwrap();
     assert_eq!(error.line, 6);
     assert_eq!(
         error.to_string(),
         format!(
-            "{PATH}:6: [keys] \"list.compose\" is not an action Rail knows (the README lists them)"
+            "{PATH}:6: [keys] \"list.write\" is not an action Rail knows (the README lists them)"
         )
     );
 }
@@ -289,13 +289,13 @@ fn hostile_text_in_keys_is_escaped_in_the_error() {
 
 #[test]
 fn help_reflects_an_override_and_labels_read_as_the_wizard_showed_them() {
-    let map = configured("[keys]\n\"list.filter\" = \"f\"\n").unwrap();
+    let map = configured("[keys]\n\"list.filter\" = \"v\"\n").unwrap();
     let rows = map.help(View::List);
     let filter = rows
         .iter()
         .find(|r| r.action == Action::ListFilter)
         .unwrap();
-    assert_eq!(filter.keys, "f");
+    assert_eq!(filter.keys, "v");
     assert!(filter.overridden);
     let open = rows.iter().find(|r| r.action == Action::ListOpen).unwrap();
     assert_eq!((open.keys.as_str(), open.overridden), ("Enter", false));

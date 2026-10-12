@@ -516,7 +516,7 @@ impl MailScreen {
                     .rev()
                     .map(|e| ErrorRow {
                         text: format!("{}  {}", self.ctx.clock.short(e.at), e.text),
-                        retry: e.retry,
+                        retry: e.retry.clone(),
                     })
                     .collect();
                 self.modal = Some(Modal::Errors(ErrorList::with_retries(rows, self.ctx.icons)));

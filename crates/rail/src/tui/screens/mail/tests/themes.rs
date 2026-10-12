@@ -12,7 +12,7 @@ use crate::tui::theme::scheme::scheme;
 /// Open the palette and run `target` as Enter would.
 async fn run_target(f: &mut Fixture, target: Target) {
     let effects = f.screen.run_palette(target);
-    settle_capturing(&mut f.screen, effects, &f.last_theme).await;
+    settle_capturing(&mut f.screen, effects, &f.last_theme, &f.editor).await;
 }
 
 /// Type `text` into the open picker.
@@ -224,7 +224,7 @@ async fn a_thread_leaving_the_store_under_a_previewing_picker_restores_the_theme
         result: Ok(None),
     };
     let effects = f.screen.update(Msg::Task(TaskResult::Mail(gone)));
-    settle_capturing(&mut f.screen, effects, &f.last_theme).await;
+    settle_capturing(&mut f.screen, effects, &f.last_theme, &f.editor).await;
     assert!(f.screen.reader().is_none() && f.screen.modal.is_none());
     let kept = Theme::from_choice(f.screen.themes.current, ColorDepth::TrueColor);
     assert_eq!(applied_theme(&f), Some(kept), "the kept look is back");

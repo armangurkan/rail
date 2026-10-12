@@ -12,6 +12,13 @@ use rail_core::store::filter::Filter;
 use rail_core::store::view::{AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadPage};
 use rail_core::store::{Store, StoreError};
 
+/// How many address matches the recipient prompt shows at most.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the composer (Task 7) is the first caller")
+)]
+const SUGGESTION_LIMIT: usize = 8;
+
 use super::{MailEvent, job, refresh_job, send};
 use crate::tui::app::Effect;
 
@@ -87,6 +94,17 @@ pub struct ListOutcome {
 pub struct SidebarOutcome {
     pub counts: SidebarCounts,
     pub account_ids: Vec<Option<i64>>,
+}
+
+/// Which message a reply or forward answers: this one, or a thread's latest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the composer (Task 7) is the first caller")
+)]
+pub enum ReplyTarget {
+    Message(i64),
+    Thread(i64),
 }
 
 #[derive(Clone)]
@@ -253,6 +271,60 @@ impl StoreReader {
                 .read(move |store| store.label_choices(account_id, &threads))
                 .await;
             send(&sink, MailEvent::Labels { seq, result });
+        })
+    }
+
+    /// The reply source of `target`: a message, or the newest message of a thread.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "the composer (Task 7) is the first caller")
+    )]
+    pub fn reply_source(&self, seq: u64, target: ReplyTarget) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| {
+                    let message = match target {
+                        ReplyTarget::Message(id) => Some(id),
+                        ReplyTarget::Thread(thread) => store.latest_message_of(thread)?,
+                    };
+                    match message {
+                        Some(id) => Ok(store.reply_source(id)?.map(Box::new)),
+                        None => Ok(None),
+                    }
+                })
+                .await;
+            send(&sink, MailEvent::ReplySource { seq, result });
+        })
+    }
+
+    /// The best address-book matches for `prefix`.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "the composer (Task 7) is the first caller")
+    )]
+    pub fn suggest(&self, seq: u64, prefix: String) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| store.address_suggestions(&prefix, SUGGESTION_LIMIT))
+                .await;
+            send(&sink, MailEvent::Suggestions { seq, result });
+        })
+    }
+
+    /// An account's drafts.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "the composer (Task 7) is the first caller")
+    )]
+    pub fn drafts(&self, seq: u64, account_id: i64) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| store.drafts_for_account(account_id))
+                .await;
+            send(&sink, MailEvent::Drafts { seq, result });
         })
     }
 }

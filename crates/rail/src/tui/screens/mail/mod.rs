@@ -743,6 +743,9 @@ impl Screen for MailScreen {
             }
             Msg::Resize(..) => Vec::new(),
             Msg::Task(TaskResult::Mail(event)) => self.mail_event(event),
+            Msg::Task(TaskResult::EditorDone(result)) => {
+                self.mail_event(MailEvent::EditorDone(result))
+            }
             Msg::Task(TaskResult::JobPanicked(message)) => self.job_panicked(&message),
             Msg::Task(_) => Vec::new(),
         };

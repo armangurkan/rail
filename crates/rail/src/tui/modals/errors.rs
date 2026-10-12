@@ -18,7 +18,7 @@ use crate::tui::theme::Theme;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorRow {
     pub text: String,
-    pub retry: Option<rail_core::ops::OutboxId>,
+    pub retry: Option<rail_core::ops::RowToken>,
 }
 
 pub struct ErrorList {
@@ -63,7 +63,7 @@ impl ErrorList {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => ModalOutcome::Close,
-            KeyCode::Enter => match self.rows.get(self.selected).and_then(|r| r.retry) {
+            KeyCode::Enter => match self.rows.get(self.selected).and_then(|r| r.retry.clone()) {
                 Some(row) => ModalOutcome::Run(Command::Retry(row)),
                 None => ModalOutcome::Close,
             },

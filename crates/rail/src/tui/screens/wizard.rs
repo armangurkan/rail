@@ -390,7 +390,7 @@ impl Screen for WizardScreen {
             }
             Msg::Resize(..) => Vec::new(),
             Msg::Task(TaskResult::Wizard(event)) => self.apply_event(event),
-            Msg::Task(TaskResult::Mail(_)) => Vec::new(),
+            Msg::Task(TaskResult::Mail(_) | TaskResult::EditorDone(_)) => Vec::new(),
             Msg::Task(TaskResult::JobPanicked(message)) => self.job_panicked(&message),
             Msg::Task(TaskResult::Copied(result)) => {
                 self.copied(result);

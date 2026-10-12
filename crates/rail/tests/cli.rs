@@ -114,14 +114,14 @@ fn a_bad_keys_entry_stops_rail_with_its_line() {
     let _daemon = StopsDaemon(&dir);
     write_config(
         &dir,
-        &format!("{WORK_FILE_BACKEND}\n[keys]\n\"list.compose\" = \"e\"\n"),
+        &format!("{WORK_FILE_BACKEND}\n[keys]\n\"list.write\" = \"e\"\n"),
     );
     let out = bounded(rail_cmd(&dir).args(["setup"]));
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("config.toml:12:"), "got {stderr:?}");
     assert!(
-        stderr.contains("\"list.compose\" is not an action Rail knows"),
+        stderr.contains("\"list.write\" is not an action Rail knows"),
         "got {stderr:?}"
     );
 }
@@ -132,7 +132,7 @@ fn a_bad_keys_entry_stops_plain_rail_with_its_line_too() {
     let _daemon = StopsDaemon(&dir);
     write_config(
         &dir,
-        &format!("{WORK_FILE_BACKEND}\n[keys]\n\"list.compose\" = \"e\"\n"),
+        &format!("{WORK_FILE_BACKEND}\n[keys]\n\"list.write\" = \"e\"\n"),
     );
     let out = bounded(&mut rail_cmd(&dir));
     assert_eq!(out.status.code(), Some(1));

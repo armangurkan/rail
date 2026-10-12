@@ -626,4 +626,17 @@ impl Store {
             .collect::<Result<_, _>>()?;
         Ok(Some(source))
     }
+
+    /// The newest message of `thread` (by date, then id): the one a reply or forward of the
+    /// thread answers. `None` when the thread holds no message.
+    pub fn latest_message_of(&self, thread: i64) -> Result<Option<i64>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id FROM messages WHERE thread_id = ?1 ORDER BY date DESC, id DESC LIMIT 1",
+                [thread],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
 }

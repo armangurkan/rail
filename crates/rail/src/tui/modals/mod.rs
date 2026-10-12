@@ -45,7 +45,7 @@ pub enum Command {
     /// The trash confirmation was answered yes.
     Trash,
     /// Send this failed outbox row again.
-    Retry(rail_core::ops::OutboxId),
+    Retry(rail_core::ops::RowToken),
     /// The label picker's answer: labels to add and to remove.
     Labels {
         add: Vec<i64>,

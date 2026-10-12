@@ -96,6 +96,29 @@ fn reply_source_carries_the_headers_the_daemon_needs() -> Result<(), StoreError>
 }
 
 #[test]
+fn the_latest_message_of_a_thread_is_the_newest_by_date_then_id() -> Result<(), StoreError> {
+    let (mut store, account_id) = store_with_account();
+    let (first, second) = seed_two_messages(&mut store, account_id);
+    let thread: i64 = store.conn().query_row(
+        "SELECT thread_id FROM messages WHERE id = ?1",
+        [first],
+        |r| r.get(0),
+    )?;
+    assert_eq!(store.latest_message_of(thread)?, Some(second));
+    store.conn().execute(
+        "UPDATE messages SET date = 5 WHERE id IN (?1, ?2)",
+        [first, second],
+    )?;
+    assert_eq!(
+        store.latest_message_of(thread)?,
+        Some(first.max(second)),
+        "a tie goes to the higher id"
+    );
+    assert_eq!(store.latest_message_of(thread + 100)?, None);
+    Ok(())
+}
+
+#[test]
 fn draft_state_and_remote_ids_are_set_in_place() -> Result<(), StoreError> {
     let (mut store, account_id) = store_with_account();
     let id = store.draft_upsert(&write(account_id), 1)?.expect("created");

@@ -6,7 +6,10 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use rail_core::ops::{Action as MailAction, ActionApplyResponse, ActionFailed, OpError, OutboxId};
+use rail_core::ops::{
+    Action as MailAction, ActionApplyResponse, ActionFailed, OpError, OutboxId, RowToken,
+    client_token,
+};
 use rail_core::store::view::ThreadDetail;
 
 use super::selection::{Picked, Selection};
@@ -25,7 +28,8 @@ const SHOWN_SUBJECT_CHARS: usize = 120;
 #[derive(Debug)]
 pub(super) struct LastAction {
     seq: u64,
-    rows: Vec<OutboxId>,
+    /// The rows the daemon queued, each with the token it was queued under.
+    rows: Vec<RowToken>,
     count: usize,
     until: usize,
     /// When `UNDO_GRACE` of wall time has passed: ticks are skipped while the terminal is
@@ -72,7 +76,7 @@ pub(crate) struct ActionState {
     last: Option<LastAction>,
     seq: u64,
     /// Threads whose action failed: the row and the escaped line on their list row.
-    pub(crate) failures: BTreeMap<i64, (OutboxId, String)>,
+    pub(crate) failures: BTreeMap<i64, (RowToken, String)>,
     /// What `y` on the trash confirmation applies to.
     trashing: Vec<(i64, Picked)>,
     /// The picker waiting for its labels, then open: what its answer applies to.
@@ -263,6 +267,7 @@ impl MailScreen {
                 threads,
                 action: action.clone(),
                 grace,
+                client_token: client_token(),
             }));
         }
         effects
@@ -371,8 +376,8 @@ impl MailScreen {
                 self.send_action(MailAction::Trash {}, &targets, true)
             }
             Command::Retry(row) => {
-                self.status.retried(row);
-                self.actions.failures.retain(|_, (r, _)| *r != row);
+                self.status.retried(row.row);
+                self.actions.failures.retain(|_, (r, _)| r.row != row.row);
                 vec![self.ctx.link.retry(row)]
             }
             other => self.picker_command(other),
@@ -425,7 +430,7 @@ impl MailScreen {
                 .is_some_and(|l| l.seq == call.seq);
         let mut effects = Vec::new();
         match result {
-            Ok(answer) if tracked => effects = self.call_answered(&call.action, answer.rows),
+            Ok(answer) if tracked => effects = self.call_answered(call, answer.rows),
             Ok(_) => {}
             Err(error) => {
                 self.action_error(verbs(&call.action).1, &error);
@@ -440,10 +445,17 @@ impl MailScreen {
 
     /// One account's `action.apply` answered: keep its rows for `z`, or undo them at once if
     /// `z` was pressed first.
-    fn call_answered(&mut self, action: &MailAction, rows: Vec<OutboxId>) -> Vec<Effect> {
+    fn call_answered(&mut self, call: &ApplyCall, rows: Vec<OutboxId>) -> Vec<Effect> {
         let Some(last) = self.actions.last.as_mut() else {
             return Vec::new();
         };
+        let rows: Vec<RowToken> = rows
+            .into_iter()
+            .map(|row| RowToken {
+                row,
+                client_token: call.client_token.clone(),
+            })
+            .collect();
         last.pending = last.pending.saturating_sub(1);
         if last.undo_wanted {
             if rows.is_empty() {
@@ -454,7 +466,7 @@ impl MailScreen {
             return vec![self.ctx.link.undo(last.seq, rows)];
         }
         last.rows.extend(rows);
-        let (done, _) = verbs(action);
+        let (done, _) = verbs(&call.action);
         let key = self.ctx.keymap.label(Action::GlobalUndo);
         let text = format!("{done} {} · {key} undoes", last.count);
         let left = last.until.saturating_sub(self.tick);
@@ -540,16 +552,20 @@ impl MailScreen {
             verbs(&failure.action).1,
             error_line(&failure.error)
         );
+        let row = RowToken {
+            row: failure.row,
+            client_token: failure.client_token.clone(),
+        };
         for thread in &failure.threads {
             self.actions
                 .failures
-                .insert(*thread, (failure.row, text.clone()));
+                .insert(*thread, (row.clone(), text.clone()));
         }
         // The daemon sends the failed rows again on every connect: a row still offered for a
         // retry is listed once.
         if !self.status.offers_retry(failure.row) {
             self.status
-                .error_with_retry(text, self.ctx.clock.now(), self.tick, failure.row);
+                .error_with_retry(text, self.ctx.clock.now(), self.tick, row);
         }
         self.dirty()
     }

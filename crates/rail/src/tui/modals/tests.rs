@@ -52,9 +52,9 @@ fn entries() -> Vec<PaletteEntry> {
     ]
 }
 
-/// The default keys with `list.filter` moved to `f`, so help shows the override marker.
+/// The default keys with `list.filter` moved to `v`, so help shows the override marker.
 fn overridden_keymap() -> Keymap {
-    let text = "[keys]\n\"list.filter\" = \"f\"\n";
+    let text = "[keys]\n\"list.filter\" = \"v\"\n";
     let path = std::path::Path::new("/c/config.toml");
     let config = rail_core::config::parse(text, path).unwrap();
     Keymap::from_config(&config.keys, text, path).unwrap()
@@ -117,7 +117,7 @@ fn help_lists_the_view_and_the_global_keys_and_marks_overrides() {
         "{text}"
     );
     assert!(
-        text.contains("f *") && text.contains("Filter the list as you type"),
+        text.contains("v *") && text.contains("Filter the list as you type"),
         "{text}"
     );
     assert_eq!(help.title(), "Keys (* set in config.toml)");
@@ -440,12 +440,19 @@ fn the_palette_and_the_filter_line_draw_the_cursor_where_it_is() {
     assert_eq!(cursor_after(&line), Some(Position::new(9, 23)));
 }
 
+fn token() -> rail_core::ops::RowToken {
+    rail_core::ops::RowToken {
+        row: 7,
+        client_token: "tok".into(),
+    }
+}
+
 #[test]
 fn errors_with_a_retry_move_a_highlight_and_enter_retries_it() {
     let rows = vec![
         ErrorRow {
             text: "Could not archive: gone".into(),
-            retry: Some(7),
+            retry: Some(token()),
         },
         ErrorRow {
             text: "The store could not be read".into(),
@@ -455,7 +462,7 @@ fn errors_with_a_retry_move_a_highlight_and_enter_retries_it() {
     let mut list = ErrorList::with_retries(rows, Icons::Ascii);
     assert_eq!(
         list.key(key(KeyCode::Enter)),
-        ModalOutcome::Run(Command::Retry(7))
+        ModalOutcome::Run(Command::Retry(token()))
     );
     assert_eq!(list.key(key(KeyCode::Char('j'))), ModalOutcome::Stay);
     assert_eq!(
