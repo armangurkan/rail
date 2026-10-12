@@ -113,7 +113,7 @@ async fn edit_then_quit(program: &'static [&'static str], recorder: &mut Recorde
 #[tokio::test]
 async fn the_event_stream_is_dropped_before_the_editor_and_made_again_after() {
     let mut recorder = Recorder::default();
-    let screen = edit_then_quit(&["/bin/true"], &mut recorder).await;
+    let screen = edit_then_quit(&["/bin/sh", "-c", "exit 0"], &mut recorder).await;
     assert_eq!(screen.edited, vec![Ok(0)]);
     assert_eq!(
         *recorder.log.lock().unwrap(),
@@ -156,7 +156,11 @@ async fn an_interrupt_for_the_editor_does_not_kill_rail() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_editor_runs_on_a_multi_thread_runtime_too() {
     let mut recorder = Recorder::default();
-    let ran = run_editor_blocking(&mut recorder, &["/bin/false".to_string()], Path::new("x"));
+    let ran = run_editor_blocking(
+        &mut recorder,
+        &["/bin/sh", "-c", "exit 1"].map(String::from),
+        Path::new("x"),
+    );
     assert_eq!(ran, Ok(1));
     assert_eq!(*recorder.log.lock().unwrap(), ["suspend", "resume"]);
 }
@@ -179,7 +183,11 @@ fn a_failed_hand_over_still_tries_to_take_the_terminal_back() {
         fail_suspend: true,
         ..Recorder::default()
     };
-    let ran = run_editor_blocking(&mut recorder, &["/bin/true".to_string()], Path::new("x"));
+    let ran = run_editor_blocking(
+        &mut recorder,
+        &["/bin/sh", "-c", "exit 0"].map(String::from),
+        Path::new("x"),
+    );
     let error = ran.unwrap_err();
     assert!(error.contains("cannot leave the terminal"), "{error}");
     assert_eq!(
