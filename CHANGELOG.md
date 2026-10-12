@@ -200,6 +200,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- Importing a Gmail draft with attachments, and forwarding a message with its attachments, failed
+  with "Invalid attachment token"; Rail now fetches an attachment by Gmail's own attachment id.
 - The "Rail was upgraded" hint shows only the daemon's `MAJOR.MINOR.PATCH`, and Rail's own error
   text is escaped on the terminal.
 - `rail secrets set` refuses control and format characters in `--vault`/`--account`, as MCP did.

@@ -2,6 +2,7 @@
 //! changes (`threads.modify`, `threads.trash`), over the shared `ApiClient`. Every string Gmail returns is outside text.
 
 mod actions;
+mod attachment;
 mod body;
 mod drafts;
 mod history;
@@ -17,6 +18,8 @@ mod wire;
 
 #[cfg(test)]
 mod actions_tests;
+#[cfg(test)]
+mod attachment_tests;
 #[cfg(test)]
 mod body_tests;
 #[cfg(test)]
