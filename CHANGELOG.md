@@ -200,6 +200,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A sent imported draft's attachment files are removed when the send completes, not only at the
+  next daemon start (best effort; the start sweep still catches what a removal could not).
 - A send that fails on an attachment (a file that cannot be read, a forwarded attachment gone from
   Gmail or the store) no longer quotes the attachment's file name in the error, so a name from
   outside Rail is not shown unlabelled or split at `: `.

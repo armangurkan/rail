@@ -2,8 +2,9 @@
 //! `Paths::draft_files_dir()/<client token>` (0700, files 0600), so later pushes and the send
 //! never depend on Gmail's copy of the source message, which the first push replaces.
 //! An import never takes a directory a draft names. `draft.discard` removes the directory
-//! the draft's own token names; at daemon start every directory no draft
-//! names is swept (a sent draft's files go that way). Logs carry counts, never a file name.
+//! the draft's own token names, and so does a completed send (the outbox
+//! worker, best effort); at daemon start every directory no draft names is swept, which
+//! catches what a failed removal left. Logs carry counts, never a file name.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};

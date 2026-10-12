@@ -121,7 +121,13 @@ impl Rig {
             clock: Arc::new(crate::auth::unix_now),
             from_name,
             sync_wake,
+            draft_files_dir: self.draft_files_dir(),
         })
+    }
+
+    /// Where this rig's imported drafts keep their files.
+    pub(super) fn draft_files_dir(&self) -> std::path::PathBuf {
+        self._tmp.path().join("draft-files")
     }
 
     pub(super) fn start(&mut self) {

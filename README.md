@@ -532,8 +532,8 @@ in view; in the unified inbox it merges every account's, and `Enter` opens one t
 **Files of an imported draft.** The attachments of a Gmail draft are fetched once, when you open
 it, into private files the daemon keeps in the `draft-files` folder of the data directory
 (folders 0700, files 0600). Later saves and the send use those files, not Gmail's copy. Discarding
-the draft removes its files; when the daemon starts it removes every file no draft refers to, which
-is also how the files of a draft that was sent go.
+the draft removes its files, and so does a completed send; when the daemon starts it removes every
+file no draft refers to, which catches any a removal could not.
 
 **Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
 limit), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger

@@ -24,6 +24,7 @@ mod sending_tests;
 mod tests;
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -32,6 +33,7 @@ use std::time::Duration;
 use tokio::sync::{Notify, watch};
 
 use self::plan::{Plan, Remote};
+use self::sending::remove_import_dir;
 use super::batch::{Batch, StateUpdate};
 use super::engine::{Clock, stopped};
 use super::manager::{retry_delay, unobserved};
@@ -64,6 +66,8 @@ pub struct WorkerParts {
     pub from_name: Option<String>,
     /// The account's sync engine wake: nudged when a sent message lands.
     pub sync_wake: Arc<Notify>,
+    /// `Paths::draft_files_dir()`: where a sent draft's imported attachments are removed from.
+    pub draft_files_dir: PathBuf,
 }
 
 pub struct Worker {
@@ -80,6 +84,7 @@ pub struct Worker {
     paused_poll: Duration,
     from_name: Option<String>,
     sync_wake: Arc<Notify>,
+    draft_files_dir: PathBuf,
     /// Rows found in flight at start, until they settle (`sending`).
     recovered: Mutex<HashSet<OutboxId>>,
     /// True while a claimed `Send` or `PushDraft` row is being carried out: a stop lets it
@@ -133,6 +138,7 @@ impl Worker {
             paused_poll: MAX_IDLE,
             from_name: parts.from_name,
             sync_wake: parts.sync_wake,
+            draft_files_dir: parts.draft_files_dir,
             recovered: Mutex::new(HashSet::new()),
             sending: AtomicBool::new(false),
         }
@@ -327,6 +333,11 @@ impl Worker {
         }
         // A completed draft row changed Gmail's Sent or Drafts: the next sync brings it.
         let landed = result.is_ok() && row.action.draft_id().is_some();
+        // The completion deletes a sent draft, and its token with it: read the files first.
+        let files = match (&row.action, &result) {
+            (Action::Send { draft }, Ok(_)) => self.import_dir_of(*draft).await,
+            _ => None,
+        };
         let done = match row.action {
             Action::PushDraft { .. } | Action::DeleteDraft { .. } => "done",
             _ => "sent",
@@ -337,7 +348,12 @@ impl Worker {
                 gave_up: true,
                 row: Some(failed),
             }) => self.notify(failed, result.err()),
-            Ok(OutboxOutcome::Done) if landed => self.sync_wake.notify_one(),
+            Ok(OutboxOutcome::Done) if landed => {
+                self.sync_wake.notify_one();
+                if let (Some(dir), Some(draft)) = (files, row.action.draft_id()) {
+                    remove_import_dir(draft, dir).await;
+                }
+            }
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(account = %self.name, row = row.id, error = %error.message, "could not record an outbox result")
