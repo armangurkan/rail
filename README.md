@@ -419,9 +419,10 @@ the store yet, Rail fetches it first (`fetching the message…`). Microsoft 365 
 write mail yet: the first save is refused.
 
 **A new message** starts with two prompts on the bottom row. `To:` completes from the addresses
-your mail has taught Rail: type a few letters and matching addresses appear above; `Tab` and
-`Shift-Tab` (or `↓` and `↑`) move through them, `Enter` takes the highlighted one or the text you
-typed, and a comma takes the highlighted one and starts the next recipient. Then `Subject:`.
+your mail has taught Rail: type a few letters and matching addresses appear above, none
+highlighted; `Tab` and `Shift-Tab` (or `↓` and `↑`) move through them. `Enter` takes the
+highlighted one, or the text you typed when none is, and a comma takes the highlighted one and
+starts the next recipient (with none highlighted it is typed as a comma). Then `Subject:`.
 Each address is checked as you press `Enter` and the prompt stays open with the reason when one
 is wrong. A recipient is a plain `user@domain` or `Name <user@domain>`; a quoted name with a comma
 (`"Reyes, Dana" <dana@example.com>`) is one recipient. `Esc` in either prompt cancels the

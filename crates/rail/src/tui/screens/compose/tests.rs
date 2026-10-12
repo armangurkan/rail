@@ -193,6 +193,8 @@ fn the_to_prompt_asks_for_suggestions_cycles_them_and_accepts_one_per_comma() {
         PromptOutcome::NeedSuggestions("d".into())
     );
     p.suggestions(entries());
+    assert_eq!(p.highlighted(), None, "none until one is picked");
+    assert_eq!(p.key(k(KeyCode::Tab)), PromptOutcome::Stay);
     assert_eq!(
         p.highlighted(),
         Some("Dana Reyes <dana@example.com>".to_string())
@@ -207,6 +209,7 @@ fn the_to_prompt_asks_for_suggestions_cycles_them_and_accepts_one_per_comma() {
     let mut p = HeaderPrompt::new("To", "", true);
     p.key(k(KeyCode::Char('d')));
     p.suggestions(entries());
+    p.key(k(KeyCode::Down));
     assert_eq!(p.key(k(KeyCode::Char(','))), PromptOutcome::Stay);
     assert_eq!(p.value(), "Dana Reyes <dana@example.com>, ");
     assert_eq!(
@@ -219,6 +222,35 @@ fn the_to_prompt_asks_for_suggestions_cycles_them_and_accepts_one_per_comma() {
     let mut p = HeaderPrompt::new("Subject", "old", false);
     assert_eq!(p.key(k(KeyCode::Char('!'))), PromptOutcome::Stay);
     assert_eq!(p.key(k(KeyCode::Enter)), PromptOutcome::Done("old!".into()));
+}
+
+/// Final fix 6: suggestions arrive with nothing highlighted, so a fully typed address that
+/// is the start of a known one is taken as typed, and a comma is a comma.
+#[test]
+fn a_typed_address_is_kept_on_enter_until_a_suggestion_is_chosen() {
+    let known = || {
+        vec![AddressEntry {
+            name: None,
+            address: "pat@acme.com".into(),
+        }]
+    };
+    let mut p = HeaderPrompt::new("To", "pat@acme.c", true);
+    p.key(k(KeyCode::Char('o')));
+    p.suggestions(known());
+    assert_eq!(p.highlighted(), None, "nothing highlighted on arrival");
+    assert_eq!(
+        p.key(k(KeyCode::Enter)),
+        PromptOutcome::Done("pat@acme.co".into())
+    );
+    let mut p = HeaderPrompt::new("To", "pat@acme.c", true);
+    p.key(k(KeyCode::Char('o')));
+    p.suggestions(known());
+    p.key(k(KeyCode::Char(',')));
+    assert_eq!(
+        p.value(),
+        "pat@acme.co,",
+        "a comma with no highlight is typed"
+    );
 }
 
 #[test]
@@ -424,6 +456,7 @@ fn a_new_message_opens_on_its_prompts_with_suggestions_and_refuses_a_bad_address
     let seq = c.next_seq();
     c.prompt_suggestions(seq, entries());
     assert!(shown(&c, 90, 24).contains("Dana Reyes <dana@example.com>"));
+    c.key(None, k(KeyCode::Tab));
     assert_eq!(c.key(None, k(KeyCode::Enter)), ComposeOutcome::Stay);
     assert_eq!(c.prompt_label(), Some("Subject"));
     for ch in "Hi".chars() {

@@ -110,7 +110,8 @@ fn cycled(at: Option<usize>, step: isize, len: usize) -> Option<usize> {
 }
 
 /// One header's prompt. For `To`, `Cc` and `Bcc` (`completes`), each item typed asks for
-/// suggestions; Tab cycles them, Enter or a comma takes the highlighted one.
+/// suggestions; they arrive with none highlighted, Tab and the arrows pick one, and Enter or a
+/// comma takes the highlighted one (with none, the typed text and the comma stay as typed).
 pub struct HeaderPrompt {
     label: &'static str,
     input: TextInput,
@@ -154,9 +155,10 @@ impl HeaderPrompt {
         self.error = Some(why);
     }
 
-    /// The store's answer for the item being typed.
+    /// The store's answer for the item being typed, shown with none highlighted: Enter must
+    /// not replace a fully typed address with a longer known one.
     pub fn suggestions(&mut self, entries: Vec<AddressEntry>) {
-        self.highlight = (!entries.is_empty()).then_some(0);
+        self.highlight = None;
         self.matches = entries;
     }
 

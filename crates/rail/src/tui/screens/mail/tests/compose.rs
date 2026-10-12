@@ -127,7 +127,8 @@ async fn c_prompts_to_and_subject_then_edits_saves_and_shows_the_review() {
     );
     type_text(&mut f, "sa").await;
     assert!(f.screen.compose.as_ref().unwrap().captures_text());
-    // The store's suggestion sam@example.com is highlighted: Enter takes it.
+    // The store's suggestion sam@example.com shows; Tab highlights it and Enter takes it.
+    press(&mut f, KeyCode::Tab).await;
     press(&mut f, KeyCode::Enter).await;
     assert_eq!(
         f.screen.compose.as_ref().and_then(|c| c.prompt_label()),
