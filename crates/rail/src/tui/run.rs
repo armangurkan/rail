@@ -15,6 +15,7 @@ use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
 use futures_util::Stream;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
+use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
@@ -281,15 +282,20 @@ fn apply<S: Screen>(
     None
 }
 
-/// Draw a frame; after the terminal came back from the editor, repaint all of it.
+/// Draw a frame; after the terminal came back from the editor, repaint all of it. The repaint
+/// is `resize` to the current size, not `clear`: `clear` asks the terminal for the cursor
+/// position, which cannot be read while the event stream's reader waits for input.
 fn redraw<B: Backend, S: Screen>(
     terminal: &mut Terminal<B>,
     app: &App<S>,
     suspend: &mut impl Suspend,
 ) -> io::Result<()> {
     if suspend.take_returned() {
+        let size = terminal
+            .size()
+            .map_err(|e| io::Error::other(e.to_string()))?;
         terminal
-            .clear()
+            .resize(Rect::from(size))
             .map_err(|e| io::Error::other(e.to_string()))?;
     }
     draw(terminal, app)

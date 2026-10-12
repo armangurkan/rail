@@ -1,13 +1,16 @@
 use std::io;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use crossterm::event::{Event as TermEvent, KeyCode};
 use futures_util::{Stream, stream};
 use ratatui::Terminal;
-use ratatui::backend::TestBackend;
+use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
+use ratatui::buffer::Cell;
+use ratatui::layout::{Position, Size};
 
 use super::app::{App, Effect};
 use super::handover::{Suspend, run_editor_blocking};
@@ -131,6 +134,110 @@ async fn the_event_stream_is_dropped_before_the_editor_and_made_again_after() {
             "drop stream"
         ],
         "no reader of the tty exists while the editor runs"
+    );
+}
+
+/// `TestBackend`'s errors cannot happen.
+fn never(error: std::convert::Infallible) -> io::Error {
+    match error {}
+}
+
+/// A `TestBackend` that cannot report the cursor position, as a terminal cannot while the
+/// event stream's reader waits for input, and that counts the full-screen clears.
+struct NoCursor {
+    inner: TestBackend,
+    full_clears: Arc<AtomicUsize>,
+}
+
+impl Backend for NoCursor {
+    type Error = io::Error;
+
+    fn draw<'a, I>(&mut self, content: I) -> io::Result<()>
+    where
+        I: Iterator<Item = (u16, u16, &'a Cell)>,
+    {
+        self.inner.draw(content).map_err(never)
+    }
+
+    fn hide_cursor(&mut self) -> io::Result<()> {
+        self.inner.hide_cursor().map_err(never)
+    }
+
+    fn show_cursor(&mut self) -> io::Result<()> {
+        self.inner.show_cursor().map_err(never)
+    }
+
+    fn get_cursor_position(&mut self) -> io::Result<Position> {
+        Err(io::Error::other(
+            "The cursor position could not be read within a normal duration",
+        ))
+    }
+
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> io::Result<()> {
+        self.inner.set_cursor_position(position).map_err(never)
+    }
+
+    fn clear(&mut self) -> io::Result<()> {
+        self.inner.clear().map_err(never)
+    }
+
+    fn clear_region(&mut self, clear_type: ClearType) -> io::Result<()> {
+        if clear_type == ClearType::All {
+            self.full_clears.fetch_add(1, Ordering::SeqCst);
+        }
+        self.inner.clear_region(clear_type).map_err(never)
+    }
+
+    fn size(&self) -> io::Result<Size> {
+        self.inner.size().map_err(never)
+    }
+
+    fn window_size(&mut self) -> io::Result<WindowSize> {
+        self.inner.window_size().map_err(never)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush().map_err(never)
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_editor_round_does_not_ask_for_the_cursor() {
+    let full_clears = Arc::new(AtomicUsize::new(0));
+    let mut terminal = Terminal::new(NoCursor {
+        inner: TestBackend::new(30, 3),
+        full_clears: full_clears.clone(),
+    })
+    .unwrap();
+    let mut app = App::new(
+        editing(&["/bin/sh", "-c", "exit 0"]),
+        Box::new(RecordingClipboard::default()),
+    );
+    let mut made = 0;
+    let make = move || {
+        made += 1;
+        let code = if made == 1 { 'e' } else { 'q' };
+        stream::iter(vec![Ok(TermEvent::Key(key(KeyCode::Char(code))))])
+    };
+    let mut recorder = Recorder::default();
+
+    run_loop(&mut terminal, &mut app, make, &mut recorder)
+        .await
+        .expect("the editor round must not need the cursor position");
+
+    assert_eq!(app.screen.edited, vec![Ok(0)]);
+    assert_eq!(
+        full_clears.load(Ordering::SeqCst),
+        1,
+        "one repaint, after the editor"
+    );
+    let row: String = (0..15)
+        .map(|x| terminal.backend().inner.buffer()[(x, 0)].symbol())
+        .collect();
+    assert_eq!(
+        row, "hello from rail",
+        "the clear wiped the screen and the frame refilled it"
     );
 }
 
