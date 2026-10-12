@@ -207,6 +207,11 @@ async fn each_action_makes_the_gmail_call_the_spec_maps_it_to_in_order() {
     rig.start();
     rig.until("every row sent", |r| r.depth() == (0, 0, 0))
         .await;
+    // The worker publishes the depth after the row's delete commits, so the board lags the store.
+    rig.until("the board shows nothing pending", |r| {
+        r.board.get(ADDRESS).is_some_and(|s| s.outbox.pending == 0)
+    })
+    .await;
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     let modifies = rig.mock.with(|m| m.modifies.clone());
     assert_eq!(
