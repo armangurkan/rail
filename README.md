@@ -86,7 +86,8 @@ cargo install --locked --path crates/rail
 ```
 
 This puts `rail` in `~/.cargo/bin`. To upgrade, pull and run the same command; the first command
-of the new version replaces any older daemon still running. When an upgrade changes the store,
+of the new version replaces any older daemon still running, including one from an earlier build
+of the same version. When an upgrade changes the store,
 the new daemon migrates it the first time it starts (rebuilding the search index can take a
 moment on a large mailbox); until then the mail screen says the store is not set up.
 
@@ -977,6 +978,11 @@ The daemon keeps the environment of the command that started it (notably `PATH` 
 environment. A command whose `RAIL_*_DIR` settings differ from the running daemon's is refused with
 "a Rail daemon is already running with different directories".
 
+A client replaces a daemon from an older version *or an earlier build of the same version* (each
+build carries the time it was made), so reinstalling `rail` while a daemon runs is enough. A
+program that is itself older than the running daemon, such as a long-lived `rail mcp` after an
+upgrade or rebuild, never stops its successor: it says "Rail was upgraded; restart this program".
+
 The login unit written by `rail daemon install` runs the exact `rail` binary you installed it with
 (install again after moving it) and pins the `RAIL_*` directories your shell resolved at install
 time. It restarts the daemon if it fails, at most five times in five minutes, and not after a clean
@@ -1019,6 +1025,7 @@ their own.
 | Gmail asks you to log in again every week | The OAuth consent screen is still in "Testing"; publish it ("In production"). |
 | No Secret Service (tty-only Linux, containers) | Set `secrets = "file"` under `[general]` before adding accounts, or move existing tokens with `rail secrets set file`. |
 | "1Password is locked" or `op` not signed in | Unlock the app, or turn on its CLI integration; `rail doctor` checks with `op whoami`. |
+| `no operation named "…"` | The daemon is from an earlier build. Rail now replaces an older build by itself; if you still see this, run `rail daemon stop`. |
 | `rail doctor` fails because the daemon cannot start, e.g. the socket path is too long | Set `RAIL_RUNTIME_DIR` to a shorter directory. |
 | "a Rail daemon is already running with different directories" | Run `rail daemon stop` from the shell that started it, or use the same `RAIL_*` settings. |
 | "Rail was upgraded; restart this program" | An older `rail mcp` or wizard is still open after an upgrade; restart it. |

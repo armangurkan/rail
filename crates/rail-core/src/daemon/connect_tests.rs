@@ -12,7 +12,7 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
 use super::client::DaemonClient;
-use super::connect::{Connector, SpawnFn, VERSION, wait_for_daemon_exit};
+use super::connect::{BUILD, Connector, SpawnFn, VERSION, wait_for_daemon_exit};
 use super::wire::{
     Message, PROTOCOL_VERSION, Response, RpcError, encode_frame, parse_message, read_frame,
 };
@@ -54,7 +54,9 @@ impl Operation for Fail {
 fn answer(method: &str, id: u64, params: Value, version: &str, dirs: Option<&Paths>) -> Response {
     match method {
         names::HELLO => {
-            let mut hello = json!({"protocol": PROTOCOL_VERSION, "version": version, "pid": 1});
+            let mut hello = json!({
+                "protocol": PROTOCOL_VERSION, "version": version, "pid": 1, "build": BUILD,
+            });
             if let Some(dirs) = dirs {
                 hello["config_dir"] = json!(dirs.config_dir);
                 hello["data_dir"] = json!(dirs.data_dir);

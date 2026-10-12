@@ -18,6 +18,8 @@ mod action_tests;
 #[cfg(test)]
 mod body_tests;
 #[cfg(test)]
+mod connect_build_tests;
+#[cfg(test)]
 mod connect_tests;
 #[cfg(test)]
 mod draft_files_tests;
@@ -36,8 +38,8 @@ mod tests;
 
 pub use client::DaemonClient;
 pub use connect::{
-    Connector, DAEMON_EXIT_TIMEOUT, MAX_SOCKET_PATH, START_TIMEOUT, SpawnFn, VERSION, retry_safe,
-    wait_for_daemon_exit,
+    BUILD, Connector, DAEMON_EXIT_TIMEOUT, MAX_SOCKET_PATH, START_TIMEOUT, SpawnFn, VERSION,
+    retry_safe, wait_for_daemon_exit,
 };
 #[cfg(any(test, feature = "test-gates"))]
 pub use context::{BeginGate, SaveGate};

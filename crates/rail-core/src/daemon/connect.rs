@@ -58,6 +58,30 @@ pub fn retry_safe(operation: &str) -> bool {
 
 /// Rail's version, which the daemon and its clients must share.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// When this Rail was built, in unix seconds; orders two builds of the same version.
+pub const BUILD: u64 = parse_build(env!("RAIL_BUILD"));
+
+/// `text` as a number, at compile time; 0 if it holds anything but digits (or overflows).
+const fn parse_build(text: &str) -> u64 {
+    let bytes = text.as_bytes();
+    let mut value: u64 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let digit = bytes[i];
+        if !digit.is_ascii_digit() {
+            return 0;
+        }
+        value = match value.checked_mul(10) {
+            Some(shifted) => match shifted.checked_add((digit - b'0') as u64) {
+                Some(next) => next,
+                None => return 0,
+            },
+            None => return 0,
+        };
+        i += 1;
+    }
+    value
+}
 /// How long a client waits for a daemon it started.
 pub const START_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a client waits for a daemon that stopped answering to release `daemon.lock`.
@@ -76,6 +100,7 @@ pub struct Connector {
     paths: Paths,
     spawn: SpawnFn,
     version: String,
+    build: u64,
     start_timeout: Duration,
     exit_timeout: Duration,
     /// The shared connection; replaced once it has closed.
@@ -88,6 +113,7 @@ impl Connector {
             paths,
             spawn,
             version: VERSION.to_string(),
+            build: BUILD,
             start_timeout: START_TIMEOUT,
             exit_timeout: DAEMON_EXIT_TIMEOUT,
             cached: Arc::default(),
@@ -97,6 +123,12 @@ impl Connector {
     /// Speak as another Rail version (tests of the mismatch path).
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
         self.version = version.into();
+        self
+    }
+
+    /// Speak as another build of this version (tests of the rebuild path).
+    pub fn with_build(mut self, build: u64) -> Self {
+        self.build = build;
         self
     }
 
@@ -172,7 +204,7 @@ impl Connector {
                     ));
                 }
                 DaemonAge::Newer => {
-                    return Err(upgraded_error(&client.daemon().version, &self.version));
+                    return Err(self.newer_error(client.daemon()));
                 }
                 DaemonAge::Unordered => return Err(unordered_error()),
                 DaemonAge::Older => {}
@@ -180,6 +212,8 @@ impl Connector {
             tracing::info!(
                 theirs = %client.daemon().version,
                 ours = %self.version,
+                their_build = ?client.daemon().build,
+                our_build = self.build,
                 "replacing an older daemon"
             );
             self.stop(client).await?;
@@ -261,20 +295,44 @@ impl Connector {
         )
     }
 
-    /// How the daemon's Rail version (then protocol) compares with this client's.
+    /// How the daemon's Rail version (then protocol, then build) compares with this client's.
     fn age(&self, hello: &HelloResponse) -> DaemonAge {
         if hello.protocol == PROTOCOL_VERSION && hello.version == self.version {
-            return DaemonAge::Same;
+            return self.age_by_build(hello);
         }
         let order = version::compare(&hello.version, &self.version)
             .map(|order| order.then(hello.protocol.cmp(&PROTOCOL_VERSION)));
         match order {
             Some(Ordering::Less) => DaemonAge::Older,
             Some(Ordering::Greater) => DaemonAge::Newer,
-            // Same version, same protocol, different spelling (build metadata): same Rail.
-            Some(Ordering::Equal) => DaemonAge::Same,
+            // Same version, same protocol, different spelling (build metadata): same Rail
+            // as far as the version goes; the build tells a rebuild apart.
+            Some(Ordering::Equal) => self.age_by_build(hello),
             None => DaemonAge::Unordered,
         }
+    }
+
+    /// Two builds of one version: the earlier one is older. A daemon that sends no build
+    /// predates the stamp, so it is older than any build that has one.
+    fn age_by_build(&self, hello: &HelloResponse) -> DaemonAge {
+        match hello
+            .build
+            .map_or(Ordering::Less, |theirs| theirs.cmp(&self.build))
+        {
+            Ordering::Less => DaemonAge::Older,
+            Ordering::Equal => DaemonAge::Same,
+            Ordering::Greater => DaemonAge::Newer,
+        }
+    }
+
+    /// The refusal of a daemon newer than this client: Rail was upgraded, or rebuilt under it.
+    fn newer_error(&self, hello: &HelloResponse) -> OpError {
+        let same_version = hello.protocol == PROTOCOL_VERSION
+            && version::compare(&hello.version, &self.version) == Some(Ordering::Equal);
+        if same_version {
+            return rebuilt_error(&self.version);
+        }
+        upgraded_error(&hello.version, &self.version)
     }
 
     async fn connect_or_start(&self) -> Result<DaemonClient, OpError> {
@@ -416,6 +474,19 @@ fn upgraded_error(daemon_version: &str, ours: &str) -> OpError {
     )
     .with_hint(format!(
         "the running daemon is Rail {theirs}; this program is Rail {ours}"
+    ))
+}
+
+/// A client older than the running daemon, both of the same version: Rail was rebuilt while
+/// this program ran. Only our own version is quoted.
+fn rebuilt_error(ours: &str) -> OpError {
+    OpError::new(
+        ErrorCode::Daemon,
+        ErrorClass::Permanent,
+        "Rail was upgraded; restart this program",
+    )
+    .with_hint(format!(
+        "the running daemon is a newer build of Rail {ours}; restart this program"
     ))
 }
 

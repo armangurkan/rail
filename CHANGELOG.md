@@ -200,6 +200,11 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A daemon left running from an earlier build of the same version was kept, and refused new
+  operations with `no operation named "draft.push"`. Each build now carries the time it was made
+  and sends it in the hello; a client replaces a daemon from an earlier build (or one that sends
+  none), and refuses one from a later build with "restart this program". A call the daemon does
+  not know now hints `rail daemon stop`.
 - Importing a Gmail draft with attachments, and forwarding a message with its attachments, failed
   with "Invalid attachment token"; Rail now fetches an attachment by Gmail's own attachment id.
 - The "Rail was upgraded" hint shows only the daemon's `MAJOR.MINOR.PATCH`, and Rail's own error
