@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use rail_core::ops::DraftSaveResponse;
 use rail_core::ops::drafts::{AttachmentSummary, DraftAttachment};
 
-use super::compose::{compose_fixture, composing, editor_appends, saves};
+use super::compose::{compose_fixture, composing, editor_appends, saves, type_text};
 use super::*;
 use crate::tui::screens::compose::RowKind;
 
@@ -161,4 +161,30 @@ async fn x_removes_a_forwarded_part_and_later_saves_leave_it_out() {
         "the removal's save leaves the part out"
     );
     assert!(composing(&f).attachments.is_empty());
+}
+
+/// Final fix 3: `a` refuses what the worker would, counting attachments as encoded.
+#[tokio::test]
+async fn a_refuses_a_file_over_the_limit_once_encoded_without_a_save() {
+    let mut f = compose_fixture().await;
+    editor_appends(&f, "");
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("big.bin");
+    std::fs::File::create(&file)
+        .unwrap()
+        .set_len(20 * 1024 * 1024)
+        .unwrap();
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    let before = saves(&f).len();
+    press(&mut f, KeyCode::Char('a')).await;
+    type_text(&mut f, &file.to_string_lossy()).await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(saves(&f).len(), before, "refused before any save");
+    assert!(composing(&f).attachments.is_empty());
+    let error = &composing(&f).errors[0];
+    assert!(
+        error.contains("25 MiB") && error.contains("26.6 MiB"),
+        "{error}"
+    );
 }

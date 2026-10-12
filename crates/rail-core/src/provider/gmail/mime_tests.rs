@@ -1,6 +1,8 @@
 use mail_parser::{MessageParser, MimeHeaders};
 
-use super::mime::{MAX_MESSAGE_BYTES, build, sanitize_filename};
+use super::mime::{
+    MAX_MESSAGE_BYTES, build, estimated_raw_size, sanitize_filename, too_large_text,
+};
 use crate::provider::{Mailbox, Outgoing, OutgoingAttachment, ProviderError};
 
 fn outgoing() -> Outgoing {
@@ -112,6 +114,34 @@ fn a_message_over_the_cap_is_refused_before_any_call() {
     let text = error.to_string();
     assert!(text.contains("25 MiB"), "{text}");
     assert!(text.contains("33.3 MiB"), "the size is named: {text}");
+}
+
+/// Final fix 3: `estimated_raw_size` is the figure `build` refuses on, so `draft.save` and the
+/// composer, which check it too, refuse what the worker would.
+#[test]
+fn estimated_raw_size_is_what_build_checks() {
+    let with = |bytes: usize| Outgoing {
+        attachments: vec![OutgoingAttachment {
+            name: "big.bin".into(),
+            mime: "application/octet-stream".into(),
+            bytes: vec![0; bytes],
+        }],
+        ..outgoing()
+    };
+    let body = outgoing().body.len();
+    let twenty = 20 * 1024 * 1024;
+    let estimate = estimated_raw_size(body, &[twenty]);
+    assert_eq!(estimate, body + twenty.div_ceil(3) * 4 + 200);
+    assert!(estimate > MAX_MESSAGE_BYTES, "20 MiB is over once encoded");
+    let text = build(&with(twenty)).unwrap_err().to_string();
+    assert!(text.contains(&too_large_text(estimate)), "{text}");
+    assert!(text.contains("26.6 MiB"), "{text}");
+    let eighteen = 18 * 1024 * 1024;
+    assert!(estimated_raw_size(body, &[eighteen]) <= MAX_MESSAGE_BYTES);
+    assert!(
+        build(&with(eighteen)).is_ok(),
+        "under the estimate, it builds"
+    );
 }
 
 const INJECTION: &str = "\r\nBcc: x@evil.com\r\nX-Evil: 1";

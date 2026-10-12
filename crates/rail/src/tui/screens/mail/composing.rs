@@ -5,7 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use rail_core::ops::drafts::{DraftAttachment, ReplyTo};
-use rail_core::ops::{DraftSaveRequest, MAX_TOTAL_ATTACHMENT_BYTES, client_token};
+use rail_core::ops::{
+    DraftSaveRequest, MAX_MESSAGE_BYTES, client_token, estimated_raw_size, too_large_text,
+};
 use rail_core::store::drafts::{Attachment, Draft, DraftKind, Recipient, ReplySource};
 
 use super::{Focus, MailScreen};
@@ -112,8 +114,9 @@ fn named(row: &AttachmentRow) -> Option<DraftAttachment> {
     }
 }
 
-/// The file at `path` can be attached next to `total` bytes: its size, or the refusal.
-pub(super) fn attachable(path: &str, total: i64) -> Result<i64, String> {
+/// The file at `path` can be attached to `c`: its size, or the refusal. The message is
+/// counted as the daemon and the worker count it, attachments as encoded.
+pub(super) fn attachable(path: &str, c: &Composing) -> Result<i64, String> {
     let name = Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -124,9 +127,16 @@ pub(super) fn attachable(path: &str, total: i64) -> Result<i64, String> {
         return Err(format!("attachments: {name:?} is not a regular file"));
     }
     let size = i64::try_from(meta.len()).unwrap_or(i64::MAX);
-    let limit = i64::try_from(MAX_TOTAL_ATTACHMENT_BYTES).unwrap_or(i64::MAX);
-    if total.saturating_add(size) > limit {
-        return Err("attachments: together larger than Gmail's 25 MiB limit".to_string());
+    let sizes: Vec<usize> = c
+        .attachments
+        .iter()
+        .map(|a| a.size)
+        .chain([size])
+        .map(|s| usize::try_from(s).unwrap_or(0))
+        .collect();
+    let estimated = estimated_raw_size(c.body.len(), &sizes);
+    if estimated > MAX_MESSAGE_BYTES {
+        return Err(format!("attachments: {}", too_large_text(estimated)));
     }
     Ok(size)
 }

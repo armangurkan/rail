@@ -491,12 +491,14 @@ async fn save_refuses_a_missing_file_a_directory_and_a_size_over_the_cap() {
     let error = h.call::<DraftSave>(&directory).await.unwrap_err();
     assert!(error.message.contains("regular file"), "{}", error.message);
     let big = dir.path().join("big.bin");
-    std::fs::write(&big, vec![0u8; 26 * 1024 * 1024]).unwrap();
+    // Final fix 3: 20 MiB is under 25 raw but over once encoded, as the worker counts it.
+    std::fs::write(&big, vec![0u8; 20 * 1024 * 1024]).unwrap();
     let error = h
         .call::<DraftSave>(&with_file(&big, "a3"))
         .await
         .unwrap_err();
     assert!(error.message.contains("25 MiB"), "{}", error.message);
+    assert!(error.message.contains("26.6 MiB"), "{}", error.message);
     let small = dir.path().join("Notes.PDF");
     std::fs::write(&small, b"%PDF").unwrap();
     let saved = h.call::<DraftSave>(&with_file(&small, "a4")).await.unwrap();

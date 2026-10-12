@@ -11,13 +11,16 @@ use super::error::OpError;
 use crate::config::{is_format_char, is_plain};
 use crate::store::drafts::{DraftKind, Recipient};
 
+/// The size checks every side shares: the estimate the MIME builder refuses on, its limit and
+/// its refusal.
+pub use crate::provider::gmail::mime::{MAX_MESSAGE_BYTES, estimated_raw_size, too_large_text};
+
 pub const MAX_RECIPIENTS: usize = 100;
 pub const MAX_ATTACHMENTS: usize = 50;
 pub const MAX_SUBJECT_BYTES: usize = 998;
 pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 pub const MAX_ADDRESS_CHARS: usize = 254;
 pub const MAX_NAME_CHARS: usize = 200;
-pub const MAX_TOTAL_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 
 /// A refused recipient is quoted (with `{:?}`) only up to this many characters.
 const MAX_QUOTED_CHARS: usize = MAX_ADDRESS_CHARS + MAX_NAME_CHARS + 8;

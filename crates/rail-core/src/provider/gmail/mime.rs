@@ -16,15 +16,33 @@ const DEFAULT_FILENAME: &str = "attachment";
 /// Base64 grows data by 4/3; this is the per-part allowance for headers and boundaries.
 const PART_OVERHEAD_BYTES: usize = 200;
 
+/// The size `build` checks before building: the body, and each attachment as base64 plus
+/// its headers and boundary. `draft.save`, `draft.send` and the composer check the same
+/// figure, so what they accept the worker does not refuse on it.
+pub fn estimated_raw_size(body_bytes: usize, attachments: &[usize]) -> usize {
+    attachments.iter().fold(body_bytes, |total, &bytes| {
+        total
+            .saturating_add(bytes.div_ceil(3).saturating_mul(4))
+            .saturating_add(PART_OVERHEAD_BYTES)
+    })
+}
+
+/// The refusal for a message of `bytes`: "the message is 26.6 MiB, larger than Gmail's
+/// 25 MiB limit".
+pub fn too_large_text(bytes: usize) -> String {
+    let tenths = bytes.saturating_mul(10) / MIB;
+    format!(
+        "the message is {}.{} MiB, larger than Gmail's 25 MiB limit",
+        tenths / 10,
+        tenths % 10
+    )
+}
+
 /// Build `outgoing`; refuses a result over `MAX_MESSAGE_BYTES`.
 pub fn build(outgoing: &Outgoing) -> Result<Vec<u8>, ProviderError> {
     validate(outgoing)?;
-    let estimated: usize = outgoing.body.len()
-        + outgoing
-            .attachments
-            .iter()
-            .map(|a| a.bytes.len() / 3 * 4 + PART_OVERHEAD_BYTES)
-            .sum::<usize>();
+    let sizes: Vec<usize> = outgoing.attachments.iter().map(|a| a.bytes.len()).collect();
+    let estimated = estimated_raw_size(outgoing.body.len(), &sizes);
     if estimated > MAX_MESSAGE_BYTES {
         return Err(too_large(estimated));
     }
@@ -70,12 +88,7 @@ pub fn build(outgoing: &Outgoing) -> Result<Vec<u8>, ProviderError> {
 }
 
 fn too_large(bytes: usize) -> ProviderError {
-    let tenths = bytes.saturating_mul(10) / MIB;
-    ProviderError::permanent(&format!(
-        "the message is {}.{} MiB, larger than Gmail's 25 MiB limit",
-        tenths / 10,
-        tenths % 10
-    ))
+    ProviderError::permanent(&too_large_text(bytes))
 }
 
 fn strip_controls(text: &str) -> String {

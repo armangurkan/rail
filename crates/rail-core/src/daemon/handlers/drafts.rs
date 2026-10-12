@@ -10,8 +10,9 @@ use crate::daemon::registry::Call;
 use crate::ops::drafts::{AttachmentSummary, CheckedRecipients, DraftAttachment};
 use crate::ops::{
     Action, DraftDiscardRequest, DraftDiscardResponse, DraftId, DraftSaveRequest,
-    DraftSaveResponse, DraftSendRequest, DraftSendResponse, MAX_ATTACHMENTS,
-    MAX_TOTAL_ATTACHMENT_BYTES, OpError, ReplyTo, UNDO_GRACE, checked_token, new_message_id,
+    DraftSaveResponse, DraftSendRequest, DraftSendResponse, MAX_ATTACHMENTS, MAX_MESSAGE_BYTES,
+    OpError, ReplyTo, UNDO_GRACE, checked_token, estimated_raw_size, new_message_id,
+    too_large_text,
 };
 use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
@@ -65,22 +66,26 @@ fn file_attachments(paths: Vec<String>) -> Result<Vec<Attachment>, OpError> {
     paths.into_iter().map(file_attachment).collect()
 }
 
-/// At most `MAX_ATTACHMENTS`, together at most Gmail's 25 MiB.
-fn check_total<'a>(attachments: impl Iterator<Item = &'a Attachment>) -> Result<(), OpError> {
-    let (mut count, mut total) = (0usize, 0u64);
-    for attachment in attachments {
-        count += 1;
-        total = total.saturating_add(u64::try_from(attachment.size()).unwrap_or(0));
-    }
-    if count > MAX_ATTACHMENTS {
+/// At most `MAX_ATTACHMENTS`, and the message with `body_bytes` of text at most Gmail's
+/// 25 MiB as the MIME builder estimates it (attachments grow by a third once encoded).
+fn check_total<'a>(
+    body_bytes: usize,
+    attachments: impl Iterator<Item = &'a Attachment>,
+) -> Result<(), OpError> {
+    let sizes: Vec<usize> = attachments
+        .map(|a| usize::try_from(a.size()).unwrap_or(0))
+        .collect();
+    if sizes.len() > MAX_ATTACHMENTS {
         return Err(OpError::invalid_input(format!(
             "attachments: at most {MAX_ATTACHMENTS} attachments"
         )));
     }
-    if total > MAX_TOTAL_ATTACHMENT_BYTES {
-        return Err(OpError::invalid_input(
-            "attachments: together larger than Gmail's 25 MiB limit",
-        ));
+    let estimated = estimated_raw_size(body_bytes, &sizes);
+    if estimated > MAX_MESSAGE_BYTES {
+        return Err(OpError::invalid_input(format!(
+            "attachments: {}",
+            too_large_text(estimated)
+        )));
     }
     Ok(())
 }
@@ -273,7 +278,7 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
     };
     let mut attachments = kept_parts(existing.as_ref(), &request.attachments, threading.parts)?;
     attachments.extend(files);
-    check_total(attachments.iter())?;
+    check_total(request.body.len(), attachments.iter())?;
     Ok(DraftWrite {
         id: existing.as_ref().map(|d| d.id),
         account_id,
@@ -413,7 +418,7 @@ fn check_sendable(draft: &Draft) -> Result<(), OpError> {
         .attachments
         .iter()
         .filter(|a| matches!(a, Attachment::Part { .. }));
-    check_total(files.iter().chain(parts))
+    check_total(draft.body.len(), files.iter().chain(parts))
 }
 
 /// Why an enqueue wrote no row: the draft is being sent, or it is gone.

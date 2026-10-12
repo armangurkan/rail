@@ -490,9 +490,11 @@ its threading. Drafts stay on this machine: pushing them to Gmail's Drafts folde
 version, and no other mail program sees them.
 
 **Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
-limit; an over-size message says its size), 10 MiB of text and a one-line subject. File names are
-cleaned before they are sent. Attachments come from files you name by path; a forward carries the
-original's attachments along, and they count in the total. Only regular files can be attached, and
+limit), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger
+than the files (so about 18 MiB of files fit); the review's total shows the files' own sizes, and
+a file that would take the message over is refused when you attach it, naming the size the
+message would have. File names are cleaned before they are sent. Attachments come from files you
+name by path; a forward carries the original's attachments along, and they count in the total. Only regular files can be attached, and
 they are read when the message goes out: one that was moved or deleted in the meantime fails the
 send (`Could not send: could not read the attachment "<name>"`) and the review opens again.
 

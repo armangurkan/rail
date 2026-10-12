@@ -296,7 +296,7 @@ impl MailScreen {
         let Some(composer) = self.compose.as_mut() else {
             return Vec::new();
         };
-        let size = match attachable(&path, composer.composing().total_size()) {
+        let size = match attachable(&path, composer.composing()) {
             Ok(size) => size,
             Err(why) => {
                 composer.set_error(why.clone());
