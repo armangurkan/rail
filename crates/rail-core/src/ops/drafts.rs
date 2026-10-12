@@ -259,7 +259,8 @@ impl DraftSaveRequest {
             self.kind,
             DraftKind::Reply | DraftKind::ReplyAll | DraftKind::Forward
         );
-        if answers && self.reply_to.is_none() {
+        // An update without `reply_to` keeps the threading the draft was created with.
+        if answers && self.reply_to.is_none() && self.draft.is_none() {
             return Err(invalid(
                 "reply_to",
                 "a reply or forward names the message it answers",

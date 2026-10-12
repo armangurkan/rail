@@ -349,6 +349,58 @@ async fn a_reply_gets_its_headers_from_the_store_and_a_forward_its_parts() {
     assert!(gone.message.starts_with("reply_to:"), "{}", gone.message);
 }
 
+#[tokio::test]
+async fn an_update_without_reply_to_keeps_the_drafts_threading_and_parts() {
+    let h = DaemonHarness::with_messages().await;
+    let message = h.message_id("m1");
+    let forward = DraftSaveRequest {
+        kind: DraftKind::Forward,
+        reply_to: Some(ReplyTo { message }),
+        ..save_request(None, "f9")
+    };
+    let made = h.call::<DraftSave>(&forward).await.unwrap();
+    let before = h.store(|s| s.draft(made.draft).unwrap().unwrap());
+    let update = DraftSaveRequest {
+        kind: DraftKind::Forward,
+        draft: Some(made.draft),
+        reply_to: None,
+        body: "edited\n".into(),
+        ..save_request(None, "f10")
+    };
+    let saved = h.call::<DraftSave>(&update).await.unwrap();
+    assert_eq!(saved.draft, made.draft);
+    let after = h.store(|s| s.draft(made.draft).unwrap().unwrap());
+    assert_eq!(after.body, "edited\n");
+    assert_eq!(
+        (
+            after.thread_id,
+            &after.remote_thread_id,
+            &after.in_reply_to,
+            &after.references
+        ),
+        (
+            before.thread_id,
+            &before.remote_thread_id,
+            &before.in_reply_to,
+            &before.references
+        )
+    );
+    assert_eq!(after.in_reply_to.as_deref(), Some("<m1@example.com>"));
+    assert_eq!(
+        after.attachments, before.attachments,
+        "the forwarded part stays"
+    );
+    let create = DraftSaveRequest {
+        kind: DraftKind::Reply,
+        reply_to: None,
+        ..save_request(None, "r9")
+    };
+    assert!(
+        h.call::<DraftSave>(&create).await.is_err(),
+        "a create still names it"
+    );
+}
+
 fn with_file(path: &std::path::Path, token: &str) -> DraftSaveRequest {
     DraftSaveRequest {
         attachments: vec![DraftAttachment::File {

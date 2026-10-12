@@ -70,6 +70,7 @@ impl MailScreen {
     fn save_answered(&mut self, answer: DraftSaveResponse) {
         self.status.answered();
         self.composing.unsaved = false;
+        self.remove_compose_file();
         let Some(composer) = self.compose.as_mut() else {
             return;
         };
@@ -125,12 +126,12 @@ impl MailScreen {
                     .is_some_and(|c| c.composing().draft == Some(draft));
                 self.composing.last_sent = None;
                 if ours {
-                    self.composing.last_sent = self.compose.take().map(|c| {
+                    self.composing.last_sent = self.compose.as_ref().map(|c| {
                         let mut composing = c.composing().clone();
                         composing.errors.clear();
                         composing
                     });
-                    self.focus_back();
+                    self.hide_composer();
                 }
                 self.sent_record(RowToken {
                     row: answer.row,
@@ -169,9 +170,7 @@ impl MailScreen {
                     .as_ref()
                     .is_some_and(|c| c.composing().draft == Some(draft));
                 if ours {
-                    self.compose = None;
-                    self.composing.pending = None;
-                    self.focus_back();
+                    self.hide_composer();
                 }
                 self.status.notify("draft discarded", self.tick);
             }

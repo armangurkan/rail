@@ -63,6 +63,8 @@ pub enum Command {
     ResumeDraft(rail_core::ops::DraftId),
     /// "Keep what you wrote?" was answered yes: use the text the editor left.
     KeepText,
+    /// "Discard the unsaved changes?" was answered yes: close the composer.
+    DiscardUnsaved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

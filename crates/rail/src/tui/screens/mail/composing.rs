@@ -11,6 +11,7 @@ use rail_core::store::drafts::{Attachment, DraftKind, Recipient, ReplySource};
 use super::{Focus, MailScreen};
 use crate::tui::app::Effect;
 use crate::tui::data::{ReplyTarget, ResumedDraft, SaveCall};
+use crate::tui::keys::Action;
 use crate::tui::screens::compose::model::{AttachmentRow, Composing, Headers};
 use crate::tui::screens::compose::{Composer, file, prefill};
 use crate::tui::text::escape;
@@ -130,8 +131,32 @@ impl MailScreen {
 
     /// Show `composer` over the screen.
     pub(super) fn show_composer(&mut self, composer: Composer) {
-        self.compose = Some(composer);
+        let keymap = &self.ctx.keymap;
+        let labels = [
+            Action::ComposeSend,
+            Action::ComposeEdit,
+            Action::ComposeHeaders,
+            Action::ComposeAttach,
+            Action::ComposeRemove,
+            Action::ComposeClose,
+            Action::ComposeDiscard,
+        ]
+        .map(|a| keymap.label(a));
+        self.compose = Some(composer.with_hint(&labels));
+        self.composing.unsaved = false;
         self.focus = Focus::Compose;
+    }
+
+    /// Close the composer: its answers are dropped (except a send's, which still makes the
+    /// undo record) and the compose file goes.
+    pub(super) fn hide_composer(&mut self) {
+        self.compose = None;
+        self.composing.unsaved = false;
+        if !matches!(self.composing.pending, Some(Pending::Sending { .. })) {
+            self.composing.pending = None;
+        }
+        self.remove_compose_file();
+        self.focus_back();
     }
 
     /// The position of the account with this store id.

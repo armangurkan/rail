@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Span;
 use ratatui::widgets::{Clear, Paragraph};
 
-use super::review::{self, DISCARD_QUESTION, HINT, Row, RowStyle};
+use super::review::{self, DISCARD_QUESTION, Row, RowStyle};
 use super::{Composer, Prompting};
 use crate::tui::screens::mail::Glyphs;
 use crate::tui::text::{fit, pad};
@@ -52,7 +52,7 @@ impl Composer {
         let hint = if self.confirm_discard {
             Span::styled(fit(DISCARD_QUESTION, cols), theme.error)
         } else {
-            Span::styled(fit(HINT, cols), theme.muted)
+            Span::styled(fit(&self.hint, cols), theme.muted)
         };
         line(frame, area, last, hint);
         match &self.prompting {

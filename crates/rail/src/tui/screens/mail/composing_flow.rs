@@ -255,12 +255,23 @@ impl MailScreen {
 
     /// `q`: close the review; the draft stays.
     fn close_compose(&mut self) -> Vec<Effect> {
+        if self.composing.unsaved {
+            let lines = vec![
+                "The last save failed: closing now loses what changed since.".to_string(),
+                "Yes closes; no keeps the review open.".to_string(),
+            ];
+            self.modal = Some(Modal::Confirm(Confirm::new(
+                "Discard the unsaved changes?",
+                lines,
+                Command::DiscardUnsaved,
+            )));
+            return Vec::new();
+        }
         let saved = self
             .compose
-            .take()
+            .as_ref()
             .is_some_and(|c| c.composing().draft.is_some());
-        self.drop_pending();
-        self.focus_back();
+        self.hide_composer();
         let text = if saved {
             "draft kept"
         } else {
@@ -275,9 +286,7 @@ impl MailScreen {
         match self.compose.as_ref().and_then(|c| c.composing().draft) {
             Some(draft) => vec![self.ctx.link.draft_discard(draft)],
             None => {
-                self.compose = None;
-                self.drop_pending();
-                self.focus_back();
+                self.hide_composer();
                 Vec::new()
             }
         }
@@ -321,14 +330,6 @@ impl MailScreen {
         let before = attachments.clone();
         attachments.remove(index);
         self.save_draft(After::Review, Some(before))
-    }
-
-    /// The composer closed: its answers are dropped, except a send's, which still makes the
-    /// undo record.
-    fn drop_pending(&mut self) {
-        if !matches!(self.composing.pending, Some(Pending::Sending { .. })) {
-            self.composing.pending = None;
-        }
     }
 
     /// `y`: queue the saved draft; the review closes when the daemon has it.
@@ -417,8 +418,8 @@ impl MailScreen {
     /// opened on it again.
     fn apply_file_text(&mut self, text: String) -> Vec<Effect> {
         match file::parse(&text) {
+            // The file stays until a save succeeds: it holds the text if the save fails.
             Ok((headers, body)) => {
-                self.remove_compose_file();
                 let Some(composer) = self.compose.as_mut() else {
                     return Vec::new();
                 };
@@ -456,6 +457,12 @@ impl MailScreen {
                 Some(text) => self.apply_file_text(text),
                 None => Vec::new(),
             },
+            Command::DiscardUnsaved => {
+                self.hide_composer();
+                let text = "unsaved changes discarded";
+                self.status.notify(text, self.tick);
+                Vec::new()
+            }
             other => return Err(other),
         })
     }

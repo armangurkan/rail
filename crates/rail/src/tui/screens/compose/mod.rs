@@ -68,6 +68,8 @@ pub struct Composer {
     prompting: Option<Prompting>,
     confirm_discard: bool,
     seq: u64,
+    /// The bottom row: the review's keys.
+    hint: String,
     /// The review's width and body height at the last draw, for cursor moves.
     width: Cell<usize>,
     view_rows: Cell<usize>,
@@ -123,6 +125,7 @@ impl Composer {
             prompting: None,
             confirm_discard: false,
             seq: 0,
+            hint: review::default_hint(),
             width: Cell::new(FIRST_WIDTH),
             view_rows: Cell::new(0),
         }
@@ -134,6 +137,13 @@ impl Composer {
         let mut composer = Self::new(composing);
         composer.start_headers(steps, true);
         composer
+    }
+
+    /// Name these keys on the bottom row: the labels of send, edit, headers, attach, remove,
+    /// keep and discard, in that order.
+    pub fn with_hint(mut self, labels: &[String; 7]) -> Self {
+        self.hint = review::hint(labels);
+        self
     }
 
     pub fn composing(&self) -> &Composing {

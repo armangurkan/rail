@@ -168,6 +168,17 @@ fn threading_for(
     })
 }
 
+/// A stored draft's threading as it is; its forwarded parts stay with the update.
+fn kept_threading(d: &Draft) -> Threading {
+    Threading {
+        thread_id: d.thread_id,
+        remote_thread_id: d.remote_thread_id.clone(),
+        in_reply_to: d.in_reply_to.clone(),
+        references: d.references.clone(),
+        parts: Vec::new(),
+    }
+}
+
 /// What a save writes, checked against the store.
 struct SaveInput {
     account_id: i64,
@@ -209,7 +220,12 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
         files,
     } = input;
     let existing = editable(&store, request.draft, account_id)?;
-    let threading = threading_for(&store, request.kind, request.reply_to.as_ref(), account_id)?;
+    let threading = match (&existing, request.reply_to.as_ref()) {
+        // An update that names no message keeps what the draft was created with (the
+        // message it answers may have left the store since).
+        (Some(d), None) => kept_threading(d),
+        (_, reply_to) => threading_for(&store, request.kind, reply_to, account_id)?,
+    };
     let mut attachments = match &existing {
         Some(d) => d
             .attachments

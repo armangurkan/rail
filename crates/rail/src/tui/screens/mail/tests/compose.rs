@@ -378,6 +378,18 @@ async fn a_failed_send_reopens_the_review_with_the_error() {
     assert!(composing(&f).errors[0].contains("notes.txt"));
     assert!(f.screen.status_line().contains("Could not send"));
     assert_eq!(f.screen.error_count(), 1);
+    // The answered message is not known for this draft: it still edits and saves.
+    assert_eq!(composing(&f).reply_to, None);
+    let before = saves(&f).len();
+    editor_appends(&f, "fixed\n");
+    press(&mut f, KeyCode::Char('e')).await;
+    assert_eq!(saves(&f).len(), before + 1);
+    assert!(
+        composing(&f).errors.is_empty(),
+        "the save cleared the error"
+    );
+    assert!(composing(&f).body.contains("fixed"));
+    assert!(!f.paths.compose_dir().join("1.eml").exists());
 }
 
 #[tokio::test]
@@ -571,4 +583,73 @@ async fn the_palette_writes_a_message_and_runs_the_composers_keys() {
     settle_capturing(&mut f.screen, effects, &f.last_theme, &f.editor).await;
     assert!(!compose_open(&f));
     assert_eq!(f.screen.focus, Focus::Reader);
+}
+
+#[tokio::test]
+async fn closing_after_a_failed_save_asks_before_the_changes_are_lost() {
+    let mut f = compose_fixture().await;
+    editor_appends(&f, "typed\n");
+    let mut calls = 0;
+    *f.fake.on_save.lock().unwrap() = Some(Box::new(move |_| {
+        calls += 1;
+        if calls % 2 == 0 {
+            Err(OpError::new(
+                ErrorCode::Daemon,
+                ErrorClass::Transient,
+                "the connection to the daemon closed",
+            ))
+        } else {
+            Ok(DraftSaveResponse {
+                draft: 1,
+                message_id: "<x@example.com>".into(),
+                attachments: vec![],
+            })
+        }
+    }));
+    let file = f.paths.compose_dir().join("1.eml");
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await; // save 1 ok, the editor, save 2 fails
+    assert!(
+        file.exists(),
+        "the file keeps the text the failed save did not store"
+    );
+    press(&mut f, KeyCode::Char('q')).await;
+    assert!(
+        matches!(f.screen.modal, Some(Modal::Confirm(_))),
+        "Discard the unsaved changes?"
+    );
+    press(&mut f, KeyCode::Char('n')).await;
+    assert!(compose_open(&f), "no keeps the review");
+    assert!(composing(&f).body.contains("typed"));
+    press(&mut f, KeyCode::Char('e')).await; // save 3 ok
+    assert!(!file.exists(), "a successful save removes the file");
+    press(&mut f, KeyCode::Char('e')).await; // save 4 fails
+    press(&mut f, KeyCode::Char('q')).await;
+    press(&mut f, KeyCode::Char('y')).await;
+    assert!(!compose_open(&f));
+    assert!(!file.exists());
+    assert!(f.screen.status_line().contains("unsaved changes discarded"));
+    // A composer opened afterwards starts saved: q closes at once.
+    *f.fake.on_save.lock().unwrap() = None;
+    press(&mut f, KeyCode::Char('r')).await;
+    press(&mut f, KeyCode::Char('q')).await;
+    assert!(!compose_open(&f));
+    assert!(f.screen.status_line().contains("draft kept"));
+}
+
+#[tokio::test]
+async fn the_review_names_the_users_keys() {
+    let mut f = compose_fixture().await;
+    let text = "[keys]\n\"compose.send\" = \"S\"\n";
+    let path = std::path::Path::new("/c/config.toml");
+    let config = rail_core::config::parse(text, path).unwrap();
+    f.screen.ctx.keymap = Arc::new(Keymap::from_config(&config.keys, text, path).unwrap());
+    editor_appends(&f, "");
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    let rows = crate::tui::test_util::render_lines(120, 30, |frame| {
+        f.screen.view(frame, &Theme::default());
+    });
+    let hint = &rows[28];
+    assert!(hint.starts_with("S send · e edit · t headers"), "{hint}");
 }

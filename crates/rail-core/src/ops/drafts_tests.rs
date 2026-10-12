@@ -88,6 +88,11 @@ fn save_checks_every_bound_without_echoing_an_address() {
         reply.checked().is_err(),
         "a reply names the message it answers"
     );
+    reply.draft = Some(7);
+    assert!(
+        reply.checked().is_ok(),
+        "an update keeps the message it was created for"
+    );
 }
 
 #[test]

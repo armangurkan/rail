@@ -8,9 +8,26 @@ use super::model::Composing;
 use crate::tui::modals::confirm::human_size;
 use crate::tui::text::{Block, blocks, escape, expand_tabs, fold_label, shown_host, wrap};
 
-/// The bottom row: the review's keys (the default ones; Task 7 builds it from the keymap).
-pub(super) const HINT: &str =
-    "y send · e edit · t headers · a attach · x remove · q keep · d discard";
+/// The keys the bottom row names, in its order: send, edit, headers, attach, remove, keep,
+/// discard.
+pub(super) const HINT_WORDS: [&str; 7] = [
+    "send", "edit", "headers", "attach", "remove", "keep", "discard",
+];
+
+/// The bottom row for these key labels (in `HINT_WORDS`' order).
+pub(super) fn hint(labels: &[String; 7]) -> String {
+    labels
+        .iter()
+        .zip(HINT_WORDS)
+        .map(|(key, word)| format!("{key} {word}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The bottom row with the default keys.
+pub(super) fn default_hint() -> String {
+    hint(&["y", "e", "t", "a", "x", "q", "d"].map(String::from))
+}
 /// The bottom row while the discard question is open.
 pub(super) const DISCARD_QUESTION: &str = "Discard this draft? (y/n)";
 
