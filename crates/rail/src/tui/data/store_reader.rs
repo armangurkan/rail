@@ -7,16 +7,13 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rail_core::ops::OpError;
+use rail_core::ops::{DraftId, OpError};
+use rail_core::store::drafts::{Draft, DraftKind};
 use rail_core::store::filter::Filter;
 use rail_core::store::view::{AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadPage};
 use rail_core::store::{Store, StoreError};
 
 /// How many address matches the recipient prompt shows at most.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the composer (Task 7) is the first caller")
-)]
 const SUGGESTION_LIMIT: usize = 8;
 
 use super::{MailEvent, job, refresh_job, send};
@@ -96,12 +93,15 @@ pub struct SidebarOutcome {
     pub account_ids: Vec<Option<i64>>,
 }
 
+/// A draft read to resume it, and the stored message it answers (a reply's or forward's,
+/// which a save names again).
+pub struct ResumedDraft {
+    pub draft: Draft,
+    pub answers: Option<i64>,
+}
+
 /// Which message a reply or forward answers: this one, or a thread's latest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the composer (Task 7) is the first caller")
-)]
 pub enum ReplyTarget {
     Message(i64),
     Thread(i64),
@@ -275,10 +275,6 @@ impl StoreReader {
     }
 
     /// The reply source of `target`: a message, or the newest message of a thread.
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the composer (Task 7) is the first caller")
-    )]
     pub fn reply_source(&self, seq: u64, target: ReplyTarget) -> Effect {
         let reader = self.clone();
         job(move |sink| async move {
@@ -299,10 +295,6 @@ impl StoreReader {
     }
 
     /// The best address-book matches for `prefix`.
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the composer (Task 7) is the first caller")
-    )]
     pub fn suggest(&self, seq: u64, prefix: String) -> Effect {
         let reader = self.clone();
         job(move |sink| async move {
@@ -313,18 +305,42 @@ impl StoreReader {
         })
     }
 
-    /// An account's drafts.
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the composer (Task 7) is the first caller")
-    )]
-    pub fn drafts(&self, seq: u64, account_id: i64) -> Effect {
+    /// The drafts of these accounts, each account's newest first, in the accounts' order.
+    pub fn drafts(&self, seq: u64, account_ids: Vec<i64>) -> Effect {
         let reader = self.clone();
         job(move |sink| async move {
             let result = reader
-                .read(move |store| store.drafts_for_account(account_id))
+                .read(move |store| {
+                    let mut all = Vec::new();
+                    for account_id in account_ids {
+                        all.extend(store.drafts_for_account(account_id)?);
+                    }
+                    Ok(all)
+                })
                 .await;
             send(&sink, MailEvent::Drafts { seq, result });
+        })
+    }
+
+    /// One draft to resume, with the message a reply or forward answers.
+    pub fn draft(&self, seq: u64, id: DraftId) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| {
+                    let Some(draft) = store.draft(id)? else {
+                        return Ok(None);
+                    };
+                    let answers = match (draft.kind, draft.thread_id) {
+                        (DraftKind::New, _) | (_, None) => None,
+                        (_, Some(thread)) => {
+                            store.answered_message(thread, draft.in_reply_to.as_deref())?
+                        }
+                    };
+                    Ok(Some(Box::new(ResumedDraft { draft, answers })))
+                })
+                .await;
+            send(&sink, MailEvent::Draft { seq, result });
         })
     }
 }

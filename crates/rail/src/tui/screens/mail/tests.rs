@@ -24,6 +24,7 @@ use crate::tui::test_util::{
 use crate::tui::theme::choice::{ColorDepth, ThemeChoice};
 
 mod actions;
+mod compose;
 mod pickers;
 mod state;
 mod themes;

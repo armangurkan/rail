@@ -225,6 +225,9 @@ fn account_part(name: &str, status: Option<&AccountSyncStatus>, glyphs: &Glyphs)
         return format!("{name} …");
     };
     let mut part = sync_part(name, s, glyphs);
+    if s.outbox.sending > 0 {
+        part.push_str(" sending…");
+    }
     if s.outbox.pending > 0 {
         part.push_str(&format!(" {} queued", s.outbox.pending));
     }

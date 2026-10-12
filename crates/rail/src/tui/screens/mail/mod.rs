@@ -4,10 +4,14 @@
 
 mod actions;
 mod actions_pick;
+mod composing;
+mod composing_answers;
+mod composing_flow;
 mod layout;
 mod list;
 #[cfg(test)]
 mod modal_tests;
+mod palette;
 mod reading;
 mod selection;
 mod sidebar;
@@ -49,9 +53,10 @@ use crate::tui::data::{
 };
 use crate::tui::effects::Opener;
 use crate::tui::keys::{Action, Chord, Keymap, Resolved, View};
-use crate::tui::modals::{FilterLine, Help, Modal, Palette, PaletteEntry, Target};
+use crate::tui::modals::{FilterLine, Help, Modal, Palette};
 use crate::tui::open::OpenFiles;
 use crate::tui::screen::Screen;
+use crate::tui::screens::compose::Composer;
 use crate::tui::screens::reader::Reader;
 use crate::tui::theme::Theme;
 use crate::tui::theme::choice::{ColorDepth, ThemeChoice};
@@ -77,6 +82,11 @@ pub struct MailContext {
     pub depth: ColorDepth,
     /// The scheme and accent in force, which the pickers change one at a time.
     pub theme_choice: ThemeChoice,
+    /// The editor's command line, the compose file's path appended when it runs.
+    pub editor: Vec<String>,
+    /// Each account's signature (in `config.toml`'s order): the file's text, why it could not
+    /// be read, or `None` when none is set.
+    pub signatures: Vec<Option<Result<String, String>>>,
 }
 
 /// One configured account, in `config.toml`'s order.
@@ -114,6 +124,8 @@ pub enum Focus {
     List,
     Sidebar,
     Reader,
+    /// The composer's review or prompts, over the list or the reader.
+    Compose,
 }
 
 /// What the list area shows instead of rows.
@@ -161,6 +173,9 @@ pub struct MailScreen {
     html_confirmed: bool,
     /// The message `o` is waiting on a body fetch for.
     pending_open: Option<i64>,
+    /// The message being written, drawn over everything but the status bar.
+    compose: Option<Composer>,
+    composing: composing::ComposeState,
     seq: u64,
     latest_list: u64,
     /// The newest thread read: an older answer is dropped.
@@ -214,6 +229,8 @@ impl MailScreen {
             open_files,
             html_confirmed: false,
             pending_open: None,
+            compose: None,
+            composing: composing::ComposeState::default(),
             seq: 0,
             latest_list: 0,
             latest_thread: 0,
@@ -343,6 +360,7 @@ impl MailScreen {
             Focus::List => View::List,
             Focus::Sidebar => View::Sidebar,
             Focus::Reader => View::Reader,
+            Focus::Compose => View::Compose,
         };
         [view, View::Global]
     }
@@ -354,6 +372,9 @@ impl MailScreen {
         if let Some(modal) = self.modal.as_mut() {
             let outcome = modal.key(key);
             return self.modal_outcome(outcome);
+        }
+        if self.focus == Focus::Compose {
+            return self.compose_key(key);
         }
         let views = self.views();
         match self.ctx.keymap.resolve(&views, &mut self.chord, key) {
@@ -381,6 +402,9 @@ impl MailScreen {
             }
             _ => {}
         }
+        if let Some(effects) = self.compose_action(action) {
+            return effects;
+        }
         if let Some(effects) = self.mail_action(action) {
             return effects;
         }
@@ -391,12 +415,13 @@ impl MailScreen {
             Focus::List => self.list_action(action),
             Focus::Sidebar => self.sidebar_action(action),
             Focus::Reader => self.reader_action(action),
+            Focus::Compose => self.compose_act(action),
         }
     }
 
     /// Actions of both the list and the sidebar.
     fn shared_action(&mut self, action: Action) -> Option<Vec<Effect>> {
-        if self.focus == Focus::Reader {
+        if matches!(self.focus, Focus::Reader | Focus::Compose) {
             // Only the refresh key works in the reader: the status bar offers it after the
             // daemon link is lost, whatever is on screen.
             return (action == Action::ListRefresh).then(|| self.refresh());
@@ -420,7 +445,7 @@ impl MailScreen {
             }
             Action::ListUnified => self.set_scope(ScopeChoice::Unified),
             Action::ListRefresh => self.refresh(),
-            other => return account_number(other).map(|n| self.go_to_account(n)),
+            other => return palette::account_number(other).map(|n| self.go_to_account(n)),
         };
         Some(effects)
     }
@@ -503,7 +528,11 @@ impl MailScreen {
                 thread_id,
                 result,
             } if seq == self.latest_thread => self.thread_read(thread_id, result),
-            MailEvent::Bodies { thread_id, result } => self.bodies_answered(thread_id, result),
+            MailEvent::Bodies { thread_id, result } => {
+                let mut effects = self.bodies_answered(thread_id, result);
+                effects.extend(self.body_for_reply(thread_id));
+                effects
+            }
             MailEvent::Html { message_id, result } => self.html_read(message_id, result),
             MailEvent::Daemon(event) => self.on_daemon(event),
             MailEvent::Timer {
@@ -609,93 +638,6 @@ impl MailScreen {
         self.list.cancel_loading();
         vec![self.read_list(PageAt::First, Place::Top)]
     }
-
-    /// Every palette entry: each key action of the active view and the global ones with its
-    /// key, `errors`, `theme`, `accent`, each account and label.
-    pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
-        let key = |a: Action| self.ctx.keymap.label(a);
-        let views = self.views();
-        let mut entries: Vec<PaletteEntry> = Action::ALL
-            .iter()
-            .filter(|a| a.views().iter().any(|v| views.contains(v)))
-            .map(|&a| PaletteEntry {
-                text: a.description().to_string(),
-                search: format!("{} {}", a.description(), a.id()),
-                key: key(a),
-                target: Target::Action(a),
-            })
-            .collect();
-        let commands = [
-            ("Show recent errors", "errors", Target::Errors),
-            ("Change the colour theme", "theme", Target::Theme),
-            ("Change the accent colour", "accent", Target::Accent),
-        ];
-        entries.extend(commands.into_iter().map(|(text, id, target)| PaletteEntry {
-            text: text.into(),
-            search: format!("{id} {text}"),
-            key: String::new(),
-            target,
-        }));
-        entries.extend(self.accounts.iter().enumerate().map(|(i, a)| PaletteEntry {
-            text: format!("Go to {}'s inbox", a.name),
-            search: format!("Go to {}'s inbox account {} {}", a.name, a.name, a.address),
-            key: account_action(i + 1).map(key).unwrap_or_default(),
-            target: Target::Scope(ScopeChoice::Account(i)),
-        }));
-        entries.extend(
-            self.sidebar
-                .items()
-                .iter()
-                .filter(|i| i.depth > 0)
-                .map(|item| {
-                    let account = item
-                        .account
-                        .and_then(|i| self.accounts.get(i))
-                        .map_or("", |a| a.name.as_str());
-                    PaletteEntry {
-                        text: format!("Label: {account} · {}", item.label),
-                        search: format!("label {account} {}", item.label),
-                        key: String::new(),
-                        target: Target::Scope(item.scope.clone()),
-                    }
-                }),
-        );
-        entries
-    }
-}
-
-/// The `list.account_n` action for account number `n` (1 to 9).
-fn account_action(n: usize) -> Option<Action> {
-    let action = match n {
-        1 => Action::ListAccount1,
-        2 => Action::ListAccount2,
-        3 => Action::ListAccount3,
-        4 => Action::ListAccount4,
-        5 => Action::ListAccount5,
-        6 => Action::ListAccount6,
-        7 => Action::ListAccount7,
-        8 => Action::ListAccount8,
-        9 => Action::ListAccount9,
-        _ => return None,
-    };
-    Some(action)
-}
-
-/// The account number of a `list.account_n` action.
-fn account_number(action: Action) -> Option<usize> {
-    let number = match action {
-        Action::ListAccount1 => 1,
-        Action::ListAccount2 => 2,
-        Action::ListAccount3 => 3,
-        Action::ListAccount4 => 4,
-        Action::ListAccount5 => 5,
-        Action::ListAccount6 => 6,
-        Action::ListAccount7 => 7,
-        Action::ListAccount8 => 8,
-        Action::ListAccount9 => 9,
-        _ => return None,
-    };
-    Some(number)
 }
 
 impl MailScreen {
@@ -761,13 +703,16 @@ impl Screen for MailScreen {
     }
 
     fn captures_text(&self) -> bool {
-        self.modal.as_ref().is_some_and(Modal::captures_text)
+        match &self.modal {
+            Some(modal) => modal.captures_text(),
+            None => self.compose.as_ref().is_some_and(Composer::captures_text),
+        }
     }
 
     /// The active view's own keys and a waiting chord are the screen's; the global quit key
     /// is the shell's unless the view binds it (`q` closes the reader).
     fn claims_key(&self, key: KeyEvent) -> bool {
-        if self.modal.is_some() || self.chord.is_pending() {
+        if self.modal.is_some() || self.chord.is_pending() || self.captures_text() {
             return true;
         }
         let mut chord = self.chord;

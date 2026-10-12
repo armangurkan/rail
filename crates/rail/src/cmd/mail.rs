@@ -3,6 +3,7 @@
 //! store at once and a daemon that cannot be reached only shows in the status bar.
 
 use std::io::IsTerminal;
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use rail_core::paths::Paths;
 
 use crate::tui::clock::Clock;
 use crate::tui::data::{DaemonLink, StoreReader};
+use crate::tui::editor;
 use crate::tui::effects::Opener;
 use crate::tui::keys::Keymap;
 use crate::tui::run::{finish_run, run_app};
@@ -20,6 +22,9 @@ use crate::tui::text::hyperlinks_supported;
 use crate::tui::theme::Theme;
 use crate::tui::theme::choice::{ColorDepth, ThemeChoice, ThemeError, color_depth};
 use crate::{browser, daemon_link, test_hooks};
+
+/// The most of a signature file a message carries.
+const MAX_SIGNATURE_BYTES: usize = 4096;
 
 /// Printed instead of the mail screen in a pipe.
 pub const MAIL_PIPE_HINT: &str = "rail: the mail screen needs an interactive terminal; `rail search <query>` and `rail sync` work in scripts";
@@ -79,7 +84,33 @@ fn context(
         hyperlinks: hyperlinks_supported(|name| std::env::var(name).ok()),
         depth,
         theme_choice,
+        editor: editor::command_line(config.general.editor.as_deref(), |n| std::env::var(n).ok()),
+        signatures: config
+            .accounts
+            .iter()
+            .map(|a| a.signature.as_deref().map(read_signature))
+            .collect(),
     }
+}
+
+/// A signature file's text (a leading `~` is the home directory), trailing whitespace
+/// trimmed, at most `MAX_SIGNATURE_BYTES`; or why it could not be read.
+fn read_signature(path: &Path) -> Result<String, String> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let path = match (path.strip_prefix("~"), home) {
+        (Ok(rest), Some(home)) => home.join(rest),
+        _ => path.to_path_buf(),
+    };
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut text = text.trim_end().to_string();
+    if text.len() > MAX_SIGNATURE_BYTES {
+        let mut end = MAX_SIGNATURE_BYTES;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    Ok(text)
 }
 
 /// The `hint:` line printed under a theme error.
@@ -101,6 +132,18 @@ mod tests {
     fn error(text: &str) -> ThemeError {
         let config = rail_core::config::parse(text, std::path::Path::new("/c")).unwrap();
         ThemeChoice::from_config(&config.general, text, std::path::Path::new("/c")).unwrap_err()
+    }
+
+    #[test]
+    fn a_signature_is_trimmed_capped_and_a_missing_file_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sig.txt");
+        std::fs::write(&path, "Dana\n\n  \n").unwrap();
+        assert_eq!(read_signature(&path).unwrap(), "Dana");
+        std::fs::write(&path, "é".repeat(MAX_SIGNATURE_BYTES)).unwrap();
+        let capped = read_signature(&path).unwrap();
+        assert!(capped.len() <= MAX_SIGNATURE_BYTES && capped.len() > MAX_SIGNATURE_BYTES - 2);
+        assert!(read_signature(&dir.path().join("none")).is_err());
     }
 
     #[test]

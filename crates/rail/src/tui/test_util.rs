@@ -472,6 +472,8 @@ pub fn mail_ctx(paths: &Paths, fake: Arc<FakeDaemon>) -> MailContext {
         hyperlinks: false,
         depth: ColorDepth::TrueColor,
         theme_choice: ThemeChoice::default(),
+        editor: vec!["fake".into()],
+        signatures: vec![Some(Ok("work sig".into())), None],
     }
 }
 

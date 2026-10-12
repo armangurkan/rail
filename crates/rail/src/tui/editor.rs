@@ -3,18 +3,10 @@
 use std::path::Path;
 use std::process::Command;
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the composer (Task 7) is the first caller")
-)]
 const FALLBACK: &str = "vi";
 
 /// `general.editor`, else `$VISUAL`, else `$EDITOR`, else `vi`, split with shell-words rules
 /// (quotes respected, no shell run). A blank or unparseable value is skipped.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the composer (Task 7) is the first caller")
-)]
 pub fn command_line(configured: Option<&str>, var: impl Fn(&str) -> Option<String>) -> Vec<String> {
     let candidates = [configured.map(str::to_string), var("VISUAL"), var("EDITOR")];
     for candidate in candidates.into_iter().flatten() {

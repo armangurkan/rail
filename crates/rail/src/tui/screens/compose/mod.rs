@@ -154,15 +154,18 @@ impl Composer {
         self.prompting.is_some() || self.confirm_discard
     }
 
+    #[cfg(test)]
     pub fn confirming_discard(&self) -> bool {
         self.confirm_discard
     }
 
+    #[cfg(test)]
     pub fn cursor(&self) -> usize {
         self.cursor
     }
 
     /// The open prompt's label: a header's name, or `Attach`.
+    #[cfg(test)]
     pub fn prompt_label(&self) -> Option<&'static str> {
         match &self.prompting {
             Some(Prompting::Headers(s)) => Some(s.prompt.label()),

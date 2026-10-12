@@ -49,6 +49,8 @@ pub(super) struct LastAction {
     restored: bool,
     /// Some undo was answered.
     undid: bool,
+    /// A `draft.send`: undoing it reopens the review.
+    sent: bool,
 }
 
 impl LastAction {
@@ -66,6 +68,7 @@ impl LastAction {
             selected,
             restored: false,
             undid: false,
+            sent: false,
         }
     }
 }
@@ -380,7 +383,10 @@ impl MailScreen {
                 self.actions.failures.retain(|_, (r, _)| r.row != row.row);
                 vec![self.ctx.link.retry(row)]
             }
-            other => self.picker_command(other),
+            other => match self.compose_command(other) {
+                Ok(effects) => effects,
+                Err(other) => self.picker_command(other),
+            },
         }
     }
 
@@ -395,7 +401,9 @@ impl MailScreen {
                         (false, true)
                     }
                 };
-                self.undone(seq, too_late, failed);
+                if self.undone(seq, too_late, failed) {
+                    self.reopen_sent();
+                }
                 self.dirty()
             }
             MailEvent::Retried { result, .. } => {
@@ -413,7 +421,7 @@ impl MailScreen {
             MailEvent::ActionFailed(failure) => self.action_failed(*failure),
             MailEvent::Labels { seq, result } => self.labels_read(seq, result),
             MailEvent::ThemeSaved { result } => self.theme_saved(result),
-            _ => Vec::new(),
+            other => self.compose_event(other),
         }
     }
 
@@ -500,8 +508,8 @@ impl MailScreen {
 
     /// Once `z` was pressed and every call and undo of the record is answered, report the
     /// combined result and drop the record. `say_nothing`: say so when nothing was undone
-    /// (no error is on the bar to say why).
-    fn finish_undo(&mut self, say_nothing: bool) {
+    /// (no error is on the bar to say why). True when a send was undone.
+    fn finish_undo(&mut self, say_nothing: bool) -> bool {
         let tick = self.tick;
         let done = self
             .actions
@@ -509,10 +517,10 @@ impl MailScreen {
             .as_ref()
             .is_some_and(|l| l.undo_wanted && l.pending == 0 && l.undos == 0);
         if !done {
-            return;
+            return false;
         }
         let Some(last) = self.actions.last.take() else {
-            return;
+            return false;
         };
         if last.undid {
             let text = if last.too_late {
@@ -524,20 +532,34 @@ impl MailScreen {
         } else if say_nothing {
             self.status.notify("Nothing to undo.", tick);
         }
+        last.sent && last.undid && !last.too_late
     }
 
     /// An `action.undo` answered. An answer for another action than the newest is stale and
-    /// ignored.
-    fn undone(&mut self, seq: u64, too_late: bool, failed: bool) {
+    /// ignored. True when a send was undone.
+    fn undone(&mut self, seq: u64, too_late: bool, failed: bool) -> bool {
         let Some(last) = self.actions.last.as_mut().filter(|l| l.seq == seq) else {
-            return;
+            return false;
         };
         last.undos = last.undos.saturating_sub(1);
         if !failed {
             last.undid = true;
             last.too_late |= too_late;
         }
-        self.finish_undo(false);
+        self.finish_undo(false)
+    }
+
+    /// `draft.send` queued the draft: `z` takes it back while the grace lasts.
+    pub(super) fn sent_record(&mut self, row: RowToken) {
+        self.actions.seq += 1;
+        let until = self.tick + UNDO_TICKS;
+        let mut last = LastAction::new(self.actions.seq, 1, until, Vec::new());
+        last.rows.push(row);
+        last.sent = true;
+        self.actions.last = Some(last);
+        let key = self.ctx.keymap.label(Action::GlobalUndo);
+        self.status
+            .notify_for(format!("sent · {key} undoes"), self.tick, UNDO_TICKS);
     }
 
     fn action_error(&mut self, what: &str, error: &OpError) {
@@ -563,11 +585,16 @@ impl MailScreen {
         }
         // The daemon sends the failed rows again on every connect: a row still offered for a
         // retry is listed once.
+        let mut effects = Vec::new();
         if !self.status.offers_retry(failure.row) {
             self.status
                 .error_with_retry(text, self.ctx.clock.now(), self.tick, row);
+            if let (MailAction::Send { .. }, Some(draft)) = (&failure.action, failure.draft) {
+                effects = self.send_failed(draft, &failure.error);
+            }
         }
-        self.dirty()
+        effects.extend(self.dirty());
+        effects
     }
 }
 

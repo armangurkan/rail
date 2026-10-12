@@ -43,10 +43,6 @@ pub struct ApplyCall {
 }
 
 /// One `draft.save` the composer sends; `seq` ties the answer to the save that asked.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the composer (Task 7) is the first caller")
-)]
 #[derive(Clone)]
 pub struct SaveCall {
     pub seq: u64,
@@ -201,10 +197,6 @@ impl DaemonLink {
     }
 
     /// Create or update a draft in the daemon.
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the composer (Task 7) is the first caller")
-    )]
     pub fn draft_save(&self, call: SaveCall) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
@@ -223,10 +215,6 @@ impl DaemonLink {
     }
 
     /// Queue `draft` to be sent under `client_token` (which `z` and a retry name it by).
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the composer (Task 7) is the first caller")
-    )]
     pub fn draft_send(&self, seq: u64, draft: DraftId, client_token: String) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
@@ -251,10 +239,6 @@ impl DaemonLink {
     }
 
     /// Delete `draft` (the daemon refuses while it is being sent).
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the composer (Task 7) is the first caller")
-    )]
     pub fn draft_discard(&self, draft: DraftId) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {

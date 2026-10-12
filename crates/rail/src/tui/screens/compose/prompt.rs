@@ -138,6 +138,7 @@ impl HeaderPrompt {
         self.label
     }
 
+    #[cfg(test)]
     pub fn value(&self) -> &str {
         self.input.value()
     }
@@ -317,6 +318,7 @@ impl PathPrompt {
         }
     }
 
+    #[cfg(test)]
     pub fn value(&self) -> &str {
         self.input.value()
     }
@@ -326,6 +328,7 @@ impl PathPrompt {
         expand(self.input.value().trim())
     }
 
+    #[cfg(test)]
     pub fn matches(&self) -> &[String] {
         &self.matches
     }

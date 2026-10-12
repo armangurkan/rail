@@ -59,6 +59,10 @@ pub enum PickerKind {
     Theme,
     /// An accent slot, previewed as the highlight moves.
     Accent,
+    /// The account a new message is written from (`id`: its position).
+    Account,
+    /// A draft to open in the composer (`id`: the draft's).
+    Draft,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -181,6 +185,8 @@ impl Picker {
                     .filter(|n| *n <= 15)
                     .map_or(AccentAnswer::SchemeDefault, AccentAnswer::Slot),
             )),
+            PickerKind::Account => usize::try_from(item.id).ok().map(Command::Account),
+            PickerKind::Draft => Some(Command::ResumeDraft(item.id)),
         }
     }
 
@@ -268,6 +274,16 @@ impl Picker {
             ),
             PickerKind::Theme => ("Theme", hint, "No theme matches."),
             PickerKind::Accent => ("Accent", hint, "No accent matches."),
+            PickerKind::Account => (
+                "Write from",
+                "Enter writes from it · Esc cancels · ↑↓ move",
+                "No account matches.",
+            ),
+            PickerKind::Draft => (
+                "Drafts",
+                "Enter opens · Esc cancels · ↑↓ move",
+                "No draft matches.",
+            ),
         }
     }
 

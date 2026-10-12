@@ -21,21 +21,13 @@ use rail_core::store::AddressEntry;
 use rail_core::store::drafts::{DraftSummary, ReplySource};
 use rail_core::store::view::{HtmlBody, LabelChoices, ThreadDetail};
 
-#[cfg_attr(
-    not(test),
-    allow(unused_imports, reason = "the composer (Task 7) is the first user")
-)]
 pub use daemon_link::SaveCall;
 pub use daemon_link::{ApplyCall, DaemonLink};
 #[cfg(test)]
 pub use daemon_link::{FakeCall, FakeDaemon};
-#[cfg_attr(
-    not(test),
-    allow(unused_imports, reason = "the composer (Task 7) is the first user")
-)]
 pub use store_reader::ReplyTarget;
 pub use store_reader::{
-    ListOutcome, ListRequest, ReadError, ScopeChoice, SidebarOutcome, StoreReader,
+    ListOutcome, ListRequest, ReadError, ResumedDraft, ScopeChoice, SidebarOutcome, StoreReader,
 };
 
 use crate::tui::app::{Effect, TaskResult, TaskSink};
@@ -65,10 +57,6 @@ pub enum DaemonEvent {
 }
 
 /// One answer to the mail screen.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the composer (Task 7) is the first caller")
-)]
 pub enum MailEvent {
     Listed {
         seq: u64,
@@ -154,10 +142,15 @@ pub enum MailEvent {
         seq: u64,
         result: Result<Option<Box<ReplySource>>, ReadError>,
     },
-    /// An account's drafts.
+    /// The drafts of the accounts asked for.
     Drafts {
         seq: u64,
         result: Result<Vec<DraftSummary>, ReadError>,
+    },
+    /// A draft to resume (`None`: it is no longer stored).
+    Draft {
+        seq: u64,
+        result: Result<Option<Box<ResumedDraft>>, ReadError>,
     },
     /// The editor exited: its exit code, or why it could not run.
     EditorDone(Result<i32, String>),
@@ -270,6 +263,11 @@ impl fmt::Debug for MailEvent {
                 .finish(),
             Self::Drafts { seq, result } => f
                 .debug_struct("Drafts")
+                .field("seq", seq)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::Draft { seq, result } => f
+                .debug_struct("Draft")
                 .field("seq", seq)
                 .field("ok", &result.is_ok())
                 .finish(),

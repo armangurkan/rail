@@ -119,6 +119,37 @@ fn the_latest_message_of_a_thread_is_the_newest_by_date_then_id() -> Result<(), 
 }
 
 #[test]
+fn a_saved_reply_answers_the_message_it_names_else_the_newest() -> Result<(), StoreError> {
+    let (mut store, account_id) = store_with_account();
+    let (first, second) = seed_two_messages(&mut store, account_id);
+    let thread: i64 = store.conn().query_row(
+        "SELECT thread_id FROM messages WHERE id = ?1",
+        [first],
+        |r| r.get(0),
+    )?;
+    assert_eq!(
+        store.answered_message(thread, Some("<m1@example.com>"))?,
+        Some(first)
+    );
+    store.conn().execute(
+        "UPDATE messages SET message_id = 'm1@example.com' WHERE id = ?1",
+        [first],
+    )?;
+    assert_eq!(
+        store.answered_message(thread, Some("<m1@example.com>"))?,
+        Some(first),
+        "a bare stored id matches too"
+    );
+    assert_eq!(
+        store.answered_message(thread, Some("<gone@x>"))?,
+        Some(second)
+    );
+    assert_eq!(store.answered_message(thread, None)?, Some(second));
+    assert_eq!(store.answered_message(thread + 100, None)?, None);
+    Ok(())
+}
+
+#[test]
 fn draft_state_and_remote_ids_are_set_in_place() -> Result<(), StoreError> {
     let (mut store, account_id) = store_with_account();
     let id = store.draft_upsert(&write(account_id), 1)?.expect("created");

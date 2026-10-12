@@ -11,6 +11,7 @@ use rail_core::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
 
 use super::*;
 use crate::tui::data::ApplyCall;
+use crate::tui::modals::Target;
 
 /// The fake applies each call to the store as the daemon would (rows ids from the store).
 fn applying(f: &Fixture) {

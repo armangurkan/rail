@@ -57,6 +57,12 @@ pub enum Command {
     Theme(Option<usize>),
     /// `:accent`'s answer.
     Accent(AccentAnswer),
+    /// The account picker's answer: write a new message from account `n` (its position).
+    Account(usize),
+    /// The drafts picker's answer: open this draft in the composer.
+    ResumeDraft(rail_core::ops::DraftId),
+    /// "Keep what you wrote?" was answered yes: use the text the editor left.
+    KeepText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

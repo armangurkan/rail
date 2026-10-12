@@ -31,6 +31,11 @@ impl Clock {
         self.now.unwrap_or_else(rail_core::auth::unix_now)
     }
 
+    /// The time zone dates are shown in.
+    pub fn zone(&self) -> &TimeZone {
+        &self.tz
+    }
+
     /// The time zone's offset now, in seconds east of UTC (for the filter's dates).
     pub fn utc_offset(&self) -> i32 {
         self.zoned(self.now()).map_or(0, |z| z.offset().seconds())

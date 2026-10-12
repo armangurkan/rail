@@ -85,10 +85,6 @@ pub enum Effect {
     Theme(Theme),
     /// Leave the terminal, run `command` on `path` until it exits, take the terminal back,
     /// then report `TaskResult::EditorDone`. Nothing else runs meanwhile.
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the composer (Task 7) is the first caller")
-    )]
     RunEditor {
         command: Vec<String>,
         path: std::path::PathBuf,
