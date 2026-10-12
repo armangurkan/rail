@@ -305,6 +305,26 @@ async fn a_compose_file_matching_the_store_is_written_as_usual() {
 }
 
 #[tokio::test]
+async fn a_leftover_differing_only_in_line_ends_is_not_recovered() {
+    let mut f = compose_fixture().await;
+    let seen = editor_records(&f);
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    let stored = seen.lock().unwrap()[0].clone();
+    let mut g = compose_fixture().await;
+    leave_compose_file(&g, "1.eml", &stored.replace('\n', "\r\n"));
+    let seen = editor_records(&g);
+    press(&mut g, KeyCode::Enter).await;
+    press(&mut g, KeyCode::Char('r')).await;
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [stored],
+        "written as usual, plain line ends"
+    );
+    assert!(!g.screen.status_line().contains(RECOVERED));
+}
+
+#[tokio::test]
 async fn a_leftover_new_message_file_is_not_reused() {
     let mut f = compose_fixture().await;
     leave_compose_file(&f, "new.eml", "To: x@y.z\n\nsomeone else's message\n");

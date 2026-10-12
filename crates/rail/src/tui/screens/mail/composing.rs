@@ -275,7 +275,8 @@ impl MailScreen {
             return None;
         }
         match std::fs::read_to_string(&path) {
-            Ok(text) => (text != file::render(&c.headers, &c.body)).then_some(Leftover::Text(path)),
+            Ok(text) => (file::plain_line_ends(&text) != file::render(&c.headers, &c.body))
+                .then_some(Leftover::Text(path)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => {
                 tracing::warn!(kind = ?error.kind(), "could not read the compose file");
