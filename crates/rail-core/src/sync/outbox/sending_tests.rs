@@ -20,10 +20,10 @@ use crate::store::Store;
 use crate::store::drafts::{Attachment, DraftKind, DraftState, DraftWrite, Recipient};
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxRow, OutboxWrite};
 
-struct Harness {
-    rig: Rig,
-    account_id: i64,
-    mock: MockProvider,
+pub(super) struct Harness {
+    pub(super) rig: Rig,
+    pub(super) account_id: i64,
+    pub(super) mock: MockProvider,
     from_name: Option<String>,
     sync_wake: Arc<Notify>,
     wakes: AtomicUsize,
@@ -31,7 +31,7 @@ struct Harness {
 }
 
 impl Harness {
-    async fn new() -> Self {
+    pub(super) async fn new() -> Self {
         Self::build(None).await
     }
 
@@ -54,11 +54,11 @@ impl Harness {
         }
     }
 
-    fn with_store<R>(&self, f: impl FnOnce(&mut Store) -> R) -> R {
+    pub(super) fn with_store<R>(&self, f: impl FnOnce(&mut Store) -> R) -> R {
         f(&mut Store::open(&self.rig.db).unwrap())
     }
 
-    async fn enqueue(&self, new: NewAction) -> OutboxId {
+    pub(super) async fn enqueue(&self, new: NewAction) -> OutboxId {
         let OutboxOutcome::Enqueued { rows, .. } = self
             .rig
             .writer
@@ -71,24 +71,24 @@ impl Harness {
         rows[0]
     }
 
-    async fn step(&self) {
+    pub(super) async fn step(&self) {
         self.worker.step().await;
     }
 
     /// One step of the harness's worker, as a task of its own.
-    fn worker_step(&self) -> impl Future<Output = ()> + Send + 'static {
+    pub(super) fn worker_step(&self) -> impl Future<Output = ()> + Send + 'static {
         let worker = self.worker.clone();
         async move {
             worker.step().await;
         }
     }
 
-    async fn row(&self, id: OutboxId) -> Option<OutboxRow> {
+    pub(super) async fn row(&self, id: OutboxId) -> Option<OutboxRow> {
         self.rig.store().outbox_row(id).unwrap()
     }
 
     /// Make every row due at or before `not_before` due now (the writer claims by wall time).
-    async fn advance_past(&self, not_before: i64) {
+    pub(super) async fn advance_past(&self, not_before: i64) {
         self.with_store(|s| {
             s.conn()
                 .execute(
@@ -118,16 +118,16 @@ impl Harness {
             .worker_with(self.from_name.clone(), self.sync_wake.clone())
     }
 
-    fn failures(&self) -> Vec<ActionFailed> {
+    pub(super) fn failures(&self) -> Vec<ActionFailed> {
         self.rig.failures.lock().unwrap().clone()
     }
 
-    async fn depth(&self) -> OutboxDepth {
+    pub(super) async fn depth(&self) -> OutboxDepth {
         self.rig.board.get(ADDRESS).unwrap().outbox
     }
 
     /// How many times the sync engine was nudged so far (a stored permit is taken and counted).
-    fn sync_wakes(&self) -> usize {
+    pub(super) fn sync_wakes(&self) -> usize {
         let mut notified = pin!(self.sync_wake.notified());
         if notified
             .as_mut()
@@ -162,7 +162,7 @@ impl Worker {
 }
 
 /// An `editing` draft of the account, its Message-ID `<d{n}@example.com>`.
-fn new_draft(h: &Harness, n: i64, attachments: Vec<Attachment>) -> DraftId {
+pub(super) fn new_draft(h: &Harness, n: i64, attachments: Vec<Attachment>) -> DraftId {
     h.with_store(|s| {
         s.draft_upsert(
             &DraftWrite {
@@ -517,28 +517,6 @@ async fn sending_shows_in_the_depth_while_a_send_is_in_flight() {
     assert_eq!(h.depth().await.sending, 1);
     step.await.unwrap();
     assert_eq!(h.depth().await.sending, 0);
-}
-
-#[tokio::test]
-async fn a_draft_push_row_fails_until_a_later_version() {
-    let h = Harness::new().await;
-    let draft = new_draft(&h, 14, vec![]);
-    h.enqueue(NewAction {
-        account_id: h.account_id,
-        action: Action::PushDraft { draft },
-        threads: vec![],
-        not_before: 0,
-        client_token: "push".into(),
-    })
-    .await;
-    h.step().await;
-    let failed = h.failures();
-    assert_eq!(
-        failed[0].error.message,
-        "saving drafts to Gmail arrives in a later version"
-    );
-    assert_eq!(failed[0].draft, Some(draft));
-    assert!(h.mock.calls().is_empty(), "no Gmail call");
 }
 
 #[tokio::test]

@@ -115,7 +115,7 @@ pub(crate) struct Mailbox {
     pub known_header_ids: HashSet<String>,
     /// Attachment bytes by (message id, part id).
     pub attachment_bytes: HashMap<(String, String), Vec<u8>>,
-    pub missing_threads: HashSet<String>, // deleted at Gmail: a send naming one is `NotFound`
+    pub missing_threads: HashSet<String>, // deleted at Gmail: a send or draft create naming one is `NotFound`
     /// The provider drafts by draft id.
     pub drafts: BTreeMap<String, MockDraft>,
     /// Numbers the ids of drafts and their messages.
@@ -612,7 +612,7 @@ impl Provider for MockProvider {
         self.enter(Call::DraftCreate, None)?;
         let delay = self.lock().action_delay;
         tokio::time::sleep(delay).await;
-        Ok(drafts::create(&mut self.lock(), raw, thread_id))
+        drafts::create(&mut self.lock(), raw, thread_id)
     }
 
     async fn draft_update(

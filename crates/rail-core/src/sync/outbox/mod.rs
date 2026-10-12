@@ -3,15 +3,20 @@
 //! completes or fails it through the writer. It sleeps until the earliest `not_before` (at
 //! least `MIN_IDLE`, at most `MAX_IDLE`) or the new-row signal; it pauses while the account
 //! needs a login; stopping drops a call in flight (the row stays inflight, and the restart rule
-//! sends it again), except a draft being sent, which it lets finish within the manager's stop
-//! deadline. A `Send` row goes through `sending` (the never-twice rule); once one completes, the
-//! account's sync engine is nudged so the Sent copy arrives. Logs carry row ids, counts and
+//! sends it again), except a draft being sent or pushed to Gmail, which it lets finish (and
+//! records) within the manager's stop deadline, so a create is never cut off before its ids are
+//! kept. A `Send` row goes through `sending` (the never-twice rule); a `PushDraft` or
+//! `DeleteDraft` row goes through `pushing`. Once a draft row completes, the account's sync
+//! engine is nudged so Gmail's copy (Sent or Drafts) arrives. Logs carry row ids, counts and
 //! codes only.
 
 mod compose;
 #[cfg(test)]
 mod compose_tests;
 mod plan;
+mod pushing;
+#[cfg(test)]
+mod pushing_tests;
 mod sending;
 #[cfg(test)]
 mod sending_tests;
@@ -33,8 +38,10 @@ use super::manager::{retry_delay, unobserved};
 use super::status::StatusBoard;
 use super::writer::WriterHandle;
 use crate::error::ErrorClass;
-use crate::ops::{Action, ActionFailed, ErrorCode, OpError, OutboxDepth, OutboxId, SyncPhase};
-use crate::provider::{Provider, ProviderError};
+use crate::ops::{
+    Action, ActionFailed, DraftId, ErrorCode, OpError, OutboxDepth, OutboxId, SyncPhase,
+};
+use crate::provider::{DraftIds, Provider, ProviderError};
 use crate::store::outbox::{Failure, OutboxOutcome, OutboxRow, OutboxWrite};
 use crate::store::{Store, StoreError};
 
@@ -75,8 +82,17 @@ pub struct Worker {
     sync_wake: Arc<Notify>,
     /// Rows found in flight at start, until they settle (`sending`).
     recovered: Mutex<HashSet<OutboxId>>,
-    /// True while a claimed `Send` row is being carried out: a stop lets it finish.
+    /// True while a claimed `Send` or `PushDraft` row is being carried out: a stop lets it
+    /// finish.
     sending: AtomicBool,
+}
+
+/// What a row's provider calls left to record.
+pub(super) enum Landed {
+    /// Done: the row completes.
+    Done,
+    /// A push landed: the draft keeps Gmail's ids.
+    Pushed { draft: DraftId, ids: DraftIds },
 }
 
 /// What the loop does next.
@@ -205,10 +221,9 @@ impl Worker {
                 return Next::Idle(MAX_IDLE);
             }
         };
-        let is_send = matches!(row.action, Action::Send { .. });
-        if is_send {
+        if matches!(row.action, Action::Send { .. } | Action::PushDraft { .. }) {
             self.sending.store(true, Ordering::SeqCst);
-            // The status shows "sending…" while the row is inflight.
+            // The status shows "sending…" or "saving…" while the row is inflight.
             self.publish().await;
         }
         let result = self.send(&row).await;
@@ -233,20 +248,24 @@ impl Worker {
         .clamp(MIN_IDLE, MAX_IDLE)
     }
 
-    async fn send(&self, row: &OutboxRow) -> Result<(), ProviderError> {
+    async fn send(&self, row: &OutboxRow) -> Result<Landed, ProviderError> {
         let target = row.clone();
         let planned = self.read(move |store| plan::plan(store, &target)).await;
         let planned = planned.map_err(|e| ProviderError::transient(&e.message))?;
+        let done = |()| Landed::Done;
         match planned {
-            Plan::Nothing => Ok(()),
+            Plan::Nothing => Ok(Landed::Done),
             Plan::LabelGone => Err(ProviderError::permanent(
                 "a label of this action no longer exists in Gmail",
             )),
-            Plan::Send { threads, change } => unobserved(self.call_each(&threads, &change)).await,
-            Plan::SendDraft(draft) => unobserved(self.send_draft(row, draft)).await,
-            Plan::NotYet => Err(ProviderError::permanent(
-                "saving drafts to Gmail arrives in a later version",
-            )),
+            Plan::Send { threads, change } => unobserved(self.call_each(&threads, &change))
+                .await
+                .map(done),
+            Plan::SendDraft(draft) => unobserved(self.send_draft(row, draft)).await.map(done),
+            Plan::PushDraft(draft) => unobserved(self.push_draft(draft))
+                .await
+                .map(|ids| Landed::Pushed { draft, ids }),
+            Plan::DeleteDraft(id) => unobserved(self.delete_remote_draft(&id)).await.map(done),
         }
     }
 
@@ -266,9 +285,19 @@ impl Worker {
     }
 
     /// The write that records `result` for `row`.
-    async fn write_for(&self, row: &OutboxRow, result: &Result<(), ProviderError>) -> OutboxWrite {
+    async fn write_for(
+        &self,
+        row: &OutboxRow,
+        result: &Result<Landed, ProviderError>,
+    ) -> OutboxWrite {
         match result {
-            Ok(()) => OutboxWrite::Complete { id: row.id },
+            Ok(Landed::Done) => OutboxWrite::Complete { id: row.id },
+            Ok(Landed::Pushed { draft, ids }) => OutboxWrite::CompletePush {
+                id: row.id,
+                draft: *draft,
+                remote_draft_id: ids.draft_id.clone(),
+                remote_message_id: ids.message_id.clone(),
+            },
             Err(ProviderError::NeedsAuth { .. }) => {
                 self.needs_login().await;
                 OutboxWrite::Release { id: row.id }
@@ -291,13 +320,18 @@ impl Worker {
         }
     }
 
-    async fn settle(&self, row: OutboxRow, result: Result<(), ProviderError>) {
+    async fn settle(&self, row: OutboxRow, result: Result<Landed, ProviderError>) {
         let write = self.write_for(&row, &result).await;
         if !matches!(write, OutboxWrite::Release { .. }) {
             self.forget_recovered(row.id);
         }
-        let landed = result.is_ok() && matches!(row.action, Action::Send { .. });
-        tracing::info!(account = %self.name, row = row.id, threads = row.thread_ids.len(), outcome = result.as_ref().err().map_or("sent", ProviderError::code), "outbox row");
+        // A completed draft row changed Gmail's Sent or Drafts: the next sync brings it.
+        let landed = result.is_ok() && row.action.draft_id().is_some();
+        let done = match row.action {
+            Action::PushDraft { .. } | Action::DeleteDraft { .. } => "done",
+            _ => "sent",
+        };
+        tracing::info!(account = %self.name, row = row.id, threads = row.thread_ids.len(), outcome = result.as_ref().err().map_or(done, ProviderError::code), "outbox row");
         match self.writer.outbox(write).await {
             Ok(OutboxOutcome::Failed {
                 gave_up: true,

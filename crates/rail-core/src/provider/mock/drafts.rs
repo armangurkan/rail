@@ -3,7 +3,16 @@
 use super::{Mailbox, MockDraft};
 use crate::provider::{DraftIds, ProviderError, RemoteId};
 
-pub(super) fn create(m: &mut Mailbox, raw: &[u8], thread: Option<&str>) -> DraftIds {
+/// A new draft; one naming a thread deleted at Gmail (`missing_threads`) is `NotFound`, as a
+/// send is, and saves nothing.
+pub(super) fn create(
+    m: &mut Mailbox,
+    raw: &[u8],
+    thread: Option<&str>,
+) -> Result<DraftIds, ProviderError> {
+    if thread.is_some_and(|t| m.missing_threads.contains(t)) {
+        return Err(ProviderError::NotFound);
+    }
     m.next_draft += 1;
     let ids = DraftIds {
         draft_id: format!("r{}", m.next_draft),
@@ -17,7 +26,7 @@ pub(super) fn create(m: &mut Mailbox, raw: &[u8], thread: Option<&str>) -> Draft
             thread_id: thread.map(str::to_string),
         },
     );
-    ids
+    Ok(ids)
 }
 
 pub(super) fn update(

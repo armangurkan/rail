@@ -256,3 +256,16 @@ async fn find_answers_the_draft_of_a_message_and_a_delete_removes_it() {
     mock.draft_delete(&created.draft_id).await.unwrap();
     assert_eq!(mock.draft_find(&created.message_id).await.unwrap(), None);
 }
+
+#[tokio::test]
+async fn a_draft_create_in_a_thread_gone_at_gmail_is_not_found_and_saves_nothing() {
+    let mock = MockProvider::new();
+    mock.with(|m| m.missing_threads.insert("t-gone".into()));
+    assert_eq!(
+        mock.draft_create(b"x", Some("t-gone")).await.unwrap_err(),
+        ProviderError::NotFound
+    );
+    assert!(mock.with(|m| m.drafts.is_empty()));
+    let created = mock.draft_create(b"x", None).await.unwrap();
+    assert_eq!(created.draft_id, "r1", "the refused create took no id");
+}

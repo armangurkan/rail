@@ -28,8 +28,10 @@ pub(super) enum Plan {
     LabelGone,
     /// A `Send` row: the worker's send path builds and sends the draft.
     SendDraft(DraftId),
-    /// A draft row this version cannot carry out yet (saving drafts to Gmail).
-    NotYet,
+    /// A `PushDraft` row: create or update the draft's Gmail copy.
+    PushDraft(DraftId),
+    /// A `DeleteDraft` row: delete this Gmail draft.
+    DeleteDraft(String),
 }
 
 fn labels(store: &Store, account: i64, ids: &[i64]) -> Result<Option<Vec<RemoteId>>, StoreError> {
@@ -47,7 +49,10 @@ pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
     // A draft row names no threads: it is planned by its draft.
     match &row.action {
         Action::Send { draft } => return Ok(Plan::SendDraft(*draft)),
-        Action::PushDraft { .. } | Action::DeleteDraft { .. } => return Ok(Plan::NotYet),
+        Action::PushDraft { draft } => return Ok(Plan::PushDraft(*draft)),
+        Action::DeleteDraft {
+            remote_draft_id, ..
+        } => return Ok(Plan::DeleteDraft(remote_draft_id.clone())),
         _ => {}
     }
     let threads = store.thread_remotes(row.account_id, &row.thread_ids)?;
@@ -80,9 +85,9 @@ pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
             Some(add) => (add, system(INBOX_LABEL)),
             None => return Ok(Plan::LabelGone),
         },
-        // Planned above.
+        // Draft rows were planned above, by their draft; none reaches here.
         Action::Send { .. } | Action::PushDraft { .. } | Action::DeleteDraft { .. } => {
-            return Ok(Plan::NotYet);
+            return Ok(Plan::Nothing);
         }
     };
     Ok(Plan::Send {
