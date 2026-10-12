@@ -63,30 +63,40 @@ impl OpenFiles {
     }
 
     /// Remove regular files in the directory last changed before `now - STALE_AFTER`; how
-    /// many. Symlinks and subdirectories are left alone (the entry's own type is checked,
-    /// never its target's).
+    /// many.
     pub fn sweep(&self, now: SystemTime) -> io::Result<usize> {
-        let entries = match std::fs::read_dir(&self.dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
-            Err(e) => return Err(e),
-        };
-        let cutoff = now
-            .checked_sub(STALE_AFTER)
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let mut removed = 0;
-        for entry in entries {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            if entry.metadata()?.modified()? < cutoff {
-                std::fs::remove_file(entry.path())?;
-                removed += 1;
-            }
-        }
-        Ok(removed)
+        sweep_dir(&self.dir, older_than(now, STALE_AFTER), None)
     }
+}
+
+/// `now - age`, or the epoch when that is before it.
+pub fn older_than(now: SystemTime, age: Duration) -> SystemTime {
+    now.checked_sub(age).unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// Remove the regular files in `dir` (with `extension`, when given) last changed before
+/// `cutoff`; how many. Symlinks and subdirectories are left alone (the entry's own type is
+/// checked, never its target's). No directory: nothing to do.
+pub fn sweep_dir(dir: &Path, cutoff: SystemTime, extension: Option<&str>) -> io::Result<usize> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e),
+    };
+    let mut removed = 0;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let wanted = extension.is_none_or(|x| path.extension().is_some_and(|e| e == x));
+        if !wanted || !entry.file_type()?.is_file() {
+            continue;
+        }
+        if entry.metadata()?.modified()? < cutoff {
+            std::fs::remove_file(&path)?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 impl Drop for OpenFiles {

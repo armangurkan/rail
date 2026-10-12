@@ -54,7 +54,7 @@ use crate::tui::data::{
 use crate::tui::effects::Opener;
 use crate::tui::keys::{Action, Chord, Keymap, Resolved, View};
 use crate::tui::modals::{FilterLine, Help, Modal, Palette};
-use crate::tui::open::OpenFiles;
+use crate::tui::open::{OpenFiles, older_than, sweep_dir};
 use crate::tui::screen::Screen;
 use crate::tui::screens::compose::Composer;
 use crate::tui::screens::reader::Reader;
@@ -63,6 +63,8 @@ use crate::tui::theme::choice::{ColorDepth, ThemeChoice};
 
 /// Rows the list is assumed to show before the first frame says.
 const FALLBACK_HEIGHT: usize = 20;
+/// Compose files older than this at start are a crash's leftovers.
+const COMPOSE_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(7 * 86_400);
 
 /// What the mail screen needs from the outside world.
 #[derive(Clone)]
@@ -662,6 +664,14 @@ impl Screen for MailScreen {
             Ok(removed) => tracing::info!(removed, "removed message files a previous session left"),
             Err(error) => {
                 tracing::warn!(error = %error, "could not clean the opened-messages directory");
+            }
+        }
+        let cutoff = older_than(std::time::SystemTime::now(), COMPOSE_STALE_AFTER);
+        match sweep_dir(&self.ctx.paths.compose_dir(), cutoff, Some("eml")) {
+            Ok(0) => {}
+            Ok(removed) => tracing::info!(removed, "removed compose files a previous session left"),
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "could not clean the compose directory");
             }
         }
         if self.ctx.depth == ColorDepth::Ansi && self.themes.current.scheme.is_some() {

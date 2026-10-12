@@ -188,3 +188,30 @@ async fn a_refuses_a_file_over_the_limit_once_encoded_without_a_save() {
         "{error}"
     );
 }
+
+/// Final fix 5: a crash's compose files go at the next start once a week old; newer ones and
+/// files that are not compose files stay.
+#[tokio::test]
+async fn start_sweeps_compose_files_older_than_a_week() {
+    let mut f = fixture(1).await;
+    let dir = f.paths.compose_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let (stale, fresh, other) = (dir.join("1.eml"), dir.join("2.eml"), dir.join("notes.txt"));
+    for path in [&stale, &fresh, &other] {
+        std::fs::write(path, "To: a@b.c\n\nx\n").unwrap();
+    }
+    let eight_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86_400);
+    for path in [&stale, &other] {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(eight_days_ago)
+            .unwrap();
+    }
+    let effects = f.screen.start();
+    settle(&mut f.screen, effects).await;
+    assert!(!stale.exists(), "a week-old compose file is swept");
+    assert!(fresh.exists(), "a newer one stays");
+    assert!(other.exists(), "only .eml files are swept");
+}

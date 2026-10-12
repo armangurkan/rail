@@ -448,7 +448,8 @@ a space continues the one before). Any other header, or a line that is not `Name
 refused: Rail names the line and opens the editor again on the same text. If the editor exits with
 a non-zero status Rail asks `Keep what you wrote?`: yes saves the text, no keeps the draft as it
 was. If the editor cannot start Rail says `cannot run …` and the review opens with the text it
-had. The file is kept until a save succeeds, so an error never loses what you typed.
+had. The file is kept until a save succeeds, so an error never loses what you typed (after a
+crash, for seven days).
 
 **The review.** When the editor returns, Rail shows the message as it will go: `From`, `To`, `Cc`
 and `Bcc` (when used), `Subject`, then the attachments with their count and total size, then the
@@ -730,7 +731,8 @@ and written atomically.
 `body_cache_days`; and attachment names, types and sizes (never attachment contents). Drafts you write are kept
 there too, with the paths of the files you attached (the files are read when the message is sent,
 so they must still be there then); the editor's working file lives in the `compose`
-folder of the cache directory until a save succeeds. HTML bodies
+folder of the cache directory until a save succeeds, and one a crash left behind is removed when
+the mail screen next starts, once it is seven days old. HTML bodies
 are converted to text by Rail's own scanner without running scripts or loading anything remote, so
 syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
 finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail changes mail on
