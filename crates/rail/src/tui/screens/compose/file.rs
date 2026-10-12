@@ -21,7 +21,7 @@ pub struct ParseError {
 /// editor set to Windows line ends writes) and the extra `\r` each round used to add become
 /// `\n`. A `\r` not followed by `\n` stays. Borrows when there is nothing to remove.
 pub fn plain_line_ends(text: &str) -> Cow<'_, str> {
-    if !text.contains("\r\n") && !text.contains("\r\r") {
+    if !text.contains("\r\n") {
         return Cow::Borrowed(text);
     }
     let mut out = String::with_capacity(text.len());
@@ -157,8 +157,8 @@ fn split(text: &str) -> (&str, &str) {
 }
 
 /// Headers up to the first empty line (names case-insensitive, continuation lines joined with
-/// a space), then the body with plain line ends. An unknown header or a line without `Name:` is an error
-/// naming its line.
+/// a space), then the body with plain line ends. An unknown header or a line without `Name:` is
+/// an error naming its line.
 pub fn parse(text: &str) -> Result<(Headers, String), ParseError> {
     let text = plain_line_ends(text);
     let (head, body) = split(&text);

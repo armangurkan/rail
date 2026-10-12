@@ -425,7 +425,7 @@ impl MailScreen {
                 bcc: shown(&d.bcc),
                 subject: d.subject,
             },
-            body: d.body,
+            body: file::plain_line_ends(&d.body).into_owned(),
             attachments: d.attachments.iter().map(attachment_row).collect(),
             message_id: Some(d.message_id),
             errors: Vec::new(),

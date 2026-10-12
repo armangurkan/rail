@@ -6,7 +6,7 @@ use jiff::tz::TimeZone;
 use rail_core::provider::Mailbox;
 use rail_core::store::drafts::ReplySource;
 
-use super::file::one_line;
+use super::file::{one_line, plain_line_ends};
 use super::model::Headers;
 
 const FORWARD_BAR: &str = "---------- Forwarded message ---------";
@@ -82,20 +82,23 @@ pub fn quoted(text: &str) -> String {
     out
 }
 
-/// `body`, then a blank line, `-- ` and the signature's lines, when there is a signature.
+/// `body`, then a blank line, `-- ` and the signature's lines, when there is a signature; all
+/// with plain line ends.
 pub fn with_signature(body: &str, signature: Option<&str>) -> String {
+    let body = plain_line_ends(body);
     let Some(signature) = signature.map(|s| s.trim_end_matches(['\n', '\r'])) else {
-        return body.to_string();
+        return body.into_owned();
     };
     if signature.trim().is_empty() {
-        return body.to_string();
+        return body.into_owned();
     }
-    let mut out = body.to_string();
+    let signature = plain_line_ends(signature);
+    let mut out = body.into_owned();
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
     out.push_str("\n-- \n");
-    out.push_str(signature);
+    out.push_str(&signature);
     out.push('\n');
     out
 }

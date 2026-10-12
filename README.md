@@ -449,10 +449,11 @@ Are you free on Thursday?
 ```
 
 `To`, `Cc` and `Bcc` take comma-separated recipients; a header is one line (a line starting with
-a space continues the one before). Rail accepts a file the editor saved with Windows line endings (CRLF) and keeps the message as plain lines. Any other header, or a line that is not `Name: value`, is
-refused: Rail names the line and opens the editor again on the same text. If the editor exits with
-a non-zero status Rail asks `Keep what you wrote?`: yes saves the text, no keeps the draft as it
-was. If the editor cannot start Rail says `cannot run …` and the review opens with the text it
+a space continues the one before). Any other header, or a line that is not `Name: value`, is
+refused: Rail names the line and opens the editor again on the same text. Rail also accepts a file
+the editor saved with Windows line endings (CRLF) and keeps the message as plain lines. If the
+editor exits with a non-zero status Rail asks `Keep what you wrote?`: yes saves the text, no keeps
+the draft as it was. If the editor cannot start Rail says `cannot run …` and the review opens with the text it
 had. The file is kept until a save succeeds, and also when the editor cannot run or its file
 cannot be read back. If Rail stops before that (a crash, a closed terminal), the next editor round
 for that draft opens on the file as it was left, headers included (so changes made with `t` after
