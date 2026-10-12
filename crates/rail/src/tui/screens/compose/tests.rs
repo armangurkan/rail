@@ -496,3 +496,74 @@ fn the_review_renders_at_both_sizes_with_folded_quotes_and_the_total() {
     press(&mut c, Action::ComposeDiscard);
     assert!(shown(&c, 90, 24).contains("Discard this draft? (y/n)"));
 }
+
+#[test]
+fn a_quoted_name_with_a_comma_stays_one_recipient() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = headers();
+    h.to = vec!["\"Reyes, Dana\" <d@x.example>".into(), "s@x.example".into()];
+    let path = write(dir.path(), "q", &h, "").unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        text.starts_with("To: \"Reyes, Dana\" <d@x.example>, s@x.example\n"),
+        "{text}"
+    );
+    let (parsed, _) = parse(&text).unwrap();
+    assert_eq!(parsed.to, ["\"Reyes, Dana\" <d@x.example>", "s@x.example"]);
+    assert_eq!(
+        super::file::split_addresses(r#""A \"q\", B" <a@x.example>, b@x.example"#),
+        [r#""A \"q\", B" <a@x.example>"#, "b@x.example"],
+        "an escaped quote does not close the quote"
+    );
+    assert_eq!(
+        super::file::split_addresses("\"open, a@x.example"),
+        ["\"open", "a@x.example"],
+        "unbalanced quotes: a plain split"
+    );
+    let mut p = HeaderPrompt::new("To", "", true);
+    for ch in "\"Reyes, Dana\" <d@x.example>, sa".chars() {
+        p.key(k(KeyCode::Char(ch)));
+    }
+    assert_eq!(p.current_item(), "sa");
+    // The header prompts take the quoted name as one valid recipient.
+    let mut c = Composer::new(composing());
+    press(&mut c, Action::ComposeHeaders);
+    for _ in 0.."Dana Reyes <dana@example.com>".len() {
+        c.key(None, k(KeyCode::Backspace));
+    }
+    for ch in "\"Reyes, Dana\" <d@x.example>, s@x.example".chars() {
+        c.key(None, k(KeyCode::Char(ch)));
+    }
+    assert_eq!(c.key(None, k(KeyCode::Enter)), ComposeOutcome::Stay);
+    assert_eq!(c.prompt_label(), Some("Cc"), "accepted");
+}
+
+#[test]
+fn header_values_cannot_break_out_of_their_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = headers();
+    h.subject = "x\r\nBcc: a@evil.com".into();
+    h.bcc = vec![];
+    let path = write(dir.path(), "s", &h, "body\n").unwrap();
+    let (parsed, body) = parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(parsed.subject, "x  Bcc: a@evil.com");
+    assert!(parsed.bcc.is_empty());
+    assert_eq!(body, "body\n");
+    let mut evil = source();
+    evil.from[0].name = Some("Dana\nBcc: a@evil.com".into());
+    evil.subject = "Lunch\r\nBcc: a@evil.com".into();
+    let (h, body) = reply(&evil, false, "me@example.com", &jiff::tz::TimeZone::UTC);
+    assert_eq!(h.to, ["Dana Bcc: a@evil.com <dana@example.com>"]);
+    assert_eq!(h.subject, "Re: Lunch  Bcc: a@evil.com");
+    assert!(body.contains("Dana Bcc: a@evil.com wrote:"), "{body}");
+    let (h, body) = forward(&evil);
+    assert_eq!(h.subject, "Fwd: Lunch  Bcc: a@evil.com");
+    assert!(
+        body.contains("\nFrom: Dana Bcc: a@evil.com <dana@example.com>\n"),
+        "{body}"
+    );
+    assert!(
+        body.contains("\nSubject: Lunch  Bcc: a@evil.com\n"),
+        "{body}"
+    );
+}

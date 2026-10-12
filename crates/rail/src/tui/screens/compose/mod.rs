@@ -95,7 +95,7 @@ fn store_header(headers: &mut Headers, label: &str, value: &str) -> Result<(), S
             return Ok(());
         }
     };
-    let items = file::items(value);
+    let items = file::split_addresses(value);
     if let Some(Err(why)) = items
         .iter()
         .map(|i| parse_recipient(i))

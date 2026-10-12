@@ -16,17 +16,24 @@ pub struct ParseError {
     pub message: String,
 }
 
-/// Write `<dir>/<key>.eml` (directory 0700, file 0600) and return its path. The text is
-/// written as is: the editor needs the real text.
+/// Write `<dir>/<key>.eml` (directory 0700, file 0600) and return its path. The body is
+/// written as is (the editor needs the real text); each header value is kept to one line.
 pub fn write(dir: &Path, key: &str, headers: &Headers, body: &str) -> std::io::Result<PathBuf> {
     create_private_dir(dir)?;
     let path = dir.join(format!("{key}.eml"));
+    let list = |items: &[String]| {
+        items
+            .iter()
+            .map(|i| one_line(i))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let text = format!(
         "To: {}\nCc: {}\nBcc: {}\nSubject: {}\n\n{body}",
-        headers.to.join(", "),
-        headers.cc.join(", "),
-        headers.bcc.join(", "),
-        headers.subject,
+        list(&headers.to),
+        list(&headers.cc),
+        list(&headers.bcc),
+        one_line(&headers.subject),
     );
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -40,14 +47,58 @@ pub fn write(dir: &Path, key: &str, headers: &Headers, body: &str) -> std::io::R
     Ok(path)
 }
 
-/// A comma-separated header value as trimmed, non-empty items.
-pub fn items(value: &str) -> Vec<String> {
+/// `text` with `\r`, `\n` and every other control character replaced by a space, so a header
+/// value stays on its one line of the compose file.
+pub fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+/// A comma-separated header value as trimmed, non-empty items, without the quote-aware
+/// rules: the fallback for unbalanced quotes.
+fn plain_split(value: &str) -> Vec<String> {
     value
         .split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+/// Byte offsets of the commas of `value` that separate recipients (not those inside `"…"`,
+/// where `\"` does not close the quote), and whether the quotes balance.
+pub(super) fn separators(value: &str) -> (Vec<usize>, bool) {
+    let (mut found, mut quoted, mut escaped) = (Vec::new(), false, false);
+    for (at, c) in value.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ',' if !quoted => found.push(at),
+            _ => {}
+        }
+    }
+    (found, !quoted)
+}
+
+/// A header value's recipients: split at commas outside quotes (`"Reyes, Dana" <d@x>` is one),
+/// trimmed, empty ones dropped; with unbalanced quotes, split at every comma.
+pub fn split_addresses(value: &str) -> Vec<String> {
+    let (commas, balanced) = separators(value);
+    if !balanced {
+        return plain_split(value);
+    }
+    let mut out = Vec::new();
+    let mut start = 0;
+    for at in commas.into_iter().chain(std::iter::once(value.len())) {
+        let item = value[start..at].trim();
+        if !item.is_empty() {
+            out.push(item.to_string());
+        }
+        start = at + 1;
+    }
+    out
 }
 
 /// The header block (up to the first empty line) and the body after it. Without an empty
@@ -94,9 +145,9 @@ pub fn parse(text: &str) -> Result<(Headers, String), ParseError> {
     let mut headers = Headers::default();
     for (line, name, value) in fields {
         match HEADERS.iter().find(|h| h.eq_ignore_ascii_case(&name)) {
-            Some(&"To") => headers.to.extend(items(&value)),
-            Some(&"Cc") => headers.cc.extend(items(&value)),
-            Some(&"Bcc") => headers.bcc.extend(items(&value)),
+            Some(&"To") => headers.to.extend(split_addresses(&value)),
+            Some(&"Cc") => headers.cc.extend(split_addresses(&value)),
+            Some(&"Bcc") => headers.bcc.extend(split_addresses(&value)),
             Some(_) => headers.subject = value,
             None => {
                 return Err(ParseError {

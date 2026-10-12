@@ -6,24 +6,25 @@ use jiff::tz::TimeZone;
 use rail_core::provider::Mailbox;
 use rail_core::store::drafts::ReplySource;
 
+use super::file::one_line;
 use super::model::Headers;
 
 const FORWARD_BAR: &str = "---------- Forwarded message ---------";
 /// Characters that make a display name need quotes.
 const NAME_SPECIALS: [char; 3] = [',', '<', '>'];
 
-/// `Name <address>`, or `address` alone when there is no name. Quotes and backslashes are
-/// dropped from the name (a quoted name may not hold them) and a name holding `,`, `<` or `>`
+/// `Name <address>`, or `address` alone when there is no name, controls replaced by spaces.
+/// Quotes and backslashes are dropped from the name (a quoted name may not hold them) and a name holding `,`, `<` or `>`
 /// is quoted.
 pub fn display_parts(name: Option<&str>, address: &str) -> String {
-    let cleaned: String = name
-        .unwrap_or("")
+    let cleaned: String = one_line(name.unwrap_or(""))
         .chars()
         .filter(|c| !matches!(c, '"' | '\\'))
         .collect();
     let cleaned = cleaned.trim();
+    let address = one_line(address);
     if cleaned.is_empty() {
-        return address.to_string();
+        return address;
     }
     if cleaned.contains(NAME_SPECIALS) || name.is_some_and(|n| n.contains('"')) {
         format!("\"{cleaned}\" <{address}>")
@@ -44,8 +45,9 @@ fn starts_with_any(subject: &str, prefixes: &[&str]) -> bool {
 
 /// `Re: ` once: a subject already starting with `Re:` in any case is kept.
 pub fn re_subject(subject: &str) -> String {
-    if starts_with_any(subject, &["re:"]) {
-        subject.to_string()
+    let subject = one_line(subject);
+    if starts_with_any(&subject, &["re:"]) {
+        subject
     } else {
         format!("Re: {subject}")
     }
@@ -53,8 +55,9 @@ pub fn re_subject(subject: &str) -> String {
 
 /// `Fwd: ` once: a subject already starting with `Fwd:` or `Fw:` in any case is kept.
 pub fn fwd_subject(subject: &str) -> String {
-    if starts_with_any(subject, &["fwd:", "fw:"]) {
-        subject.to_string()
+    let subject = one_line(subject);
+    if starts_with_any(&subject, &["fwd:", "fw:"]) {
+        subject
     } else {
         format!("Fwd: {subject}")
     }
@@ -145,8 +148,7 @@ pub fn reply(source: &ReplySource, all: bool, me: &str, tz: &TimeZone) -> (Heade
             .as_deref()
             .map(str::trim)
             .filter(|n| !n.is_empty())
-            .unwrap_or(&m.address)
-            .to_string()
+            .map_or_else(|| one_line(&m.address), one_line)
     });
     let body = format!(
         "\n\nOn {}, {who} wrote:\n{}",
@@ -173,7 +175,7 @@ pub fn forward(source: &ReplySource) -> (Headers, String) {
         "\n\n{FORWARD_BAR}\nFrom: {}\nDate: {}\nSubject: {}\nTo: {}\n",
         joined(&source.from),
         rfc2822(source.date, &TimeZone::UTC),
-        source.subject,
+        one_line(&source.subject),
         joined(&source.to),
     );
     if !source.cc.is_empty() {

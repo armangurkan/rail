@@ -10,6 +10,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
+use super::file::separators;
 use super::prefill::display_parts;
 use crate::tui::text::{fit, input_row, pad, width};
 use crate::tui::theme::Theme;
@@ -158,10 +159,15 @@ impl HeaderPrompt {
         self.matches = entries;
     }
 
-    /// The item being typed: the text after the last comma, trimmed.
-    fn current_item(&self) -> &str {
-        let value = self.input.value();
-        value.rfind(',').map_or(value, |i| &value[i + 1..]).trim()
+    /// Where the item being typed starts: after the last comma outside quotes.
+    fn item_start(&self) -> usize {
+        let (commas, _) = separators(self.input.value());
+        commas.last().map_or(0, |i| i + 1)
+    }
+
+    /// The item being typed: the text after the last comma outside quotes, trimmed.
+    pub fn current_item(&self) -> &str {
+        self.input.value()[self.item_start()..].trim()
     }
 
     /// Put the highlighted match in place of the item being typed, then `after`.
@@ -169,8 +175,7 @@ impl HeaderPrompt {
         let Some(chosen) = self.highlighted() else {
             return false;
         };
-        let value = self.input.value();
-        let head = value.rfind(',').map_or("", |i| &value[..=i]);
+        let head = &self.input.value()[..self.item_start()];
         let joined = if head.is_empty() {
             format!("{chosen}{after}")
         } else {
