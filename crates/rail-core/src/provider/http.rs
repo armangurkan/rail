@@ -294,6 +294,41 @@ impl ApiClient {
         self.send(&url, &outgoing, cost).await.map(|_| ())
     }
 
+    /// `post_json`, parsing the answer. With `retries` false the request is tried once (plus
+    /// the one 401 refresh): a send that may have reached Gmail must not be repeated blindly;
+    /// the outbox worker checks first.
+    pub(crate) async fn post_json_value<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        cost: u32,
+        retries: bool,
+    ) -> Result<T, ProviderError> {
+        let url = self.resolve(path)?;
+        let encoded = body
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(|_| ProviderError::permanent("Rail could not encode a request"))?;
+        let outgoing = Outgoing {
+            method: reqwest::Method::POST,
+            query: &[],
+            body: Some(encoded.unwrap_or_default()),
+        };
+        let bytes = if retries {
+            self.send(&url, &outgoing, cost).await?
+        } else {
+            let policy = RetryPolicy {
+                attempts: 1,
+                ..retry_policy_override().unwrap_or(self.policy)
+            };
+            with_retry_policy(policy, self.send(&url, &outgoing, cost)).await?
+        };
+        let Some(bytes) = bytes else {
+            return Err(ProviderError::permanent("Gmail's answer was too large"));
+        };
+        serde_json::from_slice(&bytes).map_err(|e| malformed(&e))
+    }
+
     /// `path` joined to the base, refused unless it stays under the base: paths carry ids
     /// Gmail sent, and a request must never leave the API root (or carry the token elsewhere).
     fn resolve(&self, path: &str) -> Result<Url, ProviderError> {

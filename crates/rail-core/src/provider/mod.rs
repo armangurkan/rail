@@ -1,6 +1,5 @@
 //! Mail providers: the read side of the `Provider` trait, the types it speaks, the HTTP layer
-//! providers share, and the Gmail implementation. Attachments and sends join the trait in
-//! later phases.
+//! providers share, and the Gmail implementation.
 
 pub mod error;
 pub mod gmail;
@@ -17,8 +16,8 @@ pub(crate) mod mock;
 pub use error::ProviderError;
 pub use types::{
     AttachmentMeta, Body, ChangeSet, Envelope, EnvelopePage, FolderKind, INBOX_LABEL, IdPage,
-    MAX_PAGE_TOKEN_BYTES, Mailbox, PageToken, Profile, Relabel, RemoteFolder, RemoteId,
-    STARRED_LABEL, SyncCursor, UNREAD_LABEL, Window,
+    MAX_PAGE_TOKEN_BYTES, Mailbox, Outgoing, OutgoingAttachment, PageToken, Profile, Relabel,
+    RemoteFolder, RemoteId, STARRED_LABEL, SentReceipt, SyncCursor, UNREAD_LABEL, Window,
 };
 
 /// One account's mailbox, read through its provider's API. Every method speaks Rail types;
@@ -57,4 +56,18 @@ pub trait Provider: Send + Sync {
     ) -> Result<(), ProviderError>;
     /// Move each thread to the provider's trash (restorable there). Idempotent.
     async fn trash_threads(&self, ids: &[RemoteId]) -> Result<(), ProviderError>;
+    /// Send the RFC 5322 message `raw`, in `thread_id` when given. NEVER retried blindly: a
+    /// request that may have reached the provider is not repeated, so a transient error here
+    /// means "unknown"; the caller looks the message up (`message_by_header_id`) before it
+    /// sends again.
+    async fn send(&self, raw: &[u8], thread_id: Option<&str>)
+    -> Result<SentReceipt, ProviderError>;
+    /// The message whose `Message-ID` header is `rfc822_message_id` (angle brackets
+    /// included), if the mailbox holds it: the "was it sent already" check.
+    async fn message_by_header_id(
+        &self,
+        rfc822_message_id: &str,
+    ) -> Result<Option<RemoteId>, ProviderError>;
+    /// The bytes of one attachment part of a message.
+    async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError>;
 }

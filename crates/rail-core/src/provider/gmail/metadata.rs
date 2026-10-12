@@ -11,11 +11,12 @@ use super::wire::{Header, Message};
 use crate::provider::{Envelope, Mailbox};
 
 /// The headers Rail asks Gmail for.
-pub const METADATA_HEADERS: [&str; 9] = [
+pub const METADATA_HEADERS: [&str; 10] = [
     "From",
     "To",
     "Cc",
     "Bcc",
+    "Reply-To",
     "Subject",
     "Date",
     "Message-ID",
@@ -86,6 +87,7 @@ fn fill_headers(envelope: &mut Envelope, parsed: &mail_parser::Message<'_>) {
     envelope.to = mailboxes(parsed.to());
     envelope.cc = mailboxes(parsed.cc());
     envelope.bcc = mailboxes(parsed.bcc());
+    envelope.reply_to = mailboxes(parsed.reply_to());
     envelope.message_id = parsed.message_id().map(capped_id);
     envelope.in_reply_to = texts(parsed.in_reply_to()).into_iter().next();
     envelope.references = texts(parsed.references());
