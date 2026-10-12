@@ -464,7 +464,7 @@ the mail system sees. The bottom row names the keys:
 | `e` | Edit again in your editor. |
 | `t` | Change `To`, `Cc`, `Bcc` and `Subject`, one prompt after another. |
 | `a` | Attach a file: type its path (`~` works, `Tab` completes names from the folder, relative paths are made absolute) and press `Enter`. |
-| `x` | Remove the attachment on the cursor row. |
+| `x` | Remove the attachment on the cursor row: a file you attached or one a forward carried along. |
 | `q` or `Esc` | Close and keep the draft: `draft kept`. |
 | `d` | Discard the draft after `Discard this draft? (y/n)`: `draft discarded`. |
 | `j` `k` `↑` `↓` `PageUp` `PageDown` `Space` | Move through the message. |

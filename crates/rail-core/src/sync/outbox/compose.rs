@@ -122,7 +122,7 @@ pub(super) async fn attach(
 ) -> Result<Outgoing, ProviderError> {
     if let Some(name) = assembly.part_gone {
         return Err(ProviderError::permanent(&format!(
-            "the message \"{name}\" was forwarded from is no longer in the store"
+            "the message that \"{name}\" was forwarded from is no longer in the store"
         )));
     }
     let mut outgoing = assembly.outgoing;
