@@ -180,20 +180,31 @@ impl Store {
             .optional()?)
     }
 
-    /// The draft `token` made in the account, and the Gmail message it holds, if any.
+    /// The draft `token` made, in any account (tokens are unique across accounts), and the
+    /// Gmail message it holds, if any.
     pub fn draft_token_owner(
         &self,
-        account_id: i64,
         token: &str,
     ) -> Result<Option<(DraftId, Option<String>)>, StoreError> {
         Ok(self
             .conn
             .query_row(
-                "SELECT id, remote_message_id FROM drafts WHERE account_id = ?1 AND client_token = ?2",
-                params![account_id, token],
+                "SELECT id, remote_message_id FROM drafts WHERE client_token = ?1",
+                [token],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?)
+    }
+
+    /// The client token a draft was created with (`None` for a draft without one, or none).
+    pub fn draft_client_token(&self, id: DraftId) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row("SELECT client_token FROM drafts WHERE id = ?1", [id], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .optional()?
+            .flatten())
     }
 
     /// The path of every file attachment of every draft; `None` when a draft's list does not

@@ -429,6 +429,8 @@ pub enum DraftSaved {
     Missing,
     /// The draft is being sent: it changes only after an undo.
     Queued,
+    /// An import's client token already made a draft (in any account): nothing was written.
+    TokenUsed,
 }
 
 /// True while the draft is being sent: `queued`, or a live `send` row names it.

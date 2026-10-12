@@ -222,7 +222,7 @@ fn a_draft_is_found_by_its_gmail_message_in_its_account_only() {
 }
 
 #[test]
-fn a_token_names_its_draft_and_its_gmail_message_in_its_account_only() {
+fn a_token_names_its_draft_and_its_gmail_message_in_any_account() {
     let (mut store, first) = store_with_account();
     let second = second_account(&store);
     let plain = local(&mut store, first, 1, 10);
@@ -235,16 +235,30 @@ fn a_token_names_its_draft_and_its_gmail_message_in_its_account_only() {
              UPDATE drafts SET client_token = 'b' WHERE id = {pushed};"
         ))
         .unwrap();
+    let theirs = local(&mut store, second, 3, 30);
+    store
+        .conn()
+        .execute(
+            "UPDATE drafts SET client_token = 'z' WHERE id = ?1",
+            [theirs],
+        )
+        .unwrap();
+    assert_eq!(store.draft_token_owner("a").unwrap(), Some((plain, None)));
     assert_eq!(
-        store.draft_token_owner(first, "a").unwrap(),
-        Some((plain, None))
-    );
-    assert_eq!(
-        store.draft_token_owner(first, "b").unwrap(),
+        store.draft_token_owner("b").unwrap(),
         Some((pushed, Some("dm1".into())))
     );
-    assert_eq!(store.draft_token_owner(second, "a").unwrap(), None);
-    assert_eq!(store.draft_token_owner(first, "c").unwrap(), None);
+    assert_eq!(
+        store.draft_token_owner("z").unwrap(),
+        Some((theirs, None)),
+        "tokens are unique across accounts"
+    );
+    assert_eq!(store.draft_token_owner("c").unwrap(), None);
+    assert_eq!(
+        store.draft_client_token(plain).unwrap().as_deref(),
+        Some("a")
+    );
+    assert_eq!(store.draft_client_token(theirs + 100).unwrap(), None);
 }
 
 #[test]

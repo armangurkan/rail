@@ -1,15 +1,17 @@
 //! The files an imported Gmail draft owns. `draft.import` fetches each attachment once into
 //! `Paths::draft_files_dir()/<client token>` (0700, files 0600), so later pushes and the send
 //! never depend on Gmail's copy of the source message, which the first push replaces.
-//! `draft.discard` removes the draft's directory; at daemon start every directory no draft
+//! An import never takes a directory a draft names. `draft.discard` removes the directory
+//! the draft's own token names; at daemon start every directory no draft
 //! names is swept (a sent draft's files go that way). Logs carry counts, never a file name.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
+use super::drafts::token_used;
 use crate::daemon::DaemonContext;
 use crate::ops::{ErrorCode, OpError};
-use crate::paths::{Paths, create_private_dir, replace_private_atomic};
+use crate::paths::{Paths, create_private_dir};
 use crate::provider::Provider;
 use crate::provider::gmail::mime::sanitize_filename;
 use crate::store::Store;
@@ -58,21 +60,6 @@ fn owning_dir(root: &Path, path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// The import directories `attachments` own, each once.
-pub(crate) fn owned_dirs(paths: &Paths, attachments: &[Attachment]) -> Vec<PathBuf> {
-    let root = paths.draft_files_dir();
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    for attachment in attachments {
-        if let Attachment::File { path, .. } = attachment
-            && let Some(dir) = owning_dir(&root, Path::new(path))
-            && !dirs.contains(&dir)
-        {
-            dirs.push(dir);
-        }
-    }
-    dirs
-}
-
 /// Remove `dirs`; how many went. A failure is logged and the sweep at the next start retries.
 pub(crate) fn remove_dirs(dirs: &[PathBuf]) -> usize {
     dirs.iter()
@@ -108,21 +95,49 @@ async fn fetch_all(
     Ok(fetched)
 }
 
-/// Write `fetched` into a fresh `dir`: an earlier failed try's directory is replaced.
-fn write_all(dir: &Path, fetched: Vec<Fetched>) -> Result<Vec<Attachment>, OpError> {
+/// Take `dir` for this import: refused when any draft names a file in it (or the store
+/// cannot say), so another draft's files are never cleared; else an earlier failed try's
+/// leftovers go and the directory is made fresh (0700).
+fn claim(db: &Path, root: &Path, dir: &Path) -> Result<(), OpError> {
+    let referenced = Store::open_reader(db)?.draft_file_paths()?;
+    let named = referenced.is_none_or(|paths| {
+        paths
+            .iter()
+            .any(|p| owning_dir(root, Path::new(p)).as_deref() == Some(dir))
+    });
+    if named {
+        return Err(token_used());
+    }
     match std::fs::remove_dir_all(dir) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
             return Err(io_error("clearing an import's files", &e));
         }
         _ => {}
     }
-    create_private_dir(dir).map_err(|e| io_error("creating an import's directory", &e))?;
+    create_private_dir(dir).map_err(|e| io_error("creating an import's directory", &e))
+}
+
+/// One new file, 0600, written and synced. The directory is fresh and private, so no temp
+/// name is needed: a name is never longer than the attachment's own.
+fn write_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Write `fetched` into the claimed `dir`; the file entries.
+fn write_all(dir: &Path, fetched: Vec<Fetched>) -> Result<Vec<Attachment>, OpError> {
     let mut taken = HashSet::new();
     let mut files = Vec::with_capacity(fetched.len());
     for Fetched { meta, bytes } in fetched {
         let path = dir.join(file_name(&meta.filename, &mut taken));
-        replace_private_atomic(&path, &bytes)
-            .map_err(|e| io_error("writing an imported attachment", &e))?;
+        write_new(&path, &bytes).map_err(|e| io_error("writing an imported attachment", &e))?;
         let path = path.to_str().ok_or_else(|| {
             OpError::invalid_input("the data directory's path is not valid UTF-8")
         })?;
@@ -133,11 +148,14 @@ fn write_all(dir: &Path, fetched: Vec<Fetched>) -> Result<Vec<Attachment>, OpErr
             size: i64::try_from(bytes.len()).unwrap_or(i64::MAX),
         });
     }
+    std::fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(|e| io_error("syncing an import's directory", &e))?;
     Ok(files)
 }
 
-/// Fetch every part of the Gmail message `remote` and store it under `dir`; the file
-/// entries. Any failure removes `dir` and fails the import.
+/// Claim `dir`, fetch every part of the Gmail message `remote` and store it there; the file
+/// entries. Once claimed, any failure removes `dir` and fails the import.
 pub(crate) async fn fetch_into(
     ctx: &DaemonContext,
     provider: &dyn Provider,
@@ -145,6 +163,12 @@ pub(crate) async fn fetch_into(
     parts: Vec<ReplyAttachment>,
     dir: PathBuf,
 ) -> Result<Vec<Attachment>, OpError> {
+    let (db, root, claimed) = (
+        ctx.paths.db_file(),
+        ctx.paths.draft_files_dir(),
+        dir.clone(),
+    );
+    ctx.blocking(move || claim(&db, &root, &claimed)).await?;
     let fetched = match fetch_all(provider, remote, parts).await {
         Ok(fetched) => fetched,
         Err(e) => {

@@ -185,6 +185,15 @@ pub(super) fn import_in(
     if let Some(id) = known {
         return Ok(DraftSaved::Saved(id));
     }
+    // Tokens are unique across accounts; a token another call used binds nothing here.
+    let used: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM drafts WHERE client_token = ?1)",
+        [token],
+        |r| r.get(0),
+    )?;
+    if used {
+        return Ok(DraftSaved::TokenUsed);
+    }
     let saved = drafts::save_in(tx, write, token, now)?;
     if let DraftSaved::Saved(id) = saved {
         tx.execute(

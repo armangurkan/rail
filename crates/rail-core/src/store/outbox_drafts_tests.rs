@@ -446,9 +446,20 @@ fn an_import_never_rewrites_a_draft_or_its_gmail_identity() {
         panic!("saved");
     };
     store.draft_set_remote(mine, "r-mine", "dm-mine").unwrap();
-    // An import replaying that token answers that draft and leaves its Gmail ids alone.
+    // An import with that token is refused: it binds nothing, and the draft keeps its ids.
     let replayed = import(&mut store, write(account, 2), ("r9", "dm9"), "t1");
-    assert_eq!(replayed, DraftSaved::Saved(mine));
+    assert_eq!(replayed, DraftSaved::TokenUsed);
+    // So is one in another account: tokens are unique across accounts.
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (name, kind, address) VALUES ('home', 'gmail', 'h@example.com')",
+            [],
+        )
+        .unwrap();
+    let other = store.conn().last_insert_rowid();
+    let elsewhere = import(&mut store, write(other, 4), ("r7", "dm7"), "t1");
+    assert_eq!(elsewhere, DraftSaved::TokenUsed);
     let draft = store.draft(mine).unwrap().unwrap();
     assert_eq!(draft.remote_draft_id.as_deref(), Some("r-mine"));
     assert_eq!(draft.remote_message_id.as_deref(), Some("dm-mine"));

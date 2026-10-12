@@ -119,7 +119,7 @@ fn earlier_import(
     if let Some(draft) = store.draft_by_remote_message(account_id, remote)? {
         return Ok(Some(draft));
     }
-    if store.draft_token_owner(account_id, token)?.is_some() {
+    if store.draft_token_owner(token)?.is_some() {
         return Err(token_used());
     }
     Ok(None)

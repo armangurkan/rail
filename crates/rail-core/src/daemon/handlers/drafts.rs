@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::draft_files::{owned_dirs, remove_dirs};
+use super::draft_files::{import_dir, remove_dirs};
 
 use crate::auth::unix_now;
 use crate::daemon::registry::Call;
@@ -353,6 +353,7 @@ pub(super) fn saved_id(outcome: OutboxOutcome) -> Result<DraftId, OpError> {
         OutboxOutcome::DraftSaved(DraftSaved::Saved(id)) => Ok(id),
         OutboxOutcome::DraftSaved(DraftSaved::Missing) => Err(no_such_draft()),
         OutboxOutcome::DraftSaved(DraftSaved::Queued) => Err(being_sent()),
+        OutboxOutcome::DraftSaved(DraftSaved::TokenUsed) => Err(token_used()),
         _ => Err(unexpected()),
     }
 }
@@ -515,10 +516,15 @@ pub(super) async fn send(
     Ok(DraftSendResponse { row })
 }
 
-/// The import directories the draft owns (none when it is gone).
+/// The import directory the draft owns: the one its own client token names, when it exists
+/// (an import made it; tokens are unique across accounts). None when the draft is gone.
 fn owned_files(db: &Path, paths: &Paths, id: DraftId) -> Result<Vec<PathBuf>, OpError> {
-    let draft = Store::open_reader(db)?.draft(id)?;
-    Ok(draft.map_or_else(Vec::new, |d| owned_dirs(paths, &d.attachments)))
+    let token = Store::open_reader(db)?.draft_client_token(id)?;
+    Ok(token
+        .map(|t| import_dir(paths, &t))
+        .filter(|dir| dir.is_dir())
+        .into_iter()
+        .collect())
 }
 
 pub(super) async fn discard(
