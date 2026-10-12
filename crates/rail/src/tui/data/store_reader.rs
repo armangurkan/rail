@@ -314,6 +314,18 @@ impl StoreReader {
         })
     }
 
+    /// The Drafts folder of these accounts: local drafts and Gmail's, newest first.
+    #[allow(dead_code, reason = "the Drafts screens call it")]
+    pub fn drafts_folder(&self, seq: u64, account_ids: Vec<i64>) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| store.drafts_folder(&account_ids))
+                .await;
+            send(&sink, MailEvent::DraftsFolder { seq, result });
+        })
+    }
+
     /// One draft to resume. Its threading stays as stored: a save of it names no message.
     pub fn draft(&self, seq: u64, id: DraftId) -> Effect {
         let reader = self.clone();

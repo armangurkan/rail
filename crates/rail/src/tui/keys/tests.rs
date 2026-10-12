@@ -402,3 +402,22 @@ fn the_action_keys_have_their_spec_defaults_and_views() {
         [Resolved::Action(Action::GlobalUndo)]
     );
 }
+
+#[test]
+fn compose_push_is_s_and_clashes_with_no_other_compose_key() {
+    let map = Keymap::defaults();
+    assert_eq!(
+        (
+            Action::ComposePush.id(),
+            map.label(Action::ComposePush).as_str(),
+            Action::ComposePush.views()
+        ),
+        ("compose.push", "s", &[View::Compose][..])
+    );
+    let compose = [View::Compose, View::Global];
+    assert_eq!(
+        resolve(&map, &compose, &[press(KeyCode::Char('s'))]),
+        [Resolved::Action(Action::ComposePush)]
+    );
+    configured("").expect("the defaults are free of clashes");
+}

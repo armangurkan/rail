@@ -227,6 +227,8 @@ fn account_part(name: &str, status: Option<&AccountSyncStatus>, glyphs: &Glyphs)
     let mut part = sync_part(name, s, glyphs);
     if s.outbox.sending > 0 {
         part.push_str(" sending…");
+    } else if s.outbox.saving > 0 {
+        part.push_str(" saving to Gmail…");
     }
     if s.outbox.pending > 0 {
         part.push_str(&format!(" {} queued", s.outbox.pending));

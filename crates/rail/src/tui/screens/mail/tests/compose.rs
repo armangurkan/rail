@@ -437,6 +437,26 @@ async fn sending_shows_in_the_bar_while_a_send_is_in_flight() {
 }
 
 #[tokio::test]
+async fn saving_to_gmail_shows_in_the_bar_and_sending_wins_over_it() {
+    let mut f = compose_fixture().await;
+    let mut status = status("work", "w@example.com", SyncPhase::Idle);
+    status.outbox.saving = 1;
+    let event = MailEvent::Daemon(DaemonEvent::Progress(Box::new(status.clone())));
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+    settle(&mut f.screen, effects).await;
+    let line = f.screen.status_line();
+    assert!(line.contains("saving to Gmail…"), "{line}");
+    assert!(!line.contains("sending…"), "{line}");
+    status.outbox.sending = 1;
+    let event = MailEvent::Daemon(DaemonEvent::Progress(Box::new(status)));
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+    settle(&mut f.screen, effects).await;
+    let line = f.screen.status_line();
+    assert!(line.contains("sending…"), "{line}");
+    assert!(!line.contains("saving to Gmail…"), "{line}");
+}
+
+#[tokio::test]
 async fn an_editor_that_cannot_run_keeps_the_draft_and_says_so() {
     let mut f = compose_fixture().await;
     f.editor
