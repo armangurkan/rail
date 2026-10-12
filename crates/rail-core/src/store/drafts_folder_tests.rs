@@ -4,10 +4,10 @@
 
 use super::Store;
 use super::drafts::{Attachment, DraftKind, DraftWrite, Recipient};
-use super::drafts_folder::{DraftsRowKind, MAX_DRAFTS_ROWS};
+use super::drafts_folder::{DraftsRowKind, GMAIL, MAX_DRAFTS_ROWS};
 use crate::ops::DraftId;
 use crate::provider::mock::envelope;
-use crate::provider::{AttachmentMeta, Body, Envelope, Mailbox};
+use crate::provider::{AttachmentMeta, Body, Envelope, FolderKind, Mailbox, RemoteFolder};
 use crate::sync::batch::Batch;
 use crate::test_support::store_with_account;
 
@@ -42,17 +42,34 @@ fn local(store: &mut Store, account_id: i64, n: i64, at: i64) -> DraftId {
     store.draft_upsert(&write, at).unwrap().unwrap()
 }
 
-/// A synced Gmail draft `remote` in its own thread, its `Date:` at `secs`.
+/// A synced Gmail draft `remote` in its own thread and Gmail's Drafts, its `Date:` at `secs`.
 fn gmail_draft(remote: &str, secs: i64) -> Envelope {
     Envelope {
         is_draft: true,
         to: vec![mailbox("gmail@example.com")],
+        folders: vec!["DRAFT".into()],
         ..envelope(remote, &format!("t-{remote}"), secs * 1000)
     }
 }
 
+/// The account's folders as Gmail lists them: the inbox and the Drafts.
+fn folders() -> Vec<RemoteFolder> {
+    [
+        ("INBOX", "Inbox", FolderKind::Inbox),
+        ("DRAFT", "Drafts", FolderKind::Drafts),
+    ]
+    .into_iter()
+    .map(|(remote_id, name, kind)| RemoteFolder {
+        remote_id: remote_id.into(),
+        name: name.into(),
+        kind,
+    })
+    .collect()
+}
+
 fn sync(store: &mut Store, account_id: i64, upserts: Vec<Envelope>, bodies: Vec<(String, Body)>) {
     let batch = Batch {
+        folders: Some(folders()),
         upserts,
         bodies,
         ..Batch::new(account_id)
@@ -185,6 +202,55 @@ fn the_folder_is_filtered_by_account_and_capped() {
     assert_eq!(rows.len(), MAX_DRAFTS_ROWS);
     assert_eq!(rows[0].kind, DraftsRowKind::Gmail { message: dy });
     assert_eq!(rows[MAX_DRAFTS_ROWS - 1].date, 103, "the two oldest went");
+}
+
+/// The Gmail half reads the account's Drafts folder, not every message: a large mailbox with
+/// few drafts answers only the drafts, through the folder's index.
+#[test]
+fn a_large_mailbox_with_few_drafts_answers_only_its_drafts_from_the_drafts_folder() {
+    let (mut store, account) = store_with_account();
+    let mail: Vec<Envelope> = (0..2_000)
+        .map(|n| envelope(&format!("m{n}"), &format!("t{}", n % 300), 1_000 + n))
+        .collect();
+    let drafts = vec![gmail_draft("dm1", 10), gmail_draft("dm2", 20)];
+    sync(
+        &mut store,
+        account,
+        mail.into_iter().chain(drafts).collect(),
+        vec![],
+    );
+    let rows = store.drafts_folder(&[account]).unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.kind).collect::<Vec<_>>(),
+        vec![
+            DraftsRowKind::Gmail {
+                message: message(&store, account, "dm2")
+            },
+            DraftsRowKind::Gmail {
+                message: message(&store, account, "dm1")
+            },
+        ]
+    );
+    let mut stmt = store
+        .conn()
+        .prepare(&format!("EXPLAIN QUERY PLAN {GMAIL}"))
+        .unwrap();
+    let plan: Vec<String> = stmt
+        .query_map(rusqlite::params![format!("[{account}]"), 500], |r| r.get(3))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert!(
+        plan.iter()
+            .any(|step| step.contains("message_folders_by_folder")),
+        "{plan:?}"
+    );
+    assert!(
+        !plan
+            .iter()
+            .any(|step| step.starts_with("SCAN m") || step.starts_with("SCAN t")),
+        "no walk over messages or threads: {plan:?}"
+    );
 }
 
 #[test]
