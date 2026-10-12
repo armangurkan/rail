@@ -9,6 +9,7 @@ use std::time::Duration;
 use mail_parser::MessageParser;
 
 use super::sending_tests::{Harness, new_draft};
+use super::tests::ADDRESS;
 use crate::ops::{Action, DraftId, OutboxId};
 use crate::provider::mock::Call;
 use crate::provider::{Provider, ProviderError};
@@ -303,7 +304,11 @@ async fn the_status_shows_saving_while_a_push_runs() {
     let draft = new_draft(&h, 9, vec![]);
     push(&h, draft, "push-9").await;
     let step = tokio::spawn(h.worker_step());
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    h.rig
+        .until("the saving status", |r| {
+            r.board.get(ADDRESS).is_some_and(|s| s.outbox.saving == 1)
+        })
+        .await;
     let during = h.depth().await;
     assert_eq!((during.saving, during.sending), (1, 0));
     step.await.unwrap();
