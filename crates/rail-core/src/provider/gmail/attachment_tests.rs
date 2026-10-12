@@ -9,6 +9,7 @@ use super::attachment::find_part;
 use super::fixtures::{API_PATH, Gmail, b64, full_json};
 use super::wire::Part;
 use super::*;
+use crate::error::ErrorClass;
 use crate::provider::Provider;
 
 fn file_part(part_id: &str, body: Value) -> Value {
@@ -141,9 +142,7 @@ async fn a_part_id_not_in_the_message_is_a_permanent_error_without_a_fetch() {
         .attachment(&"m1".to_string(), "7")
         .await
         .unwrap_err();
-    assert!(matches!(error, ProviderError::Permanent { .. }), "{error}");
-    assert!(error.to_string().contains("no longer in the message"));
-    assert!(!error.to_string().contains("a.pdf"));
+    assert_eq!(error, ProviderError::NotFound);
     assert!(attachment_paths(&gmail).await.is_empty());
 }
 
@@ -157,7 +156,7 @@ async fn a_part_with_neither_data_nor_attachment_id_is_a_permanent_error() {
         .attachment(&"m1".to_string(), "1")
         .await
         .unwrap_err();
-    assert!(matches!(error, ProviderError::Permanent { .. }), "{error}");
+    assert_eq!(error, ProviderError::NotFound);
     assert!(attachment_paths(&gmail).await.is_empty());
 }
 
@@ -188,6 +187,39 @@ async fn an_unsafe_message_id_is_refused_before_any_request() {
         .unwrap_err();
     assert!(matches!(error, ProviderError::Permanent { .. }), "{error}");
     assert!(gmail.server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_503_on_the_message_read_is_transient() {
+    let gmail = Gmail::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{API_PATH}/messages/m1")))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&gmail.server)
+        .await;
+    let error = gmail
+        .provider()
+        .attachment(&"m1".to_string(), "1")
+        .await
+        .unwrap_err();
+    assert_eq!(error.class(), ErrorClass::Transient, "{error:?}");
+    assert!(attachment_paths(&gmail).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_404_on_the_message_read_is_not_found() {
+    let gmail = Gmail::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{API_PATH}/messages/m1")))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&gmail.server)
+        .await;
+    let error = gmail
+        .provider()
+        .attachment(&"m1".to_string(), "1")
+        .await
+        .unwrap_err();
+    assert_eq!(error, ProviderError::NotFound);
 }
 
 fn part(part_id: &str, children: Vec<Part>) -> Part {

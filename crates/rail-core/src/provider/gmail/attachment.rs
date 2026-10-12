@@ -7,14 +7,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use super::body::MAX_PART_DEPTH;
 use super::wire::{Message, Part};
-use super::{COST_GET, GmailProvider, safe_id};
+use super::{COST_GET, GmailProvider, checked_id};
 use crate::provider::ProviderError;
-
-const MAX_MESSAGE_ID_BYTES: usize = 64;
-
-fn gone() -> ProviderError {
-    ProviderError::permanent("this attachment is no longer in the message")
-}
 
 impl GmailProvider {
     pub(crate) async fn attachment_bytes(
@@ -22,25 +16,25 @@ impl GmailProvider {
         message: &str,
         part: &str,
     ) -> Result<Vec<u8>, ProviderError> {
-        if !safe_id(message, MAX_MESSAGE_ID_BYTES) {
+        let Some(message) = checked_id(message) else {
             return Err(ProviderError::permanent(
                 "a message id is not one Rail sends to Gmail",
             ));
-        }
+        };
         let query = [("format", "full".to_string())];
         let answer: Message = self
             .api
             .get_json(&format!("messages/{message}"), &query, COST_GET)
             .await?;
         if answer.id.as_deref() != Some(message) {
-            return Err(gone());
+            return Err(ProviderError::NotFound);
         }
-        let payload = answer.payload.ok_or_else(gone)?;
-        let found = find_part(&payload, part).ok_or_else(gone)?;
+        let payload = answer.payload.ok_or(ProviderError::NotFound)?;
+        let found = find_part(&payload, part).ok_or(ProviderError::NotFound)?;
         let data = match (&found.body.data, &found.body.attachment_id) {
             (Some(data), _) => data.clone(),
             (None, Some(attachment)) => self.attachment_data(message, attachment).await?,
-            (None, None) => return Err(gone()),
+            (None, None) => return Err(ProviderError::NotFound),
         };
         URL_SAFE_NO_PAD
             .decode(data.trim_end_matches('='))
