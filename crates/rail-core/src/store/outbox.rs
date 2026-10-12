@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
 use super::apply_local::{self, Prior};
+use super::drafts::{self, DraftSaved, DraftWrite};
 use super::{Store, StoreError, rollup};
 use crate::ops::{Action, DraftId, OutboxId, RowToken};
 
@@ -107,6 +108,13 @@ pub enum OutboxWrite {
     DraftSendAttempted {
         draft: DraftId,
     },
+    /// `draft.save`'s write: every store write goes through the one writer.
+    DraftSave {
+        write: Box<DraftWrite>,
+        client_token: String,
+    },
+    /// `draft.discard`'s delete, refused while the draft is being sent.
+    DraftDelete(DraftId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +137,9 @@ pub enum OutboxOutcome {
     Retried(bool),
     /// The rows moved back to pending: the worker looks a `send` among them up before sending.
     Recovered(Vec<OutboxId>),
+    DraftSaved(DraftSaved),
+    /// False when the draft is being sent: nothing was deleted.
+    DraftDeleted(bool),
 }
 
 const COLUMNS: &str = "id, account_id, payload, thread_ids, state, attempts, not_before, \
@@ -530,6 +541,31 @@ pub(crate) fn recover(tx: &Transaction, account: i64) -> Result<Vec<OutboxId>, S
     Ok(ids.collect::<Result<_, _>>()?)
 }
 
+/// The writes that change a draft row, in the caller's transaction (`outbox_write` passes only
+/// those).
+fn draft_write(
+    tx: &Transaction,
+    write: &OutboxWrite,
+    now: i64,
+) -> Result<OutboxOutcome, StoreError> {
+    Ok(match write {
+        OutboxWrite::DraftSendAttempted { draft } => {
+            tx.execute(
+                "UPDATE drafts SET send_attempted_at = ?2
+                 WHERE id = ?1 AND send_attempted_at IS NULL",
+                params![draft, now],
+            )?;
+            OutboxOutcome::Done
+        }
+        OutboxWrite::DraftSave {
+            write,
+            client_token,
+        } => OutboxOutcome::DraftSaved(drafts::save_in(tx, write, client_token, now)?),
+        OutboxWrite::DraftDelete(id) => OutboxOutcome::DraftDeleted(drafts::delete_in(tx, *id)?),
+        _ => OutboxOutcome::Done,
+    })
+}
+
 impl Store {
     /// One outbox write in one `IMMEDIATE` transaction.
     pub fn outbox_write(
@@ -541,16 +577,11 @@ impl Store {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let outcome = match write {
-            OutboxWrite::Enqueue(new) => match enqueue(&tx, new)? {
-                Some((id, applied)) => OutboxOutcome::Enqueued {
-                    rows: vec![id],
-                    applied,
-                },
-                None => OutboxOutcome::Enqueued {
-                    rows: Vec::new(),
-                    applied: 0,
-                },
-            },
+            OutboxWrite::Enqueue(new) => {
+                let (rows, applied) =
+                    enqueue(&tx, new)?.map_or((Vec::new(), 0), |(id, n)| (vec![id], n));
+                OutboxOutcome::Enqueued { rows, applied }
+            }
             OutboxWrite::Claim { account_id } => {
                 OutboxOutcome::Claimed(claim_next(&tx, *account_id, now)?)
             }
@@ -576,14 +607,9 @@ impl Store {
             OutboxWrite::Recover { account_id } => {
                 OutboxOutcome::Recovered(recover(&tx, *account_id)?)
             }
-            OutboxWrite::DraftSendAttempted { draft } => {
-                tx.execute(
-                    "UPDATE drafts SET send_attempted_at = ?2
-                     WHERE id = ?1 AND send_attempted_at IS NULL",
-                    params![draft, now],
-                )?;
-                OutboxOutcome::Done
-            }
+            OutboxWrite::DraftSendAttempted { .. }
+            | OutboxWrite::DraftSave { .. }
+            | OutboxWrite::DraftDelete(_) => draft_write(&tx, write, now)?,
         };
         tx.commit()?;
         Ok(outcome)
@@ -629,6 +655,16 @@ impl Store {
                          WHERE t.value IN (SELECT value FROM json_each(?1))) ORDER BY o.id"
         ))?;
         let rows = stmt.query_map(params![json(&thread_ids)], read_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The draft's live (pending or inflight) rows, oldest first.
+    pub fn pending_rows_for_draft(&self, draft: DraftId) -> Result<Vec<OutboxRow>, StoreError> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM outbox WHERE draft_id = ?1
+             AND state IN ('pending', 'inflight') ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([draft], read_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

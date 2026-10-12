@@ -7,6 +7,7 @@ pub mod actions;
 pub mod body;
 pub mod confirm;
 pub mod daemon;
+pub mod drafts;
 pub mod error;
 pub mod guide;
 pub mod op;
@@ -17,6 +18,8 @@ pub mod status;
 pub mod sync;
 pub mod untrusted;
 
+#[cfg(test)]
+mod drafts_tests;
 #[cfg(test)]
 mod tests;
 
@@ -39,6 +42,12 @@ pub use confirm::{ConfirmPlan, MAX_NAME_CHARS, plan_digest, shown};
 pub use daemon::{
     BrowserEnv, DaemonInfo, DaemonInfoRequest, DaemonStopRequest, DaemonStopResponse, HelloRequest,
     HelloResponse, MAX_BROWSER_ENV_CHARS,
+};
+pub use drafts::{
+    AttachmentSummary, DraftAttachment, DraftDiscardRequest, DraftDiscardResponse,
+    DraftSaveRequest, DraftSaveResponse, DraftSendRequest, DraftSendResponse, MAX_ADDRESS_CHARS,
+    MAX_ATTACHMENTS, MAX_BODY_BYTES, MAX_RECIPIENTS, MAX_SUBJECT_BYTES, MAX_TOTAL_ATTACHMENT_BYTES,
+    ReplyTo, new_message_id, parse_recipient,
 };
 pub(crate) use error::write_config_text;
 pub use error::{ErrorCode, OpError, preset_file_message};

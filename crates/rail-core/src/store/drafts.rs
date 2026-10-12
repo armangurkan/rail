@@ -7,7 +7,7 @@ use super::{Store, StoreError};
 use crate::ops::DraftId;
 use crate::provider::Mailbox;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DraftKind {
     New,
@@ -356,12 +356,18 @@ fn read_reply_head(r: &Row<'_>) -> rusqlite::Result<ReplySource> {
     })
 }
 
-fn insert_draft(conn: &Connection, w: &DraftWrite, now: i64) -> Result<(), StoreError> {
+/// Insert a draft; `token` is the create's client token (`None` outside `draft.save`).
+fn insert_draft(
+    conn: &Connection,
+    w: &DraftWrite,
+    token: Option<&str>,
+    now: i64,
+) -> Result<(), StoreError> {
     conn.execute(
         "INSERT INTO drafts (account_id, kind, thread_id, remote_thread_id, in_reply_to,
            references_ids, to_json, cc_json, bcc_json, subject, body, attachments_json,
-           message_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
+           message_id, created_at, updated_at, client_token)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15)",
         params![
             w.account_id,
             w.kind.as_str(),
@@ -376,7 +382,8 @@ fn insert_draft(conn: &Connection, w: &DraftWrite, now: i64) -> Result<(), Store
             w.body,
             json(&w.attachments),
             w.message_id,
-            now
+            now,
+            token
         ],
     )?;
     Ok(())
@@ -413,6 +420,78 @@ fn update_draft(
     )?)
 }
 
+/// What a save through the writer did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftSaved {
+    /// Created, updated, or (a create whose token was seen before) the draft that token made.
+    Saved(DraftId),
+    /// The id names no draft of the account.
+    Missing,
+    /// The draft is being sent: it changes only after an undo.
+    Queued,
+}
+
+/// True while the draft is being sent: `queued`, or a live `send` row names it.
+fn being_sent(conn: &Connection, id: DraftId) -> Result<bool, StoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM drafts WHERE id = ?1 AND state = 'queued')
+             OR EXISTS (SELECT 1 FROM outbox WHERE draft_id = ?1 AND kind = 'send'
+                          AND state IN ('pending', 'inflight'))",
+        [id],
+        |r| r.get(0),
+    )?)
+}
+
+/// `draft_upsert` in the writer's outbox transaction. A create keeps its client token, so a
+/// create sent again with that token answers the draft it made and changes nothing; an
+/// update of a draft being sent is refused.
+pub(super) fn save_in(
+    conn: &Connection,
+    w: &DraftWrite,
+    token: &str,
+    now: i64,
+) -> Result<DraftSaved, StoreError> {
+    if let Some(id) = w.id {
+        let held: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM drafts WHERE id = ?1 AND account_id = ?2)",
+            params![id, w.account_id],
+            |r| r.get(0),
+        )?;
+        if !held {
+            return Ok(DraftSaved::Missing);
+        }
+        if being_sent(conn, id)? {
+            return Ok(DraftSaved::Queued);
+        }
+        update_draft(conn, id, w, now)?;
+        return Ok(DraftSaved::Saved(id));
+    }
+    let known: Option<DraftId> = conn
+        .query_row(
+            "SELECT id FROM drafts WHERE client_token = ?1 AND account_id = ?2",
+            params![token, w.account_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(id) = known {
+        return Ok(DraftSaved::Saved(id));
+    }
+    insert_draft(conn, w, Some(token), now)?;
+    Ok(DraftSaved::Saved(conn.last_insert_rowid()))
+}
+
+/// `draft_delete` in the writer's outbox transaction, unless the draft is being sent (its
+/// send row pending or inflight): false then, and nothing changes. A missing draft is gone
+/// already: true.
+pub(super) fn delete_in(conn: &Connection, id: DraftId) -> Result<bool, StoreError> {
+    if being_sent(conn, id)? {
+        return Ok(false);
+    }
+    conn.execute("DELETE FROM outbox WHERE draft_id = ?1", [id])?;
+    conn.execute("DELETE FROM drafts WHERE id = ?1", [id])?;
+    Ok(true)
+}
+
 impl Store {
     /// Create (`id: None`) or update one of the account's drafts; the draft's id, or `None` when
     /// `id` names no draft of that account. An update leaves `message_id`, the remote ids and
@@ -425,7 +504,7 @@ impl Store {
         match w.id {
             Some(id) => Ok((update_draft(&self.conn, id, w, now)? > 0).then_some(id)),
             None => {
-                insert_draft(&self.conn, w, now)?;
+                insert_draft(&self.conn, w, None, now)?;
                 Ok(Some(self.conn.last_insert_rowid()))
             }
         }

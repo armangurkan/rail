@@ -21,6 +21,9 @@ CREATE TABLE drafts (
   -- When Rail first handed this draft to Gmail's send: from then on, every send of it looks
   -- the Message-ID up first (a failure after Gmail accepted it must not send it twice).
   send_attempted_at INTEGER,
+  -- The client token of the draft.save that created it: the same create sent again answers
+  -- this draft instead of making a second one.
+  client_token      TEXT UNIQUE,
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL
 );

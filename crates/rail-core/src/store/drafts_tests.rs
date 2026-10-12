@@ -183,3 +183,64 @@ fn an_unparseable_attachment_list_is_reported_unreadable() -> Result<(), StoreEr
     );
     Ok(())
 }
+
+fn save(
+    store: &mut super::Store,
+    write: DraftWrite,
+    token: &str,
+) -> Result<super::drafts::DraftSaved, StoreError> {
+    use super::outbox::{OutboxOutcome, OutboxWrite};
+    let save = OutboxWrite::DraftSave {
+        write: Box::new(write),
+        client_token: token.into(),
+    };
+    match store.outbox_write(&save, 2_000)? {
+        OutboxOutcome::DraftSaved(saved) => Ok(saved),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The writer's save: a create replayed by its token answers the same draft unchanged, an
+/// update of another account's draft is missing, and neither an update nor a delete touches
+/// a draft being sent.
+#[test]
+fn the_writers_save_replays_by_token_and_leaves_a_draft_being_sent_alone() -> Result<(), StoreError>
+{
+    use super::drafts::DraftSaved;
+    use super::outbox::{OutboxOutcome, OutboxWrite};
+    let (mut store, account_id) = store_with_account();
+    let DraftSaved::Saved(id) = save(&mut store, write(account_id), "t1")? else {
+        panic!("created");
+    };
+    let replay = DraftWrite {
+        subject: "Other".into(),
+        message_id: "<other@example.com>".into(),
+        ..write(account_id)
+    };
+    assert_eq!(save(&mut store, replay, "t1")?, DraftSaved::Saved(id));
+    assert_eq!(store.draft(id)?.expect("kept").subject, "Hello");
+    let elsewhere = DraftWrite {
+        id: Some(id),
+        account_id: account_id + 1,
+        ..write(account_id)
+    };
+    assert_eq!(save(&mut store, elsewhere, "t2")?, DraftSaved::Missing);
+    store.draft_set_state(id, DraftState::Queued)?;
+    let update = DraftWrite {
+        id: Some(id),
+        ..write(account_id)
+    };
+    assert_eq!(save(&mut store, update, "t3")?, DraftSaved::Queued);
+    let delete = OutboxWrite::DraftDelete(id);
+    assert_eq!(
+        store.outbox_write(&delete, 2_000)?,
+        OutboxOutcome::DraftDeleted(false)
+    );
+    store.draft_set_state(id, DraftState::Editing)?;
+    assert_eq!(
+        store.outbox_write(&delete, 2_000)?,
+        OutboxOutcome::DraftDeleted(true)
+    );
+    assert!(store.draft(id)?.is_none());
+    Ok(())
+}

@@ -17,6 +17,10 @@ use super::daemon::{
     DaemonInfo, DaemonInfoRequest, DaemonStopRequest, DaemonStopResponse, HelloRequest,
     HelloResponse,
 };
+use super::drafts::{
+    DraftDiscardRequest, DraftDiscardResponse, DraftSaveRequest, DraftSaveResponse,
+    DraftSendRequest, DraftSendResponse,
+};
 use super::guide::{GuideRequest, GuideResponse};
 use super::pending::{CancelRequest, WaitRequest, WaitResponse};
 use super::presets::{
@@ -50,9 +54,12 @@ pub mod names {
     pub const ACTION_APPLY: &str = "action.apply";
     pub const ACTION_UNDO: &str = "action.undo";
     pub const ACTION_RETRY: &str = "action.retry";
+    pub const DRAFT_SAVE: &str = "draft.save";
+    pub const DRAFT_SEND: &str = "draft.send";
+    pub const DRAFT_DISCARD: &str = "draft.discard";
 
     /// Every user operation, in the order of the specs' tables.
-    pub const ALL: [&str; 19] = [
+    pub const ALL: [&str; 22] = [
         STATUS,
         ACCOUNTS_LIST,
         PRESETS_LIST,
@@ -72,6 +79,9 @@ pub mod names {
         ACTION_APPLY,
         ACTION_UNDO,
         ACTION_RETRY,
+        DRAFT_SAVE,
+        DRAFT_SEND,
+        DRAFT_DISCARD,
     ];
 
     /// The daemon's own methods: the handshake and its lifecycle. Not user operations.
@@ -184,6 +194,18 @@ operation!(
 operation!(
     /// Send a refused change again. Terminal-only.
     ActionRetry, names::ACTION_RETRY, ActionRetryRequest, ActionRetryResponse
+);
+operation!(
+    /// Create or update a draft, checked before anything is stored. Terminal-only.
+    DraftSave, names::DRAFT_SAVE, DraftSaveRequest, DraftSaveResponse
+);
+operation!(
+    /// Queue a draft to be sent once the undo grace is over. Terminal-only.
+    DraftSend, names::DRAFT_SEND, DraftSendRequest, DraftSendResponse
+);
+operation!(
+    /// Delete a draft that is not being sent. Terminal-only.
+    DraftDiscard, names::DRAFT_DISCARD, DraftDiscardRequest, DraftDiscardResponse
 );
 operation!(
     /// The handshake: protocol and Rail versions.
