@@ -16,12 +16,14 @@ use super::test_util::{Hello, RecordingClipboard, key};
 
 type Log = Arc<Mutex<Vec<&'static str>>>;
 
-/// Records the order of hand-over calls; `fail_suspend` makes the first `suspend` fail.
+/// Records the order of hand-over calls; `fail_suspend` makes the first `suspend` fail,
+/// `fail_resume` every `resume`.
 #[derive(Default)]
 struct Recorder {
     log: Log,
     returned: bool,
     fail_suspend: bool,
+    fail_resume: bool,
 }
 
 impl Suspend for Recorder {
@@ -36,6 +38,9 @@ impl Suspend for Recorder {
     fn resume(&mut self) -> io::Result<()> {
         self.log.lock().unwrap().push("resume");
         self.returned = true;
+        if self.fail_resume {
+            return Err(io::Error::other("no raw mode"));
+        }
         Ok(())
     }
 
@@ -195,4 +200,17 @@ fn a_failed_hand_over_still_tries_to_take_the_terminal_back() {
         ["suspend", "resume"],
         "no editor ran"
     );
+}
+
+/// Final fix 7: once the editor ran, its exit code is the answer even when taking the
+/// terminal back fails (the screen repaints anyway), so the text it wrote is read.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_failed_resume_after_the_editor_ran_still_answers_its_exit_code() {
+    let mut recorder = Recorder {
+        fail_resume: true,
+        ..Recorder::default()
+    };
+    let screen = edit_then_quit(&["/bin/sh", "-c", "exit 0"], &mut recorder).await;
+    assert_eq!(screen.edited, vec![Ok(0)]);
 }

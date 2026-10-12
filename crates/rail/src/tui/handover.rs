@@ -119,7 +119,9 @@ where
 }
 
 /// Hand the terminal to the editor, wait for it, take the terminal back. A failed hand-over
-/// still tries to take the terminal back, and says so.
+/// still tries to take the terminal back, and says so. Once the editor ran its exit code is
+/// the answer: a failure to take the terminal back is logged (the screen repaints anyway), so
+/// what the editor wrote is still read.
 pub fn run_editor_blocking(
     suspend: &mut impl Suspend,
     command: &[String],
@@ -135,9 +137,9 @@ pub fn run_editor_blocking(
         return Err(text);
     }
     let ran = block_here(|| editor::run(command, path));
-    suspend
-        .resume()
-        .map_err(|e| format!("cannot take the terminal back from the editor: {e}"))?;
+    if let Err(error) = suspend.resume() {
+        tracing::warn!(error = %error, "could not take the terminal back from the editor");
+    }
     ran
 }
 
