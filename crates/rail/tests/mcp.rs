@@ -365,7 +365,15 @@ async fn no_tool_changes_mail() {
     for tool in &tools {
         // The JSON Schema dialect URI (`…/draft/2020-12/schema`) is not something a tool offers.
         let mut offered = (*tool.input_schema).clone();
-        offered.remove("$schema");
+        if let Some(dialect) = offered.remove("$schema") {
+            assert!(
+                dialect
+                    .as_str()
+                    .is_some_and(|d| d.starts_with("https://json-schema.org/")),
+                "{} hides {dialect} under $schema",
+                tool.name
+            );
+        }
         let schema = serde_json::to_string(&offered).unwrap();
         for word in [
             "archive",

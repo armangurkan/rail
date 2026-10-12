@@ -34,7 +34,7 @@ struct DaemonHarness {
 }
 
 impl DaemonHarness {
-    /// A synced daemon whose store holds m1 (thread t1, `<m1@example.com>`) and m2.
+    /// A synced daemon whose store holds m1 (thread t1), m2 and m3.
     async fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let paths = Paths::all_in(tmp.path());
@@ -42,11 +42,22 @@ impl DaemonHarness {
         std::fs::write(paths.config_file(), WORK).unwrap();
         let mock = MockProvider::new();
         let now = crate::auth::unix_now() * 1000;
+        // Ids as Gmail's metadata stores them: bare. m2's are bracketed and one reference is
+        // bad; m3's own id is bad.
         mock.seed(Envelope {
-            message_id: Some("<m1@example.com>".into()),
+            message_id: Some("m1@example.com".into()),
+            references: vec!["m0@example.com".into()],
             ..envelope("m1", "t1", now - 1_000)
         });
-        mock.seed(envelope("m2", "t2", now - 2_000));
+        mock.seed(Envelope {
+            message_id: Some("<m2@example.com>".into()),
+            references: vec!["<bad id@example.com>".into(), "<m1@example.com>".into()],
+            ..envelope("m2", "t2", now - 2_000)
+        });
+        mock.seed(Envelope {
+            message_id: Some("m3;x@example.com".into()),
+            ..envelope("m3", "t3", now - 3_000)
+        });
         Self::boot(tmp, paths, mock).await
     }
 
@@ -154,6 +165,24 @@ impl DaemonHarness {
     }
 }
 
+type Headers = (Option<String>, Option<String>, Option<String>);
+
+impl DaemonHarness {
+    /// Save a reply to `remote`: the draft's In-Reply-To, References and thread.
+    async fn reply_headers(&self, remote: &str, token: &str) -> Headers {
+        let request = DraftSaveRequest {
+            kind: DraftKind::Reply,
+            reply_to: Some(ReplyTo {
+                message: self.message_id(remote),
+            }),
+            ..save_request(None, token)
+        };
+        let saved = self.call::<DraftSave>(&request).await.unwrap();
+        let d = self.store(|s| s.draft(saved.draft).unwrap().unwrap());
+        (d.in_reply_to, d.references, d.remote_thread_id)
+    }
+}
+
 /// A new draft for `work` to sam@example.com.
 fn save_request(draft: Option<DraftId>, token: &str) -> DraftSaveRequest {
     DraftSaveRequest {
@@ -235,6 +264,32 @@ async fn a_send_replayed_with_its_token_answers_the_same_row() {
 }
 
 #[tokio::test]
+async fn a_token_another_drafts_send_used_is_refused() {
+    let h = DaemonHarness::new().await;
+    let a = h
+        .call::<DraftSave>(&save_request(None, "da"))
+        .await
+        .unwrap();
+    let b = h
+        .call::<DraftSave>(&save_request(None, "db"))
+        .await
+        .unwrap();
+    h.send(a.draft, "tok-a").await.unwrap();
+    let error = h.send(b.draft, "tok-a").await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert_eq!(
+        error.message,
+        "client_token: this token was used for another action"
+    );
+    assert!(
+        h.store(|s| s.pending_rows_for_draft(b.draft).unwrap())
+            .is_empty()
+    );
+    let draft = h.store(|s| s.draft(b.draft).unwrap().unwrap());
+    assert_eq!(draft.state, DraftState::Editing);
+}
+
+#[tokio::test]
 async fn a_reply_gets_its_headers_from_the_store_and_a_forward_its_parts() {
     let h = DaemonHarness::with_messages().await;
     let message = h.message_id("m1");
@@ -246,7 +301,10 @@ async fn a_reply_gets_its_headers_from_the_store_and_a_forward_its_parts() {
     let reply = h.call::<DraftSave>(&reply).await.unwrap();
     let draft = h.store(|s| s.draft(reply.draft).unwrap().unwrap());
     assert_eq!(draft.in_reply_to.as_deref(), Some("<m1@example.com>"));
-    assert_eq!(draft.references.as_deref(), Some("<m1@example.com>"));
+    assert_eq!(
+        draft.references.as_deref(),
+        Some("<m0@example.com> <m1@example.com>")
+    );
     assert_eq!(draft.remote_thread_id.as_deref(), Some("t1"));
     assert!(draft.attachments.is_empty());
     assert!(reply.attachments.is_empty());
@@ -264,6 +322,22 @@ async fn a_reply_gets_its_headers_from_the_store_and_a_forward_its_parts() {
             forward.attachments[0].path.as_ref()
         ),
         ("plan.pdf", None)
+    );
+    let bracketed = h.reply_headers("m2", "r3").await;
+    assert_eq!(
+        bracketed,
+        (
+            Some("<m2@example.com>".into()),
+            Some("<m1@example.com> <m2@example.com>".into()),
+            Some("t2".into())
+        ),
+        "a bracketed id is kept once and a bad reference is dropped"
+    );
+    let bad = h.reply_headers("m3", "r4").await;
+    assert_eq!(
+        bad,
+        (None, None, Some("t3".into())),
+        "a bad id never blocks a reply"
     );
     let gone = DraftSaveRequest {
         kind: DraftKind::Reply,

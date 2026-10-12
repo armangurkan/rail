@@ -669,7 +669,6 @@ impl Store {
     }
 
     /// One row, whatever its state.
-    #[cfg(test)]
     pub(crate) fn outbox_row(&self, id: OutboxId) -> Result<Option<OutboxRow>, StoreError> {
         Ok(self
             .conn

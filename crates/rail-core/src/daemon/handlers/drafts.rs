@@ -13,6 +13,7 @@ use crate::ops::{
     DraftSaveResponse, DraftSendRequest, DraftSendResponse, MAX_ATTACHMENTS,
     MAX_TOTAL_ATTACHMENT_BYTES, OpError, ReplyTo, UNDO_GRACE, checked_token, new_message_id,
 };
+use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
@@ -111,10 +112,14 @@ struct Threading {
     parts: Vec<Attachment>,
 }
 
-/// One `<id>` token: what a threading header can carry. Received headers that are not are
-/// left out rather than refused at send time.
-fn header_id(id: &str) -> bool {
-    id.len() > 2 && id.starts_with('<') && id.ends_with('>') && crate::config::is_plain(id)
+/// A stored id as a threading header carries it: `<inner>`. Gmail's metadata keeps ids bare
+/// and either form is accepted. `None` when the inner part fails the MIME builder's rule: a bad
+/// id in received mail is left out of the headers rather than blocking the reply.
+fn header_id(id: &str) -> Option<String> {
+    let id = id.trim();
+    let inner = id.strip_prefix('<').unwrap_or(id);
+    let inner = inner.strip_suffix('>').unwrap_or(inner);
+    valid_message_id_inner(inner).then(|| format!("<{inner}>"))
 }
 
 fn threading_for(
@@ -132,10 +137,14 @@ fn threading_for(
         .ok_or_else(|| {
             OpError::not_found("reply_to: the message being answered is no longer in the store")
         })?;
-    let in_reply_to = source.message_id.clone().filter(|id| header_id(id));
-    let mut references: Vec<String> = source.references.clone();
+    let in_reply_to = source.message_id.as_deref().and_then(header_id);
+    // Space-joined: the worker splits `references` on whitespace.
+    let mut references: Vec<String> = source
+        .references
+        .iter()
+        .filter_map(|id| header_id(id))
+        .collect();
     references.extend(in_reply_to.clone());
-    references.retain(|id| header_id(id));
     let parts = match kind {
         DraftKind::Forward => source
             .attachments
@@ -359,6 +368,19 @@ fn not_queued(db: &Path, id: DraftId) -> Result<OpError, OpError> {
     })
 }
 
+/// A token already in the outbox answers its row: refuse it unless that row is this draft's.
+fn row_of_draft(db: &Path, row: i64, id: DraftId) -> Result<(), OpError> {
+    let owner = Store::open_reader(db)?
+        .outbox_row(row)?
+        .and_then(|r| r.draft_id);
+    if owner != Some(id) {
+        return Err(OpError::invalid_input(
+            "client_token: this token was used for another action",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) async fn send(
     call: Call,
     request: DraftSendRequest,
@@ -396,9 +418,13 @@ pub(super) async fn send(
     let OutboxOutcome::Enqueued { rows, .. } = outcome else {
         return Err(unexpected());
     };
+    let reader = db.clone();
     let Some(&row) = rows.first() else {
-        return Err(call.ctx.blocking(move || not_queued(&db, id)).await?);
+        return Err(call.ctx.blocking(move || not_queued(&reader, id)).await?);
     };
+    call.ctx
+        .blocking(move || row_of_draft(&db, row, id))
+        .await?;
     tracing::info!(account = %target.name, draft = id, row, "a send was queued");
     call.ctx.sync.outbox_changed(&call.ctx).await;
     Ok(DraftSendResponse { row })

@@ -134,6 +134,13 @@ fn valid_address(address: &str) -> bool {
 fn valid_message_id(id: &str) -> bool {
     let inner = id.strip_prefix('<').unwrap_or(id);
     let inner = inner.strip_suffix('>').unwrap_or(inner);
+    valid_message_id_inner(inner)
+}
+
+/// The rule for a message id without its angle brackets: one `@` with text on both sides, no
+/// whitespace or control character, none of the RFC 5322 specials. Shared with `draft.save`,
+/// which keeps only ids this accepts, so a saved reply's headers always build.
+pub(crate) fn valid_message_id_inner(inner: &str) -> bool {
     plain_text(inner) && !inner.contains(['<', '>']) && valid_address(inner)
 }
 
