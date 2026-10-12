@@ -86,6 +86,8 @@ impl MailScreen {
                 mime: a.mime,
                 size: a.size,
                 path: a.path,
+                message: a.message,
+                part: a.part,
             })
             .collect();
     }

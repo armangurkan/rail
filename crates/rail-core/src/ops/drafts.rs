@@ -30,12 +30,21 @@ pub struct ReplyTo {
     pub message: i64,
 }
 
-/// An attachment as the TUI names it: a file by path. (Parts of forwarded messages are added
-/// by the daemon from the store.)
+/// An attachment as the TUI names it: a file by path, or a part of a forwarded message the
+/// draft already holds. A create takes a forward's parts from the store and names none; an
+/// update keeps exactly the parts it names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DraftAttachment {
-    File { path: String },
+    File {
+        path: String,
+    },
+    Part {
+        /// The store's id of the forwarded message.
+        message: i64,
+        /// Its part id, as the stored attachment names it.
+        part: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -74,6 +83,12 @@ pub struct AttachmentSummary {
     /// The file's path for a file attachment; `None` for a forwarded part.
     #[serde(default)]
     pub path: Option<String>,
+    /// The forwarded message's store id, for a forwarded part.
+    #[serde(default)]
+    pub message: Option<i64>,
+    /// The part id, for a forwarded part.
+    #[serde(default)]
+    pub part: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -276,13 +291,22 @@ impl DraftSaveRequest {
                 &format!("at most {MAX_ATTACHMENTS} attachments"),
             ));
         }
-        let mut seen = HashSet::new();
-        for DraftAttachment::File { path } in &self.attachments {
-            if !std::path::Path::new(path).is_absolute() {
-                return Err(invalid("attachments", "a path must be absolute"));
-            }
-            if !seen.insert(path) {
-                return Err(invalid("attachments", "a file is attached twice"));
+        let (mut files, mut parts) = (HashSet::new(), HashSet::new());
+        for attachment in &self.attachments {
+            match attachment {
+                DraftAttachment::File { path } => {
+                    if !std::path::Path::new(path).is_absolute() {
+                        return Err(invalid("attachments", "a path must be absolute"));
+                    }
+                    if !files.insert(path) {
+                        return Err(invalid("attachments", "a file is attached twice"));
+                    }
+                }
+                DraftAttachment::Part { message, part } => {
+                    if !parts.insert((message, part)) {
+                        return Err(invalid("attachments", "a part is attached twice"));
+                    }
+                }
             }
         }
         Ok(())

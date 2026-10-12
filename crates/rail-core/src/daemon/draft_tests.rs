@@ -365,6 +365,10 @@ async fn an_update_without_reply_to_keeps_the_drafts_threading_and_parts() {
         draft: Some(made.draft),
         reply_to: None,
         body: "edited\n".into(),
+        attachments: vec![DraftAttachment::Part {
+            message,
+            part: "p1".into(),
+        }],
         ..save_request(None, "f10")
     };
     let saved = h.call::<DraftSave>(&update).await.unwrap();
@@ -388,7 +392,7 @@ async fn an_update_without_reply_to_keeps_the_drafts_threading_and_parts() {
     assert_eq!(after.in_reply_to.as_deref(), Some("<m1@example.com>"));
     assert_eq!(
         after.attachments, before.attachments,
-        "the forwarded part stays"
+        "the forwarded part it lists stays"
     );
     let create = DraftSaveRequest {
         kind: DraftKind::Reply,
@@ -399,6 +403,67 @@ async fn an_update_without_reply_to_keeps_the_drafts_threading_and_parts() {
         h.call::<DraftSave>(&create).await.is_err(),
         "a create still names it"
     );
+}
+
+/// Final fix 2: an update keeps only the forwarded parts it lists, and a part the draft never
+/// had is refused, as is one named by a create.
+#[tokio::test]
+async fn an_update_keeps_only_the_parts_it_lists_and_refuses_one_never_stored() {
+    let h = DaemonHarness::with_messages().await;
+    let message = h.message_id("m1");
+    Store::open(&h.paths.db_file())
+        .unwrap()
+        .conn()
+        .execute(
+            "INSERT INTO attachments (message_id, remote_part_id, filename, mime_type, size)
+             VALUES (?1, 'p2', 'notes.txt', 'text/plain', 10)",
+            [message],
+        )
+        .unwrap();
+    let forward = DraftSaveRequest {
+        kind: DraftKind::Forward,
+        reply_to: Some(ReplyTo { message }),
+        ..save_request(None, "k1")
+    };
+    let made = h.call::<DraftSave>(&forward).await.unwrap();
+    assert_eq!(made.attachments.len(), 2, "a create takes every part");
+    assert_eq!(made.attachments[1].message, Some(message));
+    assert_eq!(made.attachments[1].part.as_deref(), Some("p2"));
+    let part = |part: &str| DraftAttachment::Part {
+        message,
+        part: part.into(),
+    };
+    let update = |attachments, token: &str| DraftSaveRequest {
+        kind: DraftKind::Forward,
+        draft: Some(made.draft),
+        attachments,
+        ..save_request(None, token)
+    };
+    let kept = h
+        .call::<DraftSave>(&update(vec![part("p2")], "k2"))
+        .await
+        .unwrap();
+    assert_eq!(kept.attachments.len(), 1);
+    assert_eq!(kept.attachments[0].name, "notes.txt");
+    let stored = h.store(|s| s.draft(made.draft).unwrap().unwrap());
+    assert!(matches!(&stored.attachments[..], [Attachment::Part { part, .. }] if part == "p2"));
+    let refused = h
+        .call::<DraftSave>(&update(vec![part("p1")], "k3"))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.message,
+        "attachments: not an attachment of this draft"
+    );
+    let on_create = DraftSaveRequest {
+        attachments: vec![part("p1")],
+        ..forward.clone()
+    };
+    let on_create = DraftSaveRequest {
+        client_token: "k4".into(),
+        ..on_create
+    };
+    assert!(h.call::<DraftSave>(&on_create).await.is_err());
 }
 
 fn with_file(path: &std::path::Path, token: &str) -> DraftSaveRequest {

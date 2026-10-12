@@ -27,13 +27,17 @@ impl fmt::Debug for Headers {
 }
 
 /// One attachment of the draft: a local file (`path`) or a part of the forwarded message
-/// (`path: None`).
+/// (`path: None`; `message` and `part` name it once the daemon has stored it).
 #[derive(Clone, PartialEq, Eq)]
 pub struct AttachmentRow {
     pub name: String,
     pub mime: String,
     pub size: i64,
     pub path: Option<String>,
+    /// The forwarded message's store id, for a part.
+    pub message: Option<i64>,
+    /// The part id, for a part.
+    pub part: Option<String>,
 }
 
 impl fmt::Debug for AttachmentRow {

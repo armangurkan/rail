@@ -320,11 +320,16 @@ async fn a_attaches_through_the_daemon_and_x_removes() {
                 .request
                 .attachments
                 .iter()
-                .map(|DraftAttachment::File { path }| AttachmentSummary {
-                    name: "notes.txt".into(),
-                    mime: "text/plain".into(),
-                    size: 1,
-                    path: Some(path.clone()),
+                .filter_map(|a| match a {
+                    DraftAttachment::File { path } => Some(AttachmentSummary {
+                        name: "notes.txt".into(),
+                        mime: "text/plain".into(),
+                        size: 1,
+                        path: Some(path.clone()),
+                        message: None,
+                        part: None,
+                    }),
+                    DraftAttachment::Part { .. } => None,
                 })
                 .collect(),
         })

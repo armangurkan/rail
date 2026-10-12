@@ -84,14 +84,31 @@ fn shown(recipients: &[Recipient]) -> Vec<String> {
 }
 
 fn attachment_row(a: &Attachment) -> AttachmentRow {
+    let (path, message, part) = match a {
+        Attachment::File { path, .. } => (Some(path.clone()), None, None),
+        Attachment::Part { message, part, .. } => (None, Some(*message), Some(part.clone())),
+    };
     AttachmentRow {
         name: a.name().to_string(),
         mime: a.mime().to_string(),
         size: a.size(),
-        path: match a {
-            Attachment::File { path, .. } => Some(path.clone()),
-            Attachment::Part { .. } => None,
-        },
+        path,
+        message,
+        part,
+    }
+}
+
+/// An attachment as a save names it: a file by path, a stored part by message and part id.
+/// A part not stored yet (a forward before its create) is named by nobody: the create takes
+/// it from the store.
+fn named(row: &AttachmentRow) -> Option<DraftAttachment> {
+    match (&row.path, row.message, &row.part) {
+        (Some(path), _, _) => Some(DraftAttachment::File { path: path.clone() }),
+        (None, Some(message), Some(part)) => Some(DraftAttachment::Part {
+            message,
+            part: part.clone(),
+        }),
+        _ => None,
     }
 }
 
@@ -183,11 +200,12 @@ impl MailScreen {
             bcc: c.headers.bcc.clone(),
             subject: c.headers.subject.clone(),
             body: c.body.clone(),
+            // A create names files only; every save after it names each attachment kept.
             attachments: c
                 .attachments
                 .iter()
-                .filter_map(|a| a.path.clone())
-                .map(|path| DraftAttachment::File { path })
+                .filter_map(named)
+                .filter(|a| c.draft.is_some() || matches!(a, DraftAttachment::File { .. }))
                 .collect(),
             client_token: client_token(),
         }
@@ -303,6 +321,8 @@ impl MailScreen {
                     mime: a.mime_type.clone(),
                     size: a.size,
                     path: None,
+                    message: Some(source.message),
+                    part: Some(a.part_id.clone()),
                 })
                 .collect(),
             _ => Vec::new(),

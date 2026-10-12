@@ -315,6 +315,8 @@ impl MailScreen {
             mime: String::new(),
             size,
             path: Some(path),
+            message: None,
+            part: None,
         });
         self.save_draft(After::Review, Some(before))
     }

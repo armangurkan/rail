@@ -4,9 +4,11 @@
 use std::sync::{Arc, Mutex};
 
 use rail_core::ops::DraftSaveResponse;
+use rail_core::ops::drafts::{AttachmentSummary, DraftAttachment};
 
 use super::compose::{compose_fixture, composing, editor_appends, saves};
 use super::*;
+use crate::tui::screens::compose::RowKind;
 
 /// Answers each save as the daemon would about the message a reply names: refused when it
 /// is no longer in the store. `requests` records every request.
@@ -68,4 +70,95 @@ async fn a_reply_still_saves_after_its_message_leaves_the_store() {
     );
     assert!(!f.screen.composing.unsaved);
     assert_eq!(saves(&f).len(), 3);
+}
+
+/// A summary of the forwarded part `p1` of `message`.
+fn part_summary(message: i64) -> AttachmentSummary {
+    AttachmentSummary {
+        name: "plan.pdf".into(),
+        mime: "application/pdf".into(),
+        size: 1234,
+        path: None,
+        message: Some(message),
+        part: Some("p1".into()),
+    }
+}
+
+/// Answers each save as the daemon does with parts: a forward's create takes `p1` of the
+/// message it names; an update keeps the parts it lists.
+fn daemon_like_parts(f: &Fixture, requests: Arc<Mutex<Vec<rail_core::ops::DraftSaveRequest>>>) {
+    *f.fake.on_save.lock().unwrap() = Some(Box::new(move |call| {
+        let request = &call.request;
+        requests.lock().unwrap().push(request.clone());
+        let attachments = match (request.draft, &request.reply_to) {
+            (None, Some(reply)) => vec![part_summary(reply.message)],
+            _ => request
+                .attachments
+                .iter()
+                .filter_map(|a| match a {
+                    DraftAttachment::Part { message, .. } => Some(part_summary(*message)),
+                    DraftAttachment::File { .. } => None,
+                })
+                .collect(),
+        };
+        Ok(DraftSaveResponse {
+            draft: 1,
+            message_id: "<x@example.com>".into(),
+            attachments,
+        })
+    }));
+}
+
+fn lists_a_part(request: &rail_core::ops::DraftSaveRequest) -> bool {
+    request
+        .attachments
+        .iter()
+        .any(|a| matches!(a, DraftAttachment::Part { part, .. } if part == "p1"))
+}
+
+/// Final fix 2: an update lists the forwarded parts kept, so `x` on one removes it.
+#[tokio::test]
+async fn x_removes_a_forwarded_part_and_later_saves_leave_it_out() {
+    let mut f = compose_fixture().await;
+    let store = writer(&f);
+    let message: i64 = store
+        .conn()
+        .query_row("SELECT id FROM messages WHERE remote_id = 'wm2'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO attachments (message_id, remote_part_id, filename, mime_type, size)
+             VALUES (?1, 'p1', 'plan.pdf', 'application/pdf', 1234)",
+            [message],
+        )
+        .unwrap();
+    editor_appends(&f, "");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    daemon_like_parts(&f, requests.clone());
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('f')).await;
+    {
+        let sent = requests.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert!(!lists_a_part(&sent[0]), "a create names no part");
+        assert!(lists_a_part(&sent[1]), "an update lists the part it keeps");
+    }
+    assert_eq!(
+        composing(&f).attachments.len(),
+        1,
+        "the part is on the review"
+    );
+    while f.screen.compose.as_ref().unwrap().cursor_row_kind() != RowKind::Attachment(0) {
+        press(&mut f, KeyCode::Char('j')).await;
+    }
+    press(&mut f, KeyCode::Char('x')).await;
+    let last = requests.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        !lists_a_part(&last),
+        "the removal's save leaves the part out"
+    );
+    assert!(composing(&f).attachments.is_empty());
 }

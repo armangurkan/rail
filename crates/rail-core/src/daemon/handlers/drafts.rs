@@ -168,7 +168,7 @@ fn threading_for(
     })
 }
 
-/// A stored draft's threading as it is; its forwarded parts stay with the update.
+/// A stored draft's threading as it is (its forwarded parts are kept by `kept_parts`).
 fn kept_threading(d: &Draft) -> Threading {
     Threading {
         thread_id: d.thread_id,
@@ -207,9 +207,54 @@ fn editable(
     Ok(Some(draft))
 }
 
+fn not_this_drafts() -> OpError {
+    OpError::invalid_input("attachments: not an attachment of this draft")
+}
+
+/// Whether `stored` is the part `message`/`part` names.
+fn is_part(stored: &Attachment, message: i64, part: &str) -> bool {
+    matches!(stored, Attachment::Part { message: m, part: p, .. } if *m == message && p == part)
+}
+
+/// The forwarded parts a save keeps: on an update, the stored parts the request lists (one
+/// the draft never had is refused); on a create, none may be listed and a forward takes its
+/// parts from the store.
+fn kept_parts(
+    existing: Option<&Draft>,
+    listed: &[DraftAttachment],
+    derived: Vec<Attachment>,
+) -> Result<Vec<Attachment>, OpError> {
+    let listed: Vec<(i64, &str)> = listed
+        .iter()
+        .filter_map(|a| match a {
+            DraftAttachment::Part { message, part } => Some((*message, part.as_str())),
+            DraftAttachment::File { .. } => None,
+        })
+        .collect();
+    let Some(draft) = existing else {
+        return if listed.is_empty() {
+            Ok(derived)
+        } else {
+            Err(not_this_drafts())
+        };
+    };
+    let stored = &draft.attachments;
+    if !listed
+        .iter()
+        .all(|&(m, p)| stored.iter().any(|a| is_part(a, m, p)))
+    {
+        return Err(not_this_drafts());
+    }
+    Ok(stored
+        .iter()
+        .filter(|a| listed.iter().any(|&(m, p)| is_part(a, m, p)))
+        .cloned()
+        .collect())
+}
+
 /// The draft to write: the existing one (the account's, not being sent) updated, or a new
-/// one with a fresh `Message-ID`. An update keeps the forwarded parts it has; the request's
-/// files replace its files.
+/// one with a fresh `Message-ID`. An update keeps the forwarded parts the request lists; the
+/// request's files replace its files.
 fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
     let store = Store::open_reader(db)?;
     let SaveInput {
@@ -226,15 +271,7 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
         (Some(d), None) => kept_threading(d),
         (_, reply_to) => threading_for(&store, request.kind, reply_to, account_id)?,
     };
-    let mut attachments = match &existing {
-        Some(d) => d
-            .attachments
-            .iter()
-            .filter(|a| matches!(a, Attachment::Part { .. }))
-            .cloned()
-            .collect(),
-        None => threading.parts,
-    };
+    let mut attachments = kept_parts(existing.as_ref(), &request.attachments, threading.parts)?;
     attachments.extend(files);
     check_total(attachments.iter())?;
     Ok(DraftWrite {
@@ -256,14 +293,17 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
 }
 
 fn summary(attachment: &Attachment) -> AttachmentSummary {
+    let (path, message, part) = match attachment {
+        Attachment::File { path, .. } => (Some(path.clone()), None, None),
+        Attachment::Part { message, part, .. } => (None, Some(*message), Some(part.clone())),
+    };
     AttachmentSummary {
         name: attachment.name().to_string(),
         mime: attachment.mime().to_string(),
         size: attachment.size(),
-        path: match attachment {
-            Attachment::File { path, .. } => Some(path.clone()),
-            Attachment::Part { .. } => None,
-        },
+        path,
+        message,
+        part,
     }
 }
 
@@ -301,7 +341,10 @@ pub(super) async fn save(
     let paths: Vec<String> = request
         .attachments
         .iter()
-        .map(|DraftAttachment::File { path }| path.clone())
+        .filter_map(|a| match a {
+            DraftAttachment::File { path } => Some(path.clone()),
+            DraftAttachment::Part { .. } => None,
+        })
         .collect();
     let files = call.ctx.blocking(move || file_attachments(paths)).await?;
     let (db, client_token) = (call.ctx.paths.db_file(), request.client_token.clone());
