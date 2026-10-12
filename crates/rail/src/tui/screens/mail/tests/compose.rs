@@ -11,13 +11,13 @@ use super::*;
 use crate::tui::modals::Target;
 use crate::tui::screens::compose::RowKind;
 
-async fn type_text(f: &mut Fixture, text: &str) {
+pub(super) async fn type_text(f: &mut Fixture, text: &str) {
     for c in text.chars() {
         press(f, KeyCode::Char(c)).await;
     }
 }
 
-fn saves(f: &Fixture) -> Vec<FakeCall> {
+pub(super) fn saves(f: &Fixture) -> Vec<FakeCall> {
     f.fake
         .calls
         .lock()
@@ -28,21 +28,21 @@ fn saves(f: &Fixture) -> Vec<FakeCall> {
         .collect()
 }
 
-fn calls_of(f: &Fixture, keep: fn(&FakeCall) -> bool) -> Vec<FakeCall> {
+pub(super) fn calls_of(f: &Fixture, keep: fn(&FakeCall) -> bool) -> Vec<FakeCall> {
     let calls = f.fake.calls.lock().unwrap();
     calls.iter().filter(|c| keep(c)).cloned().collect()
 }
 
-fn compose_open(f: &Fixture) -> bool {
+pub(super) fn compose_open(f: &Fixture) -> bool {
     f.screen.compose.is_some()
 }
 
-fn composing(f: &Fixture) -> &crate::tui::screens::compose::model::Composing {
+pub(super) fn composing(f: &Fixture) -> &crate::tui::screens::compose::model::Composing {
     f.screen.compose.as_ref().unwrap().composing()
 }
 
 /// The fake editor appends `text` to the file and exits 0.
-fn editor_appends(f: &Fixture, text: &'static str) {
+pub(super) fn editor_appends(f: &Fixture, text: &'static str) {
     f.editor.set(move |path| {
         let mut current = std::fs::read_to_string(path).unwrap();
         current.push_str(text);
@@ -89,7 +89,7 @@ impl Fixture {
 
 /// `fixture(3)` with the newest thread's body stored and `sam@example.com` in the address
 /// book.
-async fn compose_fixture() -> Fixture {
+pub(super) async fn compose_fixture() -> Fixture {
     let f = fixture(3).await;
     let mut store = writer(&f);
     let body = Body {

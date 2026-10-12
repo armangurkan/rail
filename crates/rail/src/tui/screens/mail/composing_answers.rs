@@ -3,12 +3,12 @@
 //! drafts picker with the draft it resumes.
 
 use rail_core::ops::{DraftId, DraftSaveResponse, DraftSendResponse, OpError, RowToken};
-use rail_core::store::drafts::DraftSummary;
+use rail_core::store::drafts::{Draft, DraftSummary};
 
 use super::composing::{After, BUSY, Pending};
 use super::{MailScreen, error_line};
 use crate::tui::app::Effect;
-use crate::tui::data::{MailEvent, ReadError, ResumedDraft, ScopeChoice};
+use crate::tui::data::{MailEvent, ReadError, ScopeChoice};
 use crate::tui::modals::{Modal, Picker, PickerItem, PickerKind};
 use crate::tui::screens::compose::Composer;
 use crate::tui::screens::compose::model::AttachmentRow;
@@ -208,7 +208,7 @@ impl MailScreen {
     fn draft_read(
         &mut self,
         seq: u64,
-        result: Result<Option<Box<ResumedDraft>>, ReadError>,
+        result: Result<Option<Box<Draft>>, ReadError>,
     ) -> Vec<Effect> {
         if self.composing.pending != Some(Pending::Resuming { seq }) || self.compose.is_some() {
             return Vec::new();

@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rail_core::ops::{DraftId, OpError};
-use rail_core::store::drafts::{Draft, DraftKind};
 use rail_core::store::filter::Filter;
 use rail_core::store::view::{AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadPage};
 use rail_core::store::{Store, StoreError};
@@ -91,13 +90,6 @@ pub struct ListOutcome {
 pub struct SidebarOutcome {
     pub counts: SidebarCounts,
     pub account_ids: Vec<Option<i64>>,
-}
-
-/// A draft read to resume it, and the stored message it answers (a reply's or forward's,
-/// which a save names again).
-pub struct ResumedDraft {
-    pub draft: Draft,
-    pub answers: Option<i64>,
 }
 
 /// Which message a reply or forward answers: this one, or a thread's latest.
@@ -322,23 +314,12 @@ impl StoreReader {
         })
     }
 
-    /// One draft to resume, with the message a reply or forward answers.
+    /// One draft to resume. Its threading stays as stored: a save of it names no message.
     pub fn draft(&self, seq: u64, id: DraftId) -> Effect {
         let reader = self.clone();
         job(move |sink| async move {
             let result = reader
-                .read(move |store| {
-                    let Some(draft) = store.draft(id)? else {
-                        return Ok(None);
-                    };
-                    let answers = match (draft.kind, draft.thread_id) {
-                        (DraftKind::New, _) | (_, None) => None,
-                        (_, Some(thread)) => {
-                            store.answered_message(thread, draft.in_reply_to.as_deref())?
-                        }
-                    };
-                    Ok(Some(Box::new(ResumedDraft { draft, answers })))
-                })
+                .read(move |store| Ok(store.draft(id)?.map(Box::new)))
                 .await;
             send(&sink, MailEvent::Draft { seq, result });
         })

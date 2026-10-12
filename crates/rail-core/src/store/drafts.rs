@@ -627,32 +627,6 @@ impl Store {
         Ok(Some(source))
     }
 
-    /// The message of `thread` a saved reply answers: the one whose `Message-ID` is
-    /// `in_reply_to` (stored with or without its angle brackets), else the thread's newest.
-    /// What a resumed reply or forward names when it is saved again.
-    pub fn answered_message(
-        &self,
-        thread: i64,
-        in_reply_to: Option<&str>,
-    ) -> Result<Option<i64>, StoreError> {
-        if let Some(id) = in_reply_to.map(|i| i.trim().trim_matches(['<', '>'])) {
-            let found = self
-                .conn
-                .query_row(
-                    "SELECT id FROM messages WHERE thread_id = ?1
-                       AND trim(message_id, '<> ') = ?2
-                     ORDER BY id DESC LIMIT 1",
-                    params![thread, id],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if found.is_some() {
-                return Ok(found);
-            }
-        }
-        self.latest_message_of(thread)
-    }
-
     /// The newest message of `thread` (by date, then id): the one a reply or forward of the
     /// thread answers. `None` when the thread holds no message.
     pub fn latest_message_of(&self, thread: i64) -> Result<Option<i64>, StoreError> {

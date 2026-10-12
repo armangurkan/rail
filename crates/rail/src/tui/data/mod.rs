@@ -18,7 +18,7 @@ use rail_core::ops::{
     BodyFetchResponse, DraftId, DraftSaveResponse, DraftSendResponse, OpError, OutboxId,
 };
 use rail_core::store::AddressEntry;
-use rail_core::store::drafts::{DraftSummary, ReplySource};
+use rail_core::store::drafts::{Draft, DraftSummary, ReplySource};
 use rail_core::store::view::{HtmlBody, LabelChoices, ThreadDetail};
 
 pub use daemon_link::SaveCall;
@@ -27,7 +27,7 @@ pub use daemon_link::{ApplyCall, DaemonLink};
 pub use daemon_link::{FakeCall, FakeDaemon};
 pub use store_reader::ReplyTarget;
 pub use store_reader::{
-    ListOutcome, ListRequest, ReadError, ResumedDraft, ScopeChoice, SidebarOutcome, StoreReader,
+    ListOutcome, ListRequest, ReadError, ScopeChoice, SidebarOutcome, StoreReader,
 };
 
 use crate::tui::app::{Effect, TaskResult, TaskSink};
@@ -150,7 +150,7 @@ pub enum MailEvent {
     /// A draft to resume (`None`: it is no longer stored).
     Draft {
         seq: u64,
-        result: Result<Option<Box<ResumedDraft>>, ReadError>,
+        result: Result<Option<Box<Draft>>, ReadError>,
     },
     /// The editor exited: its exit code, or why it could not run.
     EditorDone(Result<i32, String>),

@@ -25,6 +25,7 @@ use crate::tui::theme::choice::{ColorDepth, ThemeChoice};
 
 mod actions;
 mod compose;
+mod compose_edges;
 mod pickers;
 mod state;
 mod themes;

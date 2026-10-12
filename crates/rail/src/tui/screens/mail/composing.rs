@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 
 use rail_core::ops::drafts::{DraftAttachment, ReplyTo};
 use rail_core::ops::{DraftSaveRequest, MAX_TOTAL_ATTACHMENT_BYTES, client_token};
-use rail_core::store::drafts::{Attachment, DraftKind, Recipient, ReplySource};
+use rail_core::store::drafts::{Attachment, Draft, DraftKind, Recipient, ReplySource};
 
 use super::{Focus, MailScreen};
 use crate::tui::app::Effect;
-use crate::tui::data::{ReplyTarget, ResumedDraft, SaveCall};
+use crate::tui::data::{ReplyTarget, SaveCall};
 use crate::tui::keys::Action;
 use crate::tui::screens::compose::model::{AttachmentRow, Composing, Headers};
 use crate::tui::screens::compose::{Composer, file, prefill};
@@ -172,7 +172,12 @@ impl MailScreen {
             account: self.accounts[c.account_index].name.clone(),
             draft: c.draft,
             kind: c.kind,
-            reply_to: c.reply_to.map(|message| ReplyTo { message }),
+            // Only the create names the message answered; an update keeps the threading the
+            // draft was created with (that message may have left the store since).
+            reply_to: c
+                .reply_to
+                .filter(|_| c.draft.is_none())
+                .map(|message| ReplyTo { message }),
             to: c.headers.to.clone(),
             cc: c.headers.cc.clone(),
             bcc: c.headers.bcc.clone(),
@@ -317,15 +322,15 @@ impl MailScreen {
     }
 
     /// A stored draft as the composer holds it; `None` when its account is not configured.
-    pub(super) fn composing_of(&self, read: ResumedDraft) -> Option<Composing> {
-        let ResumedDraft { draft: d, answers } = read;
+    /// It names no message answered: its saves are updates, which keep the stored threading.
+    pub(super) fn composing_of(&self, d: Draft) -> Option<Composing> {
         let index = self.account_index_of(d.account_id)?;
         Some(Composing {
             draft: Some(d.id),
             account_index: index,
             account_address: self.accounts[index].address.clone(),
             kind: d.kind,
-            reply_to: answers,
+            reply_to: None,
             headers: Headers {
                 to: shown(&d.to),
                 cc: shown(&d.cc),
