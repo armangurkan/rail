@@ -7,6 +7,8 @@ mod actions_pick;
 mod composing;
 mod composing_answers;
 mod composing_flow;
+mod drafts_flow;
+mod drafts_pane;
 mod layout;
 mod list;
 #[cfg(test)]
@@ -178,6 +180,8 @@ pub struct MailScreen {
     /// The message being written, drawn over everything but the status bar.
     compose: Option<Composer>,
     composing: composing::ComposeState,
+    /// The Drafts folder's pane and what its keys wait on.
+    drafts: drafts_flow::DraftsState,
     seq: u64,
     latest_list: u64,
     /// The newest thread read: an older answer is dropped.
@@ -233,6 +237,7 @@ impl MailScreen {
             pending_open: None,
             compose: None,
             composing: composing::ComposeState::default(),
+            drafts: drafts_flow::DraftsState::default(),
             seq: 0,
             latest_list: 0,
             latest_thread: 0,
@@ -322,6 +327,9 @@ impl MailScreen {
             return Vec::new();
         }
         self.list.cancel_loading();
+        if self.in_drafts() {
+            return vec![self.read_sidebar(), self.read_drafts_pane()];
+        }
         let (at, place) = self
             .navigating
             .unwrap_or_else(|| (self.list.requery_at(), Place::Keep));
@@ -353,6 +361,9 @@ impl MailScreen {
         self.sidebar.point_at(&scope);
         self.scope = scope;
         self.list.cancel_loading();
+        if self.in_drafts() {
+            return self.open_drafts_pane();
+        }
         vec![self.read_list(PageAt::First, Place::Top)]
     }
 
@@ -386,6 +397,9 @@ impl MailScreen {
     }
 
     pub(crate) fn act(&mut self, action: Action) -> Vec<Effect> {
+        if let Some(effects) = self.drafts_action(action) {
+            return effects;
+        }
         match action {
             // The shell quits on its own key; this is `q` read after a chord's first key.
             Action::GlobalQuit => return vec![Effect::Quit],
@@ -628,7 +642,8 @@ impl MailScreen {
         if !self.actions.selection.is_empty() {
             line = format!("{} selected  ·  {line}", self.actions.selection.len());
         }
-        if self.filter.is_empty() {
+        // The Drafts folder's pane is not filtered.
+        if self.filter.is_empty() || self.in_drafts() {
             return line;
         }
         let parsed = crate::tui::text::escape(&self.filter.describe().join(" · "));

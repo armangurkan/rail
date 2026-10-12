@@ -49,8 +49,16 @@ pub(super) struct LastAction {
     restored: bool,
     /// Some undo was answered.
     undid: bool,
-    /// A `draft.send`: undoing it reopens the review.
-    sent: bool,
+    /// What the record is: undoing a send reopens its review.
+    kind: Record,
+}
+
+/// What an undo record took: thread actions, a `draft.send` or a `draft.push`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Record {
+    Threads,
+    Sent,
+    Pushed,
 }
 
 impl LastAction {
@@ -68,7 +76,7 @@ impl LastAction {
             selected,
             restored: false,
             undid: false,
-            sent: false,
+            kind: Record::Threads,
         }
     }
 }
@@ -98,7 +106,7 @@ pub(crate) fn verbs(action: &MailAction) -> (&'static str, &'static str) {
         MailAction::Labels { .. } => ("labelled", "change the labels of"),
         MailAction::Move { .. } => ("moved", "move"),
         MailAction::Send { .. } => ("sent", "send"),
-        MailAction::PushDraft { .. } => ("saved", "save the draft"),
+        MailAction::PushDraft { .. } => ("saved to Gmail", "save the draft to Gmail"),
         MailAction::DeleteDraft { .. } => ("discarded", "discard the draft"),
     }
 }
@@ -523,16 +531,16 @@ impl MailScreen {
             return false;
         };
         if last.undid {
-            let text = if last.too_late {
-                "too late to undo"
-            } else {
-                "undone"
+            let text = match (last.too_late, last.kind) {
+                (true, _) => "too late to undo",
+                (false, Record::Pushed) => "kept on this computer",
+                (false, Record::Threads | Record::Sent) => "undone",
             };
             self.status.notify(text, tick);
         } else if say_nothing {
             self.status.notify("Nothing to undo.", tick);
         }
-        last.sent && last.undid && !last.too_late
+        last.kind == Record::Sent && last.undid && !last.too_late
     }
 
     /// An `action.undo` answered. An answer for another action than the newest is stale and
@@ -551,15 +559,25 @@ impl MailScreen {
 
     /// `draft.send` queued the draft: `z` takes it back while the grace lasts.
     pub(super) fn sent_record(&mut self, row: RowToken) {
+        self.draft_record(row, Record::Sent, "sent");
+    }
+
+    /// `draft.push` queued the draft for Gmail under `row`'s token: `z` takes it back while
+    /// the grace lasts, and the draft stays on this computer.
+    pub(super) fn pushed_record(&mut self, row: RowToken) {
+        self.draft_record(row, Record::Pushed, "saved to Gmail");
+    }
+
+    fn draft_record(&mut self, row: RowToken, kind: Record, done: &str) {
         self.actions.seq += 1;
         let until = self.tick + UNDO_TICKS;
         let mut last = LastAction::new(self.actions.seq, 1, until, Vec::new());
         last.rows.push(row);
-        last.sent = true;
+        last.kind = kind;
         self.actions.last = Some(last);
         let key = self.ctx.keymap.label(Action::GlobalUndo);
         self.status
-            .notify_for(format!("sent · {key} undoes"), self.tick, UNDO_TICKS);
+            .notify_for(format!("{done} · {key} undoes"), self.tick, UNDO_TICKS);
     }
 
     fn action_error(&mut self, what: &str, error: &OpError) {

@@ -1,37 +1,61 @@
-//! `draft.save`, `draft.send` and `draft.discard`. Front-end operations only: no MCP tool
+//! `draft.save`, `draft.send` and `draft.discard` (which removes an imported draft's files).
+//! Front-end operations only: no MCP tool
 //! reaches them. Reads open a reader; every write goes through the writer's outbox path, so
 //! the store keeps one writer. Logs carry ids and counts, never an address, a subject or a
 //! file name (a file name appears only in the refusal the user reads).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use super::draft_files::{import_dir, remove_dirs};
 
 use crate::auth::unix_now;
 use crate::daemon::registry::Call;
+use crate::error::ErrorClass;
 use crate::ops::drafts::{AttachmentSummary, CheckedRecipients, DraftAttachment};
 use crate::ops::{
     Action, DraftDiscardRequest, DraftDiscardResponse, DraftId, DraftSaveRequest,
-    DraftSaveResponse, DraftSendRequest, DraftSendResponse, MAX_ATTACHMENTS, MAX_MESSAGE_BYTES,
-    OpError, ReplyTo, UNDO_GRACE, checked_token, estimated_raw_size, new_message_id,
-    too_large_text,
+    DraftSaveResponse, DraftSendRequest, DraftSendResponse, ErrorCode, MAX_ATTACHMENTS,
+    MAX_MESSAGE_BYTES, OpError, ReplyTo, UNDO_GRACE, checked_token, estimated_raw_size,
+    new_message_id, too_large_text,
 };
+use crate::paths::Paths;
 use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
-use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
+use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
 
-fn unexpected() -> OpError {
+pub(super) fn unexpected() -> OpError {
     OpError::internal("the store answered a draft write unexpectedly")
 }
 
-fn no_such_draft() -> OpError {
+pub(super) fn no_such_draft() -> OpError {
     OpError::not_found("draft: no such draft")
 }
 
-fn being_sent() -> OpError {
+pub(super) fn being_sent() -> OpError {
     OpError::invalid_input("draft: this draft is being sent; undo first")
 }
 
-fn checked_id(draft: DraftId) -> Result<(), OpError> {
+/// A push of the draft is in flight: its Gmail id may be about to change, so a discard now
+/// could leave the Gmail copy behind. It clears up once the push lands.
+fn being_pushed() -> OpError {
+    OpError::new(
+        ErrorCode::InvalidInput,
+        ErrorClass::Transient,
+        "draft: saving to Gmail, try again in a moment",
+    )
+}
+
+/// The request's client token, refused under its field's name.
+pub(super) fn checked_client_token(token: &str) -> Result<(), OpError> {
+    checked_token(token).map_err(|e| OpError::invalid_input(format!("client_token: {}", e.message)))
+}
+
+pub(super) fn token_used() -> OpError {
+    OpError::invalid_input("client_token: this token was used for another action")
+}
+
+pub(super) fn checked_id(draft: DraftId) -> Result<(), OpError> {
     if draft <= 0 {
         return Err(OpError::invalid_input(
             "draft: a draft id is a positive number",
@@ -120,7 +144,7 @@ struct Threading {
 /// A stored id as a threading header carries it: `<inner>`. Gmail's metadata keeps ids bare
 /// and either form is accepted. `None` when the inner part fails the MIME builder's rule: a bad
 /// id in received mail is left out of the headers rather than blocking the reply.
-fn header_id(id: &str) -> Option<String> {
+pub(super) fn header_id(id: &str) -> Option<String> {
     let id = id.trim();
     let inner = id.strip_prefix('<').unwrap_or(id);
     let inner = inner.strip_suffix('>').unwrap_or(inner);
@@ -324,11 +348,12 @@ fn saved(db: &Path, id: DraftId) -> Result<DraftSaveResponse, OpError> {
     })
 }
 
-fn saved_id(outcome: OutboxOutcome) -> Result<DraftId, OpError> {
+pub(super) fn saved_id(outcome: OutboxOutcome) -> Result<DraftId, OpError> {
     match outcome {
         OutboxOutcome::DraftSaved(DraftSaved::Saved(id)) => Ok(id),
         OutboxOutcome::DraftSaved(DraftSaved::Missing) => Err(no_such_draft()),
         OutboxOutcome::DraftSaved(DraftSaved::Queued) => Err(being_sent()),
+        OutboxOutcome::DraftSaved(DraftSaved::TokenUsed) => Err(token_used()),
         _ => Err(unexpected()),
     }
 }
@@ -383,7 +408,7 @@ pub(super) async fn save(
 }
 
 /// The draft and its account's address.
-fn draft_and_address(db: &Path, id: DraftId) -> Result<(Draft, String), OpError> {
+pub(super) fn draft_and_address(db: &Path, id: DraftId) -> Result<(Draft, String), OpError> {
     let store = Store::open_reader(db)?;
     let draft = store.draft(id)?.ok_or_else(no_such_draft)?;
     if !store.draft_attachments_readable(id)? {
@@ -422,7 +447,7 @@ fn check_sendable(draft: &Draft) -> Result<(), OpError> {
 }
 
 /// Why an enqueue wrote no row: the draft is being sent, or it is gone.
-fn not_queued(db: &Path, id: DraftId) -> Result<OpError, OpError> {
+pub(super) fn not_queued(db: &Path, id: DraftId) -> Result<OpError, OpError> {
     let draft = Store::open_reader(db)?.draft(id)?;
     Ok(match draft {
         Some(d) if d.state == DraftState::Queued => {
@@ -433,14 +458,12 @@ fn not_queued(db: &Path, id: DraftId) -> Result<OpError, OpError> {
 }
 
 /// A token already in the outbox answers its row: refuse it unless that row is this draft's.
-fn row_of_draft(db: &Path, row: i64, id: DraftId) -> Result<(), OpError> {
+pub(super) fn row_of_draft(db: &Path, row: i64, id: DraftId) -> Result<(), OpError> {
     let owner = Store::open_reader(db)?
         .outbox_row(row)?
         .and_then(|r| r.draft_id);
     if owner != Some(id) {
-        return Err(OpError::invalid_input(
-            "client_token: this token was used for another action",
-        ));
+        return Err(token_used());
     }
     Ok(())
 }
@@ -449,8 +472,7 @@ pub(super) async fn send(
     call: Call,
     request: DraftSendRequest,
 ) -> Result<DraftSendResponse, OpError> {
-    checked_token(&request.client_token)
-        .map_err(|e| OpError::invalid_input(format!("client_token: {}", e.message)))?;
+    checked_client_token(&request.client_token)?;
     checked_id(request.draft)?;
     let (db, id) = (call.ctx.paths.db_file(), request.draft);
     let reader = db.clone();
@@ -494,11 +516,31 @@ pub(super) async fn send(
     Ok(DraftSendResponse { row })
 }
 
+/// The import directory the draft owns: the one its own client token names, when it exists
+/// (an import made it; tokens are unique across accounts). None when the draft is gone.
+fn owned_files(db: &Path, paths: &Paths, id: DraftId) -> Result<Vec<PathBuf>, OpError> {
+    let token = Store::open_reader(db)?.draft_client_token(id)?;
+    Ok(token
+        .map(|t| import_dir(paths, &t))
+        .filter(|dir| dir.is_dir())
+        .into_iter()
+        .collect())
+}
+
 pub(super) async fn discard(
     call: Call,
     request: DraftDiscardRequest,
 ) -> Result<DraftDiscardResponse, OpError> {
     checked_id(request.draft)?;
+    let (db, paths, id) = (
+        call.ctx.paths.db_file(),
+        call.ctx.paths.clone(),
+        request.draft,
+    );
+    let owned = call
+        .ctx
+        .blocking(move || owned_files(&db, &paths, id))
+        .await?;
     let outcome = call
         .ctx
         .sync
@@ -507,11 +549,13 @@ pub(super) async fn discard(
         .outbox(OutboxWrite::DraftDelete(request.draft))
         .await?;
     match outcome {
-        OutboxOutcome::DraftDeleted(true) => {}
-        OutboxOutcome::DraftDeleted(false) => return Err(being_sent()),
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::Deleted) => {}
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingSent) => return Err(being_sent()),
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingPushed) => return Err(being_pushed()),
         _ => return Err(unexpected()),
     }
-    tracing::info!(draft = request.draft, "a draft was discarded");
+    let files = remove_dirs(&owned);
+    tracing::info!(draft = request.draft, files, "a draft was discarded");
     call.ctx.sync.outbox_changed(&call.ctx).await;
     Ok(DraftDiscardResponse {})
 }

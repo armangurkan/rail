@@ -38,6 +38,8 @@ fn the_registry_serves_exactly_the_implemented_operations() {
         names::DAEMON_INFO,
         names::DAEMON_STOP,
         names::DRAFT_DISCARD,
+        names::DRAFT_IMPORT,
+        names::DRAFT_PUSH,
         names::DRAFT_SAVE,
         names::DRAFT_SEND,
         names::GUIDE_PROVIDER,

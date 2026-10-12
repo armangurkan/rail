@@ -52,6 +52,8 @@ fn every_operation_name_is_unique_and_matches_its_marker() {
         DraftSave::NAME,
         DraftSend::NAME,
         DraftDiscard::NAME,
+        DraftPush::NAME,
+        DraftImport::NAME,
     ];
     assert_eq!(markers, names::ALL);
     for internal in [Hello::NAME, DaemonInfoOp::NAME, DaemonStop::NAME] {
@@ -84,6 +86,8 @@ fn every_request_and_response_has_an_object_schema() {
         object_schemas::<DraftSave>(),
         object_schemas::<DraftSend>(),
         object_schemas::<DraftDiscard>(),
+        object_schemas::<DraftPush>(),
+        object_schemas::<DraftImport>(),
     ];
     for (request, response) in all {
         assert_eq!(request["type"], "object", "{request}");

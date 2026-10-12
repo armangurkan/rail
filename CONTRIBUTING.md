@@ -19,6 +19,8 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
     store/filter.rs      The filter line's syntax as SQL conditions
     store/outbox.rs      The outbox queue the action operations and the worker share
     store/drafts.rs      Local drafts, their recipients and attachments
+    store/drafts_folder.rs The Drafts folder's rows (local and Gmail) and the import's source query
+    store/outbox_drafts.rs The outbox rows that save a draft to Gmail and delete its Gmail copy
     store/addresses.rs   The addresses mail has taught the store, for `To:` completion
     store/apply_local.rs Local changes of actions and their exact reverse, and the conflict rule
   src/auth/              Secret stores (keyring, file, 1Password), OAuth endpoints, loopback listener, login and admin consent, token refresh
@@ -27,14 +29,19 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
     ops/drafts.rs        The draft operations' types and the limits on a message
   src/daemon/            JSON-RPC wire format, client and connector, the socket server and its handlers
     daemon/handlers/drafts.rs  The `draft.save`, `draft.send` and `draft.discard` handlers
+    daemon/handlers/drafts_gmail.rs  The `draft.push` and `draft.import` handlers
+    daemon/handlers/draft_files.rs  The private files of an imported draft: fetch, removal, the start-up sweep
   src/accounts/          The add, login and remove pipeline the daemon runs
   src/guide/             Google and Microsoft setup steps as versioned data
   src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries) and the Gmail provider with its HTML-to-text scanner
     provider/gmail/mime.rs, send.rs  Building an outgoing message and sending it
+    provider/gmail/drafts.rs  Gmail's drafts: create, update, delete, find
+    provider/mock/       The in-memory provider the tests use (a module: `mod.rs`, `drafts.rs`, `tests.rs`)
   src/sync/              Per-account sync engines, backfill and history passes, the single store writer, search
     sync/body_fetch.rs   Fetches bodies the store does not hold yet (the `body.fetch` operation)
     sync/outbox/         The per-account outbox worker that sends actions to Gmail
     sync/outbox/compose.rs Assembles a draft into the message the Gmail provider sends
+    sync/outbox/pushing.rs Saves a draft to Gmail (create or update) and deletes a Gmail draft
   src/doctor.rs          The `rail doctor` checks
 crates/rail/             Binary: clap CLI, logging, and the account, daemon, doctor, mcp, search, secrets, setup and sync commands
   src/cmd/mcp/           The MCP server: tools, the setup prompt, confirmation through elicitation, summaries
@@ -42,7 +49,8 @@ crates/rail/             Binary: clap CLI, logging, and the account, daemon, doc
     tui/keys             Actions, their default keys and `[keys]` overrides: the keymap every screen reads
     tui/text             Escaping, width, wrapping and hyperlinks for text that came from outside
     tui/data             The mail screen's read side (the store reader) and its link to the daemon
-    tui/screens/mail     The mail screen: thread list, sidebar, status bar; `composing*.rs` is its side of writing mail
+    tui/screens/mail     The mail screen: thread list, sidebar, status bar; `composing*.rs` is its side of writing mail, `drafts_pane.rs` and `drafts_flow.rs` its Drafts folder
+    tui/screens/mail/tests/compose_gmail.rs, drafts_folder.rs  The tests of saving to Gmail and of the Drafts folder
     tui/screens/reader   The reader: messages, folded quotes, numbered links
     tui/screens/compose  The composer: the compose file, reply and forward prefill, prompts with completion, the review
     tui/editor.rs        Which editor to run and how (`handover.rs` hands the terminal over)

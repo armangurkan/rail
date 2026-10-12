@@ -18,7 +18,7 @@ use crate::tui::text::{escape, fit, outside, pad, pad_left, width};
 use crate::tui::theme::Theme;
 
 /// Columns of the date column.
-const DATE_COLS: usize = 10;
+pub(super) const DATE_COLS: usize = 10;
 /// Columns of the message count (`(12)`).
 const COUNT_COLS: usize = 5;
 
@@ -39,6 +39,8 @@ pub struct Glyphs {
     pub open: &'static str,
     /// A collapsed message's arrow.
     pub closed: &'static str,
+    /// Before a draft kept only on this computer, in the Drafts folder.
+    pub draft: &'static str,
 }
 
 impl Glyphs {
@@ -55,6 +57,7 @@ impl Glyphs {
                 problem: "!",
                 open: "▾",
                 closed: "▸",
+                draft: "✎",
             },
             Icons::Ascii => Self {
                 bar: "|",
@@ -67,6 +70,7 @@ impl Glyphs {
                 problem: "!",
                 open: "v",
                 closed: ">",
+                draft: "*",
             },
         }
     }
@@ -84,8 +88,13 @@ pub(crate) fn visible_offset(offset: usize, selected: usize, height: usize) -> u
     }
 }
 
+/// Columns of the people column in a list `cols` wide.
+pub(super) fn people_cols(cols: u16) -> usize {
+    usize::from(cols / 4).clamp(12, 24)
+}
+
 /// Senders as the list shows them: names, or the part of the address before `@`.
-fn participants(people: &[Mailbox]) -> String {
+pub(super) fn participants(people: &[Mailbox]) -> String {
     people
         .iter()
         .map(|p| match p.name.as_deref() {
@@ -244,6 +253,10 @@ impl MailScreen {
     }
 
     fn render_list(&self, frame: &mut Frame, area: Rect, theme: &Theme, glyphs: &Glyphs) {
+        if self.in_drafts() {
+            self.render_drafts(frame, area, theme, glyphs);
+            return;
+        }
         if let Some(lines) = self.list_message(theme) {
             frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
             return;
@@ -320,7 +333,7 @@ impl MailScreen {
         } else {
             base
         };
-        let people_cols = usize::from(cols / 4).clamp(12, 24);
+        let people_cols = people_cols(cols);
         let date = pad_left(&self.ctx.clock.short(row.key.last_date), DATE_COLS);
         let people = pad(&participants(&row.participants), people_cols);
         let count = if row.message_count > 1 {
@@ -365,10 +378,12 @@ impl MailScreen {
             .border_style(theme.muted);
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let hint = format!(
-            "Open a thread with {}; it shows here.",
-            self.ctx.keymap.label(Action::ListOpen)
-        );
+        let key = self.ctx.keymap.label(Action::ListOpen);
+        let hint = if self.in_drafts() {
+            format!("Open a draft with {key}; its review takes the screen.")
+        } else {
+            format!("Open a thread with {key}; it shows here.")
+        };
         frame.render_widget(Paragraph::new(Line::styled(hint, theme.muted)), inner);
     }
 

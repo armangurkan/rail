@@ -38,6 +38,14 @@ impl PageToken {
     }
 }
 
+/// The ids of a draft saved at the provider: the draft itself, and the message it holds (which
+/// changes with every update).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftIds {
+    pub draft_id: RemoteId,
+    pub message_id: RemoteId,
+}
+
 /// The `folders.kind` values of the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FolderKind {

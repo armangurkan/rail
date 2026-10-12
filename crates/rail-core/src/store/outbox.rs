@@ -9,7 +9,8 @@ use std::collections::BTreeSet;
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
 use super::apply_local::{self, Prior};
-use super::drafts::{self, DraftSaved, DraftWrite};
+use super::drafts::{DraftSaved, DraftWrite};
+use super::outbox_drafts::{draft_remote, draft_write, enqueue_draft, insert_delete_draft};
 use super::{Store, StoreError, rollup};
 use crate::ops::{Action, DraftId, OutboxId, RowToken};
 
@@ -113,8 +114,44 @@ pub enum OutboxWrite {
         write: Box<DraftWrite>,
         client_token: String,
     },
-    /// `draft.discard`'s delete, refused while the draft is being sent.
+    /// `draft.discard`'s delete, refused while the draft is being sent or pushed; a draft
+    /// Gmail holds leaves a Gmail delete.
     DraftDelete(DraftId),
+    /// A push landed: the draft keeps Gmail's ids and the row goes.
+    CompletePush {
+        id: OutboxId,
+        draft: DraftId,
+        remote_draft_id: String,
+        remote_message_id: String,
+    },
+    /// The import of a Gmail draft: one local draft per Gmail message, keeping Gmail's ids.
+    DraftImport {
+        write: Box<DraftWrite>,
+        remote_draft_id: String,
+        remote_message_id: String,
+        client_token: String,
+    },
+}
+
+/// What `draft.discard`'s delete did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftDeleteOutcome {
+    /// Gone (or gone already); a Gmail delete is queued when Gmail held it.
+    Deleted,
+    /// The draft is being sent: nothing changed.
+    BeingSent,
+    /// A push of the draft is in flight: nothing changed; try again once it lands.
+    BeingPushed,
+}
+
+/// An account's outbox rows: waiting (inflight ones too), failed, `send` rows in flight and
+/// `push_draft` rows in flight.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OutboxCounts {
+    pub pending: u64,
+    pub failed: u64,
+    pub sending: u64,
+    pub saving: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,8 +175,7 @@ pub enum OutboxOutcome {
     /// The rows moved back to pending: the worker looks a `send` among them up before sending.
     Recovered(Vec<OutboxId>),
     DraftSaved(DraftSaved),
-    /// False when the draft is being sent: nothing was deleted.
-    DraftDeleted(bool),
+    DraftDeleted(DraftDeleteOutcome),
 }
 
 const COLUMNS: &str = "id, account_id, payload, thread_ids, state, attempts, not_before, \
@@ -176,7 +212,7 @@ fn one(tx: &Transaction, id: OutboxId) -> Result<Option<OutboxRow>, StoreError> 
         .optional()?)
 }
 
-fn json<T: serde::Serialize>(value: &T) -> String {
+pub(super) fn json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "[]".into())
 }
 
@@ -282,42 +318,8 @@ pub(crate) fn enqueue(
     Ok(Some((id, threads.len())))
 }
 
-/// A draft row for one of the account's drafts; `None` (nothing written) when the account
-/// holds no such draft, or for a `send` of a draft that is not `editing` (already queued). A
-/// `send` row queues the draft.
-fn enqueue_draft(
-    tx: &Transaction,
-    new: &NewAction,
-    draft: DraftId,
-) -> Result<Option<(OutboxId, usize)>, StoreError> {
-    let Some(state) = draft_state(tx, draft, Some(new.account_id))? else {
-        return Ok(None);
-    };
-    if matches!(new.action, Action::Send { .. }) && state != "editing" {
-        return Ok(None);
-    }
-    tx.execute(
-        "INSERT INTO outbox (account_id, kind, payload, state, client_token, not_before, thread_ids,
-           reversal, draft_id)
-         VALUES (?1, ?2, ?3, 'pending', ?4, ?5, '[]', '[]', ?6)",
-        params![
-            new.account_id,
-            new.action.kind_column(),
-            json(&new.action),
-            new.client_token,
-            new.not_before,
-            draft
-        ],
-    )?;
-    let id = tx.last_insert_rowid();
-    if matches!(new.action, Action::Send { .. }) {
-        set_draft_state(tx, draft, "queued")?;
-    }
-    Ok(Some((id, 1)))
-}
-
 /// The draft's state, when it exists (and is `account`'s, when given).
-fn draft_state(
+pub(super) fn draft_state(
     tx: &Transaction,
     draft: DraftId,
     account: Option<i64>,
@@ -332,7 +334,11 @@ fn draft_state(
 }
 
 /// The draft's `editing` or `queued`.
-fn set_draft_state(tx: &Transaction, draft: DraftId, state: &str) -> Result<(), StoreError> {
+pub(super) fn set_draft_state(
+    tx: &Transaction,
+    draft: DraftId,
+    state: &str,
+) -> Result<(), StoreError> {
     tx.execute(
         "UPDATE drafts SET state = ?2 WHERE id = ?1",
         params![draft, state],
@@ -380,8 +386,9 @@ pub(crate) fn claim_next(
 }
 
 /// The row is done: it leaves the outbox, and a sent draft leaves the store with every other
-/// row of it (a failed earlier send among them), so none can act on the draft again.
-pub(crate) fn complete(tx: &Transaction, id: OutboxId) -> Result<(), StoreError> {
+/// row of it (a failed earlier send among them), so none can act on the draft again. A sent
+/// draft Gmail holds leaves a Gmail delete of its copy there, due `now`, in this transaction.
+pub(crate) fn complete(tx: &Transaction, id: OutboxId, now: i64) -> Result<(), StoreError> {
     let sent: Option<DraftId> = tx
         .query_row(
             "SELECT draft_id FROM outbox WHERE id = ?1 AND kind = 'send'",
@@ -391,6 +398,10 @@ pub(crate) fn complete(tx: &Transaction, id: OutboxId) -> Result<(), StoreError>
         .optional()?
         .flatten();
     if let Some(draft) = sent {
+        if let Some((account_id, Some(remote))) = draft_remote(tx, draft)? {
+            let token = format!("after-send-{id}");
+            insert_delete_draft(tx, account_id, draft, &remote, &token, now)?;
+        }
         tx.execute(
             "DELETE FROM outbox WHERE draft_id = ?1 AND id != ?2",
             params![draft, id],
@@ -541,31 +552,6 @@ pub(crate) fn recover(tx: &Transaction, account: i64) -> Result<Vec<OutboxId>, S
     Ok(ids.collect::<Result<_, _>>()?)
 }
 
-/// The writes that change a draft row, in the caller's transaction (`outbox_write` passes only
-/// those).
-fn draft_write(
-    tx: &Transaction,
-    write: &OutboxWrite,
-    now: i64,
-) -> Result<OutboxOutcome, StoreError> {
-    Ok(match write {
-        OutboxWrite::DraftSendAttempted { draft } => {
-            tx.execute(
-                "UPDATE drafts SET send_attempted_at = ?2
-                 WHERE id = ?1 AND send_attempted_at IS NULL",
-                params![draft, now],
-            )?;
-            OutboxOutcome::Done
-        }
-        OutboxWrite::DraftSave {
-            write,
-            client_token,
-        } => OutboxOutcome::DraftSaved(drafts::save_in(tx, write, client_token, now)?),
-        OutboxWrite::DraftDelete(id) => OutboxOutcome::DraftDeleted(drafts::delete_in(tx, *id)?),
-        _ => OutboxOutcome::Done,
-    })
-}
-
 impl Store {
     /// One outbox write in one `IMMEDIATE` transaction.
     pub fn outbox_write(
@@ -586,7 +572,7 @@ impl Store {
                 OutboxOutcome::Claimed(claim_next(&tx, *account_id, now)?)
             }
             OutboxWrite::Complete { id } => {
-                complete(&tx, *id)?;
+                complete(&tx, *id, now)?;
                 OutboxOutcome::Done
             }
             OutboxWrite::Fail { id, failure } => {
@@ -609,24 +595,33 @@ impl Store {
             }
             OutboxWrite::DraftSendAttempted { .. }
             | OutboxWrite::DraftSave { .. }
-            | OutboxWrite::DraftDelete(_) => draft_write(&tx, write, now)?,
+            | OutboxWrite::DraftDelete(_)
+            | OutboxWrite::CompletePush { .. }
+            | OutboxWrite::DraftImport { .. } => draft_write(&tx, write, now)?,
         };
         tx.commit()?;
         Ok(outcome)
     }
 
-    /// `(waiting, failed, sending)` rows of the account; waiting counts inflight ones, and
-    /// sending is the inflight `send` rows.
-    pub fn outbox_depth(&self, account_id: i64) -> Result<(u64, u64, u64), StoreError> {
-        let (waiting, failed, sending): (i64, i64, i64) = self.conn.query_row(
+    /// The account's rows by state: waiting counts inflight ones, sending is the inflight
+    /// `send` rows, and saving the inflight `push_draft` rows.
+    pub fn outbox_depth(&self, account_id: i64) -> Result<OutboxCounts, StoreError> {
+        let counts: [i64; 4] = self.conn.query_row(
             "SELECT COALESCE(sum(state != 'failed'), 0), COALESCE(sum(state = 'failed'), 0),
-               COALESCE(sum(state = 'inflight' AND kind = 'send'), 0)
+               COALESCE(sum(state = 'inflight' AND kind = 'send'), 0),
+               COALESCE(sum(state = 'inflight'
+                            AND json_extract(payload, '$.kind') = 'push_draft'), 0)
              FROM outbox WHERE account_id = ?1",
             [account_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok([r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?]),
         )?;
         let count = |n: i64| u64::try_from(n).unwrap_or(0);
-        Ok((count(waiting), count(failed), count(sending)))
+        Ok(OutboxCounts {
+            pending: count(counts[0]),
+            failed: count(counts[1]),
+            sending: count(counts[2]),
+            saving: count(counts[3]),
+        })
     }
 
     /// The earliest `not_before` of a pending row that `claim_next` can take once due: rows

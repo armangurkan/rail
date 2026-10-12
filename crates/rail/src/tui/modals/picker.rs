@@ -186,7 +186,7 @@ impl Picker {
                     .map_or(AccentAnswer::SchemeDefault, AccentAnswer::Slot),
             )),
             PickerKind::Account => usize::try_from(item.id).ok().map(Command::Account),
-            PickerKind::Draft => Some(Command::ResumeDraft(item.id)),
+            PickerKind::Draft => usize::try_from(item.id).ok().map(Command::DraftRow),
         }
     }
 

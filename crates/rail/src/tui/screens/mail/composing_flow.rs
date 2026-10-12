@@ -3,7 +3,7 @@
 //! and the editor round trip with its failure paths.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use rail_core::ops::client_token;
+use rail_core::ops::{DraftId, client_token};
 use rail_core::store::drafts::{DraftKind, ReplySource};
 
 use super::composing::{After, BUSY, OPENING_PROMPTS, Pending, attachable};
@@ -34,8 +34,7 @@ impl MailScreen {
 
     /// `c`: the scope's account, or the account picker in the unified inbox.
     pub(super) fn start_compose(&mut self) -> Vec<Effect> {
-        if self.compose.is_some() {
-            self.status.notify(BUSY, self.tick);
+        if self.import_blocks() {
             return Vec::new();
         }
         if self.accounts.is_empty() {
@@ -64,6 +63,17 @@ impl MailScreen {
         self.start_new(index)
     }
 
+    /// A message is being written, or an import's answer is to open a review: a new message
+    /// must not take its place. Says so.
+    fn import_blocks(&mut self) -> bool {
+        let busy = self.compose.is_some()
+            || matches!(self.composing.pending, Some(Pending::Importing { .. }));
+        if busy {
+            self.status.notify(BUSY, self.tick);
+        }
+        busy
+    }
+
     /// A new message from account `index`: the `To` and `Subject` prompts first.
     pub(super) fn start_new(&mut self, index: usize) -> Vec<Effect> {
         if self.compose.is_some() || index >= self.accounts.len() {
@@ -78,8 +88,7 @@ impl MailScreen {
 
     /// `r`, `R`, `f`: the open thread's latest message, else the cursor thread's.
     fn start_reply(&mut self, kind: DraftKind) -> Vec<Effect> {
-        if self.compose.is_some() {
-            self.status.notify(BUSY, self.tick);
+        if self.import_blocks() {
             return Vec::new();
         }
         let target = match (self.focus, self.reader.as_ref()) {
@@ -232,6 +241,7 @@ impl MailScreen {
             ComposeOutcome::Stay => Vec::new(),
             ComposeOutcome::Edit => self.open_editor(),
             ComposeOutcome::Send => self.send_draft(),
+            ComposeOutcome::Push => self.push_draft(),
             ComposeOutcome::Close => self.close_compose(),
             ComposeOutcome::Discard => self.discard_compose(),
             ComposeOutcome::Attach(path) => self.attach(path),
@@ -364,6 +374,34 @@ impl MailScreen {
         vec![self.ctx.link.draft_send(seq, draft, client_token())]
     }
 
+    /// `s`: save text not stored yet, then save the draft to Gmail's Drafts; the review
+    /// closes when the daemon has queued the push.
+    fn push_draft(&mut self) -> Vec<Effect> {
+        let Some(draft) = self.compose.as_ref().map(|c| c.composing().draft) else {
+            return Vec::new();
+        };
+        if self.composing.pending.is_some() {
+            self.status.notify("Wait for the draft to save.", self.tick);
+            return Vec::new();
+        }
+        match draft {
+            Some(draft) if !self.composing.unsaved => self.start_push(draft),
+            _ => self.save_draft(After::Push, None),
+        }
+    }
+
+    /// Ask the daemon to save `draft` to Gmail under a fresh token.
+    pub(super) fn start_push(&mut self, draft: DraftId) -> Vec<Effect> {
+        let seq = self.next_compose_seq();
+        let client_token = client_token();
+        self.composing.pending = Some(Pending::Pushing {
+            seq,
+            draft,
+            client_token: client_token.clone(),
+        });
+        vec![self.ctx.link.draft_push(seq, draft, client_token)]
+    }
+
     /// The editor exited (or could not start).
     pub(super) fn editor_done(&mut self, result: Result<i32, String>) -> Vec<Effect> {
         if self.composing.pending != Some(Pending::Editing) {
@@ -454,7 +492,8 @@ impl MailScreen {
     pub(super) fn compose_command(&mut self, command: Command) -> Result<Vec<Effect>, Command> {
         Ok(match command {
             Command::Account(index) => self.start_new(index),
-            Command::ResumeDraft(draft) => self.resume_draft(draft),
+            Command::DraftRow(index) => self.picked_draft(index),
+            Command::DiscardDraftRow => self.discard_draft_row(),
             Command::KeepText => match self.composing.kept.take() {
                 Some(text) => self.apply_file_text(text),
                 None => Vec::new(),
@@ -471,6 +510,7 @@ impl MailScreen {
 
     /// A modal closed without an answer: "Keep what you wrote?" answered no drops the text.
     pub(super) fn compose_modal_closed(&mut self) {
+        self.discard_row_closed();
         if self.composing.kept.take().is_some() {
             self.remove_compose_file();
         }

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use rail_core::ops::drafts::{DraftAttachment, ReplyTo};
 use rail_core::ops::{
-    DraftSaveRequest, MAX_MESSAGE_BYTES, client_token, estimated_raw_size, too_large_text,
+    DraftId, DraftSaveRequest, MAX_MESSAGE_BYTES, client_token, estimated_raw_size, too_large_text,
 };
 use rail_core::store::drafts::{Attachment, Draft, DraftKind, Recipient, ReplySource};
 
@@ -25,6 +25,8 @@ pub(super) enum After {
     Edit,
     /// Show (or refresh) the review.
     Review,
+    /// Save the draft to Gmail's Drafts once it is saved.
+    Push,
 }
 
 /// The one composing request in flight; an answer that does not match it is stale.
@@ -49,10 +51,21 @@ pub(super) enum Pending {
     Editing,
     /// `draft.send` is in flight.
     Sending { seq: u64 },
+    /// `draft.push` is in flight for `draft` under `client_token`.
+    Pushing {
+        seq: u64,
+        draft: DraftId,
+        client_token: String,
+    },
     /// A draft is read to resume it.
     Resuming { seq: u64 },
     /// The drafts picker's list is read.
     Drafts { seq: u64 },
+    /// `draft.import` is in flight for a Gmail draft; `then` is what its answer is for.
+    Importing {
+        seq: u64,
+        then: super::drafts_flow::AfterImport,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -161,6 +174,7 @@ impl MailScreen {
         let keymap = &self.ctx.keymap;
         let labels = [
             Action::ComposeSend,
+            Action::ComposePush,
             Action::ComposeEdit,
             Action::ComposeHeaders,
             Action::ComposeAttach,
@@ -174,12 +188,15 @@ impl MailScreen {
         self.focus = Focus::Compose;
     }
 
-    /// Close the composer: its answers are dropped (except a send's, which still makes the
-    /// undo record) and the compose file goes.
+    /// Close the composer: its answers are dropped (except a send's or a push's, which still
+    /// make the undo record) and the compose file goes.
     pub(super) fn hide_composer(&mut self) {
         self.compose = None;
         self.composing.unsaved = false;
-        if !matches!(self.composing.pending, Some(Pending::Sending { .. })) {
+        if !matches!(
+            self.composing.pending,
+            Some(Pending::Sending { .. } | Pending::Pushing { .. })
+        ) {
             self.composing.pending = None;
         }
         self.remove_compose_file();

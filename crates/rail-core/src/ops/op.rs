@@ -18,8 +18,9 @@ use super::daemon::{
     HelloResponse,
 };
 use super::drafts::{
-    DraftDiscardRequest, DraftDiscardResponse, DraftSaveRequest, DraftSaveResponse,
-    DraftSendRequest, DraftSendResponse,
+    DraftDiscardRequest, DraftDiscardResponse, DraftImportRequest, DraftImportResponse,
+    DraftPushRequest, DraftPushResponse, DraftSaveRequest, DraftSaveResponse, DraftSendRequest,
+    DraftSendResponse,
 };
 use super::guide::{GuideRequest, GuideResponse};
 use super::pending::{CancelRequest, WaitRequest, WaitResponse};
@@ -57,9 +58,11 @@ pub mod names {
     pub const DRAFT_SAVE: &str = "draft.save";
     pub const DRAFT_SEND: &str = "draft.send";
     pub const DRAFT_DISCARD: &str = "draft.discard";
+    pub const DRAFT_PUSH: &str = "draft.push";
+    pub const DRAFT_IMPORT: &str = "draft.import";
 
     /// Every user operation, in the order of the specs' tables.
-    pub const ALL: [&str; 22] = [
+    pub const ALL: [&str; 24] = [
         STATUS,
         ACCOUNTS_LIST,
         PRESETS_LIST,
@@ -82,6 +85,8 @@ pub mod names {
         DRAFT_SAVE,
         DRAFT_SEND,
         DRAFT_DISCARD,
+        DRAFT_PUSH,
+        DRAFT_IMPORT,
     ];
 
     /// The daemon's own methods: the handshake and its lifecycle. Not user operations.
@@ -206,6 +211,14 @@ operation!(
 operation!(
     /// Delete a draft that is not being sent. Terminal-only.
     DraftDiscard, names::DRAFT_DISCARD, DraftDiscardRequest, DraftDiscardResponse
+);
+operation!(
+    /// Queue a draft's save to Gmail's Drafts, after the undo grace. Terminal-only.
+    DraftPush, names::DRAFT_PUSH, DraftPushRequest, DraftPushResponse
+);
+operation!(
+    /// Make a local draft of a Gmail draft, keeping its Gmail ids. Terminal-only.
+    DraftImport, names::DRAFT_IMPORT, DraftImportRequest, DraftImportResponse
 );
 operation!(
     /// The handshake: protocol and Rail versions.

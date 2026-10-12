@@ -1,18 +1,18 @@
 //! The answers composing waits for: `draft.save`, `draft.send` (and its undo reopening the
-//! review), `draft.discard`, the address suggestions, a send the daemon gave up on, and the
-//! drafts picker with the draft it resumes.
+//! review), `draft.push`, `draft.import`, `draft.discard`, the address suggestions, a send the
+//! daemon gave up on, the Drafts-folder reads, and the draft a resume reads.
 
-use rail_core::ops::{DraftId, DraftSaveResponse, DraftSendResponse, OpError, RowToken};
-use rail_core::store::drafts::{Draft, DraftSummary};
+use rail_core::ops::{
+    DraftId, DraftPushResponse, DraftSaveResponse, DraftSendResponse, OpError, RowToken,
+};
+use rail_core::store::drafts::Draft;
 
 use super::composing::{After, BUSY, Pending};
 use super::{MailScreen, error_line};
 use crate::tui::app::Effect;
-use crate::tui::data::{MailEvent, ReadError, ScopeChoice};
-use crate::tui::modals::{Modal, Picker, PickerItem, PickerKind};
+use crate::tui::data::{MailEvent, ReadError};
 use crate::tui::screens::compose::Composer;
 use crate::tui::screens::compose::model::AttachmentRow;
-use crate::tui::screens::compose::prefill;
 
 impl MailScreen {
     /// The composing answers; every other event is ignored.
@@ -25,6 +25,13 @@ impl MailScreen {
                 client_token,
                 result,
             } => self.draft_sent(seq, draft, client_token, result),
+            MailEvent::DraftPushed {
+                seq,
+                draft,
+                client_token,
+                result,
+            } => self.draft_pushed(seq, draft, client_token, result),
+            MailEvent::DraftImported { seq, result, .. } => self.draft_imported(seq, result),
             MailEvent::DraftDiscarded { draft, result } => self.draft_discarded(draft, result),
             MailEvent::Suggestions { seq, result } => {
                 match (result, self.compose.as_mut()) {
@@ -36,7 +43,7 @@ impl MailScreen {
                 Vec::new()
             }
             MailEvent::ReplySource { seq, result } => self.reply_source_read(seq, result),
-            MailEvent::Drafts { seq, result } => self.drafts_read(seq, result),
+            MailEvent::DraftsFolder { seq, result } => self.drafts_folder_read(seq, result),
             MailEvent::Draft { seq, result } => self.draft_read(seq, result),
             MailEvent::EditorDone(result) => self.editor_done(result),
             _ => Vec::new(),
@@ -56,23 +63,34 @@ impl MailScreen {
             return Vec::new();
         }
         self.composing.pending = None;
-        match result {
-            Ok(answer) => self.save_answered(answer),
-            Err(error) => self.save_failed(&error, before),
-        }
-        match after {
+        let saved = match result {
+            Ok(answer) => Some(self.save_answered(answer)),
+            Err(error) => {
+                self.save_failed(&error, before);
+                None
+            }
+        };
+        // The daemon does not report a save: the Drafts folder reads its rows again here.
+        let reread = saved.and_then(|_| self.drafts_changed());
+        let mut effects = match after {
             // Nothing is lost when the save failed: the editor works on the text in memory.
             After::Edit => self.open_editor(),
             After::Review => Vec::new(),
-        }
+            // A failed save pushes nothing: its error is on the review.
+            After::Push => saved.map_or_else(Vec::new, |draft| self.start_push(draft)),
+        };
+        effects.extend(reread);
+        effects
     }
 
-    fn save_answered(&mut self, answer: DraftSaveResponse) {
+    /// The saved draft's id.
+    fn save_answered(&mut self, answer: DraftSaveResponse) -> DraftId {
         self.status.answered();
         self.composing.unsaved = false;
         self.remove_compose_file();
+        let draft = answer.draft;
         let Some(composer) = self.compose.as_mut() else {
-            return;
+            return draft;
         };
         let composing = composer.composing_mut();
         composing.draft = Some(answer.draft);
@@ -90,6 +108,7 @@ impl MailScreen {
                 part: a.part,
             })
             .collect();
+        draft
     }
 
     fn save_failed(&mut self, error: &OpError, before: Option<Vec<AttachmentRow>>) {
@@ -154,6 +173,51 @@ impl MailScreen {
         Vec::new()
     }
 
+    fn draft_pushed(
+        &mut self,
+        seq: u64,
+        draft: DraftId,
+        client_token: String,
+        result: Result<DraftPushResponse, OpError>,
+    ) -> Vec<Effect> {
+        let wanted = Pending::Pushing {
+            seq,
+            draft,
+            client_token: client_token.clone(),
+        };
+        if self.composing.pending.as_ref() != Some(&wanted) {
+            return Vec::new();
+        }
+        self.composing.pending = None;
+        let ours = self
+            .compose
+            .as_ref()
+            .is_some_and(|c| c.composing().draft == Some(draft));
+        match result {
+            Ok(answer) => {
+                self.status.answered();
+                if ours {
+                    self.hide_composer();
+                }
+                self.pushed_record(RowToken {
+                    row: answer.row,
+                    client_token,
+                });
+            }
+            Err(error) => {
+                tracing::warn!(code = ?error.code, "draft.push failed");
+                self.status.failed(&error);
+                let line = error_line(&error);
+                if let Some(composer) = self.compose.as_mut().filter(|_| ours) {
+                    composer.set_error(line.clone());
+                }
+                let text = format!("Could not save to Gmail: {line}");
+                self.status.error(text, self.ctx.clock.now(), self.tick);
+            }
+        }
+        Vec::new()
+    }
+
     /// A send was undone: its review opens again, unless another message is being written.
     pub(super) fn reopen_sent(&mut self) {
         if self.compose.is_some() {
@@ -175,15 +239,16 @@ impl MailScreen {
                     self.hide_composer();
                 }
                 self.status.notify("draft discarded", self.tick);
+                self.drafts_changed().into_iter().collect()
             }
             Err(error) => {
                 tracing::warn!(code = ?error.code, "draft.discard failed");
                 self.status.failed(&error);
                 let text = format!("Could not discard the draft: {}", error_line(&error));
                 self.status.error(text, self.ctx.clock.now(), self.tick);
+                Vec::new()
             }
         }
-        Vec::new()
     }
 
     /// The daemon gave up sending `draft`: its review opens with the error, unless another
@@ -237,69 +302,5 @@ impl MailScreen {
             }
         }
         Vec::new()
-    }
-
-    /// `:drafts`: the scope's account's drafts (every account's in the unified inbox).
-    pub(super) fn drafts_picker(&mut self) -> Vec<Effect> {
-        if self.compose.is_some() {
-            self.status.notify(BUSY, self.tick);
-            return Vec::new();
-        }
-        let ids: Vec<i64> = match &self.scope {
-            ScopeChoice::Unified => self.account_ids.iter().flatten().copied().collect(),
-            ScopeChoice::Account(index) | ScopeChoice::Folder { account: index, .. } => self
-                .account_ids
-                .get(*index)
-                .copied()
-                .flatten()
-                .into_iter()
-                .collect(),
-        };
-        let seq = self.next_compose_seq();
-        self.composing.pending = Some(Pending::Drafts { seq });
-        vec![self.ctx.store.drafts(seq, ids)]
-    }
-
-    fn drafts_read(
-        &mut self,
-        seq: u64,
-        result: Result<Vec<DraftSummary>, ReadError>,
-    ) -> Vec<Effect> {
-        if self.composing.pending != Some(Pending::Drafts { seq }) {
-            return Vec::new();
-        }
-        self.composing.pending = None;
-        match result {
-            Ok(drafts) if drafts.is_empty() => self.status.notify("No drafts.", self.tick),
-            Ok(drafts) => {
-                let items = drafts.iter().map(|d| self.draft_item(d)).collect();
-                self.modal = Some(Modal::Picker(Picker::new(PickerKind::Draft, items)));
-            }
-            Err(error) => {
-                self.side_read_failed(error, "drafts");
-            }
-        }
-        Vec::new()
-    }
-
-    /// `subject · to · when`, raw: the picker escapes names when it draws them.
-    fn draft_item(&self, d: &DraftSummary) -> PickerItem {
-        let subject = if d.subject.trim().is_empty() {
-            "(no subject)"
-        } else {
-            d.subject.as_str()
-        };
-        let to =
-            d.to.iter()
-                .map(|r| prefill::display_parts(r.name.as_deref(), &r.address))
-                .collect::<Vec<_>>()
-                .join(", ");
-        let when = self.ctx.clock.short(d.updated_at);
-        PickerItem {
-            id: d.id,
-            name: format!("{subject} · {to} · {when}"),
-            checked: false,
-            swatch: Vec::new(),
-        }
     }
 }

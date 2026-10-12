@@ -209,27 +209,6 @@ impl std::fmt::Debug for DraftWrite {
     }
 }
 
-/// A Drafts-folder row. `subject` and `to` are outside text.
-#[derive(Clone, PartialEq, Eq)]
-pub struct DraftSummary {
-    pub id: DraftId,
-    pub account_id: i64,
-    pub kind: DraftKind,
-    pub subject: String,
-    pub to: Vec<Recipient>,
-    pub state: DraftState,
-    pub updated_at: i64,
-}
-
-impl std::fmt::Debug for DraftSummary {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DraftSummary")
-            .field("id", &self.id)
-            .field("state", &self.state)
-            .finish_non_exhaustive()
-    }
-}
-
 /// A stored attachment of a message being replied to or forwarded. `filename` is outside text.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ReplyAttachment {
@@ -291,7 +270,7 @@ fn json<T: Serialize>(value: &T) -> String {
 }
 
 /// Rail's own JSON; an unreadable value (a hand-edited store) reads as empty.
-fn parsed<T: serde::de::DeserializeOwned + Default>(text: &str) -> T {
+pub(super) fn parsed<T: serde::de::DeserializeOwned + Default>(text: &str) -> T {
     serde_json::from_str(text).unwrap_or_default()
 }
 
@@ -317,18 +296,6 @@ fn read_draft(r: &Row<'_>) -> rusqlite::Result<Draft> {
         state: DraftState::parse(&text(16)?),
         updated_at: r.get(17)?,
         send_attempted_at: r.get(18)?,
-    })
-}
-
-fn read_summary(r: &Row<'_>) -> rusqlite::Result<DraftSummary> {
-    Ok(DraftSummary {
-        id: r.get(0)?,
-        account_id: r.get(1)?,
-        kind: DraftKind::parse(&r.get::<_, String>(2)?),
-        subject: r.get(3)?,
-        to: parsed(&r.get::<_, String>(4)?),
-        state: DraftState::parse(&r.get::<_, String>(5)?),
-        updated_at: r.get(6)?,
     })
 }
 
@@ -429,10 +396,12 @@ pub enum DraftSaved {
     Missing,
     /// The draft is being sent: it changes only after an undo.
     Queued,
+    /// An import's client token already made a draft (in any account): nothing was written.
+    TokenUsed,
 }
 
 /// True while the draft is being sent: `queued`, or a live `send` row names it.
-fn being_sent(conn: &Connection, id: DraftId) -> Result<bool, StoreError> {
+pub(super) fn being_sent(conn: &Connection, id: DraftId) -> Result<bool, StoreError> {
     Ok(conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM drafts WHERE id = ?1 AND state = 'queued')
              OR EXISTS (SELECT 1 FROM outbox WHERE draft_id = ?1 AND kind = 'send'
@@ -480,16 +449,24 @@ pub(super) fn save_in(
     Ok(DraftSaved::Saved(conn.last_insert_rowid()))
 }
 
-/// `draft_delete` in the writer's outbox transaction, unless the draft is being sent (its
-/// send row pending or inflight): false then, and nothing changes. A missing draft is gone
-/// already: true.
-pub(super) fn delete_in(conn: &Connection, id: DraftId) -> Result<bool, StoreError> {
-    if being_sent(conn, id)? {
-        return Ok(false);
-    }
-    conn.execute("DELETE FROM outbox WHERE draft_id = ?1", [id])?;
-    conn.execute("DELETE FROM drafts WHERE id = ?1", [id])?;
-    Ok(true)
+/// The stored attachments of `message`, in part order.
+pub(super) fn attachments_of(
+    conn: &Connection,
+    message: i64,
+) -> Result<Vec<ReplyAttachment>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT remote_part_id, filename, mime_type, size FROM attachments
+         WHERE message_id = ?1 ORDER BY id",
+    )?;
+    let rows = stmt.query_map([message], |r| {
+        Ok(ReplyAttachment {
+            part_id: r.get(0)?,
+            filename: r.get(1)?,
+            mime_type: r.get(2)?,
+            size: r.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 impl Store {
@@ -519,16 +496,6 @@ impl Store {
                 read_draft,
             )
             .optional()?)
-    }
-
-    /// The account's drafts, newest first.
-    pub fn drafts_for_account(&self, account_id: i64) -> Result<Vec<DraftSummary>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, account_id, kind, subject, to_json, state, updated_at FROM drafts
-             WHERE account_id = ?1 ORDER BY updated_at DESC, id DESC",
-        )?;
-        let rows = stmt.query_map([account_id], read_summary)?;
-        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Delete the draft and its outbox rows.
@@ -610,20 +577,7 @@ impl Store {
         let Some(mut source) = head else {
             return Ok(None);
         };
-        let mut stmt = self.conn.prepare(
-            "SELECT remote_part_id, filename, mime_type, size FROM attachments
-             WHERE message_id = ?1 ORDER BY id",
-        )?;
-        source.attachments = stmt
-            .query_map([message], |r| {
-                Ok(ReplyAttachment {
-                    part_id: r.get(0)?,
-                    filename: r.get(1)?,
-                    mime_type: r.get(2)?,
-                    size: r.get(3)?,
-                })
-            })?
-            .collect::<Result<_, _>>()?;
+        source.attachments = attachments_of(&self.conn, message)?;
         Ok(Some(source))
     }
 

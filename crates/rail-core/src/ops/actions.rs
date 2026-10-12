@@ -28,14 +28,16 @@ pub struct RowToken {
 /// How long an action waits in the outbox before it is sent, so `z` can take it back.
 pub const UNDO_GRACE: Duration = Duration::from_secs(10);
 
-/// An account's outbox: rows waiting (inflight ones too), rows that failed, and `send` rows
-/// being sent now.
+/// An account's outbox: rows waiting (inflight ones too), rows that failed, `send` rows
+/// being sent now, and drafts being saved to Gmail now (inflight `push_draft` rows).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OutboxDepth {
     pub pending: u64,
     pub failed: u64,
     #[serde(default)]
     pub sending: u64,
+    #[serde(default)]
+    pub saving: u64,
 }
 
 /// The `action.failed` notification: an action Gmail refused for good, already reverted in the
@@ -451,9 +453,9 @@ mod tests {
         for bad in ["", "a b", "tok\n"] {
             assert!(checked_token(bad).is_err(), "{bad:?}");
         }
-        // An old depth without `sending` still reads.
+        // An old depth without `sending` or `saving` still reads.
         let depth: OutboxDepth = serde_json::from_str(r#"{"pending":1,"failed":2}"#).unwrap();
-        assert_eq!(depth.sending, 0);
+        assert_eq!((depth.sending, depth.saving), (0, 0));
         let token = client_token();
         assert_eq!(token.len(), 24);
         assert!(token.bytes().all(|b| b.is_ascii_alphanumeric()));

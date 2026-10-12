@@ -331,6 +331,30 @@ impl crate::provider::Provider for Panics {
     ) -> Result<Vec<u8>, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
+    async fn draft_create(
+        &self,
+        _: &[u8],
+        _: Option<&str>,
+    ) -> Result<crate::provider::DraftIds, crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
+    async fn draft_update(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: Option<&str>,
+    ) -> Result<crate::provider::DraftIds, crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
+    async fn draft_delete(&self, _: &str) -> Result<(), crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
+    async fn draft_find(
+        &self,
+        _: &str,
+    ) -> Result<Option<crate::provider::RemoteId>, crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
     async fn profile(&self) -> Result<crate::provider::Profile, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
@@ -668,6 +692,27 @@ impl crate::provider::Provider for RetryingSearch {
     }
     async fn attachment(&self, message: &crate::provider::RemoteId, part: &str) -> Answer<Vec<u8>> {
         self.inner.attachment(message, part).await
+    }
+    async fn draft_create(
+        &self,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Answer<crate::provider::DraftIds> {
+        self.inner.draft_create(raw, thread_id).await
+    }
+    async fn draft_update(
+        &self,
+        draft_id: &str,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Answer<crate::provider::DraftIds> {
+        self.inner.draft_update(draft_id, raw, thread_id).await
+    }
+    async fn draft_delete(&self, draft_id: &str) -> Answer<()> {
+        self.inner.draft_delete(draft_id).await
+    }
+    async fn draft_find(&self, message_id: &str) -> Answer<Option<crate::provider::RemoteId>> {
+        self.inner.draft_find(message_id).await
     }
     async fn changes(
         &self,

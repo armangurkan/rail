@@ -10,13 +10,14 @@ use rail_core::daemon::wire::Notification;
 use rail_core::daemon::{Connector, DaemonClient};
 use rail_core::error::ErrorClass;
 use rail_core::ops::op::{
-    ActionApply, ActionRetry, ActionUndo, BodyFetch, DraftDiscard, DraftSave, DraftSend, SyncNow,
-    SyncStatus,
+    ActionApply, ActionRetry, ActionUndo, BodyFetch, DraftDiscard, DraftImport, DraftPush,
+    DraftSave, DraftSend, SyncNow, SyncStatus,
 };
 use rail_core::ops::{
     AccountSyncStatus, ActionApplyRequest, ActionFailed, ActionRetryRequest, ActionUndoRequest,
-    BodyFetchRequest, DraftDiscardRequest, DraftId, DraftSaveRequest, DraftSendRequest, ErrorCode,
-    OpError, RowToken, SyncNowRequest, SyncStatusRequest, names,
+    BodyFetchRequest, DraftDiscardRequest, DraftId, DraftImportRequest, DraftPushRequest,
+    DraftSaveRequest, DraftSendRequest, ErrorCode, OpError, RowToken, SyncNowRequest,
+    SyncStatusRequest, names,
 };
 use tokio::sync::broadcast::{self, error::RecvError};
 
@@ -238,6 +239,62 @@ impl DaemonLink {
         }
     }
 
+    /// Save `draft` to Gmail's Drafts under `client_token` (which `z` names the push by).
+    pub fn draft_push(&self, seq: u64, draft: DraftId, client_token: String) -> Effect {
+        match self.link.clone() {
+            Link::Daemon(connector) => job(move |sink| async move {
+                let request = DraftPushRequest {
+                    draft,
+                    client_token: client_token.clone(),
+                };
+                let result = connector.call::<DraftPush>(&request).await;
+                let event = MailEvent::DraftPushed {
+                    seq,
+                    draft,
+                    client_token,
+                    result,
+                };
+                send(&sink, event);
+            }),
+            #[cfg(test)]
+            Link::Fake(fake) => {
+                job(move |sink| async move { fake.draft_push(&sink, seq, draft, client_token) })
+            }
+        }
+    }
+
+    /// Make the stored Gmail draft `message` of `account` a local draft, under `client_token`.
+    pub fn draft_import(
+        &self,
+        seq: u64,
+        account: String,
+        message: i64,
+        client_token: String,
+    ) -> Effect {
+        match self.link.clone() {
+            Link::Daemon(connector) => job(move |sink| async move {
+                let request = DraftImportRequest {
+                    account,
+                    message,
+                    client_token,
+                };
+                let result = connector.call::<DraftImport>(&request).await;
+                send(
+                    &sink,
+                    MailEvent::DraftImported {
+                        seq,
+                        message,
+                        result,
+                    },
+                );
+            }),
+            #[cfg(test)]
+            Link::Fake(fake) => job(move |sink| async move {
+                fake.draft_import(&sink, seq, account, message, client_token)
+            }),
+        }
+    }
+
     /// Delete `draft` (the daemon refuses while it is being sent).
     pub fn draft_discard(&self, draft: DraftId) -> Effect {
         match self.link.clone() {
@@ -373,6 +430,11 @@ pub struct FakeDaemon {
     >,
     /// The answer to the next `draft.send`; a fresh row when unset.
     pub send_answer: std::sync::Mutex<Option<Result<rail_core::ops::DraftSendResponse, OpError>>>,
+    /// The answer to the next `draft.push`; a fresh row when unset.
+    pub push_answer: std::sync::Mutex<Option<Result<rail_core::ops::DraftPushResponse, OpError>>>,
+    /// The answer to the next `draft.import`; a fresh draft when unset.
+    pub import_answer:
+        std::sync::Mutex<Option<Result<rail_core::ops::DraftImportResponse, OpError>>>,
     /// The answer to the next `draft.discard`; discarded when unset.
     pub discard_answer: std::sync::Mutex<Option<Result<(), OpError>>>,
     pub next_draft: std::sync::atomic::AtomicI64,
@@ -407,6 +469,15 @@ pub enum FakeCall {
     },
     DraftSend {
         draft: DraftId,
+        client_token: String,
+    },
+    DraftPush {
+        draft: DraftId,
+        client_token: String,
+    },
+    DraftImport {
+        account: String,
+        message: i64,
         client_token: String,
     },
     DraftDiscard {
@@ -576,6 +647,62 @@ impl FakeDaemon {
             result,
         };
         send(sink, event);
+    }
+
+    fn draft_push(&self, sink: &TaskSink, seq: u64, draft: DraftId, client_token: String) {
+        use std::sync::atomic::Ordering;
+        self.record(FakeCall::DraftPush {
+            draft,
+            client_token: client_token.clone(),
+        });
+        let result = self.push_answer.lock().unwrap().take().unwrap_or_else(|| {
+            Ok(rail_core::ops::DraftPushResponse {
+                row: self.next_row.fetch_add(1, Ordering::SeqCst) + 1,
+            })
+        });
+        let result = if self.down() { Err(closed()) } else { result };
+        let event = MailEvent::DraftPushed {
+            seq,
+            draft,
+            client_token,
+            result,
+        };
+        send(sink, event);
+    }
+
+    fn draft_import(
+        &self,
+        sink: &TaskSink,
+        seq: u64,
+        account: String,
+        message: i64,
+        client_token: String,
+    ) {
+        use std::sync::atomic::Ordering;
+        self.record(FakeCall::DraftImport {
+            account,
+            message,
+            client_token,
+        });
+        let result = self
+            .import_answer
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_else(|| {
+                Ok(rail_core::ops::DraftImportResponse {
+                    draft: self.next_draft.fetch_add(1, Ordering::SeqCst) + 1,
+                })
+            });
+        let result = if self.down() { Err(closed()) } else { result };
+        send(
+            sink,
+            MailEvent::DraftImported {
+                seq,
+                message,
+                result,
+            },
+        );
     }
 
     fn draft_discard(&self, sink: &TaskSink, draft: DraftId) {

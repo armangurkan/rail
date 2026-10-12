@@ -58,7 +58,7 @@ fn a_draft_round_trips_and_updates_in_place() -> Result<(), StoreError> {
         write(account_id).message_id,
         "fixed at creation"
     );
-    let listed = store.drafts_for_account(account_id)?;
+    let listed = store.drafts_folder(&[account_id])?;
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].subject, "Hello again");
     store.draft_delete(id)?;
@@ -230,7 +230,7 @@ fn save(
 fn the_writers_save_replays_by_token_and_leaves_a_draft_being_sent_alone() -> Result<(), StoreError>
 {
     use super::drafts::DraftSaved;
-    use super::outbox::{OutboxOutcome, OutboxWrite};
+    use super::outbox::{DraftDeleteOutcome, OutboxOutcome, OutboxWrite};
     let (mut store, account_id) = store_with_account();
     let DraftSaved::Saved(id) = save(&mut store, write(account_id), "t1")? else {
         panic!("created");
@@ -257,12 +257,12 @@ fn the_writers_save_replays_by_token_and_leaves_a_draft_being_sent_alone() -> Re
     let delete = OutboxWrite::DraftDelete(id);
     assert_eq!(
         store.outbox_write(&delete, 2_000)?,
-        OutboxOutcome::DraftDeleted(false)
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingSent)
     );
     store.draft_set_state(id, DraftState::Editing)?;
     assert_eq!(
         store.outbox_write(&delete, 2_000)?,
-        OutboxOutcome::DraftDeleted(true)
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::Deleted)
     );
     assert!(store.draft(id)?.is_none());
     Ok(())

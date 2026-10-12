@@ -16,13 +16,15 @@ use crate::provider::ProviderError;
 use crate::provider::gmail::build_message;
 use crate::store::outbox::{OutboxOutcome, OutboxRow, OutboxWrite};
 
-/// What a send reads from the store in one go.
-struct Loaded {
-    message_id: String,
-    remote_thread: Option<String>,
-    send_attempted: bool,
-    attachments_readable: bool,
-    assembly: Assembly,
+/// What a send or a push reads from the store in one go.
+pub(super) struct Loaded {
+    pub(super) message_id: String,
+    pub(super) remote_thread: Option<String>,
+    /// The draft's Gmail draft id, once a push created it.
+    pub(super) remote_draft_id: Option<String>,
+    pub(super) send_attempted: bool,
+    pub(super) attachments_readable: bool,
+    pub(super) assembly: Assembly,
 }
 
 impl Worker {
@@ -112,7 +114,7 @@ impl Worker {
         Ok(())
     }
 
-    async fn load(&self, draft: DraftId) -> Result<Loaded, ProviderError> {
+    pub(super) async fn load(&self, draft: DraftId) -> Result<Loaded, ProviderError> {
         let (account, from, from_name) = (
             self.account_id,
             self.address.clone(),
@@ -128,6 +130,7 @@ impl Worker {
                 Ok(Some(Loaded {
                     message_id: d.message_id,
                     remote_thread: d.remote_thread_id,
+                    remote_draft_id: d.remote_draft_id,
                     send_attempted: d.send_attempted_at.is_some(),
                     attachments_readable,
                     assembly,

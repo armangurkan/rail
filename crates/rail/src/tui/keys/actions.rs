@@ -148,6 +148,7 @@ actions! {
     ReaderTop => "reader.top", [Reader], ["home", "g g"], "First line";
     ReaderBottom => "reader.bottom", [Reader], ["end", "G"], "Last line";
     ComposeSend => "compose.send", [Compose], ["y"], "Send";
+    ComposePush => "compose.push", [Compose], ["s"], "Save to Gmail's Drafts";
     ComposeEdit => "compose.edit", [Compose], ["e"], "Edit in your editor";
     ComposeHeaders => "compose.headers", [Compose], ["t"], "Change To, Cc, Bcc or Subject";
     ComposeAttach => "compose.attach", [Compose], ["a"], "Attach a file";

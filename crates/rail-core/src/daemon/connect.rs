@@ -25,8 +25,10 @@ use crate::paths::{Paths, canonical_dir, create_private_dir};
 /// read, or (`pending.cancel`, `sync.now`, `search`, `body.fetch`) have the same effect however often they
 /// run, or are `action.apply` and `draft.send` (the client token finds the row a first try
 /// made), `draft.save` (the token finds the draft a first create made; an update writes the
-/// same draft again), `action.undo`, `action.retry` and `draft.discard`.
-const RETRY_SAFE: [&str; 18] = [
+/// same draft again), `draft.push` (the token finds the row; a second push folds into it),
+/// `draft.import` (a second import answers the draft the first made), `action.undo`,
+/// `action.retry` and `draft.discard`.
+const RETRY_SAFE: [&str; 20] = [
     names::STATUS,
     names::ACCOUNTS_LIST,
     names::PRESETS_LIST,
@@ -45,6 +47,8 @@ const RETRY_SAFE: [&str; 18] = [
     names::DRAFT_SAVE,
     names::DRAFT_SEND,
     names::DRAFT_DISCARD,
+    names::DRAFT_PUSH,
+    names::DRAFT_IMPORT,
 ];
 
 /// True when `operation` may be sent again on a fresh connection.

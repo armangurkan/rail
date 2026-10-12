@@ -762,10 +762,6 @@ async fn the_reader_answers_reply_sources_suggestions_and_drafts() {
         !entries.is_empty(),
         "the seeded senders are in the address book"
     );
-    let drafts = events(reader.drafts(5, vec![account]), 1, bound).await;
-    assert!(
-        matches!(drafts.as_slice(), [MailEvent::Drafts { seq: 5, result: Ok(list) }] if list.is_empty())
-    );
     let missing = events(reader.draft(6, 999), 1, bound).await;
     assert!(matches!(
         missing.as_slice(),
@@ -774,4 +770,169 @@ async fn the_reader_answers_reply_sources_suggestions_and_drafts() {
             result: Ok(None)
         }]
     ));
+}
+
+#[tokio::test]
+async fn the_fake_records_push_and_import_and_answers_with_the_token() {
+    let fake = std::sync::Arc::new(FakeDaemon::default());
+    let link = DaemonLink::fake(fake.clone());
+    let bound = Duration::from_secs(5);
+    let pushed = events(link.draft_push(3, 7, "tok-push".into()), 1, bound).await;
+    assert!(
+        matches!(pushed.as_slice(), [MailEvent::DraftPushed { seq: 3, draft: 7, client_token, result: Ok(_) }] if client_token == "tok-push"),
+        "{pushed:?}"
+    );
+    let imported = events(
+        link.draft_import(4, "work".into(), 42, "tok-import".into()),
+        1,
+        bound,
+    )
+    .await;
+    assert!(
+        matches!(
+            imported.as_slice(),
+            [MailEvent::DraftImported {
+                seq: 4,
+                message: 42,
+                result: Ok(_)
+            }]
+        ),
+        "{imported:?}"
+    );
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        [
+            FakeCall::DraftPush {
+                draft: 7,
+                client_token: "tok-push".into()
+            },
+            FakeCall::DraftImport {
+                account: "work".into(),
+                message: 42,
+                client_token: "tok-import".into()
+            }
+        ]
+    );
+    *fake.push_answer.lock().unwrap() = Some(Err(OpError::internal("no push")));
+    *fake.import_answer.lock().unwrap() = Some(Err(OpError::internal("no import")));
+    let pushed = events(link.draft_push(1, 7, "t".into()), 1, bound).await;
+    assert!(matches!(
+        pushed.as_slice(),
+        [MailEvent::DraftPushed { result: Err(_), .. }]
+    ));
+    let imported = events(link.draft_import(2, "work".into(), 1, "t".into()), 1, bound).await;
+    assert!(matches!(
+        imported.as_slice(),
+        [MailEvent::DraftImported { result: Err(_), .. }]
+    ));
+}
+
+#[tokio::test]
+async fn the_daemon_link_sends_the_push_and_import_requests_the_ops_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    std::fs::write(paths.config_file(), WORK).unwrap();
+    let (ctx, _urls) = daemon_ctx(&paths, None).await;
+    let link = DaemonLink::new(ctx.daemon.clone());
+    let bound = Duration::from_secs(10);
+    let pushed = events(link.draft_push(1, 999, "tok".into()), 1, bound).await;
+    let [
+        MailEvent::DraftPushed {
+            client_token,
+            result: Err(_),
+            ..
+        },
+    ] = pushed.as_slice()
+    else {
+        panic!("{pushed:?}");
+    };
+    assert_eq!(
+        client_token, "tok",
+        "the daemon knows the op and answers it"
+    );
+    let imported = events(
+        link.draft_import(2, "work".into(), 999, "tok".into()),
+        1,
+        bound,
+    )
+    .await;
+    assert!(
+        matches!(
+            imported.as_slice(),
+            [MailEvent::DraftImported {
+                message: 999,
+                result: Err(_),
+                ..
+            }]
+        ),
+        "{imported:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_reader_answers_the_drafts_folder_of_the_accounts_asked_for() {
+    use rail_core::store::drafts::{DraftWrite, Recipient};
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
+    let mut store = seed_store(&paths, &[("work", "w@example.com")], &[]);
+    let account: i64 = store
+        .conn()
+        .query_row("SELECT id FROM accounts LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    let write = DraftWrite {
+        id: None,
+        account_id: account,
+        kind: DraftKind::New,
+        thread_id: None,
+        remote_thread_id: None,
+        in_reply_to: None,
+        references: None,
+        to: vec![Recipient {
+            name: None,
+            address: "dana@example.com".into(),
+        }],
+        cc: vec![],
+        bcc: vec![],
+        subject: "hello".into(),
+        body: String::new(),
+        attachments: vec![],
+        message_id: "<a@example.com>".into(),
+    };
+    store.draft_upsert(&write, 1_760_000_000).unwrap();
+    let reader = StoreReader::new(paths.db_file());
+    let bound = Duration::from_secs(5);
+    let mine = events(reader.drafts_folder(8, vec![account]), 1, bound).await;
+    assert!(
+        matches!(mine.as_slice(), [MailEvent::DraftsFolder { seq: 8, result: Ok(rows) }] if rows.len() == 1),
+        "{mine:?}"
+    );
+    let other = events(reader.drafts_folder(9, vec![account + 100]), 1, bound).await;
+    assert!(
+        matches!(other.as_slice(), [MailEvent::DraftsFolder { seq: 9, result: Ok(rows) }] if rows.is_empty()),
+        "{other:?}"
+    );
+}
+
+#[test]
+fn the_push_import_and_folder_events_debug_without_content() {
+    let pushed = MailEvent::DraftPushed {
+        seq: 1,
+        draft: 2,
+        client_token: "SECRET-token".into(),
+        result: Err(OpError::internal("SECRET detail")),
+    };
+    let imported = MailEvent::DraftImported {
+        seq: 3,
+        message: 4,
+        result: Err(OpError::internal("SECRET detail")),
+    };
+    let folder = MailEvent::DraftsFolder {
+        seq: 5,
+        result: Err(ReadError::Failed(OpError::internal("SECRET detail"))),
+    };
+    for event in [pushed, imported, folder] {
+        let shown = format!("{event:?}");
+        assert!(!shown.contains("SECRET"), "{shown}");
+    }
 }

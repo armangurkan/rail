@@ -8,11 +8,17 @@ mod apply_local;
 #[cfg(test)]
 mod apply_local_tests;
 pub mod drafts;
+pub mod drafts_folder;
+#[cfg(test)]
+mod drafts_folder_tests;
 #[cfg(test)]
 mod drafts_tests;
 pub mod filter;
 pub mod migrations;
 pub mod outbox;
+mod outbox_drafts;
+#[cfg(test)]
+mod outbox_drafts_tests;
 #[cfg(test)]
 mod outbox_tests;
 mod rollup;

@@ -15,10 +15,12 @@ use futures_util::FutureExt;
 
 use rail_core::ops::{
     AccountSyncStatus, ActionApplyResponse, ActionFailed, ActionRetryResponse, ActionUndoResponse,
-    BodyFetchResponse, DraftId, DraftSaveResponse, DraftSendResponse, OpError, OutboxId,
+    BodyFetchResponse, DraftId, DraftImportResponse, DraftPushResponse, DraftSaveResponse,
+    DraftSendResponse, OpError, OutboxId,
 };
 use rail_core::store::AddressEntry;
-use rail_core::store::drafts::{Draft, DraftSummary, ReplySource};
+use rail_core::store::drafts::{Draft, ReplySource};
+use rail_core::store::drafts_folder::DraftsRow;
 use rail_core::store::view::{HtmlBody, LabelChoices, ThreadDetail};
 
 pub use daemon_link::SaveCall;
@@ -126,6 +128,19 @@ pub enum MailEvent {
         client_token: String,
         result: Result<DraftSendResponse, OpError>,
     },
+    /// `draft.push` answered for the push with this `seq`; the token it was sent with.
+    DraftPushed {
+        seq: u64,
+        draft: DraftId,
+        client_token: String,
+        result: Result<DraftPushResponse, OpError>,
+    },
+    /// `draft.import` answered for the Gmail draft `message`.
+    DraftImported {
+        seq: u64,
+        message: i64,
+        result: Result<DraftImportResponse, OpError>,
+    },
     /// `draft.discard` answered.
     DraftDiscarded {
         draft: DraftId,
@@ -142,10 +157,10 @@ pub enum MailEvent {
         seq: u64,
         result: Result<Option<Box<ReplySource>>, ReadError>,
     },
-    /// The drafts of the accounts asked for.
-    Drafts {
+    /// The Drafts folder of the accounts asked for: local drafts and Gmail's, newest first.
+    DraftsFolder {
         seq: u64,
-        result: Result<Vec<DraftSummary>, ReadError>,
+        result: Result<Vec<DraftsRow>, ReadError>,
     },
     /// A draft to resume (`None`: it is no longer stored).
     Draft {
@@ -246,6 +261,29 @@ impl fmt::Debug for MailEvent {
                 .field("draft", draft)
                 .field("ok", &result.is_ok())
                 .finish(),
+            Self::DraftPushed {
+                seq, draft, result, ..
+            } => f
+                .debug_struct("DraftPushed")
+                .field("seq", seq)
+                .field("draft", draft)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::DraftImported {
+                seq,
+                message,
+                result,
+            } => f
+                .debug_struct("DraftImported")
+                .field("seq", seq)
+                .field("message", message)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::DraftsFolder { seq, result } => f
+                .debug_struct("DraftsFolder")
+                .field("seq", seq)
+                .field("ok", &result.is_ok())
+                .finish(),
             Self::DraftDiscarded { draft, result } => f
                 .debug_struct("DraftDiscarded")
                 .field("draft", draft)
@@ -258,11 +296,6 @@ impl fmt::Debug for MailEvent {
                 .finish(),
             Self::ReplySource { seq, result } => f
                 .debug_struct("ReplySource")
-                .field("seq", seq)
-                .field("ok", &result.is_ok())
-                .finish(),
-            Self::Drafts { seq, result } => f
-                .debug_struct("Drafts")
                 .field("seq", seq)
                 .field("ok", &result.is_ok())
                 .finish(),

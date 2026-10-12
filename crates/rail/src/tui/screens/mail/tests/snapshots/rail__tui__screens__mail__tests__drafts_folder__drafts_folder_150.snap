@@ -1,0 +1,44 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/drafts_folder.rs
+expression: shot
+---
+|work · Drafts · 2 unread                                                                                                                       ? help
+  All inboxes           5│*  Yesterday  Pat Doe           Pushed note             │Open a draft with Enter; its review takes the screen.
+* work                  3│*  Yesterday  Gail              Written on the phone    │
+    Sent                 │*  Yesterday  (local)         * Local plan              │
+    Drafts              2│                                                        │
+    Projects             │                                                        │
+* home                  2│                                                        │
+    Sent                 │                                                        │
+    Projects             │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+                         │                                                        │
+work ~  ·  home ok

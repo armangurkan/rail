@@ -3,6 +3,7 @@
 
 mod actions;
 mod body;
+mod drafts;
 mod history;
 mod html;
 #[cfg(test)]
@@ -19,6 +20,8 @@ mod actions_tests;
 #[cfg(test)]
 mod body_tests;
 #[cfg(test)]
+mod drafts_tests;
+#[cfg(test)]
 pub(crate) mod fixtures;
 #[cfg(test)]
 mod history_tests;
@@ -33,11 +36,12 @@ mod tests;
 
 use super::http::{ApiClient, is_bad_request};
 use super::{
-    Body, ChangeSet, EnvelopePage, IdPage, PageToken, Profile, ProviderError, RemoteFolder,
-    RemoteId, SentReceipt, SyncCursor, Window,
+    Body, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
+    RemoteFolder, RemoteId, SentReceipt, SyncCursor, Window,
 };
 
 pub use body::{MAX_BODY_BYTES, TRUNCATED_MARKER};
+pub use drafts::{DRAFT_LIST_PAGE, MAX_DRAFT_LIST_PAGES};
 pub use history::{MAX_CHANGES_ADDED, MAX_HISTORY_PAGES, MAX_HISTORY_RECORDS};
 
 pub use metadata::{
@@ -66,6 +70,10 @@ pub(crate) const COST_ATTACHMENT: u32 = 5;
 pub(crate) const COST_THREAD_MODIFY: u32 = 10;
 pub(crate) const COST_THREAD_TRASH: u32 = 20;
 pub(crate) const COST_MESSAGE_SEND: u32 = 100;
+pub(crate) const COST_DRAFT_CREATE: u32 = 10;
+pub(crate) const COST_DRAFT_UPDATE: u32 = 15;
+pub(crate) const COST_DRAFT_DELETE: u32 = 10;
+pub(crate) const COST_DRAFT_LIST: u32 = 5;
 /// Gmail's limit on each of `addLabelIds` and `removeLabelIds`.
 pub const MAX_LABELS_PER_MODIFY: usize = 100;
 
@@ -216,6 +224,31 @@ impl super::Provider for GmailProvider {
 
     async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError> {
         self.attachment_bytes(message, part).await
+    }
+
+    async fn draft_create(
+        &self,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Result<DraftIds, ProviderError> {
+        self.create_draft(raw, thread_id).await
+    }
+
+    async fn draft_update(
+        &self,
+        draft_id: &str,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Result<DraftIds, ProviderError> {
+        self.update_draft(draft_id, raw, thread_id).await
+    }
+
+    async fn draft_delete(&self, draft_id: &str) -> Result<(), ProviderError> {
+        self.delete_draft(draft_id).await
+    }
+
+    async fn draft_find(&self, message_id: &str) -> Result<Option<RemoteId>, ProviderError> {
+        self.find_draft(message_id).await
     }
 }
 
