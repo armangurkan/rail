@@ -380,10 +380,9 @@ async fn a_vanished_attachment_fails_the_send_permanently() {
         DraftState::Editing
     );
     let failed = h.failures();
-    assert!(
-        failed[0].error.message.contains("gone.pdf"),
-        "{}",
-        failed[0].error.message
+    assert_eq!(
+        failed[0].error.message,
+        "could not read an attachment of this message"
     );
     assert!(h.mock.with(|m| m.sent.is_empty()));
 }
@@ -433,7 +432,10 @@ async fn a_part_whose_message_is_gone_fails_the_send_permanently() {
         h.with_store(|s| s.draft(draft).unwrap().unwrap().state),
         DraftState::Editing
     );
-    assert!(h.failures()[0].error.message.contains("orig.pdf"));
+    assert_eq!(
+        h.failures()[0].error.message,
+        "the message an attachment was forwarded from is no longer in the store"
+    );
     assert!(!h.mock.calls().contains(&Call::Attachment));
     assert!(h.mock.with(|m| m.sent.is_empty()));
 }

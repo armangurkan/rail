@@ -200,6 +200,9 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A send that fails on an attachment (a file that cannot be read, a forwarded attachment gone from
+  Gmail or the store) no longer quotes the attachment's file name in the error, so a name from
+  outside Rail is not shown unlabelled or split at `: `.
 - A daemon left running from an earlier build of the same version was kept, and refused new
   operations with `no operation named "draft.push"`. Each build now carries the time `rail-core` was last built
   and sends it in the hello; a client replaces a daemon from an earlier build (or one that sends

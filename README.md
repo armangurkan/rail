@@ -542,7 +542,7 @@ a file that would take the message over is refused when you attach it, naming th
 message would have. File names are cleaned before they are sent. Attachments come from files you
 name by path; a forward carries the original's attachments along, and they count in the total. Only regular files can be attached, and
 they are read when the message goes out: one that was moved or deleted in the meantime fails the
-send (`Could not send: could not read the attachment "<name>"`) and the review opens again.
+send (`Could not send: could not read an attachment of this message`) and the review opens again.
 
 **Your address and signature.** `From:` is the account's address, with `from_name` before it when
 set. A `signature` file is added under `-- ` to every new message, reply and forward. Both are

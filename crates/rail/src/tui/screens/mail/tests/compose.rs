@@ -372,7 +372,7 @@ async fn a_failed_send_reopens_the_review_with_the_error() {
         error: OpError::new(
             ErrorCode::Provider,
             ErrorClass::Permanent,
-            "could not read the attachment \"notes.txt\"",
+            "could not read an attachment of this message",
         ),
         draft: Some(1),
         client_token: "tok".into(),
@@ -381,7 +381,7 @@ async fn a_failed_send_reopens_the_review_with_the_error() {
     let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
     settle_capturing(&mut f.screen, effects, &f.last_theme, &f.editor).await;
     assert!(compose_open(&f), "reopened");
-    assert!(composing(&f).errors[0].contains("notes.txt"));
+    assert!(composing(&f).errors[0].contains("could not read an attachment"));
     assert!(f.screen.status_line().contains("Could not send"));
     assert_eq!(f.screen.error_count(), 1);
     // The answered message is not known for this draft: it still edits and saves.

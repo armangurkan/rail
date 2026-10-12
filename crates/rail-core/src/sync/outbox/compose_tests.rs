@@ -1,8 +1,9 @@
 //! From a draft row to an `Outgoing`: the addresses and headers, the references split, files
 //! and parts kept in the draft's order, a part whose message is gone.
 
-use super::compose::{FileRef, PartRef, outgoing_for};
-use crate::provider::Mailbox;
+use super::compose::{FileRef, PartRef, attach, outgoing_for};
+use crate::provider::mock::MockProvider;
+use crate::provider::{Mailbox, ProviderError};
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftWrite, Recipient};
 use crate::test_support::{seed_two_messages, store_with_account};
@@ -67,7 +68,7 @@ fn the_outgoing_carries_the_drafts_headers_and_the_senders_name() {
     );
     assert!(out.attachments.is_empty());
     assert!(assembly.files.is_empty() && assembly.parts.is_empty());
-    assert_eq!(assembly.part_gone, None);
+    assert!(!assembly.part_gone);
 }
 
 #[test]
@@ -115,7 +116,7 @@ fn files_and_parts_are_listed_with_the_parts_message_at_gmail() {
 }
 
 #[test]
-fn a_part_whose_message_left_the_store_is_named() {
+fn a_part_whose_message_left_the_store_is_flagged() {
     let (mut store, account) = store_with_account();
     let d = draft(
         &mut store,
@@ -130,7 +131,7 @@ fn a_part_whose_message_left_the_store_is_named() {
     );
     let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
     assert!(assembly.parts.is_empty());
-    assert_eq!(assembly.part_gone.as_deref(), Some("old.pdf"));
+    assert!(assembly.part_gone);
 }
 
 #[test]
@@ -140,4 +141,86 @@ fn no_references_is_an_empty_list() {
     d.references = None;
     let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
     assert!(assembly.outgoing.references.is_empty());
+}
+
+/// An outside name that would split at `": "` and carries a bidi override.
+const AWKWARD_NAME: &str = "a: b\u{202e}.txt";
+
+fn message_of(error: &ProviderError) -> (&'static str, &str) {
+    match error {
+        ProviderError::Permanent { message, .. } => ("permanent", message),
+        ProviderError::Transient { message, .. } => ("transient", message),
+        other => panic!("unexpected error {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn an_unreadable_file_is_a_permanent_error_without_its_name() {
+    let (mut store, account) = store_with_account();
+    let d = draft(
+        &mut store,
+        account,
+        vec![Attachment::File {
+            path: "/nonexistent/rail-test/file".into(),
+            name: AWKWARD_NAME.into(),
+            mime: "text/plain".into(),
+            size: 1,
+        }],
+    );
+    let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
+    let error = attach(assembly, &MockProvider::new()).await.unwrap_err();
+    let (class, message) = message_of(&error);
+    assert_eq!(class, "permanent");
+    assert_eq!(message, "could not read an attachment of this message");
+    assert!(!format!("{error:?}").contains("a: b"));
+    assert!(!error.detail().unwrap_or_default().contains("a: b"));
+}
+
+#[tokio::test]
+async fn a_forwarded_part_gone_from_gmail_is_permanent_without_its_name() {
+    let (mut store, account) = store_with_account();
+    let (message, _) = seed_two_messages(&mut store, account);
+    let d = draft(
+        &mut store,
+        account,
+        vec![Attachment::Part {
+            message,
+            part: "p1".into(),
+            name: AWKWARD_NAME.into(),
+            mime: "text/plain".into(),
+            size: 1,
+        }],
+    );
+    let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
+    let error = attach(assembly, &MockProvider::new()).await.unwrap_err();
+    let (class, message) = message_of(&error);
+    assert_eq!(class, "permanent");
+    assert_eq!(
+        message,
+        "an attachment of this message is no longer in Gmail"
+    );
+}
+
+#[tokio::test]
+async fn a_forwarded_part_whose_message_left_the_store_is_permanent_without_its_name() {
+    let (mut store, account) = store_with_account();
+    let d = draft(
+        &mut store,
+        account,
+        vec![Attachment::Part {
+            message: 4_242,
+            part: "p1".into(),
+            name: AWKWARD_NAME.into(),
+            mime: "text/plain".into(),
+            size: 1,
+        }],
+    );
+    let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
+    let error = attach(assembly, &MockProvider::new()).await.unwrap_err();
+    let (class, message) = message_of(&error);
+    assert_eq!(class, "permanent");
+    assert_eq!(
+        message,
+        "the message an attachment was forwarded from is no longer in the store"
+    );
 }
