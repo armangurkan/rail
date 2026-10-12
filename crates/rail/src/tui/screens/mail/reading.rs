@@ -66,7 +66,10 @@ impl MailScreen {
                         let glyphs = Glyphs::of(self.ctx.icons);
                         marked = self.mark_read_on_open(&mut detail);
                         self.reader = Some(Reader::new(detail, self.ctx.clock.clone(), glyphs));
-                        self.focus = Focus::Reader;
+                        // A read landing under an open composer leaves it the keys.
+                        if self.compose.is_none() {
+                            self.focus = Focus::Reader;
+                        }
                     }
                 }
                 let mut effects = self.fetch_wanted();

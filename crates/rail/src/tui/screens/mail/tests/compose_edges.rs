@@ -215,3 +215,30 @@ async fn start_sweeps_compose_files_older_than_a_week() {
     assert!(fresh.exists(), "a newer one stays");
     assert!(other.exists(), "only .eml files are swept");
 }
+
+/// Final fix 8: a thread read that lands while the composer is open leaves the focus on it,
+/// so its keys never act on the thread underneath.
+#[tokio::test]
+async fn a_late_thread_read_leaves_the_focus_on_the_composer() {
+    let mut f = compose_fixture().await;
+    editor_appends(&f, "");
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    assert_eq!(f.screen.focus, Focus::Compose);
+    let open = f.screen.reader.as_ref().unwrap().thread_id();
+    let other = thread_ids(&f).into_iter().find(|t| *t != open).unwrap();
+    let detail = writer(&f).thread_detail(other).unwrap();
+    let late = MailEvent::Thread {
+        seq: f.screen.latest_thread,
+        thread_id: other,
+        result: Ok(detail),
+    };
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(late)));
+    settle(&mut f.screen, effects).await;
+    assert_eq!(
+        f.screen.focus,
+        Focus::Compose,
+        "the composer keeps the keys"
+    );
+    assert!(f.screen.compose.is_some());
+}
