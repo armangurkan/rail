@@ -453,12 +453,16 @@ a space continues the one before). Any other header, or a line that is not `Name
 refused: Rail names the line and opens the editor again on the same text. If the editor exits with
 a non-zero status Rail asks `Keep what you wrote?`: yes saves the text, no keeps the draft as it
 was. If the editor cannot start Rail says `cannot run …` and the review opens with the text it
-had. The file is kept until a save succeeds. If Rail stops before that (a crash, a closed
-terminal), the next editor round for that draft opens on the text from the file and says
-`opened the text from your last editor session`; quitting that editor with an error and answering
-no to `Keep what you wrote?` keeps the draft as it was. A new message is saved before its first
-editor round, so it is recovered like any other draft. Only a `new.eml` (left when that first save
-failed) is never reused for another message; it is removed after seven days.
+had. The file is kept until a save succeeds, and also when the editor cannot run or its file
+cannot be read back. If Rail stops before that (a crash, a closed terminal), the next editor round
+for that draft opens on the file as it was left, headers included (so changes made with `t` after
+reopening the draft are replaced by the file's headers), and says
+`opened the text from your last editor session`. Sending or discarding the draft without opening
+the editor uses the stored text, and the file stays until it is removed after seven days. Quitting
+that editor with an error and answering no to `Keep what you wrote?` keeps the draft as it was. A
+new message is saved before its first editor round, so it is recovered like any other draft. A
+`new.eml` (left when that first save failed) is never reused for another message; it is removed
+after seven days.
 
 **The review.** When the editor returns, Rail shows the message as it will go: `From`, `To`, `Cc`
 and `Bcc` (when used), `Subject`, then the attachments with their count and total size, then the

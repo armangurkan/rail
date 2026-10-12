@@ -372,3 +372,37 @@ async fn a_compose_file_that_cannot_be_read_is_kept_and_not_called_a_recovery() 
     assert!(at.is_dir(), "not overwritten");
     assert!(!f.screen.status_line().contains(RECOVERED));
 }
+
+#[tokio::test]
+async fn an_editor_that_cannot_run_leaves_the_text_a_crash_kept() {
+    let mut f = compose_fixture().await;
+    let leftover = "To: a@b.c\nCc: \nBcc: \nSubject: typed before the crash\n\nProbe.\n";
+    leave_compose_file(&f, "1.eml", leftover);
+    f.editor
+        .set(|_| Err("cannot run \"nope\": not found".into()));
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    let file = f.paths.compose_dir().join("1.eml");
+    assert_eq!(std::fs::read_to_string(file).unwrap(), leftover);
+}
+
+#[tokio::test]
+async fn a_file_that_cannot_be_read_back_is_kept() {
+    let mut f = compose_fixture().await;
+    let file = f.paths.compose_dir().join("1.eml");
+    let path = file.clone();
+    f.editor.set(move |_| {
+        std::fs::write(&path, b"To: a@b.c\n\ncaf\xe9\n").unwrap();
+        Ok(0)
+    });
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    assert!(
+        f.screen
+            .status_line()
+            .contains("Could not read the draft file back"),
+        "{}",
+        f.screen.status_line()
+    );
+    assert_eq!(std::fs::read(file).unwrap(), b"To: a@b.c\n\ncaf\xe9\n");
+}

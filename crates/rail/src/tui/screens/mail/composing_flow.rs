@@ -429,7 +429,8 @@ impl MailScreen {
         let code = match result {
             Ok(code) => code,
             Err(why) => {
-                self.remove_compose_file();
+                // The file may hold text a crash left: forget it, do not delete it.
+                self.composing.file = None;
                 tracing::warn!("the editor could not run");
                 self.status
                     .error(escape(&why), self.ctx.clock.now(), self.tick);
@@ -442,7 +443,7 @@ impl MailScreen {
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) => {
-                self.remove_compose_file();
+                self.composing.file = None;
                 let text = format!(
                     "Could not read the draft file back: {}",
                     escape(&error.to_string())
