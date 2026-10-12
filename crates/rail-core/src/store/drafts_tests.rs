@@ -151,3 +151,30 @@ fn a_deleted_drafts_id_is_never_reused() -> Result<(), StoreError> {
     assert!(second > first, "{second} after {first}");
     Ok(())
 }
+
+#[test]
+fn a_messages_remote_id_is_read_and_an_unknown_message_is_none() -> Result<(), StoreError> {
+    let (mut store, account) = store_with_account();
+    let (m1, _) = seed_two_messages(&mut store, account);
+    assert_eq!(store.message_remote_id(m1)?.as_deref(), Some("m1"));
+    assert_eq!(store.message_remote_id(9_999)?, None);
+    Ok(())
+}
+
+#[test]
+fn an_unparseable_attachment_list_is_reported_unreadable() -> Result<(), StoreError> {
+    let (mut store, account) = store_with_account();
+    let id = store.draft_upsert(&write(account), 1)?.unwrap();
+    assert!(store.draft_attachments_readable(id)?);
+    store.conn().execute(
+        "UPDATE drafts SET attachments_json = '[{\"kind\":\"nope\"}]' WHERE id = ?1",
+        [id],
+    )?;
+    assert!(!store.draft_attachments_readable(id)?);
+    assert!(store.draft(id)?.unwrap().attachments.is_empty());
+    assert!(
+        store.draft_attachments_readable(9_999)?,
+        "no draft, nothing to refuse"
+    );
+    Ok(())
+}

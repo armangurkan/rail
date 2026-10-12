@@ -480,6 +480,32 @@ impl Store {
         Ok(())
     }
 
+    /// The provider id of a stored message: where a forwarded part is fetched from.
+    pub fn message_remote_id(&self, message: i64) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT remote_id FROM messages WHERE id = ?1",
+                [message],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// False when the draft's stored attachment list does not parse (`draft` reads such a
+    /// list as empty): a send must not go out without what the user attached.
+    pub fn draft_attachments_readable(&self, id: DraftId) -> Result<bool, StoreError> {
+        let text: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT attachments_json FROM drafts WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(text.is_none_or(|t| serde_json::from_str::<Vec<Attachment>>(&t).is_ok()))
+    }
+
     /// The headers, addresses, body and attachments a reply or forward of `message` needs.
     pub fn reply_source(&self, message: i64) -> Result<Option<ReplySource>, StoreError> {
         let head = self

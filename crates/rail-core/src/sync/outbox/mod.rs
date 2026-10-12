@@ -3,12 +3,24 @@
 //! completes or fails it through the writer. It sleeps until the earliest `not_before` (at
 //! least `MIN_IDLE`, at most `MAX_IDLE`) or the new-row signal; it pauses while the account
 //! needs a login; stopping drops a call in flight (the row stays inflight, and the restart rule
-//! sends it again). Logs carry row ids, counts and codes only.
+//! sends it again), except a draft being sent, which it lets finish within the manager's stop
+//! deadline. A `Send` row goes through `sending` (the never-twice rule); once one completes, the
+//! account's sync engine is nudged so the Sent copy arrives. Logs carry row ids, counts and
+//! codes only.
 
+mod compose;
+#[cfg(test)]
+mod compose_tests;
 mod plan;
+mod sending;
+#[cfg(test)]
+mod sending_tests;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashSet;
+use std::pin::pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -21,7 +33,7 @@ use super::manager::{retry_delay, unobserved};
 use super::status::StatusBoard;
 use super::writer::WriterHandle;
 use crate::error::ErrorClass;
-use crate::ops::{ActionFailed, ErrorCode, OpError, OutboxDepth, SyncPhase};
+use crate::ops::{Action, ActionFailed, ErrorCode, OpError, OutboxDepth, OutboxId, SyncPhase};
 use crate::provider::{Provider, ProviderError};
 use crate::store::outbox::{Failure, OutboxOutcome, OutboxRow, OutboxWrite};
 use crate::store::{Store, StoreError};
@@ -41,6 +53,10 @@ pub struct WorkerParts {
     pub board: StatusBoard,
     pub signal: Arc<Notify>,
     pub clock: Clock,
+    /// The name put before `address` in `From:`.
+    pub from_name: Option<String>,
+    /// The account's sync engine wake: nudged when a sent message lands.
+    pub sync_wake: Arc<Notify>,
 }
 
 pub struct Worker {
@@ -55,6 +71,12 @@ pub struct Worker {
     clock: Clock,
     /// How often a paused worker re-reads the account's `needs_auth` flag.
     paused_poll: Duration,
+    from_name: Option<String>,
+    sync_wake: Arc<Notify>,
+    /// Rows found in flight at start, until they settle (`sending`).
+    recovered: Mutex<HashSet<OutboxId>>,
+    /// True while a claimed `Send` row is being carried out: a stop lets it finish.
+    sending: AtomicBool,
 }
 
 /// What the loop does next.
@@ -92,20 +114,16 @@ impl Worker {
             signal: parts.signal,
             clock: parts.clock,
             paused_poll: MAX_IDLE,
+            from_name: parts.from_name,
+            sync_wake: parts.sync_wake,
+            recovered: Mutex::new(HashSet::new()),
+            sending: AtomicBool::new(false),
         }
     }
 
     /// Recover inflight rows, then send until `stop` turns true or its sender goes.
     pub async fn run(self, mut stop: watch::Receiver<bool>) {
-        if let Err(error) = self
-            .writer
-            .outbox(OutboxWrite::Recover {
-                account_id: self.account_id,
-            })
-            .await
-        {
-            tracing::warn!(account = %self.name, error = %error.message, "could not recover the outbox");
-        }
+        self.recover().await;
         self.publish().await;
         loop {
             if self.paused() {
@@ -116,9 +134,8 @@ impl Worker {
                     () = stopped(&mut stop) => break,
                 }
             }
-            let next = tokio::select! {
-                next = self.step() => next,
-                () = stopped(&mut stop) => break,
+            let Some(next) = self.step_or_stop(&mut stop).await else {
+                break;
             };
             if let Next::Idle(wait) = next {
                 tokio::select! {
@@ -128,6 +145,20 @@ impl Worker {
                 }
             }
         }
+    }
+
+    /// One step, or `None` once `stop` comes first; a draft send in flight is let finish
+    /// (and recorded) first, within the manager's stop deadline.
+    async fn step_or_stop(&self, stop: &mut watch::Receiver<bool>) -> Option<Next> {
+        let mut step = pin!(self.step());
+        tokio::select! {
+            next = &mut step => return Some(next),
+            () = stopped(stop) => {}
+        }
+        if self.sending.load(Ordering::SeqCst) {
+            step.await;
+        }
+        None
     }
 
     fn paused(&self) -> bool {
@@ -173,8 +204,15 @@ impl Worker {
                 return Next::Idle(MAX_IDLE);
             }
         };
+        let is_send = matches!(row.action, Action::Send { .. });
+        if is_send {
+            self.sending.store(true, Ordering::SeqCst);
+            // The status shows "sending…" while the row is inflight.
+            self.publish().await;
+        }
         let result = self.send(&row).await;
         self.settle(row, result).await;
+        self.sending.store(false, Ordering::SeqCst);
         self.publish().await;
         Next::Again
     }
@@ -204,6 +242,10 @@ impl Worker {
                 "a label of this action no longer exists in Gmail",
             )),
             Plan::Send { threads, change } => unobserved(self.call_each(&threads, &change)).await,
+            Plan::SendDraft(draft) => unobserved(self.send_draft(row, draft)).await,
+            Plan::NotYet => Err(ProviderError::permanent(
+                "saving drafts to Gmail arrives in a later version",
+            )),
         }
     }
 
@@ -250,12 +292,17 @@ impl Worker {
 
     async fn settle(&self, row: OutboxRow, result: Result<(), ProviderError>) {
         let write = self.write_for(&row, &result).await;
+        if !matches!(write, OutboxWrite::Release { .. }) {
+            self.forget_recovered(row.id);
+        }
+        let landed = result.is_ok() && matches!(row.action, Action::Send { .. });
         tracing::info!(account = %self.name, row = row.id, threads = row.thread_ids.len(), outcome = result.as_ref().err().map_or("sent", ProviderError::code), "outbox row");
         match self.writer.outbox(write).await {
             Ok(OutboxOutcome::Failed {
                 gave_up: true,
                 row: Some(failed),
             }) => self.notify(failed, result.err()),
+            Ok(OutboxOutcome::Done) if landed => self.sync_wake.notify_one(),
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(account = %self.name, row = row.id, error = %error.message, "could not record an outbox result")

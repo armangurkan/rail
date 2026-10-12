@@ -686,10 +686,12 @@ running syncs carry on unchanged.
 | `history_days`, `body_cache_days` | no | Per-account overrides of the `[general]` values. |
 | `ai_send` | no | `"confirm"` (default), `"drafts"` or `"client"`; see below. |
 | `signature` | no | Reserved for composing; accepted but no effect yet. |
+| `from_name` | no | The name shown before `address` in `From:` of mail Rail sends (spaces allowed, at most 200 characters). Reserved for composing; accepted but no effect yet. |
 
 `address`, `color` and `tenant` must not contain spaces, control characters or Unicode format
 characters (such as U+202E); such a value is refused by `rail account add` and fails to load from
-a hand-edited file.
+a hand-edited file. `from_name` may contain ordinary spaces but no other whitespace, control
+or format characters.
 
 ### Sync settings
 

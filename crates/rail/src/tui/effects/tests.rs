@@ -50,6 +50,7 @@ fn account(address: &str, secret: &str) -> AccountConfig {
         client_secret: Some(secret.into()),
         tenant: None,
         signature: None,
+        from_name: None,
         ai_send: None,
         history_days: None,
         body_cache_days: None,

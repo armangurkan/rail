@@ -122,7 +122,8 @@ pub enum OutboxOutcome {
         too_late: Vec<OutboxId>,
     },
     Retried(bool),
-    Recovered(usize),
+    /// The rows moved back to pending: the worker looks a `send` among them up before sending.
+    Recovered(Vec<OutboxId>),
 }
 
 const COLUMNS: &str = "id, account_id, payload, thread_ids, state, attempts, not_before, \
@@ -514,12 +515,14 @@ pub(super) fn clear_failed(
     )?)
 }
 
-/// The restart rule: inflight rows of `account` are sent again.
-pub(crate) fn recover(tx: &Transaction, account: i64) -> Result<usize, StoreError> {
-    Ok(tx.execute(
-        "UPDATE outbox SET state = 'pending', inflight_at = NULL WHERE account_id = ?1 AND state = 'inflight'",
-        [account],
-    )?)
+/// The restart rule: inflight rows of `account` are sent again; their ids.
+pub(crate) fn recover(tx: &Transaction, account: i64) -> Result<Vec<OutboxId>, StoreError> {
+    let mut stmt = tx.prepare(
+        "UPDATE outbox SET state = 'pending', inflight_at = NULL
+         WHERE account_id = ?1 AND state = 'inflight' RETURNING id",
+    )?;
+    let ids = stmt.query_map([account], |r| r.get(0))?;
+    Ok(ids.collect::<Result<_, _>>()?)
 }
 
 impl Store {
@@ -614,6 +617,19 @@ impl Store {
         ))?;
         let rows = stmt.query_map(params![json(&thread_ids)], read_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// One row, whatever its state.
+    #[cfg(test)]
+    pub(crate) fn outbox_row(&self, id: OutboxId) -> Result<Option<OutboxRow>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM outbox WHERE id = ?1"),
+                [id],
+                read_row,
+            )
+            .optional()?)
     }
 
     /// The account's failed rows, oldest first, at most `MAX_FAILED_ROWS`.

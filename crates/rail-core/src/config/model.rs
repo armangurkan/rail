@@ -160,6 +160,9 @@ pub struct AccountConfig {
     pub tenant: Option<String>,
     #[serde(default)]
     pub signature: Option<PathBuf>,
+    /// The name put before `address` in `From:` of mail Rail sends; spaces allowed.
+    #[serde(default, deserialize_with = "plain_from_name")]
+    pub from_name: Option<String>,
     /// What an AI agent may do with this account's mail over MCP. Unset means `confirm`.
     #[serde(default)]
     pub ai_send: Option<AiSend>,
@@ -219,6 +222,32 @@ pub(super) fn plain_text(field: &str, text: &str) -> Result<(), String> {
     } else {
         Err(not_plain(field))
     }
+}
+
+/// The longest `from_name`, in characters.
+pub const MAX_FROM_NAME_CHARS: usize = 200;
+
+/// `Ok` when `text` is a display name: ordinary spaces are allowed, other whitespace, control
+/// characters and format characters are not, and it is at most `MAX_FROM_NAME_CHARS` long.
+/// Never quotes the value.
+pub(super) fn plain_name(text: &str) -> Result<(), String> {
+    let bad = |c: char| c != ' ' && (c.is_whitespace() || c.is_control() || is_format_char(c));
+    if text.chars().any(bad) {
+        Err("the from_name must not contain control characters, format characters or whitespace other than spaces".to_string())
+    } else if text.chars().count() > MAX_FROM_NAME_CHARS {
+        Err(format!(
+            "the from_name must be at most {MAX_FROM_NAME_CHARS} characters"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn plain_from_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let text = String::deserialize(d)?;
+    plain_name(&text).map_err(serde::de::Error::custom)?;
+    // An empty name is no name: `From:` carries the bare address.
+    Ok((!text.trim().is_empty()).then_some(text))
 }
 
 fn plain_address<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
@@ -326,6 +355,7 @@ impl std::fmt::Debug for AccountConfig {
             )
             .field("tenant", &self.tenant)
             .field("signature", &self.signature)
+            .field("from_name", &self.from_name.is_some())
             .field("ai_send", &self.ai_send)
             .field("history_days", &self.history_days)
             .field("body_cache_days", &self.body_cache_days)
@@ -480,6 +510,35 @@ mod tests {
             assert_eq!(config.accounts[0].ai_send(), expected);
             assert_eq!(expected.as_str(), text);
         }
+    }
+
+    #[test]
+    fn from_name_loads_with_spaces_and_refuses_controls_and_length() {
+        let config = with_account("", "from_name = \"Dana Reyes\"");
+        assert_eq!(config.accounts[0].from_name.as_deref(), Some("Dana Reyes"));
+        assert_eq!(with_account("", "").accounts[0].from_name, None);
+        assert_eq!(
+            with_account("", "from_name = \"\"").accounts[0].from_name,
+            None
+        );
+        let path = std::path::Path::new("c.toml");
+        let account = |line: &str| {
+            format!(
+                "[[accounts]]\nname = \"w\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"c\"\n{line}\n"
+            )
+        };
+        for bad in [
+            "from_name = \"Dana\\tReyes\"",
+            "from_name = \"Dana\\u202EReyes\"",
+        ] {
+            let err = crate::config::parse(&account(bad), path).unwrap_err();
+            assert!(err.to_string().contains("from_name"), "{err}");
+        }
+        let long = format!("from_name = \"{}\"", "a".repeat(MAX_FROM_NAME_CHARS + 1));
+        let err = crate::config::parse(&account(&long), path).unwrap_err();
+        assert!(err.to_string().contains("at most 200"), "{err}");
+        let fits = format!("from_name = \"{}\"", "a".repeat(MAX_FROM_NAME_CHARS));
+        assert!(crate::config::parse(&account(&fits), path).is_ok());
     }
 
     #[test]

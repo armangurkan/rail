@@ -166,6 +166,9 @@ pub fn append_account(
     if let Some(signature) = &account.signature {
         table["signature"] = value(signature.to_string_lossy().into_owned());
     }
+    if let Some(name) = &account.from_name {
+        table["from_name"] = value(name.as_str());
+    }
     if let Some(ai_send) = account.ai_send {
         table["ai_send"] = value(ai_send.as_str());
     }
@@ -364,6 +367,19 @@ mod tests {
         assert!(out.contains("body_cache_days = 1"), "{out}");
         let config = parse(&out, Path::new("c.toml")).unwrap();
         assert_eq!(config.accounts[0].history_days, Some(2));
+    }
+
+    #[test]
+    fn append_writes_from_name_only_when_set() {
+        let unset = append_account("", Path::new("c.toml"), &account("a", "a@x.com")).unwrap();
+        assert!(!unset.contains("from_name"), "{unset}");
+        let named = AccountConfig {
+            from_name: Some("Dana Reyes".into()),
+            ..account("b", "b@x.com")
+        };
+        let out = append_account("", Path::new("c.toml"), &named).unwrap();
+        let config = parse(&out, Path::new("c.toml")).unwrap();
+        assert_eq!(config.accounts[0].from_name.as_deref(), Some("Dana Reyes"));
     }
 
     #[test]

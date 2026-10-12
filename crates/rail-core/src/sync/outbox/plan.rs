@@ -1,8 +1,8 @@
 //! What one row asks of the provider, in its ids: the threads the store still holds, and the
 //! labels to add and remove (system labels for archive, read and star; folders mapped to
-//! their remote ids).
+//! their remote ids); or, for a draft row, which path takes it.
 
-use crate::ops::Action;
+use crate::ops::{Action, DraftId};
 use crate::provider::{INBOX_LABEL, RemoteId, STARRED_LABEL, UNREAD_LABEL};
 use crate::store::outbox::OutboxRow;
 use crate::store::{Store, StoreError};
@@ -26,6 +26,10 @@ pub(super) enum Plan {
     },
     /// A label the action names is no longer in the store (deleted in Gmail).
     LabelGone,
+    /// A `Send` row: the worker's send path builds and sends the draft.
+    SendDraft(DraftId),
+    /// A draft row this version cannot carry out yet (saving drafts to Gmail).
+    NotYet,
 }
 
 fn labels(store: &Store, account: i64, ids: &[i64]) -> Result<Option<Vec<RemoteId>>, StoreError> {
@@ -40,6 +44,12 @@ fn labels(store: &Store, account: i64, ids: &[i64]) -> Result<Option<Vec<RemoteI
 }
 
 pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
+    // A draft row names no threads: it is planned by its draft.
+    match &row.action {
+        Action::Send { draft } => return Ok(Plan::SendDraft(*draft)),
+        Action::PushDraft { .. } | Action::DeleteDraft { .. } => return Ok(Plan::NotYet),
+        _ => {}
+    }
     let threads = store.thread_remotes(row.account_id, &row.thread_ids)?;
     if threads.is_empty() {
         return Ok(Plan::Nothing);
@@ -70,10 +80,9 @@ pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
             Some(add) => (add, system(INBOX_LABEL)),
             None => return Ok(Plan::LabelGone),
         },
-
-        // A draft row names no threads (it left above); the worker's send path takes them.
+        // Planned above.
         Action::Send { .. } | Action::PushDraft { .. } | Action::DeleteDraft { .. } => {
-            return Ok(Plan::Nothing);
+            return Ok(Plan::NotYet);
         }
     };
     Ok(Plan::Send {

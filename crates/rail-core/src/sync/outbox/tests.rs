@@ -18,19 +18,19 @@ use crate::sync::batch::Batch;
 use crate::sync::status::StatusBoard;
 use crate::sync::writer::{WriterHandle, spawn_writer};
 
-const ADDRESS: &str = "w@example.com";
-const WAIT: Duration = Duration::from_secs(10);
+pub(super) const ADDRESS: &str = "me@example.com";
+pub(super) const WAIT: Duration = Duration::from_secs(10);
 
-struct Rig {
+pub(super) struct Rig {
     _tmp: tempfile::TempDir,
-    db: std::path::PathBuf,
-    writer: WriterHandle,
-    mock: MockProvider,
-    board: StatusBoard,
-    signal: Arc<Notify>,
-    stop: watch::Sender<bool>,
-    failures: Arc<Mutex<Vec<ActionFailed>>>,
-    task: Option<tokio::task::JoinHandle<()>>,
+    pub(super) db: std::path::PathBuf,
+    pub(super) writer: WriterHandle,
+    pub(super) mock: MockProvider,
+    pub(super) board: StatusBoard,
+    pub(super) signal: Arc<Notify>,
+    pub(super) stop: watch::Sender<bool>,
+    pub(super) failures: Arc<Mutex<Vec<ActionFailed>>>,
+    pub(super) task: Option<tokio::task::JoinHandle<()>>,
 }
 
 fn folders() -> Vec<RemoteFolder> {
@@ -53,7 +53,7 @@ fn folders() -> Vec<RemoteFolder> {
     ]
 }
 
-async fn rig() -> Rig {
+pub(super) async fn rig() -> Rig {
     let tmp = tempfile::tempdir().unwrap();
     let db = tmp.path().join("rail.db");
     Store::open(&db)
@@ -94,7 +94,11 @@ async fn rig() -> Rig {
 }
 
 impl Rig {
-    fn worker(&self) -> Worker {
+    pub(super) fn worker(&self) -> Worker {
+        self.worker_with(None, Arc::new(Notify::new()))
+    }
+
+    pub(super) fn worker_with(&self, from_name: Option<String>, sync_wake: Arc<Notify>) -> Worker {
         Worker::new(WorkerParts {
             name: "work".into(),
             address: ADDRESS.into(),
@@ -105,10 +109,12 @@ impl Rig {
             board: self.board.clone(),
             signal: self.signal.clone(),
             clock: Arc::new(crate::auth::unix_now),
+            from_name,
+            sync_wake,
         })
     }
 
-    fn start(&mut self) {
+    pub(super) fn start(&mut self) {
         self.task = Some(tokio::spawn(self.worker().run(self.stop.subscribe())));
     }
 
@@ -129,11 +135,11 @@ impl Rig {
         rows[0]
     }
 
-    fn store(&self) -> Store {
+    pub(super) fn store(&self) -> Store {
         Store::open_reader(&self.db).unwrap()
     }
 
-    async fn until(&self, what: &str, done: impl Fn(&Rig) -> bool) {
+    pub(super) async fn until(&self, what: &str, done: impl Fn(&Rig) -> bool) {
         tokio::time::timeout(WAIT, async {
             while !done(self) {
                 tokio::time::sleep(Duration::from_millis(10)).await;

@@ -204,7 +204,7 @@ fn undo_refuses_claimed_rows_and_recover_requeues_them() {
     let recovered = store
         .outbox_write(&OutboxWrite::Recover { account_id: 1 }, NOW + 11)
         .unwrap();
-    assert_eq!(recovered, OutboxOutcome::Recovered(1));
+    assert_eq!(recovered, OutboxOutcome::Recovered(vec![a]));
     let row = claim(&mut store, NOW + 11).unwrap();
     assert_eq!(
         (row.id, row.attempts),
