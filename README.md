@@ -484,12 +484,17 @@ bar says `sent · z undoes` and `z` takes it back inside that window: the review
 the message as it was. After the ten seconds the account shows `sending…` and the message goes
 through Gmail like the actions in [Doing things to mail](#doing-things-to-mail). Closing the
 review with `q` before the daemon has the message does not stop the send: its `sent · z undoes`
-(or `Could not send`) still comes, even if another message is open by then, and `y` or `s` on
-that other message waits (`Wait for the last message to be queued.`). The draft being sent does
-not open from the Drafts folder or `:drafts` until then (other drafts do). If the connection to the
-daemon is lost first, Rail cannot tell whether the message was queued and says `Could not confirm
-the send: …` (`Could not confirm the save to Gmail: …` for `s`); check the outbox or the Drafts
-folder before sending again. A message is
+(or `Could not send`) still comes, even if another message is open by then. `z` then cancels the
+send but cannot reopen its review; the draft stays in Drafts, to open from there. Until
+the last message is queued, `y` and `s` on another message are refused (`Wait for the last message
+to be queued.`), and so are `e`, `a` and `x` on the review being sent or saved to Gmail. A draft
+whose send or save to Gmail (`s`) is on its way does not open from the Drafts folder or `:drafts`
+(`This draft is being sent; wait for it to be queued.`, or `This draft is being saved to Gmail;
+wait a moment.`); other drafts do. If the connection to the daemon is lost first, Rail cannot tell
+whether the message was queued and says `Could not confirm the send: … · check Sent and Drafts`
+(`Could not confirm the save to Gmail: … · check Drafts` for `s`). If it is in Sent, it went; if
+it is still in Drafts, open it and press `y` again: that is safe, since the daemon refuses a draft
+it already has queued (`this draft is already being sent`) and a sent draft is gone. A message is
 never sent twice: before any later attempt (a retry, or a start after the daemon stopped
 mid-send) the daemon asks Gmail whether a message with that `Message-ID` is already there and, if
 so, counts it as sent. A reply whose conversation was deleted in Gmail meanwhile goes out on a

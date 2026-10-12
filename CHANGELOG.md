@@ -206,8 +206,8 @@ All notable changes to Rail are recorded here. The format follows
   answer lands after a newer action now still puts a failed call's selection back and undoes its
   rows if `z` was pressed for it (saying `too late to undo` when it was); `z` still undoes only the
   newest action. While a send or save to Gmail waits for the daemon, its draft does not open from
-  the Drafts folder, and a lost connection says `Could not confirm the send` instead of leaving
-  `y` and `s` waiting.
+  the Drafts folder or `:drafts`, its review refuses `e`, `a` and `x`, and a lost connection says
+  `Could not confirm the send: … · check Sent and Drafts` instead of leaving `y` and `s` waiting.
 - A sent imported draft's attachment files are removed when the send completes, not only at the
   next daemon start (best effort; the start sweep still catches what a removal could not).
 - A send that fails on an attachment (a file that cannot be read, a forwarded attachment gone from

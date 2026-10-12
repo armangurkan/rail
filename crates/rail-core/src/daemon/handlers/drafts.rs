@@ -521,6 +521,7 @@ pub(super) async fn send(
 fn owned_files(db: &Path, paths: &Paths, id: DraftId) -> Result<Vec<PathBuf>, OpError> {
     let token = Store::open_reader(db)?.draft_client_token(id)?;
     Ok(token
+        // A token that is not one plain path segment names no directory, so owns none.
         .and_then(|t| import_dir(paths, &t).ok())
         .filter(|dir| dir.is_dir())
         .into_iter()

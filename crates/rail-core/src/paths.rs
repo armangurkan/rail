@@ -288,13 +288,13 @@ fn sync_dir(_dir: &Path) -> std::io::Result<()> {
 /// `root/<token>`, when `token` is 1 to 64 ASCII letters, digits, `-` or `_` (the client-token
 /// rule): never a separator, `.`, `..` or an absolute path. The one place a token becomes a
 /// directory.
-pub fn import_dir_in(root: &Path, token: &str) -> Option<PathBuf> {
+pub(crate) fn import_dir_in(root: &Path, token: &str) -> Option<PathBuf> {
     crate::ops::actions::safe_token(token).then(|| root.join(token))
 }
 
 /// Remove `dir` and what is in it (a symlink is removed, never followed): whether it was
 /// there. The caller logs a failure, without the path.
-pub fn remove_dir_if_present(dir: &Path) -> std::io::Result<bool> {
+pub(crate) fn remove_dir_if_present(dir: &Path) -> std::io::Result<bool> {
     match std::fs::remove_dir_all(dir) {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -304,6 +304,8 @@ pub fn remove_dir_if_present(dir: &Path) -> std::io::Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn only_a_checked_token_names_an_import_directory() {
         let root = Path::new("/d/draft-files");
@@ -317,8 +319,6 @@ mod tests {
             assert_eq!(import_dir_in(root, bad), None, "{bad:?}");
         }
     }
-
-    use super::*;
 
     #[cfg(unix)]
     #[test]

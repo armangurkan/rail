@@ -7,7 +7,7 @@ use rail_core::ops::{
 };
 use rail_core::store::drafts::Draft;
 
-use super::composing::{After, BUSY, Pending};
+use super::composing::{After, BUSY, Pending, QUEUING};
 use super::{MailScreen, error_line};
 use crate::tui::app::Effect;
 use crate::tui::data::{MailEvent, ReadError};
@@ -219,23 +219,45 @@ impl MailScreen {
         Vec::new()
     }
 
-    /// `draft` is the one a `draft.send` or `draft.push` in flight is for.
-    fn in_flight(&self, draft: DraftId) -> bool {
-        matches!(
-            self.composing.queuing,
-            Some(Pending::Sending { draft: d, .. } | Pending::Pushing { draft: d, .. }) if d == draft
-        )
+    /// Why `draft` cannot open: it is the one a `draft.send` or `draft.push` in flight is for.
+    fn in_flight(&self, draft: DraftId) -> Option<&'static str> {
+        match self.composing.queuing {
+            Some(Pending::Sending { draft: d, .. }) if d == draft => {
+                Some("This draft is being sent; wait for it to be queued.")
+            }
+            Some(Pending::Pushing { draft: d, .. }) if d == draft => {
+                Some("This draft is being saved to Gmail; wait a moment.")
+            }
+            _ => None,
+        }
+    }
+
+    /// The open review's own draft is being sent or saved to Gmail: the editor and attachment
+    /// changes wait for the answer, which may close the review. Says so.
+    pub(super) fn own_draft_queuing(&mut self) -> bool {
+        let own = self
+            .compose
+            .as_ref()
+            .and_then(|c| c.composing().draft)
+            .is_some_and(|draft| self.in_flight(draft).is_some());
+        if own {
+            self.status.notify(QUEUING, self.tick);
+        }
+        own
     }
 
     /// The daemon link was lost with a send or a push unanswered: its answer will not come,
     /// so `y` and `s` work again, and the bar says its outcome is not known.
     pub(super) fn queuing_lost(&mut self, error: &OpError) {
-        let what = match self.composing.queuing.take() {
-            Some(Pending::Sending { .. }) => "the send",
-            Some(Pending::Pushing { .. }) => "the save to Gmail",
+        let (what, look) = match self.composing.queuing.take() {
+            Some(Pending::Sending { .. }) => ("the send", "Sent and Drafts"),
+            Some(Pending::Pushing { .. }) => ("the save to Gmail", "Drafts"),
             _ => return,
         };
-        let text = format!("Could not confirm {what}: {}", error_line(error));
+        let text = format!(
+            "Could not confirm {what}: {} · check {look}",
+            error_line(error)
+        );
         self.status.error(text, self.ctx.clock.now(), self.tick);
     }
 
@@ -284,8 +306,12 @@ impl MailScreen {
 
     /// Open a stored draft in the composer; not the one being sent or saved to Gmail.
     pub(super) fn resume_draft(&mut self, draft: DraftId) -> Vec<Effect> {
-        if self.compose.is_some() || self.in_flight(draft) {
+        if self.compose.is_some() {
             self.status.notify(BUSY, self.tick);
+            return Vec::new();
+        }
+        if let Some(why) = self.in_flight(draft) {
+            self.status.notify(why, self.tick);
             return Vec::new();
         }
         let seq = self.next_compose_seq();

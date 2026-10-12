@@ -431,7 +431,9 @@ async fn the_draft_being_sent_does_not_open_but_another_one_does() {
     open_from_drafts(&mut f, 1).await;
     assert!(!compose_open(&f), "not while it is being sent");
     assert!(
-        f.screen.status_line().contains(composing::BUSY),
+        f.screen
+            .status_line()
+            .contains("This draft is being sent; wait for it to be queued."),
         "{}",
         f.screen.status_line()
     );
@@ -462,10 +464,41 @@ async fn a_lost_link_while_a_send_waits_says_so_and_lets_y_send_again() {
     assert!(
         errors
             .iter()
-            .any(|e| e == "Could not confirm the send: the connection to the daemon closed"),
+            .any(|e| e
+                == "Could not confirm the send: the connection to the daemon closed · check Sent and Drafts"),
         "{errors:?}"
     );
     another_reply(&mut f).await;
     press(&mut f, KeyCode::Char('y')).await;
     assert_eq!(draft_sends(&f).len(), 1, "y sends again");
+}
+
+#[tokio::test]
+async fn the_review_being_sent_does_not_edit_or_attach_until_it_is_queued() {
+    let mut f = compose_fixture().await;
+    review(&mut f).await;
+    let held = press_held(&mut f, KeyCode::Char('y'));
+    let saves_before = calls_of(&f, |c| matches!(c, FakeCall::DraftSave { .. })).len();
+    let effects = press_held(&mut f, KeyCode::Char('e'));
+    assert!(effects.is_empty(), "no editor: {effects:?}");
+    assert!(
+        f.screen
+            .status_line()
+            .contains("Wait for the last message to be queued."),
+        "{}",
+        f.screen.status_line()
+    );
+    let file = f.paths.data_dir.join("note.txt");
+    std::fs::write(&file, "n").unwrap();
+    press(&mut f, KeyCode::Char('a')).await;
+    for c in file.to_string_lossy().chars() {
+        press(&mut f, KeyCode::Char(c)).await;
+    }
+    press(&mut f, KeyCode::Enter).await;
+    assert!(composing(&f).attachments.is_empty(), "nothing attached");
+    let saves = calls_of(&f, |c| matches!(c, FakeCall::DraftSave { .. })).len();
+    assert_eq!(saves, saves_before, "nothing saved");
+    answer(&mut f, held).await;
+    assert!(!compose_open(&f), "the send closed the review");
+    assert!(f.screen.status_line().contains("sent · z undoes"));
 }

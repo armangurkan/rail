@@ -237,6 +237,13 @@ impl MailScreen {
     }
 
     fn compose_outcome(&mut self, outcome: ComposeOutcome) -> Vec<Effect> {
+        let changes_draft = matches!(
+            outcome,
+            ComposeOutcome::Edit | ComposeOutcome::Attach(_) | ComposeOutcome::Remove(_)
+        );
+        if changes_draft && self.own_draft_queuing() {
+            return Vec::new();
+        }
         match outcome {
             ComposeOutcome::Stay => Vec::new(),
             ComposeOutcome::Edit => self.open_editor(),
