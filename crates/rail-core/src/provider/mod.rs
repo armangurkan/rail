@@ -15,9 +15,9 @@ pub(crate) mod mock;
 
 pub use error::ProviderError;
 pub use types::{
-    AttachmentMeta, Body, ChangeSet, Envelope, EnvelopePage, FolderKind, INBOX_LABEL, IdPage,
-    MAX_PAGE_TOKEN_BYTES, Mailbox, Outgoing, OutgoingAttachment, PageToken, Profile, Relabel,
-    RemoteFolder, RemoteId, STARRED_LABEL, SentReceipt, SyncCursor, UNREAD_LABEL, Window,
+    AttachmentMeta, Body, ChangeSet, DraftIds, Envelope, EnvelopePage, FolderKind, INBOX_LABEL,
+    IdPage, MAX_PAGE_TOKEN_BYTES, Mailbox, Outgoing, OutgoingAttachment, PageToken, Profile,
+    Relabel, RemoteFolder, RemoteId, STARRED_LABEL, SentReceipt, SyncCursor, UNREAD_LABEL, Window,
 };
 
 /// One account's mailbox, read through its provider's API. Every method speaks Rail types;
@@ -70,4 +70,24 @@ pub trait Provider: Send + Sync {
     ) -> Result<Option<RemoteId>, ProviderError>;
     /// The bytes of one attachment part of a message.
     async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError>;
+    /// Save the RFC 5322 message `raw` as a draft, in `thread_id` when given. Tried once: a
+    /// transient error means unknown (the draft may exist), and the caller decides.
+    async fn draft_create(
+        &self,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Result<DraftIds, ProviderError>;
+    /// Replace the provider draft's message with `raw`. `ProviderError::NotFound` when the
+    /// draft was deleted at the provider.
+    async fn draft_update(
+        &self,
+        draft_id: &str,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Result<DraftIds, ProviderError>;
+    /// Delete the provider draft. `ProviderError::NotFound` when it is gone already.
+    async fn draft_delete(&self, draft_id: &str) -> Result<(), ProviderError>;
+    /// The provider draft whose message is `message_id`, looked for in at most
+    /// `gmail::MAX_DRAFT_LIST_PAGES` pages of the draft listing.
+    async fn draft_find(&self, message_id: &str) -> Result<Option<RemoteId>, ProviderError>;
 }

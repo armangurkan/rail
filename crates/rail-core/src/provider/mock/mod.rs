@@ -4,14 +4,16 @@
 //! list out of order (`shuffle_within_ms`), and its page tokens are valid only for their own
 //! listing and refused once stale (`expire_page_tokens`).
 
+mod drafts;
+
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use super::http::{RetryPolicy, retry_policy_override};
 use super::{
-    Body, ChangeSet, Envelope, EnvelopePage, IdPage, PageToken, Profile, Provider, ProviderError,
-    Relabel, RemoteFolder, RemoteId, SentReceipt, SyncCursor, Window,
+    Body, ChangeSet, DraftIds, Envelope, EnvelopePage, IdPage, PageToken, Profile, Provider,
+    ProviderError, Relabel, RemoteFolder, RemoteId, SentReceipt, SyncCursor, Window,
 };
 use crate::provider::FolderKind;
 
@@ -29,6 +31,10 @@ pub(crate) enum Call {
     Send,
     FindByHeader,
     Attachment,
+    DraftCreate,
+    DraftUpdate,
+    DraftDelete,
+    DraftList,
 }
 
 pub(crate) enum Change {
@@ -40,6 +46,14 @@ pub(crate) enum Change {
 /// One message the mock was asked to send.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SentRaw {
+    pub raw: Vec<u8>,
+    pub thread_id: Option<String>,
+}
+
+/// One draft the mock holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MockDraft {
+    pub message_id: String,
     pub raw: Vec<u8>,
     pub thread_id: Option<String>,
 }
@@ -102,6 +116,12 @@ pub(crate) struct Mailbox {
     /// Attachment bytes by (message id, part id).
     pub attachment_bytes: HashMap<(String, String), Vec<u8>>,
     pub missing_threads: HashSet<String>, // deleted at Gmail: a send naming one is `NotFound`
+    /// The provider drafts by draft id.
+    pub drafts: BTreeMap<String, MockDraft>,
+    /// Numbers the ids of drafts and their messages.
+    pub next_draft: u64,
+    /// Draft ids "deleted at Gmail": an update or delete naming one is `NotFound`.
+    pub missing_drafts: HashSet<String>,
 }
 
 impl Default for Mailbox {
@@ -144,6 +164,9 @@ impl Default for Mailbox {
             known_header_ids: HashSet::new(),
             attachment_bytes: HashMap::new(),
             missing_threads: HashSet::new(),
+            drafts: BTreeMap::new(),
+            next_draft: 0,
+            missing_drafts: HashSet::new(),
         }
     }
 }
@@ -580,6 +603,41 @@ impl Provider for MockProvider {
             .cloned()
             .ok_or(ProviderError::NotFound)
     }
+
+    async fn draft_create(
+        &self,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Result<DraftIds, ProviderError> {
+        self.enter(Call::DraftCreate, None)?;
+        let delay = self.lock().action_delay;
+        tokio::time::sleep(delay).await;
+        Ok(drafts::create(&mut self.lock(), raw, thread_id))
+    }
+
+    async fn draft_update(
+        &self,
+        draft_id: &str,
+        raw: &[u8],
+        thread_id: Option<&str>,
+    ) -> Result<DraftIds, ProviderError> {
+        self.enter(Call::DraftUpdate, None)?;
+        let delay = self.lock().action_delay;
+        tokio::time::sleep(delay).await;
+        drafts::update(&mut self.lock(), draft_id, raw, thread_id)
+    }
+
+    async fn draft_delete(&self, draft_id: &str) -> Result<(), ProviderError> {
+        self.enter(Call::DraftDelete, None)?;
+        let delay = self.lock().action_delay;
+        tokio::time::sleep(delay).await;
+        drafts::delete(&mut self.lock(), draft_id)
+    }
+
+    async fn draft_find(&self, message_id: &str) -> Result<Option<RemoteId>, ProviderError> {
+        self.enter(Call::DraftList, None)?;
+        Ok(drafts::find(&self.lock(), message_id))
+    }
 }
 
 /// The `Message-ID` of raw bytes (brackets kept), by a line scan of the header block.
@@ -599,201 +657,4 @@ fn header_message_id(raw: &[u8]) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn a_sent_message_is_found_afterwards_by_its_header_id() {
-        let mock = MockProvider::new();
-        let raw = b"From: a@example.com\r\nMessage-ID: <abc@example.com>\r\n\r\nHi";
-        assert_eq!(
-            mock.message_by_header_id("<abc@example.com>")
-                .await
-                .unwrap(),
-            None
-        );
-        let receipt = mock.send(raw, None).await.unwrap();
-        assert_eq!(receipt.message_id.as_deref(), Some("sent-1"));
-        assert_eq!(receipt.thread_id.as_deref(), Some("t-sent-1"));
-        assert_eq!(
-            mock.message_by_header_id("<abc@example.com>")
-                .await
-                .unwrap(),
-            Some("found-<abc@example.com>".to_string())
-        );
-        let again = mock.send(raw, Some("t9")).await.unwrap();
-        assert_eq!(
-            (
-                again.message_id.as_deref().unwrap(),
-                again.thread_id.as_deref().unwrap()
-            ),
-            ("sent-2", "t9")
-        );
-        let calls: Vec<Call> = mock.with(|m| m.calls.iter().map(|(c, _)| *c).collect());
-        assert_eq!(
-            calls,
-            [
-                Call::FindByHeader,
-                Call::Send,
-                Call::FindByHeader,
-                Call::Send
-            ]
-        );
-        assert_eq!(
-            mock.with(|m| m.sent[1].thread_id.clone()),
-            Some("t9".to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn the_mock_serves_attachment_bytes_or_not_found() {
-        let mock = MockProvider::new();
-        mock.with(|m| {
-            m.attachment_bytes
-                .insert(("m1".into(), "p1".into()), vec![1, 2])
-        });
-        assert_eq!(
-            mock.attachment(&"m1".to_string(), "p1").await.unwrap(),
-            [1, 2]
-        );
-        assert!(matches!(
-            mock.attachment(&"m1".to_string(), "p2").await,
-            Err(ProviderError::NotFound)
-        ));
-    }
-
-    #[tokio::test]
-    async fn the_mock_records_thread_changes_and_plays_them_as_history() {
-        let mock = MockProvider::new();
-        mock.seed(envelope("m1", "t1", 1_000));
-        let cursor = SyncCursor(mock.with(|m| m.history_id).to_string());
-        mock.modify_threads(
-            &["t1".into()],
-            &["STARRED".into()],
-            &["INBOX".into(), "UNREAD".into()],
-        )
-        .await
-        .unwrap();
-        mock.trash_threads(&["t1".into()]).await.unwrap();
-        let calls: Vec<Call> = mock.with(|m| m.calls.iter().map(|(c, _)| *c).collect());
-        assert_eq!(calls, [Call::Modify, Call::Trash]);
-        let env = mock.with(|m| m.messages["m1"].clone());
-        assert!(env.is_starred && env.is_read);
-        assert_eq!(env.folders, ["TRASH"]);
-        let changes = mock.changes(&cursor).await.unwrap();
-        assert_eq!(changes.relabeled.len(), 2);
-        mock.fail_next(Call::Trash, ProviderError::NotFound);
-        assert_eq!(
-            mock.trash_threads(&["t1".into()]).await,
-            Err(ProviderError::NotFound)
-        );
-    }
-
-    #[tokio::test]
-    async fn the_mock_pages_newest_first_and_plays_history() {
-        let mock = MockProvider::new();
-        mock.with(|m| m.page_size = 2);
-        for (i, ms) in [1_000, 3_000, 2_000].into_iter().enumerate() {
-            mock.seed(envelope(&format!("m{i}"), "t", ms));
-        }
-        let first = mock.list(&Window::default(), None).await.unwrap();
-        assert_eq!(first.ids, ["m1", "m2"]);
-        let second = mock
-            .list(&Window::default(), first.next.as_ref())
-            .await
-            .unwrap();
-        assert_eq!(second.ids, ["m0"]);
-        assert!(second.next.is_none());
-        let start = mock.profile().await.unwrap().cursor;
-        mock.add(envelope("new", "t2", 9_000));
-        mock.delete("m0");
-        let read = Relabel {
-            remote_id: "m1".into(),
-            add_folders: vec!["STARRED-ish".into()],
-            remove_folders: vec!["INBOX".into()],
-            read: Some(true),
-            starred: None,
-        };
-        mock.relabel(read.clone());
-        let m1 = mock.with(|m| m.messages["m1"].clone());
-        assert_eq!(m1.folders, ["STARRED-ish"]);
-        assert!(m1.is_read && !m1.is_starred);
-        let changes = mock.changes(&start).await.unwrap();
-        assert_eq!(changes.added[0].remote_id, "new");
-        assert_eq!(changes.deleted, ["m0"]);
-        assert_eq!(changes.relabeled, [read]);
-        assert!(!changes.more);
-        assert_eq!(
-            mock.calls(),
-            [Call::Backfill, Call::Backfill, Call::Profile, Call::Changes]
-        );
-        assert_eq!(
-            mock.backfill_windows(),
-            [Window::default(), Window::default()]
-        );
-        mock.with(|m| m.expired_below = u64::MAX);
-        assert_eq!(
-            mock.changes(&start).await.unwrap_err(),
-            ProviderError::CursorExpired
-        );
-    }
-
-    #[tokio::test]
-    async fn the_mock_windows_in_whole_seconds_like_gmail() {
-        let mock = MockProvider::new();
-        mock.seed(envelope("a", "t", 5_000));
-        mock.seed(envelope("b", "t", 5_900));
-        let window = Window {
-            after_ms: None,
-            before_ms: Some(5_500),
-        };
-        let page = mock.list(&window, None).await.unwrap();
-        assert!(page.ids.is_empty(), "before:5 excludes all of second 5");
-        mock.fail_next(Call::Folders, ProviderError::transient("down"));
-        assert!(mock.folders().await.is_err());
-        assert!(mock.folders().await.is_ok());
-    }
-
-    /// The mock's tokens behave as the engine must assume Gmail's do: valid only for their
-    /// own listing, refused once stale; and a shuffled listing is out of order.
-    #[tokio::test]
-    async fn the_mock_refuses_stale_or_foreign_tokens_and_can_shuffle() {
-        let mock = MockProvider::new();
-        mock.with(|m| m.page_size = 1);
-        for n in 0..10 {
-            mock.seed(envelope(&format!("m{n}"), "t", 10_000 * (n + 1)));
-        }
-        let first = mock.list(&Window::default(), None).await.unwrap();
-        let token = first.next.unwrap();
-        let other = Window {
-            after_ms: Some(1),
-            before_ms: None,
-        };
-        assert_eq!(
-            mock.list(&other, Some(&token)).await.unwrap_err(),
-            ProviderError::PageTokenRejected
-        );
-        assert!(mock.list(&Window::default(), Some(&token)).await.is_ok());
-        mock.expire_page_tokens();
-        assert_eq!(
-            mock.list(&Window::default(), Some(&token))
-                .await
-                .unwrap_err(),
-            ProviderError::PageTokenRejected
-        );
-        mock.with(|m| {
-            m.page_size = 10;
-            m.shuffle_within_ms = 1_000_000;
-        });
-        let all = mock.list(&Window::default(), None).await.unwrap();
-        let dates: Vec<i64> = all
-            .ids
-            .iter()
-            .map(|id| mock.with(|m| m.messages[id].internal_date))
-            .collect();
-        assert!(dates.windows(2).any(|w| w[0] < w[1]), "{dates:?}");
-        let page = mock.envelopes(&all.ids[..2]).await.unwrap();
-        assert_eq!(page.envelopes.len(), 2);
-        assert_eq!(mock.with(|m| m.metadata_gets.len()), 2);
-    }
-}
+mod tests;

@@ -109,11 +109,21 @@ pub(crate) fn retry_policy_override() -> Option<RetryPolicy> {
     SCOPED_POLICY.try_with(|policy| *policy).ok()
 }
 
+/// A JSON body as bytes.
+fn encode(body: Option<&serde_json::Value>) -> Result<Option<Vec<u8>>, ProviderError> {
+    body.map(serde_json::to_vec)
+        .transpose()
+        .map_err(|_| ProviderError::permanent("Rail could not encode a request"))
+}
+
 /// A token bucket in quota units: `burst` at once, then `per_minute` spread evenly.
 pub struct Quota {
     per_second: f64,
     burst: f64,
     state: tokio::sync::Mutex<(f64, Instant)>,
+    /// Units asked for, for tests that check a call's cost.
+    #[cfg(test)]
+    taken: std::sync::atomic::AtomicU64,
 }
 
 impl Quota {
@@ -122,6 +132,8 @@ impl Quota {
             per_second: f64::from(per_minute) / 60.0,
             burst: f64::from(burst),
             state: tokio::sync::Mutex::new((f64::from(burst), Instant::now())),
+            #[cfg(test)]
+            taken: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -133,6 +145,9 @@ impl Quota {
     /// Wait until `units` may be spent. Waiters queue in order behind the lock. A cost above
     /// `burst` waits for a full bucket (it could never fill past it).
     pub async fn take(&self, units: u32) {
+        #[cfg(test)]
+        self.taken
+            .fetch_add(u64::from(units), std::sync::atomic::Ordering::SeqCst);
         let units = f64::from(units).min(self.burst);
         let mut state = self.state.lock().await;
         loop {
@@ -305,26 +320,54 @@ impl ApiClient {
         cost: u32,
         retries: bool,
     ) -> Result<Option<Vec<u8>>, ProviderError> {
+        let encoded = encode(body)?.unwrap_or_default();
+        self.request_encoded(reqwest::Method::POST, path, Some(encoded), cost, retries)
+            .await
+    }
+
+    /// One request with `method` and an optional JSON `body` (none is sent when `None`), the
+    /// answer unparsed like `post_json_bytes`; `retries` means the same.
+    pub(crate) async fn request_bytes(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        cost: u32,
+        retries: bool,
+    ) -> Result<Option<Vec<u8>>, ProviderError> {
+        let encoded = encode(body)?;
+        self.request_encoded(method, path, encoded, cost, retries)
+            .await
+    }
+
+    async fn request_encoded(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Vec<u8>>,
+        cost: u32,
+        retries: bool,
+    ) -> Result<Option<Vec<u8>>, ProviderError> {
         let url = self.resolve(path)?;
-        let encoded = body
-            .map(serde_json::to_vec)
-            .transpose()
-            .map_err(|_| ProviderError::permanent("Rail could not encode a request"))?;
         let outgoing = Outgoing {
-            method: reqwest::Method::POST,
+            method,
             query: &[],
-            body: Some(encoded.unwrap_or_default()),
+            body,
         };
-        let bytes = if retries {
-            self.send(&url, &outgoing, cost).await?
-        } else {
-            let policy = RetryPolicy {
-                attempts: 1,
-                ..retry_policy_override().unwrap_or(self.policy)
-            };
-            with_retry_policy(policy, self.send(&url, &outgoing, cost)).await?
+        if retries {
+            return self.send(&url, &outgoing, cost).await;
+        }
+        let policy = RetryPolicy {
+            attempts: 1,
+            ..retry_policy_override().unwrap_or(self.policy)
         };
-        Ok(bytes)
+        with_retry_policy(policy, self.send(&url, &outgoing, cost)).await
+    }
+
+    /// Quota units taken so far, retries included.
+    #[cfg(test)]
+    pub(crate) fn units_taken(&self) -> u64 {
+        self.quota.taken.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// `path` joined to the base, refused unless it stays under the base: paths carry ids
