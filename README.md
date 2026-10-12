@@ -486,7 +486,7 @@ through Gmail like the actions in [Doing things to mail](#doing-things-to-mail).
 review with `q` before the daemon has the message does not stop the send: its `sent · z undoes`
 (or `Could not send`) still comes, even if another message is open by then. `z` then cancels the
 send but cannot reopen its review; the draft stays in Drafts, to open from there. Until
-the last message is queued, `y` and `s` on another message are refused (`Wait for the last message
+the last message is queued, `y` and `s` on any message are refused (`Wait for the last message
 to be queued.`), and so are `e`, `a` and `x` on the review being sent or saved to Gmail. A draft
 whose send or save to Gmail (`s`) is on its way does not open from the Drafts folder or `:drafts`
 (`This draft is being sent; wait for it to be queued.`, or `This draft is being saved to Gmail;
