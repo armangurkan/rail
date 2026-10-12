@@ -101,6 +101,7 @@ pub(crate) struct Mailbox {
     pub known_header_ids: HashSet<String>,
     /// Attachment bytes by (message id, part id).
     pub attachment_bytes: HashMap<(String, String), Vec<u8>>,
+    pub missing_threads: HashSet<String>, // deleted at Gmail: a send naming one is `NotFound`
 }
 
 impl Default for Mailbox {
@@ -142,6 +143,7 @@ impl Default for Mailbox {
             sent: Vec::new(),
             known_header_ids: HashSet::new(),
             attachment_bytes: HashMap::new(),
+            missing_threads: HashSet::new(),
         }
     }
 }
@@ -542,6 +544,9 @@ impl Provider for MockProvider {
         let delay = self.lock().action_delay;
         tokio::time::sleep(delay).await;
         let mut m = self.lock();
+        if thread_id.is_some_and(|t| m.missing_threads.contains(t)) {
+            return Err(ProviderError::NotFound);
+        }
         m.sent.push(SentRaw {
             raw: raw.to_vec(),
             thread_id: thread_id.map(str::to_string),
@@ -577,8 +582,7 @@ impl Provider for MockProvider {
     }
 }
 
-/// The `Message-ID` of raw message bytes (angle brackets kept), found by a line scan of the
-/// header block; the mock is compiled without a parser.
+/// The `Message-ID` of raw bytes (brackets kept), by a line scan of the header block.
 fn header_message_id(raw: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(raw);
     for line in text.lines() {

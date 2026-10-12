@@ -478,7 +478,8 @@ the message as it was. After the ten seconds the account shows `sending…` and 
 through Gmail like the actions in [Doing things to mail](#doing-things-to-mail). A message is
 never sent twice: before any later attempt (a retry, or a start after the daemon stopped
 mid-send) the daemon asks Gmail whether a message with that `Message-ID` is already there and, if
-so, counts it as sent. When Gmail refuses a message for good, the review opens again with the
+so, counts it as sent. A reply whose conversation was deleted in Gmail meanwhile goes out on a
+conversation of its own. When Gmail refuses a message for good, the review opens again with the
 error (`Could not send: Gmail refused the request (HTTP 400)`) and the failure is listed in
 `:errors`.
 

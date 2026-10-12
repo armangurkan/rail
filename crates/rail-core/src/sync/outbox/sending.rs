@@ -97,9 +97,18 @@ impl Worker {
         let outgoing = compose::attach(loaded.assembly, self.provider.as_ref()).await?;
         let raw = build_message(&outgoing)?;
         self.stamp(draft).await?;
-        self.provider
-            .send(&raw, loaded.remote_thread.as_deref())
-            .await?;
+        let thread = loaded.remote_thread.as_deref();
+        match self.provider.send(&raw, thread).await {
+            // A thread deleted at Gmail is refused with 404 before anything is accepted, so
+            // sending once more on a thread of its own cannot make a duplicate.
+            Err(ProviderError::NotFound) if thread.is_some() => {
+                tracing::info!(account = %self.name, row = row.id, "the reply's thread is gone at Gmail; sending it on its own");
+                self.provider.send(&raw, None).await?;
+            }
+            result => {
+                result?;
+            }
+        }
         Ok(())
     }
 

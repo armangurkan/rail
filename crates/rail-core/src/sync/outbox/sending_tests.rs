@@ -481,6 +481,31 @@ async fn a_send_still_goes_out_when_the_replied_message_is_gone() {
     assert!(raw.contains("In-Reply-To: <gone@example.com>"), "{raw}");
 }
 
+/// Final fix 4: Gmail answers 404 for a thread deleted there; the reply goes out once, on a
+/// thread of its own.
+#[tokio::test]
+async fn a_reply_whose_thread_gmail_no_longer_has_is_sent_once_without_it() {
+    let h = Harness::new().await;
+    let (draft, _) = queued_draft(&h, 10, vec![]).await;
+    h.with_store(|s| {
+        s.conn().execute("UPDATE drafts SET kind = 'reply', remote_thread_id = 't-deleted', in_reply_to = '<m1@example.com>' WHERE id = ?1", [draft]).unwrap();
+    });
+    h.mock
+        .with(|m| m.missing_threads.insert("t-deleted".into()));
+    h.step().await;
+    assert_eq!(
+        sends(&h),
+        2,
+        "refused with the thread, then sent without it"
+    );
+    let sent = h.mock.with(|m| m.sent.clone());
+    assert_eq!(sent.len(), 1, "delivered once");
+    assert_eq!(sent[0].thread_id, None);
+    let raw = String::from_utf8_lossy(&sent[0].raw);
+    assert!(raw.contains("In-Reply-To: <m1@example.com>"), "{raw}");
+    assert!(h.with_store(|s| s.draft(draft).unwrap()).is_none(), "sent");
+}
+
 #[tokio::test]
 async fn sending_shows_in_the_depth_while_a_send_is_in_flight() {
     let h = Harness::new().await;
