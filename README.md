@@ -388,7 +388,9 @@ After an action the status bar says what happened, for example `archived 3 · z 
 seconds `z` takes it back; afterwards it says `Too late to undo.`, and with nothing done,
 `Nothing to undo.` If the daemon has not answered yet, `z` says `undoing…` and finishes when it
 does. Only the most recent action can be undone, and marking a thread read by opening it has no
-undo. `z` works anywhere in the mail screen.
+undo. `z` works anywhere in the mail screen. An earlier action whose answer comes after a newer one
+still shows its error if it failed (its selected threads come back to the selection) and is still
+undone if `z` was pressed for it.
 
 Opening an unread thread marks it read at once in the reader; the list row and the unread counts
 follow a moment later. `u` marks it unread again.
@@ -480,7 +482,10 @@ changes discarded`; a message closed before anything was saved says `The message
 **Sending.** `y` hands the message to the daemon, which sends it ten seconds later. The status
 bar says `sent · z undoes` and `z` takes it back inside that window: the review opens again with
 the message as it was. After the ten seconds the account shows `sending…` and the message goes
-through Gmail like the actions in [Doing things to mail](#doing-things-to-mail). A message is
+through Gmail like the actions in [Doing things to mail](#doing-things-to-mail). Closing the
+review with `q` before the daemon has the message does not stop the send: its `sent · z undoes`
+(or `Could not send`) still comes, even if another message is open by then, and `y` or `s` on
+that other message waits (`Wait for the last message to be queued.`). A message is
 never sent twice: before any later attempt (a retry, or a start after the daemon stopped
 mid-send) the daemon asks Gmail whether a message with that `Message-ID` is already there and, if
 so, counts it as sent. A reply whose conversation was deleted in Gmail meanwhile goes out on a

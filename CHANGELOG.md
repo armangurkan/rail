@@ -200,6 +200,11 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A send or a save to Gmail whose review was closed, followed by a new message or reply before
+  the daemon answered, lost its answer: no `sent · z undoes` record and no error when it failed.
+  Its answer now makes its record (or shows its error) whatever is open. A thread action whose
+  answer lands after a newer action now still puts a failed call's selection back and undoes its
+  rows if `z` was pressed for it; `z` still undoes only the newest action.
 - A sent imported draft's attachment files are removed when the send completes, not only at the
   next daemon start (best effort; the start sweep still catches what a removal could not).
 - A send that fails on an attachment (a file that cannot be read, a forwarded attachment gone from

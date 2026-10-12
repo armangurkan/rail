@@ -134,17 +134,18 @@ impl MailScreen {
         client_token: String,
         result: Result<DraftSendResponse, OpError>,
     ) -> Vec<Effect> {
-        if self.composing.pending != Some(Pending::Sending { seq }) {
+        if self.composing.queuing != Some(Pending::Sending { seq }) {
             return Vec::new();
         }
-        self.composing.pending = None;
+        self.composing.queuing = None;
+        // Another message may be open: the review was closed and something else started.
+        let ours = self
+            .compose
+            .as_ref()
+            .is_some_and(|c| c.composing().draft == Some(draft));
         match result {
             Ok(answer) => {
                 self.status.answered();
-                let ours = self
-                    .compose
-                    .as_ref()
-                    .is_some_and(|c| c.composing().draft == Some(draft));
                 self.composing.last_sent = None;
                 if ours {
                     self.composing.last_sent = self.compose.as_ref().map(|c| {
@@ -163,7 +164,7 @@ impl MailScreen {
                 tracing::warn!(code = ?error.code, "draft.send failed");
                 self.status.failed(&error);
                 let line = error_line(&error);
-                if let Some(composer) = self.compose.as_mut() {
+                if let Some(composer) = self.compose.as_mut().filter(|_| ours) {
                     composer.set_error(line.clone());
                 }
                 let text = format!("Could not send: {line}");
@@ -185,10 +186,10 @@ impl MailScreen {
             draft,
             client_token: client_token.clone(),
         };
-        if self.composing.pending.as_ref() != Some(&wanted) {
+        if self.composing.queuing.as_ref() != Some(&wanted) {
             return Vec::new();
         }
-        self.composing.pending = None;
+        self.composing.queuing = None;
         let ours = self
             .compose
             .as_ref()
