@@ -140,7 +140,9 @@ fn failed_notice(account: &str, row: OutboxRow) -> ActionFailed {
         account: account.to_string(),
         row: row.id,
         threads: row.thread_ids,
+        draft: row.action.draft_id(),
         action: row.action,
         error,
+        client_token: row.client_token,
     }
 }

@@ -1,10 +1,15 @@
 //! The queue: claim order and `not_before`, the client token, transient retries and the cap,
 //! undo of claimed rows, recovery, depth, and an enqueue that keeps only the threads the
-//! account still holds.
+//! account still holds; draft rows: the draft's state, per-draft order, undo and retry by token.
 
+use rusqlite::params;
+
+use super::Store;
 use super::apply_local_tests::{enqueue, seeded, thread};
-use super::outbox::{Failure, MAX_ATTEMPTS, OutboxOutcome, OutboxState, OutboxWrite};
-use crate::ops::Action;
+use super::drafts::{DraftKind, DraftState, DraftWrite, Recipient};
+use super::outbox::{Failure, MAX_ATTEMPTS, NewAction, OutboxOutcome, OutboxState, OutboxWrite};
+use crate::ops::{Action, DraftId, OutboxId, RowToken};
+use crate::test_support::{seed_two_messages, store_with_account};
 
 const NOW: i64 = 1_760_000_000;
 
@@ -163,7 +168,7 @@ fn transient_failures_back_off_and_give_up_after_the_cap() {
             .unwrap()
             .starts_with("gave up after 20 attempts")
     );
-    assert_eq!(store.outbox_depth(1).unwrap(), (0, 1));
+    assert_eq!(store.outbox_depth(1).unwrap(), (0, 1, 0));
 }
 
 #[test]
@@ -173,7 +178,21 @@ fn undo_refuses_claimed_rows_and_recover_requeues_them() {
     let a = enqueue(&mut store, Action::Archive {}, vec![t1], "a");
     claim(&mut store, NOW + 10).unwrap();
     let outcome = store
-        .outbox_write(&OutboxWrite::Undo { ids: vec![a, 999] }, NOW + 10)
+        .outbox_write(
+            &OutboxWrite::Undo {
+                rows: vec![
+                    RowToken {
+                        row: a,
+                        client_token: "a".into(),
+                    },
+                    RowToken {
+                        row: 999,
+                        client_token: "x".into(),
+                    },
+                ],
+            },
+            NOW + 10,
+        )
         .unwrap();
     assert_eq!(
         outcome,
@@ -200,7 +219,7 @@ fn depth_due_and_reads_follow_the_rows() {
     let t1 = thread(&store, "t1");
     assert_eq!(store.outbox_next_due(1).unwrap(), None);
     enqueue(&mut store, Action::Archive {}, vec![t1], "a");
-    assert_eq!(store.outbox_depth(1).unwrap(), (1, 0));
+    assert_eq!(store.outbox_depth(1).unwrap(), (1, 0, 0));
     assert_eq!(store.outbox_next_due(1).unwrap(), Some(NOW + 10));
     assert_eq!(store.pending_for(&[t1]).unwrap().len(), 1);
     assert!(store.failed_rows(1).unwrap().is_empty());
@@ -218,7 +237,7 @@ fn depth_due_and_reads_follow_the_rows() {
 }
 
 /// Account 2 with one thread `o1` (one unread message in its inbox); its local thread id.
-fn other_account(store: &mut super::Store) -> i64 {
+fn other_account(store: &mut Store) -> i64 {
     store
         .conn()
         .execute(
@@ -246,10 +265,11 @@ fn starred(store: &super::Store, thread: i64) -> bool {
 }
 
 fn enqueue_raw(store: &mut super::Store, threads: Vec<i64>, token: &str) -> OutboxOutcome {
-    let write = OutboxWrite::Enqueue(super::outbox::NewAction {
+    let write = OutboxWrite::Enqueue(NewAction {
         account_id: 1,
         action: Action::Star { on: true },
         threads,
+        draft: None,
         not_before: NOW + 10,
         client_token: token.into(),
     });
@@ -294,8 +314,8 @@ fn enqueue_of_threads_no_longer_held_writes_nothing() {
             applied: 0
         }
     );
-    assert_eq!(store.outbox_depth(1).unwrap(), (0, 0));
-    assert_eq!(store.outbox_depth(2).unwrap(), (0, 0));
+    assert_eq!(store.outbox_depth(1).unwrap(), (0, 0, 0));
+    assert_eq!(store.outbox_depth(2).unwrap(), (0, 0, 0));
     assert!(!starred(&store, foreign));
 }
 
@@ -332,7 +352,7 @@ fn a_sync_of_the_thread_clears_its_failed_row() {
     fail_for_good(&mut store, a);
     let b = enqueue(&mut store, Action::Archive {}, vec![t2], "b");
     fail_for_good(&mut store, b);
-    assert_eq!(store.outbox_depth(1).unwrap(), (0, 2));
+    assert_eq!(store.outbox_depth(1).unwrap(), (0, 2, 0));
     let body = Batch {
         bodies: vec![("m1".into(), crate::provider::Body::default())],
         ..Batch::new(1)
@@ -340,7 +360,7 @@ fn a_sync_of_the_thread_clears_its_failed_row() {
     assert_eq!(store.apply(&body, NOW).unwrap().failed_cleared, 0);
     assert_eq!(
         store.outbox_depth(1).unwrap(),
-        (0, 2),
+        (0, 2, 0),
         "a body is not a sync"
     );
     let synced = Batch {
@@ -348,7 +368,7 @@ fn a_sync_of_the_thread_clears_its_failed_row() {
         ..Batch::new(1)
     };
     assert_eq!(store.apply(&synced, NOW).unwrap().failed_cleared, 1);
-    assert_eq!(store.outbox_depth(1).unwrap(), (0, 1));
+    assert_eq!(store.outbox_depth(1).unwrap(), (0, 1, 0));
     let left = store.failed_rows(1).unwrap();
     assert_eq!(left.iter().map(|r| r.id).collect::<Vec<_>>(), vec![b]);
 }
@@ -371,4 +391,267 @@ fn failed_rows_are_bounded() {
         .execute("UPDATE outbox SET state = 'failed'", [])
         .unwrap();
     assert_eq!(store.failed_rows(1).unwrap().len(), MAX_FAILED_ROWS);
+}
+
+fn draft_in(store: &mut Store, account_id: i64, n: i64) -> DraftId {
+    let write = DraftWrite {
+        id: None,
+        account_id,
+        kind: DraftKind::New,
+        thread_id: None,
+        remote_thread_id: None,
+        in_reply_to: None,
+        references: None,
+        to: vec![Recipient {
+            name: None,
+            address: "to@example.com".into(),
+        }],
+        cc: vec![],
+        bcc: vec![],
+        subject: format!("draft {n}"),
+        body: String::new(),
+        attachments: vec![],
+        message_id: format!("<d{n}@example.com>"),
+    };
+    store.draft_upsert(&write, 1).unwrap()
+}
+
+fn send_row(store: &mut Store, account_id: i64, draft: DraftId, token: &str, now: i64) -> OutboxId {
+    let new = NewAction {
+        account_id,
+        action: Action::Send { draft },
+        threads: vec![],
+        draft: Some(draft),
+        not_before: now + 10,
+        client_token: token.into(),
+    };
+    match store.outbox_write(&OutboxWrite::Enqueue(new), now).unwrap() {
+        OutboxOutcome::Enqueued { rows, .. } => rows[0],
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_send_row_queues_the_draft_and_undo_or_a_permanent_failure_returns_it_to_editing() {
+    let (mut store, account_id) = store_with_account();
+    let draft = draft_in(&mut store, account_id, 1);
+    let row = send_row(&mut store, account_id, draft, "tok-1", 100);
+    assert_eq!(
+        store.draft(draft).unwrap().unwrap().state,
+        DraftState::Queued
+    );
+    let stored = store.failed_rows(account_id).unwrap();
+    assert!(stored.is_empty());
+    assert_eq!(store.outbox_depth(account_id).unwrap(), (1, 0, 0));
+    // Undo with the right token.
+    let undo = OutboxWrite::Undo {
+        rows: vec![RowToken {
+            row,
+            client_token: "tok-1".into(),
+        }],
+    };
+    assert!(
+        matches!(store.outbox_write(&undo, 101).unwrap(), OutboxOutcome::Undone { undone, .. } if undone == [row])
+    );
+    assert_eq!(
+        store.draft(draft).unwrap().unwrap().state,
+        DraftState::Editing
+    );
+    // Queue again, claim, fail for good.
+    let row = send_row(&mut store, account_id, draft, "tok-2", 200);
+    let claimed = store
+        .outbox_write(&OutboxWrite::Claim { account_id }, 300)
+        .unwrap();
+    assert!(
+        matches!(claimed, OutboxOutcome::Claimed(Some(ref r)) if r.id == row && r.draft_id == Some(draft) && r.client_token == "tok-2")
+    );
+    assert_eq!(
+        store.outbox_depth(account_id).unwrap(),
+        (1, 0, 1),
+        "sending"
+    );
+    let fail = OutboxWrite::Fail {
+        id: row,
+        failure: Failure::Permanent("refused".into()),
+    };
+    store.outbox_write(&fail, 301).unwrap();
+    assert_eq!(
+        store.draft(draft).unwrap().unwrap().state,
+        DraftState::Editing
+    );
+    assert_eq!(
+        store.failed_rows(account_id).unwrap()[0].client_token,
+        "tok-2"
+    );
+    // Retry with the wrong token does nothing; the right one re-queues.
+    let wrong = OutboxWrite::Retry {
+        id: row,
+        client_token: "nope".into(),
+    };
+    assert!(matches!(
+        store.outbox_write(&wrong, 302).unwrap(),
+        OutboxOutcome::Retried(false)
+    ));
+    let right = OutboxWrite::Retry {
+        id: row,
+        client_token: "tok-2".into(),
+    };
+    assert!(matches!(
+        store.outbox_write(&right, 302).unwrap(),
+        OutboxOutcome::Retried(true)
+    ));
+    assert_eq!(
+        store.draft(draft).unwrap().unwrap().state,
+        DraftState::Queued
+    );
+    // Completing a send deletes the draft.
+    store
+        .outbox_write(&OutboxWrite::Claim { account_id }, 400)
+        .unwrap();
+    store
+        .outbox_write(&OutboxWrite::Complete { id: row }, 401)
+        .unwrap();
+    assert!(store.draft(draft).unwrap().is_none());
+    assert_eq!(store.outbox_depth(account_id).unwrap(), (0, 0, 0));
+}
+
+#[test]
+fn an_undo_with_a_mismatched_token_is_too_late_even_for_a_pending_row() {
+    let (mut store, account_id) = store_with_account();
+    let draft = draft_in(&mut store, account_id, 1);
+    let row = send_row(&mut store, account_id, draft, "tok-1", 100);
+    let undo = OutboxWrite::Undo {
+        rows: vec![RowToken {
+            row,
+            client_token: "other".into(),
+        }],
+    };
+    let outcome = store.outbox_write(&undo, 101).unwrap();
+    assert!(
+        matches!(outcome, OutboxOutcome::Undone { ref too_late, ref undone } if too_late == &[row] && undone.is_empty())
+    );
+    assert_eq!(
+        store.draft(draft).unwrap().unwrap().state,
+        DraftState::Queued,
+        "untouched"
+    );
+}
+
+#[test]
+fn two_drafts_on_one_thread_send_in_order_and_undo_separately() {
+    let (mut store, account_id) = store_with_account();
+    let (first_message, _) = seed_two_messages(&mut store, account_id);
+    let thread = store
+        .reply_source(first_message)
+        .unwrap()
+        .unwrap()
+        .thread_id;
+    let a = draft_in(&mut store, account_id, 1);
+    let b = draft_in(&mut store, account_id, 2);
+    for d in [a, b] {
+        store
+            .conn()
+            .execute(
+                "UPDATE drafts SET thread_id = ?2, kind = 'reply' WHERE id = ?1",
+                params![d, thread],
+            )
+            .unwrap();
+    }
+    let row_a = send_row(&mut store, account_id, a, "tok-a", 100);
+    let row_b = send_row(&mut store, account_id, b, "tok-b", 100);
+    // Different drafts: both claimable at once, oldest first.
+    let claimed = store
+        .outbox_write(&OutboxWrite::Claim { account_id }, 200)
+        .unwrap();
+    assert!(matches!(claimed, OutboxOutcome::Claimed(Some(ref r)) if r.id == row_a));
+    let claimed = store
+        .outbox_write(&OutboxWrite::Claim { account_id }, 200)
+        .unwrap();
+    assert!(
+        matches!(claimed, OutboxOutcome::Claimed(Some(ref r)) if r.id == row_b),
+        "b is not blocked by a"
+    );
+    store
+        .outbox_write(&OutboxWrite::Release { id: row_a }, 201)
+        .unwrap();
+    store
+        .outbox_write(&OutboxWrite::Release { id: row_b }, 201)
+        .unwrap();
+    let undo = OutboxWrite::Undo {
+        rows: vec![RowToken {
+            row: row_a,
+            client_token: "tok-a".into(),
+        }],
+    };
+    store.outbox_write(&undo, 202).unwrap();
+    assert_eq!(store.draft(a).unwrap().unwrap().state, DraftState::Editing);
+    assert_eq!(
+        store.draft(b).unwrap().unwrap().state,
+        DraftState::Queued,
+        "the second stays queued"
+    );
+}
+
+#[test]
+fn a_second_row_for_the_same_draft_waits_for_the_first() {
+    let (mut store, account_id) = store_with_account();
+    let d = draft_in(&mut store, account_id, 1);
+    let push = NewAction {
+        account_id,
+        action: Action::PushDraft { draft: d },
+        threads: vec![],
+        draft: Some(d),
+        not_before: 0,
+        client_token: "p1".into(),
+    };
+    store
+        .outbox_write(&OutboxWrite::Enqueue(push), 100)
+        .unwrap();
+    let delete = NewAction {
+        account_id,
+        action: Action::DeleteDraft {
+            draft: d,
+            remote_draft_id: "r".into(),
+        },
+        threads: vec![],
+        draft: Some(d),
+        not_before: 0,
+        client_token: "p2".into(),
+    };
+    store
+        .outbox_write(&OutboxWrite::Enqueue(delete), 100)
+        .unwrap();
+    let first = store
+        .outbox_write(&OutboxWrite::Claim { account_id }, 200)
+        .unwrap();
+    assert!(
+        matches!(first, OutboxOutcome::Claimed(Some(ref r)) if matches!(r.action, Action::PushDraft { .. }))
+    );
+    let second = store
+        .outbox_write(&OutboxWrite::Claim { account_id }, 200)
+        .unwrap();
+    assert!(
+        matches!(second, OutboxOutcome::Claimed(None)),
+        "the delete waits for the push"
+    );
+    assert_eq!(
+        store.outbox_next_due(account_id).unwrap(),
+        None,
+        "and is not reported as due"
+    );
+}
+
+#[test]
+fn a_draft_row_names_no_threads_and_a_missing_draft_is_refused() {
+    let (mut store, account_id) = store_with_account();
+    let new = NewAction {
+        account_id,
+        action: Action::Send { draft: 999 },
+        threads: vec![],
+        draft: Some(999),
+        not_before: 0,
+        client_token: "x".into(),
+    };
+    let outcome = store.outbox_write(&OutboxWrite::Enqueue(new), 100).unwrap();
+    assert!(matches!(outcome, OutboxOutcome::Enqueued { ref rows, .. } if rows.is_empty()));
 }

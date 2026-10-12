@@ -70,6 +70,11 @@ pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
             Some(add) => (add, system(INBOX_LABEL)),
             None => return Ok(Plan::LabelGone),
         },
+
+        // A draft row names no threads (it left above); the worker's send path takes them.
+        Action::Send { .. } | Action::PushDraft { .. } | Action::DeleteDraft { .. } => {
+            return Ok(Plan::Nothing);
+        }
     };
     Ok(Plan::Send {
         threads,

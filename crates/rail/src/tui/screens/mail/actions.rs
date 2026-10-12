@@ -90,6 +90,9 @@ pub(crate) fn verbs(action: &MailAction) -> (&'static str, &'static str) {
         MailAction::Read { on: false } => ("marked unread", "mark unread"),
         MailAction::Labels { .. } => ("labelled", "change the labels of"),
         MailAction::Move { .. } => ("moved", "move"),
+        MailAction::Send { .. } => ("sent", "send"),
+        MailAction::PushDraft { .. } => ("saved", "save the draft"),
+        MailAction::DeleteDraft { .. } => ("discarded", "discard the draft"),
     }
 }
 

@@ -160,6 +160,8 @@ mod tests {
             threads: vec![2],
             action: crate::ops::Action::Archive {},
             error: OpError::not_found("gone"),
+            draft: None,
+            client_token: "tok".into(),
         };
         sync.board().report_failure(&failure);
         let frame = String::from_utf8(sent.try_recv().unwrap()).unwrap();

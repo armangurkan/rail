@@ -95,6 +95,8 @@ pub struct Envelope {
     pub from: Vec<Mailbox>,
     pub to: Vec<Mailbox>,
     pub cc: Vec<Mailbox>,
+    /// The `Reply-To:` header's mailboxes; empty when it is missing.
+    pub reply_to: Vec<Mailbox>,
     pub bcc: Vec<Mailbox>,
     /// The `Date:` header in Unix seconds (the receive time when it is missing or absurd).
     pub date: i64,

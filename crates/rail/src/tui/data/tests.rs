@@ -528,6 +528,8 @@ fn an_action_failure_debug_names_the_row_and_nothing_of_the_error() {
         threads: vec![1, 2],
         action: Action::Archive {},
         error,
+        draft: None,
+        client_token: "tok".into(),
     }));
     let text = format!("{event:?}");
     assert!(

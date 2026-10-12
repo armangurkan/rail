@@ -29,6 +29,7 @@ fn applying(f: &Fixture) {
             account_id: account,
             action: call.action.clone(),
             threads: call.threads.clone(),
+            draft: None,
             not_before: i64::MAX,
             client_token: rail_core::ops::client_token(),
         };
@@ -311,6 +312,7 @@ async fn the_status_bar_shows_queued_and_failed_rows() {
     s.outbox = OutboxDepth {
         pending: 2,
         failed: 1,
+        sending: 0,
     };
     let effects = f
         .screen
@@ -336,6 +338,8 @@ async fn a_failure_shows_on_the_row_and_in_errors_where_enter_retries() {
         action: MailAction::Archive {},
         error: OpError::not_found("the mail provider no longer has it")
             .with_detail("Not\u{1b}[31m Found"),
+        draft: None,
+        client_token: "tok".into(),
     };
     let effects = f
         .screen
@@ -378,6 +382,8 @@ async fn a_failure_sent_again_on_a_reconnect_is_listed_once() {
             threads: vec![top],
             action: MailAction::Archive {},
             error: OpError::not_found("the mail provider no longer has it"),
+            draft: None,
+            client_token: "tok".into(),
         }))
     };
     let retries = |f: &Fixture| {

@@ -1,9 +1,15 @@
 //! The local SQLite store. One file, WAL mode, FTS5.
 
 pub mod accounts;
+pub mod addresses;
+#[cfg(test)]
+mod addresses_tests;
 mod apply_local;
 #[cfg(test)]
 mod apply_local_tests;
+pub mod drafts;
+#[cfg(test)]
+mod drafts_tests;
 pub mod filter;
 pub mod migrations;
 pub mod outbox;
@@ -27,6 +33,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use accounts::AccountRow;
+pub use addresses::{AddressEntry, MAX_SUGGESTIONS};
 pub use sync_read::{StoreCounts, StoredBody, StoredHit, SyncStateRow, fts_query};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags};
@@ -548,7 +555,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!((version, migrations::LATEST_VERSION), (6, 6));
+        assert_eq!((version, migrations::LATEST_VERSION), (7, 7));
         let store = Store { conn };
         let state = store.sync_state(1).unwrap();
         assert_eq!(state.backfill_before, Some(1_700_000_000_000));
@@ -666,7 +673,7 @@ mod tests {
             assert_eq!(store.schema_version().unwrap(), 5);
         }
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 6);
+        assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
         let (not_before, threads, inflight, reversal): (i64, String, Option<i64>, String) = store
             .conn()
             .query_row(
@@ -688,5 +695,44 @@ mod tests {
             )
             .unwrap();
         assert_eq!(index, 1);
+    }
+
+    /// 0007 adds drafts, `messages.reply_to_json` and `outbox.draft_id` to a version-6 store
+    /// and keeps its rows.
+    #[test]
+    fn version_7_adds_drafts_and_keeps_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rail.db");
+        {
+            let store = Store::open_at_version(&path, 6).unwrap();
+            store
+                .conn()
+                .execute_batch(
+                    "INSERT INTO accounts (name, kind, address) VALUES ('a', 'gmail', 'a@example.com');
+                     INSERT INTO threads (account_id, remote_id) VALUES (1, 't1');
+                     INSERT INTO messages (account_id, thread_id, remote_id, date, internal_date)
+                       VALUES (1, 1, 'm1', 0, 0);
+                     INSERT INTO outbox (account_id, kind, payload, client_token)
+                       VALUES (1, 'move', '{\"kind\":\"archive\"}', 'tok');",
+                )
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 7);
+        let draft: Option<i64> = store
+            .conn()
+            .query_row("SELECT draft_id FROM outbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(draft, None);
+        let reply_to: String = store
+            .conn()
+            .query_row("SELECT reply_to_json FROM messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(reply_to, "[]");
+        let drafts: i64 = store
+            .conn()
+            .query_row("SELECT count(*) FROM drafts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(drafts, 0);
     }
 }

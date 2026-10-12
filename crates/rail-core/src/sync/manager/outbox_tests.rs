@@ -36,6 +36,7 @@ async fn a_waiting_row_is_sent_by_the_accounts_worker_and_shutdown_keeps_its_dea
         account_id: 1,
         action: Action::Star { on: true },
         threads: vec![thread],
+        draft: None,
         not_before: 0,
         client_token: "t".into(),
     };
@@ -56,6 +57,7 @@ async fn a_waiting_row_is_sent_by_the_accounts_worker_and_shutdown_keeps_its_dea
         account_id: 1,
         action: Action::Star { on: false },
         threads: vec![thread],
+        draft: None,
         not_before: 0,
         client_token: "u".into(),
     };

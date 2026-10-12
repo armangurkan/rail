@@ -9,7 +9,7 @@ use tokio::sync::{Notify, watch};
 
 use super::{Worker, WorkerParts};
 use crate::config::AccountKind;
-use crate::ops::{AccountSyncStatus, Action, ActionFailed};
+use crate::ops::{AccountSyncStatus, Action, ActionFailed, RowToken};
 use crate::provider::mock::{Call, MockProvider, envelope};
 use crate::provider::{FolderKind, ProviderError, RemoteFolder};
 use crate::store::Store;
@@ -117,6 +117,7 @@ impl Rig {
             account_id: 1,
             action,
             threads,
+            draft: None,
             not_before: 0,
             client_token: token.into(),
         };
@@ -143,7 +144,7 @@ impl Rig {
         .unwrap_or_else(|_| panic!("timed out waiting for {what}"));
     }
 
-    fn depth(&self) -> (u64, u64) {
+    fn depth(&self) -> (u64, u64, u64) {
         self.store().outbox_depth(1).unwrap()
     }
 }
@@ -182,7 +183,8 @@ async fn each_action_makes_the_gmail_call_the_spec_maps_it_to_in_order() {
     rig.enqueue(Action::Move { to: label }, vec![t2], "d").await;
     rig.enqueue(Action::Trash {}, vec![t1], "e").await;
     rig.start();
-    rig.until("every row sent", |r| r.depth() == (0, 0)).await;
+    rig.until("every row sent", |r| r.depth() == (0, 0, 0))
+        .await;
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     let modifies = rig.mock.with(|m| m.modifies.clone());
     assert_eq!(
@@ -255,7 +257,7 @@ async fn a_permanent_failure_reverts_and_notifies() {
         "SELECT count(*) FROM message_folders mf JOIN folders f ON f.id = mf.folder_id WHERE f.kind = 'inbox'", [], |r| r.get(0),
     ).unwrap();
     assert_eq!(inbox, 2, "m1 is back in the inbox");
-    assert_eq!(rig.depth(), (0, 1));
+    assert_eq!(rig.depth(), (0, 1, 0));
     assert_eq!(rig.board.get(ADDRESS).unwrap().outbox.failed, 1);
 }
 
@@ -270,7 +272,7 @@ async fn needs_auth_pauses_the_worker_until_it_is_woken() {
     rig.until("paused", |r| r.board.get(ADDRESS).unwrap().needs_auth)
         .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(rig.depth(), (1, 0), "kept, not failed");
+    assert_eq!(rig.depth(), (1, 0, 0), "kept, not failed");
     let attempts: i64 = rig
         .store()
         .conn()
@@ -279,7 +281,7 @@ async fn needs_auth_pauses_the_worker_until_it_is_woken() {
     assert_eq!(attempts, 0);
     rig.board.update(ADDRESS, |s| s.needs_auth = false);
     rig.signal.notify_one();
-    rig.until("sent after the login", |r| r.depth() == (0, 0))
+    rig.until("sent after the login", |r| r.depth() == (0, 0, 0))
         .await;
 }
 
@@ -294,7 +296,7 @@ async fn an_inflight_row_at_start_is_sent_again_once() {
         .await
         .unwrap();
     rig.start();
-    rig.until("sent", |r| r.depth() == (0, 0)).await;
+    rig.until("sent", |r| r.depth() == (0, 0, 0)).await;
     let modifies = rig.mock.with(|m| m.modifies.clone());
     assert_eq!(modifies.len(), 1);
     assert_eq!(modifies[0].0, ["t1"]);
@@ -312,7 +314,12 @@ async fn an_undo_after_the_claim_is_too_late() {
         .await;
     let undo = rig
         .writer
-        .outbox(OutboxWrite::Undo { ids: vec![id] })
+        .outbox(OutboxWrite::Undo {
+            rows: vec![RowToken {
+                row: id,
+                client_token: "a".into(),
+            }],
+        })
         .await
         .unwrap();
     assert_eq!(
@@ -322,7 +329,7 @@ async fn an_undo_after_the_claim_is_too_late() {
             too_late: vec![id]
         }
     );
-    rig.until("sent", |r| r.depth() == (0, 0)).await;
+    rig.until("sent", |r| r.depth() == (0, 0, 0)).await;
 }
 
 #[tokio::test]
@@ -346,7 +353,7 @@ async fn a_row_whose_threads_are_gone_completes_without_a_call() {
         .await
         .unwrap();
     rig.start();
-    rig.until("done", |r| r.depth() == (0, 0)).await;
+    rig.until("done", |r| r.depth() == (0, 0, 0)).await;
     assert!(rig.mock.with(|m| m.modifies.is_empty()), "nothing sent");
 }
 
@@ -390,7 +397,7 @@ async fn a_label_gone_before_sending_fails_and_reverts() {
     let error = rig.failures.lock().unwrap()[0].error.message.clone();
     assert_eq!(error, "a label of this action no longer exists in Gmail");
     assert!(rig.mock.with(|m| m.modifies.is_empty()));
-    assert_eq!(rig.depth(), (0, 1));
+    assert_eq!(rig.depth(), (0, 1, 0));
 }
 
 #[tokio::test]
@@ -432,7 +439,7 @@ async fn a_failure_part_way_through_the_threads_fails_the_row_after_one_call_eac
     let modifies = rig.mock.with(|m| m.modifies.clone());
     assert_eq!(modifies.len(), 1, "t1 was sent, t2 refused");
     assert_eq!(modifies[0].0, ["t1"]);
-    assert_eq!(rig.depth(), (0, 1), "the whole row failed");
+    assert_eq!(rig.depth(), (0, 1, 0), "the whole row failed");
 }
 
 #[tokio::test]
@@ -444,6 +451,7 @@ async fn a_blocked_row_does_not_make_the_worker_poll() {
         account_id: 1,
         action: Action::Star { on: true },
         threads: vec![t1],
+        draft: None,
         not_before,
         client_token: token.into(),
     };
@@ -475,7 +483,7 @@ async fn a_paused_worker_notices_the_flag_cleared_without_a_wake() {
         .await;
     // The engine clears the flag (a good labels step) and does not notify the worker.
     rig.board.update(ADDRESS, |s| s.needs_auth = false);
-    rig.until("sent without a wake", |r| r.depth() == (0, 0))
+    rig.until("sent without a wake", |r| r.depth() == (0, 0, 0))
         .await;
     assert_eq!(rig.mock.with(|m| m.modifies.len()), 1);
 }

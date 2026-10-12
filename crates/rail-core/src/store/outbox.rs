@@ -1,6 +1,8 @@
 //! The outbox: actions waiting for the worker, in one table. Every write runs in one
 //! `IMMEDIATE` transaction on the writer's connection (`Store::outbox_write`); the reads serve
 //! the worker, the operations and the status. Rows hold ids, flags and Rail's error words only.
+//! A draft row (`send`, `push_draft`, `delete_draft`) names no threads: it is keyed by its
+//! `draft_id`, and a `send` row moves its draft between `editing` and `queued`.
 
 use std::collections::BTreeSet;
 
@@ -8,7 +10,7 @@ use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params}
 
 use super::apply_local::{self, Prior};
 use super::{Store, StoreError, rollup};
-use crate::ops::{Action, OutboxId};
+use crate::ops::{Action, DraftId, OutboxId, RowToken};
 
 /// Attempts after which a transiently failing row gives up.
 pub const MAX_ATTEMPTS: u32 = 20;
@@ -44,6 +46,10 @@ pub struct OutboxRow {
     pub not_before: i64,
     pub last_error: Option<String>,
     pub(crate) reversal: Vec<Prior>,
+    /// The draft of a draft row.
+    pub draft_id: Option<DraftId>,
+    /// The token the row was queued with: undo and retry must name it.
+    pub client_token: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +59,9 @@ pub struct NewAction {
     /// Checked by the caller: this account's threads, deduplicated. The enqueue keeps only
     /// those the store still holds for the account when it writes.
     pub threads: Vec<i64>,
+    /// The draft of a draft action (`threads` is then empty); checked against the account
+    /// when the row is written.
+    pub draft: Option<DraftId>,
     pub not_before: i64,
     pub client_token: String,
 }
@@ -83,11 +92,14 @@ pub enum OutboxWrite {
     Release {
         id: OutboxId,
     },
+    /// Pending rows whose token matches go; any other is too late.
     Undo {
-        ids: Vec<OutboxId>,
+        rows: Vec<RowToken>,
     },
+    /// A failed row whose token matches is queued again.
     Retry {
         id: OutboxId,
+        client_token: String,
     },
     /// Every inflight row of the account back to pending (daemon start).
     Recover {
@@ -116,8 +128,8 @@ pub enum OutboxOutcome {
     Recovered(usize),
 }
 
-const COLUMNS: &str =
-    "id, account_id, payload, thread_ids, state, attempts, not_before, last_error, reversal";
+const COLUMNS: &str = "id, account_id, payload, thread_ids, state, attempts, not_before, \
+    last_error, reversal, draft_id, client_token";
 
 fn read_row(r: &Row<'_>) -> rusqlite::Result<OutboxRow> {
     let json = |i: usize| -> rusqlite::Result<String> { r.get(i) };
@@ -135,6 +147,8 @@ fn read_row(r: &Row<'_>) -> rusqlite::Result<OutboxRow> {
         not_before: r.get(6)?,
         last_error: r.get(7)?,
         reversal: serde_json::from_str(&json(8)?).unwrap_or_default(),
+        draft_id: r.get(9)?,
+        client_token: r.get(10)?,
     })
 }
 
@@ -229,6 +243,9 @@ pub(crate) fn enqueue(
     if let Some(id) = known {
         return Ok(Some((id, threads.len())));
     }
+    if let Some(draft) = new.draft {
+        return enqueue_draft(tx, new, draft);
+    }
     if threads.is_empty() {
         return Ok(None);
     }
@@ -251,9 +268,61 @@ pub(crate) fn enqueue(
     Ok(Some((id, threads.len())))
 }
 
+/// A draft row for one of the account's drafts; `None` (nothing written) when the account
+/// holds no such draft. A `send` row queues the draft.
+fn enqueue_draft(
+    tx: &Transaction,
+    new: &NewAction,
+    draft: DraftId,
+) -> Result<Option<(OutboxId, usize)>, StoreError> {
+    let exists: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM drafts WHERE id = ?1 AND account_id = ?2)",
+        params![draft, new.account_id],
+        |r| r.get(0),
+    )?;
+    if !exists {
+        return Ok(None);
+    }
+    tx.execute(
+        "INSERT INTO outbox (account_id, kind, payload, state, client_token, not_before, thread_ids,
+           reversal, draft_id)
+         VALUES (?1, ?2, ?3, 'pending', ?4, ?5, '[]', '[]', ?6)",
+        params![
+            new.account_id,
+            new.action.kind_column(),
+            json(&new.action),
+            new.client_token,
+            new.not_before,
+            draft
+        ],
+    )?;
+    let id = tx.last_insert_rowid();
+    if matches!(new.action, Action::Send { .. }) {
+        set_draft_state(tx, draft, "queued")?;
+    }
+    Ok(Some((id, 1)))
+}
+
+/// The draft's `editing` or `queued`.
+fn set_draft_state(tx: &Transaction, draft: DraftId, state: &str) -> Result<(), StoreError> {
+    tx.execute(
+        "UPDATE drafts SET state = ?2 WHERE id = ?1",
+        params![draft, state],
+    )?;
+    Ok(())
+}
+
+/// The draft of `row` when it is a `send` row.
+fn sent_draft(row: &OutboxRow) -> Option<DraftId> {
+    matches!(row.action, Action::Send { .. })
+        .then_some(row.draft_id)
+        .flatten()
+}
+
 /// The oldest due pending row of `account`, now inflight. Per-thread FIFO: a row waits (even
 /// when due) while an older live row shares a thread with it, so Gmail sees one thread's
-/// actions in the order the user made them. Done in SQL: one bounded statement, no row loop.
+/// actions in the order the user made them; rows of one draft wait the same way. Done in
+/// SQL: one bounded statement, no row loop.
 pub(crate) fn claim_next(
     tx: &Transaction,
     account: i64,
@@ -267,8 +336,9 @@ pub(crate) fn claim_next(
                            AND NOT EXISTS (
                              SELECT 1 FROM outbox p
                              WHERE p.id < o.id AND p.state IN ('pending', 'inflight')
-                               AND EXISTS (SELECT 1 FROM json_each(p.thread_ids) pt
-                                           WHERE pt.value IN (SELECT value FROM json_each(o.thread_ids))))
+                               AND (EXISTS (SELECT 1 FROM json_each(p.thread_ids) pt
+                                            WHERE pt.value IN (SELECT value FROM json_each(o.thread_ids)))
+                                    OR (p.draft_id IS NOT NULL AND p.draft_id = o.draft_id)))
                          ORDER BY o.id LIMIT 1)
              RETURNING id",
             params![account, now],
@@ -281,7 +351,12 @@ pub(crate) fn claim_next(
     }
 }
 
+/// The row is done: it leaves the outbox, and a sent draft leaves the store.
 pub(crate) fn complete(tx: &Transaction, id: OutboxId) -> Result<(), StoreError> {
+    tx.execute(
+        "DELETE FROM drafts WHERE id = (SELECT draft_id FROM outbox WHERE id = ?1 AND kind = 'send')",
+        [id],
+    )?;
     tx.execute("DELETE FROM outbox WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -325,6 +400,9 @@ pub(crate) fn fail(
         }
         None => {
             apply_local::restack(tx, &row.thread_ids.iter().copied().collect(), &[id])?;
+            if let Some(draft) = sent_draft(&row) {
+                set_draft_state(tx, draft, "editing")?;
+            }
             tx.execute(
                 "UPDATE outbox SET state = 'failed', attempts = ?2, last_error = ?3, inflight_at = NULL
                  WHERE id = ?1",
@@ -335,33 +413,53 @@ pub(crate) fn fail(
     Ok((retry_at.is_none(), one(tx, id)?))
 }
 
-/// Remove the rows still pending and revert their change; the others are too late.
+/// Remove the rows still pending whose token matches and revert their change (a sent draft
+/// goes back to `editing`); the others are too late.
 pub(crate) fn remove_pending(
     tx: &Transaction,
-    ids: &[OutboxId],
+    rows: &[RowToken],
 ) -> Result<(Vec<OutboxId>, Vec<OutboxId>), StoreError> {
     let (mut undone, mut too_late, mut threads) = (Vec::new(), Vec::new(), BTreeSet::new());
-    for &id in ids {
-        match one(tx, id)? {
-            Some(row) if row.state == OutboxState::Pending => {
+    for RowToken {
+        row: id,
+        client_token,
+    } in rows
+    {
+        match one(tx, *id)? {
+            Some(row) if row.state == OutboxState::Pending && &row.client_token == client_token => {
                 threads.extend(row.thread_ids.iter().copied());
-                undone.push(id);
+                if let Some(draft) = sent_draft(&row) {
+                    set_draft_state(tx, draft, "editing")?;
+                }
+                undone.push(*id);
             }
-            _ => too_late.push(id),
+            _ => too_late.push(*id),
         }
     }
     apply_local::restack(tx, &threads, &undone)?;
+    // Deleted, not completed: an undone send keeps its draft.
     for id in &undone {
-        complete(tx, *id)?;
+        tx.execute("DELETE FROM outbox WHERE id = ?1", [id])?;
     }
     Ok((undone, too_late))
 }
 
-/// `failed` → `pending` now, its change applied again in order. False for any other row.
-pub(crate) fn retry(tx: &Transaction, id: OutboxId, now: i64) -> Result<bool, StoreError> {
-    let Some(row) = one(tx, id)?.filter(|r| r.state == OutboxState::Failed) else {
+/// `failed` → `pending` now, its change applied again in order (a sent draft is `queued`
+/// again). False for any other row, or a token that is not the row's.
+pub(crate) fn retry(
+    tx: &Transaction,
+    id: OutboxId,
+    client_token: &str,
+    now: i64,
+) -> Result<bool, StoreError> {
+    let Some(row) =
+        one(tx, id)?.filter(|r| r.state == OutboxState::Failed && r.client_token == client_token)
+    else {
         return Ok(false);
     };
+    if let Some(draft) = sent_draft(&row) {
+        set_draft_state(tx, draft, "queued")?;
+    }
     tx.execute(
         "UPDATE outbox SET state = 'pending', attempts = 0, last_error = NULL, not_before = ?2,
            reversal = '[]' WHERE id = ?1",
@@ -433,11 +531,13 @@ impl Store {
                 release(&tx, *id)?;
                 OutboxOutcome::Done
             }
-            OutboxWrite::Undo { ids } => {
-                let (undone, too_late) = remove_pending(&tx, ids)?;
+            OutboxWrite::Undo { rows } => {
+                let (undone, too_late) = remove_pending(&tx, rows)?;
                 OutboxOutcome::Undone { undone, too_late }
             }
-            OutboxWrite::Retry { id } => OutboxOutcome::Retried(retry(&tx, *id, now)?),
+            OutboxWrite::Retry { id, client_token } => {
+                OutboxOutcome::Retried(retry(&tx, *id, client_token, now)?)
+            }
             OutboxWrite::Recover { account_id } => {
                 OutboxOutcome::Recovered(recover(&tx, *account_id)?)
             }
@@ -446,22 +546,22 @@ impl Store {
         Ok(outcome)
     }
 
-    /// `(waiting, failed)` rows of the account; waiting counts inflight ones.
-    pub fn outbox_depth(&self, account_id: i64) -> Result<(u64, u64), StoreError> {
-        let (waiting, failed): (i64, i64) = self.conn.query_row(
-            "SELECT COALESCE(sum(state != 'failed'), 0), COALESCE(sum(state = 'failed'), 0)
+    /// `(waiting, failed, sending)` rows of the account; waiting counts inflight ones, and
+    /// sending is the inflight `send` rows.
+    pub fn outbox_depth(&self, account_id: i64) -> Result<(u64, u64, u64), StoreError> {
+        let (waiting, failed, sending): (i64, i64, i64) = self.conn.query_row(
+            "SELECT COALESCE(sum(state != 'failed'), 0), COALESCE(sum(state = 'failed'), 0),
+               COALESCE(sum(state = 'inflight' AND kind = 'send'), 0)
              FROM outbox WHERE account_id = ?1",
             [account_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
-        Ok((
-            u64::try_from(waiting).unwrap_or(0),
-            u64::try_from(failed).unwrap_or(0),
-        ))
+        let count = |n: i64| u64::try_from(n).unwrap_or(0);
+        Ok((count(waiting), count(failed), count(sending)))
     }
 
     /// The earliest `not_before` of a pending row that `claim_next` can take once due: rows
-    /// held back by an older live row on a shared thread are left out, so a worker sleeping
+    /// held back by an older live row on a shared thread or draft are left out, so a worker sleeping
     /// until this time is not woken by a row it cannot claim.
     pub fn outbox_next_due(&self, account_id: i64) -> Result<Option<i64>, StoreError> {
         Ok(self.conn.query_row(
@@ -470,8 +570,9 @@ impl Store {
                AND NOT EXISTS (
                  SELECT 1 FROM outbox p
                  WHERE p.id < o.id AND p.state IN ('pending', 'inflight')
-                   AND EXISTS (SELECT 1 FROM json_each(p.thread_ids) pt
-                               WHERE pt.value IN (SELECT value FROM json_each(o.thread_ids))))",
+                   AND (EXISTS (SELECT 1 FROM json_each(p.thread_ids) pt
+                                WHERE pt.value IN (SELECT value FROM json_each(o.thread_ids)))
+                        OR (p.draft_id IS NOT NULL AND p.draft_id = o.draft_id)))",
             [account_id],
             |r| r.get(0),
         )?)

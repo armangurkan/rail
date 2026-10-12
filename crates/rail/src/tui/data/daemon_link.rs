@@ -12,7 +12,7 @@ use rail_core::error::ErrorClass;
 use rail_core::ops::op::{ActionApply, ActionRetry, ActionUndo, BodyFetch, SyncNow, SyncStatus};
 use rail_core::ops::{
     AccountSyncStatus, ActionApplyRequest, ActionFailed, ActionRetryRequest, ActionUndoRequest,
-    BodyFetchRequest, ErrorCode, OpError, OutboxId, SyncNowRequest, SyncStatusRequest,
+    BodyFetchRequest, ErrorCode, OpError, OutboxId, RowToken, SyncNowRequest, SyncStatusRequest,
     client_token, names,
 };
 use tokio::sync::broadcast::{self, error::RecvError};
@@ -134,6 +134,14 @@ impl DaemonLink {
     pub fn undo(&self, seq: u64, rows: Vec<OutboxId>) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
+                // Task 5 carries the real token.
+                let rows = rows
+                    .iter()
+                    .map(|&row| RowToken {
+                        row,
+                        client_token: String::new(),
+                    })
+                    .collect();
                 let result = connector
                     .call::<ActionUndo>(&ActionUndoRequest { rows })
                     .await;
@@ -148,8 +156,12 @@ impl DaemonLink {
     pub fn retry(&self, row: OutboxId) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
+                // Task 5 carries the real token.
                 let result = connector
-                    .call::<ActionRetry>(&ActionRetryRequest { row })
+                    .call::<ActionRetry>(&ActionRetryRequest {
+                        row,
+                        client_token: String::new(),
+                    })
                     .await;
                 send(&sink, MailEvent::Retried { row, result });
             }),
