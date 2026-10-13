@@ -164,7 +164,8 @@ pub(super) fn header_id(id: &str) -> Option<String> {
 }
 
 /// The parts a forward of `message` carries: only plain files. Graph's `createForward` copies
-/// inline pictures, attached messages and links itself; every Gmail part is a plain file.
+/// inline pictures (which the reconcile then deletes), attached messages and links itself;
+/// every Gmail part is a plain file.
 fn forwarded_parts(message: i64, attachments: &[ReplyAttachment]) -> Vec<Attachment> {
     attachments
         .iter()

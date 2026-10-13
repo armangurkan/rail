@@ -204,7 +204,8 @@ pub struct AttachmentMeta {
     pub size: i64,
     /// A file Rail fetches and attaches again (a forwarded original, an imported draft's
     /// file): every Gmail part, and on Graph a `fileAttachment` that is not inline. Graph's
-    /// inline pictures, attached messages and links stay where Outlook keeps them.
+    /// attached messages and links stay where Outlook keeps them, and its inline pictures go
+    /// when Rail writes the text body.
     pub plain_file: bool,
 }
 

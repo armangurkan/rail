@@ -1,7 +1,8 @@
 //! A draft's attachments made Rail's: the pure match by cleaned name and size (the one Outlook
 //! listed when Rail recorded it), in order, each once; against fake Graph, a save reports the
-//! size Outlook lists for each attachment, deletes Outlook's extra file attachment, uploads
-//! Rail's new one and keeps the rest, never touching inline or item attachments; a carried
+//! size Outlook lists for each attachment, deletes Outlook's extra file attachment and its
+//! inline pictures, uploads Rail's new one and keeps the rest, never touching item attachments;
+//! a carried
 //! original Outlook holds is neither fetched nor uploaded, and one it lost is fetched from its
 //! message and uploaded; a listing with a next page is refused; a delete of an attachment gone
 //! is done.
@@ -216,7 +217,7 @@ fn a_listed_attachments_debug_shows_no_name() {
 }
 
 #[tokio::test]
-async fn a_save_deletes_outlooks_extra_uploads_rails_new_and_keeps_the_rest() {
+async fn a_save_deletes_outlooks_extra_and_its_inline_pictures_and_uploads_rails_new() {
     let g = Graph::start().await;
     patched(&g, "g-d1").await;
     listing(
@@ -271,8 +272,11 @@ async fn a_save_deletes_outlooks_extra_uploads_rails_new_and_keeps_the_rest() {
         .collect();
     assert_eq!(
         deleted,
-        [format!("{ROOT}/me/messages/g-d1/attachments/att-a")],
-        "inline and item attachments are never touched"
+        [
+            format!("{ROOT}/me/messages/g-d1/attachments/att-a"),
+            format!("{ROOT}/me/messages/g-d1/attachments/att-i")
+        ],
+        "the inline picture goes with the text body; the item attachment stays"
     );
 }
 

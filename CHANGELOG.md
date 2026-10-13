@@ -14,11 +14,12 @@ All notable changes to Rail are recorded here. The format follows
   in Drafts when it was deleted in Outlook; Outlook drafts open in Rail with their attached files
   and `d` deletes them in Outlook. Replies and forwards are made on
   the original message, so they join the Outlook conversation; one whose original is gone from
-  Outlook for good goes out as a new message. Attachments up to 25 MiB in all, through upload sessions
-  from 3 MiB, each uploaded once until it changes; a forward keeps the original's attachments without downloading them, and inline
-  pictures, attached messages and OneDrive or SharePoint links stay as Outlook has them. A
-  message is never sent twice: a retry or a restart asks Outlook for its `Message-ID`, and about the draft
-  Rail saved, first.
+  Outlook for good goes out as a new message. Attachments up to 25 MiB in all, through upload
+  sessions from 3 MiB, each uploaded once until it changes; a forward keeps the original's
+  attachments without downloading them. Rail writes plain text, so pictures inside the body are
+  dropped, while attached messages and OneDrive or SharePoint links stay as Outlook has them. A
+  message is never sent twice: a retry or a restart asks Outlook for its `Message-ID`, and about
+  the draft Rail saved, first.
 - Store schema v8: a draft keeps the provider id of the message a reply or forward answers, and
   an attachment says whether it is a plain file (Microsoft 365 attachments are listed again).
 - Microsoft 365 thread actions over Microsoft Graph: `e` archives to Outlook's Archive folder,

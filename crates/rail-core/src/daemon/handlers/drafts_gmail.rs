@@ -354,8 +354,9 @@ async fn from_gmail(
     provider_name: &str,
 ) -> Result<(ImportSource, Vec<Attachment>, PathBuf), OpError> {
     let mut source = with_body(ctx, account, source).await?;
-    // Only plain files: an Outlook draft's inline pictures, attached messages and links stay
-    // in Outlook, and the reconcile leaves them there (every Gmail part is a plain file).
+    // Only plain files: an Outlook draft's attached messages and links stay in Outlook, where
+    // the reconcile leaves them, and its inline pictures go when the reconcile writes the text
+    // body (every Gmail part is a plain file).
     let mut parts = std::mem::take(&mut source.attachments);
     parts.retain(|a| a.plain_file);
     let dir = import_dir(&ctx.paths, token)?;

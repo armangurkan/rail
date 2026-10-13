@@ -3,8 +3,9 @@
 //! size (the size Outlook listed for one Rail uploaded or imported, else its bytes), in order,
 //! each once. A matched one stays; one only in Outlook is deleted; one only in Rail is uploaded
 //! (a carried forward original is fetched from its message first), and the size Outlook lists
-//! for it is read back: from the post's answer, else from one listing after the uploads.
-//! Inline, item and reference attachments are never touched (`plain_file`). Logs carry counts.
+//! for it is read back: from the post's answer, else from one listing after the uploads. Rail
+//! writes the body as plain text, so the draft's inline pictures, which nothing in it shows any
+//! more, are deleted; item and reference attachments are never touched. Logs carry counts.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -22,10 +23,16 @@ use crate::provider::{Carried, OutgoingAttachment, OutgoingMail, ProviderError};
 pub(super) const FILE_ATTACHMENT: &str = "#microsoft.graph.fileAttachment";
 /// Whether a listed attachment is a plain file: a `fileAttachment` (with or without the `#` the
 /// listing sample leaves out) that is not inline. Only these are matched, fetched and posted;
-/// inline pictures, item attachments and reference attachments stay as Outlook has them.
+/// an inline one is a picture in the body, which a save deletes, and item and reference
+/// attachments stay as Outlook has them.
 pub(super) fn plain_file(odata_type: Option<&str>, is_inline: bool) -> bool {
+    !is_inline && file_kind(odata_type)
+}
+
+/// Whether a listed attachment is a `fileAttachment`, inline or not.
+fn file_kind(odata_type: Option<&str>) -> bool {
     let kind = odata_type.map(|t| t.strip_prefix('#').unwrap_or(t));
-    !is_inline && kind == FILE_ATTACHMENT.strip_prefix('#')
+    kind == FILE_ATTACHMENT.strip_prefix('#')
 }
 
 /// Attachments one listing asks for; Rail sends at most 50.
@@ -115,6 +122,13 @@ fn listed_of(wire: ListedWire) -> Result<Listed, ProviderError> {
     })
 }
 
+/// The draft's attachments as a reconcile reads them: its plain files, and the ids of its
+/// inline pictures.
+struct Listing {
+    files: Vec<Listed>,
+    inline: Vec<String>,
+}
+
 /// An attachment Graph answers a post or a finished upload with: its id and listed size.
 #[derive(Deserialize)]
 struct UploadedWire {
@@ -159,16 +173,16 @@ impl GraphProvider {
         draft: &str,
         mail: &OutgoingMail,
     ) -> Result<Vec<Option<usize>>, ProviderError> {
-        let listing = self.file_attachments(draft).await?;
+        let listing = self.listing(draft).await?;
         let attachments = &mail.outgoing.attachments;
-        let changes = changes(&listing, attachments);
-        for id in &changes.delete {
+        let changes = changes(&listing.files, attachments);
+        for id in changes.delete.iter().chain(&listing.inline) {
             self.delete_attachment(draft, id).await?;
         }
         let mut sizes: Vec<Option<usize>> = Vec::with_capacity(attachments.len());
         let mut held = Vec::new();
         for found in &changes.matched {
-            let kept = found.and_then(|i| listing.get(i));
+            let kept = found.and_then(|i| listing.files.get(i));
             sizes.push(kept.map(|l| l.size));
             held.extend(kept.map(|l| l.id.clone()));
         }
@@ -188,21 +202,22 @@ impl GraphProvider {
                 .iter()
                 .map(|a| sanitize_filename(&a.name))
                 .collect();
-            let relisted = self.file_attachments(draft).await?;
+            let relisted = self.listing(draft).await?.files;
             fill_unknown(&mut sizes, &mut held, &names, &relisted);
         }
         tracing::info!(
             draft,
             kept = attachments.len() - changes.upload.len(),
             deleted = changes.delete.len(),
+            inline_deleted = listing.inline.len(),
             uploaded = changes.upload.len(),
             "a draft's attachments were reconciled"
         );
         Ok(sizes)
     }
 
-    /// The draft's file attachments that are not inline.
-    async fn file_attachments(&self, draft: &str) -> Result<Vec<Listed>, ProviderError> {
+    /// The draft's plain files, and its inline pictures.
+    async fn listing(&self, draft: &str) -> Result<Listing, ProviderError> {
         let query = [
             ("$select", "id,name,size,contentType,isInline".to_string()),
             ("$top", MAX_LISTED.to_string()),
@@ -214,11 +229,15 @@ impl GraphProvider {
                 "the Outlook draft has more attachments than Rail reads",
             ));
         }
-        page.value
-            .into_iter()
-            .filter(|a| plain_file(a.odata_type.as_deref(), a.is_inline))
-            .map(listed_of)
-            .collect()
+        let (mut files, mut inline) = (Vec::new(), Vec::new());
+        for wire in page.value {
+            if plain_file(wire.odata_type.as_deref(), wire.is_inline) {
+                files.push(listed_of(wire)?);
+            } else if wire.is_inline && file_kind(wire.odata_type.as_deref()) {
+                inline.push(listed_of(wire)?.id);
+            }
+        }
+        Ok(Listing { files, inline })
     }
 
     async fn delete_attachment(&self, draft: &str, id: &str) -> Result<(), ProviderError> {

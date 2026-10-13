@@ -1,7 +1,8 @@
 //! What Outlook keeps on its own, through a real daemon over fake Graph: a forward carries only
 //! its source's plain files (Outlook's `createForward` copies the inline picture, the attached
 //! message and the link), and an imported Outlook draft fetches only its plain files. The save
-//! that follows uploads, deletes and fetches nothing for the rest.
+//! that follows writes the body as plain text, so it deletes the inline picture, and uploads,
+//! deletes and fetches nothing else.
 
 use std::time::Duration;
 
@@ -100,7 +101,7 @@ impl Corp {
 }
 
 #[tokio::test]
-async fn a_forward_carries_only_plain_files_and_its_save_uploads_nothing_outlook_keeps() {
+async fn a_forward_carries_only_plain_files_and_its_save_drops_only_the_inline_picture() {
     let c = corp().await;
     let m1 = c.message("m1");
     let store = Store::open(&c.paths.db_file()).unwrap();
@@ -168,13 +169,14 @@ async fn a_forward_carries_only_plain_files_and_its_save_uploads_nothing_outlook
     c.pushed(forward, "push-fk").await;
     assert_eq!(
         c.attachment_writes_and_fetches().await,
-        Vec::<String>::new()
+        [format!("DELETE {ROOT}/me/messages/g-f1/attachments/c2")],
+        "the plain file, the attached message and the link stay"
     );
     assert_eq!(c.remote_draft(forward).as_deref(), Some("g-f1"), "saved");
 }
 
 #[tokio::test]
-async fn an_imported_outlook_draft_fetches_only_plain_files_and_its_save_uploads_nothing() {
+async fn an_imported_outlook_draft_fetches_only_plain_files_and_its_save_drops_its_picture() {
     let c = corp().await;
     Mock::given(method("GET"))
         .and(path(format!("{ROOT}/me/messages/g-od1")))
@@ -223,7 +225,8 @@ async fn an_imported_outlook_draft_fetches_only_plain_files_and_its_save_uploads
     c.pushed(draft, "push-ik").await;
     assert_eq!(
         c.attachment_writes_and_fetches().await,
-        Vec::<String>::new()
+        [format!("DELETE {ROOT}/me/messages/g-od1/attachments/o2")],
+        "the link stays"
     );
     let patches = c.g.server.received_requests().await.unwrap();
     let patched = patches.iter().any(|r| {
