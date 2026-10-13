@@ -1,7 +1,7 @@
 //! Microsoft 365 through Microsoft Graph v1.0, over the shared `ApiClient` in its Graph dialect
 //! (immutable ids on every request, Graph's error envelope, at most `GRAPH_CONCURRENCY`
 //! requests in flight): folders, the delta under one combined cursor, search, envelopes,
-//! bodies and attachments.
+//! bodies and attachments, and thread actions (moves and PATCHes per message through `$batch`).
 //! Graph's own JSON never leaves this module; every string it returns is outside text.
 
 mod actions;
@@ -45,6 +45,7 @@ use super::{
 use crate::config::SyncSettings;
 use crate::ops::M365_NOT_YET;
 
+pub use actions::MOVE_TARGET_GONE;
 pub use attachment::REFERENCE_ATTACHMENT;
 pub use batch::MAX_BATCH;
 pub use body::HTML_BODY;

@@ -32,6 +32,14 @@ impl BatchRequest {
         }
     }
 
+    pub(crate) fn post(url: String, body: Value) -> Self {
+        Self {
+            method: reqwest::Method::POST,
+            url,
+            body: Some(body),
+        }
+    }
+
     pub(crate) fn get(url: String) -> Self {
         Self {
             method: reqwest::Method::GET,
