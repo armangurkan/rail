@@ -773,8 +773,9 @@ Microsoft Graph.
   undo. Rail writes each message as an Outlook draft: a reply, reply to everyone or forward is
   made on the original message, so it joins the Outlook conversation and others see it
   threaded; Rail then sets its subject, text, recipients and `Message-ID`. The text goes as plain
-  text. `y` sends that draft, and the sent copy arrives in Sent Items with the next sync. A reply
-  or forward whose original was deleted in Outlook goes out as a new message, outside the
+  text. `y` sends that draft, and the sent copy arrives in Sent Items with the next sync. An
+  original still in Deleted Items keeps the threading; a reply or forward whose original is gone
+  from Outlook for good (Deleted Items emptied) goes out as a new message, outside the
   conversation.
 - **Drafts.** `s` saves the draft to Outlook's Drafts (`saved to Microsoft 365 · z undoes`); later
   saves update the same Outlook draft, and one deleted in Outlook is made again in Drafts (the
