@@ -91,9 +91,9 @@ pub(crate) fn refusal(status: u16, retry_after: Option<Duration>, body: &[u8]) -
             message: CONSENT_MESSAGE.to_string(),
             detail,
         },
-        404 => ProviderError::NotFound,
         410 => ProviderError::CursorExpired,
         400..=499 if named(code, &EXPIRED_CODES) => ProviderError::CursorExpired,
+        404 => ProviderError::NotFound,
         429 | 500..=599 => ProviderError::Transient {
             message: format!("Microsoft 365 is busy or unavailable (HTTP {status})"),
             detail,

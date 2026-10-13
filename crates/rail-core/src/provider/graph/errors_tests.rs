@@ -60,6 +60,10 @@ fn each_status_and_code_reads_as_the_spec_says() {
         ProviderError::CursorExpired
     );
     assert_eq!(failed(409, "ResyncRequired"), ProviderError::CursorExpired);
+    assert_eq!(
+        failed(404, "syncStateNotFound"),
+        ProviderError::CursorExpired
+    );
     for status in [429, 500, 502, 503, 504] {
         assert!(
             matches!(failed(status, "x"), ProviderError::Transient { .. }),
@@ -112,7 +116,7 @@ fn an_unreadable_or_huge_envelope_is_judged_by_its_status_and_cut() {
     let Refusal::Failed(error) = refusal(400, None, &envelope(&long, &long)) else {
         panic!("a 400 is not a login failure");
     };
-    assert!(error.detail().unwrap().chars().count() <= 1_002, "cut");
+    assert!(error.detail().unwrap().chars().count() == 1_002, "cut");
 }
 
 fn client(base: &str, tokens: Arc<FixedTokens>) -> (ApiClient, Arc<Mutex<Vec<Duration>>>) {
