@@ -337,9 +337,17 @@ fn store_body(
     )?;
     for a in &body.attachments {
         tx.execute(
-            "INSERT INTO attachments (message_id, remote_part_id, filename, mime_type, size)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![message, a.part_id, a.filename, a.mime_type, a.size],
+            "INSERT INTO attachments (message_id, remote_part_id, filename, mime_type, size,
+                                      plain_file)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                message,
+                a.part_id,
+                a.filename,
+                a.mime_type,
+                a.size,
+                a.plain_file
+            ],
         )?;
     }
     touched.insert(thread);

@@ -287,6 +287,10 @@ async fn nested_part_ids_are_kept_and_unsafe_ones_dropped() {
         .map(|a| a.part_id.as_str())
         .collect();
     assert_eq!(ids, ["0.1"]);
+    assert!(
+        body.attachments[0].plain_file,
+        "a Gmail part is a plain file even in multipart/related: forwards carry it as before"
+    );
 }
 
 #[test]

@@ -779,7 +779,7 @@ Microsoft Graph.
 - **Drafts.** `s` saves the draft to Outlook's Drafts (`saved to Microsoft 365 · z undoes`); later
   saves update the same Outlook draft, and one deleted in Outlook is made again. Sending a saved
   draft sends that very draft, so none is left in Drafts. A draft written in Outlook opens in Rail
-  with its attachments; `d` on it deletes it in Outlook (it goes to Deleted Items). When Outlook
+  with its attached files; `d` on it deletes it in Outlook (it goes to Deleted Items). When Outlook
   made a reply, reply to everyone or forward draft but its answer was lost on the way back (a
   timeout, say), Rail does not know that draft exists and makes another on the retry, so an extra
   copy can stay in Outlook's Drafts: delete it there.
@@ -787,8 +787,9 @@ Microsoft Graph.
   than Microsoft 365's 25 MiB limit`). A file of 3 MiB or more goes up in 3.75 MiB pieces, and a
   failed upload is tried again later. A forward keeps the original's attachments in Outlook
   without downloading them; remove one in the review and it goes from the draft too. Rail matches
-  its attachments to the draft's by name and size, and leaves inline pictures and attached
-  messages of a draft written in Outlook alone.
+  its attachments to the draft's by name and size. A forward and an imported Outlook draft keep
+  pictures in the body, attached messages and OneDrive or SharePoint links as Outlook has them:
+  Rail does not list them for removal and never downloads or uploads them.
 - **Never sent twice.** Before any later attempt (a retry, or a start after the daemon stopped
   mid-send), Rail asks Outlook for a sent message with the draft's `Message-ID`, and about the
   draft it saved, and counts a sent one as sent.

@@ -471,6 +471,7 @@ pub(crate) fn seed_two_messages(store: &mut crate::store::Store, account_id: i64
             filename: "a.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 10,
+            plain_file: true,
         }],
         ..Body::default()
     };

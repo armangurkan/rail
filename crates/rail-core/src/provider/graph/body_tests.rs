@@ -1,6 +1,7 @@
 //! Bodies and attachments against fake Graph: HTML rendered with its links, text kept as it
-//! is, the attachment list fetched with the body, a body for another message, bytes, a
-//! reference attachment refused, a gone one, and ids Rail would not send.
+//! is, the attachment list fetched with the body (only a file that is not inline is a plain
+//! file), a body for another message, bytes, a reference attachment refused, a gone one, and
+//! ids Rail would not send.
 
 use serde_json::{Value, json};
 use wiremock::matchers::{headers, method, path, query_param};
@@ -68,7 +69,9 @@ async fn attachments_are_listed_with_the_body_inline_ones_too() {
          "contentType": "image/PNG", "size": 10, "isInline": true},
         {"@odata.type": "#microsoft.graph.referenceAttachment", "id": "a3",
          "name": "Budget.xlsx", "contentType": null, "size": 0, "isInline": false},
-        {"id": "a/4", "name": "sneaky", "contentType": "text/plain", "size": 1, "isInline": false}
+        {"id": "a/4", "name": "sneaky", "contentType": "text/plain", "size": 1, "isInline": false},
+        {"@odata.type": "#microsoft.graph.itemAttachment", "id": "a5", "name": "Re: plan",
+         "contentType": null, "size": 300, "isInline": false}
     ]});
     Mock::given(method("GET"))
         .and(path(format!("{ROOT}/me/messages/m1/attachments")))
@@ -78,19 +81,22 @@ async fn attachments_are_listed_with_the_body_inline_ones_too() {
         .mount(&g.server)
         .await;
     let body = g.provider().body("m1").await.unwrap();
-    let meta = |part: &str, name: &str, mime: &str, size: i64| AttachmentMeta {
+    let meta = |part: &str, name: &str, mime: &str, size: i64, plain_file| AttachmentMeta {
         part_id: part.into(),
         filename: name.into(),
         mime_type: mime.into(),
         size,
+        plain_file,
     };
     assert_eq!(
         body.attachments,
         [
-            meta("a1", "plan.pdf", "application/pdf", 2048),
-            meta("a2", "logo.png", "image/png", 10),
-            meta("a3", "Budget.xlsx", "application/octet-stream", 0),
-        ]
+            meta("a1", "plan.pdf", "application/pdf", 2048, true),
+            meta("a2", "logo.png", "image/png", 10, false),
+            meta("a3", "Budget.xlsx", "application/octet-stream", 0, false),
+            meta("a5", "Re: plan", "application/octet-stream", 300, false),
+        ],
+        "only a file that is not inline is a plain file"
     );
 }
 

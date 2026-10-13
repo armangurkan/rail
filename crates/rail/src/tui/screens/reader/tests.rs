@@ -77,6 +77,7 @@ async fn fixture(hyperlinks: bool) -> Fixture {
             filename: "plan.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 2_048,
+            plain_file: true,
         }],
         ..Body::default()
     };

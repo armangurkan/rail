@@ -25,15 +25,15 @@ use crate::store::Store;
 use crate::store::drafts::{DraftKind, DraftState};
 use crate::test_support::{daemon_context, start_daemon};
 
-struct Corp {
-    g: Graph,
-    paths: Paths,
-    client: DaemonClient,
+pub(super) struct Corp {
+    pub(super) g: Graph,
+    pub(super) paths: Paths,
+    pub(super) client: DaemonClient,
     _tmp: tempfile::TempDir,
 }
 
 /// Inbox (m1 in c1) and Drafts (the Outlook drafts g-od1 and g-od2), synced once.
-async fn corp() -> Corp {
+pub(super) async fn corp() -> Corp {
     let g = Graph::start().await;
     g.mount_root(json!([
         folder("f-inbox", "Inbox", 0),
@@ -85,11 +85,11 @@ async fn corp() -> Corp {
 }
 
 impl Corp {
-    fn store(&self) -> Store {
+    pub(super) fn store(&self) -> Store {
         Store::open_reader(&self.paths.db_file()).unwrap()
     }
 
-    fn message(&self, remote: &str) -> i64 {
+    pub(super) fn message(&self, remote: &str) -> i64 {
         self.store()
             .conn()
             .query_row(
@@ -119,7 +119,7 @@ impl Corp {
     }
 }
 
-fn save(kind: DraftKind, reply_to: Option<ReplyTo>, token: &str) -> DraftSaveRequest {
+pub(super) fn save(kind: DraftKind, reply_to: Option<ReplyTo>, token: &str) -> DraftSaveRequest {
     DraftSaveRequest {
         account: "corp".into(),
         draft: None,

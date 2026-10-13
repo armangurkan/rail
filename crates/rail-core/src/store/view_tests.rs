@@ -300,6 +300,7 @@ fn mixed(store: &mut Store, offset: i32) -> (i64, i64) {
             filename: "plan.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 2048,
+            plain_file: true,
         }],
         ..Body::default()
     };
@@ -456,6 +457,7 @@ fn thread_detail_is_oldest_first_with_body_states_links_and_attachments() {
             filename: "a.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 10,
+            plain_file: true,
         }],
         ..Body::default()
     };

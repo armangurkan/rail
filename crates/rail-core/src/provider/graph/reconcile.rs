@@ -1,8 +1,8 @@
 //! A draft's attachments made Rail's, after every save and before every send: the draft's
 //! file attachments that are not inline are listed and matched to Rail's by (cleaned name,
 //! size), in order, each once. A matched one stays; one only in Outlook is deleted; one only in
-//! Rail is uploaded (a carried forward original is fetched from its message first). Inline and
-//! item attachments are never touched. Logs carry counts.
+//! Rail is uploaded (a carried forward original is fetched from its message first). Inline,
+//! item and reference attachments are never touched (`plain_file`). Logs carry counts.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -18,6 +18,14 @@ use crate::provider::{Carried, OutgoingAttachment, OutgoingMail, ProviderError};
 
 /// Graph's type of a file attachment.
 pub(super) const FILE_ATTACHMENT: &str = "#microsoft.graph.fileAttachment";
+/// Whether a listed attachment is a plain file: a `fileAttachment` (with or without the `#` the
+/// listing sample leaves out) that is not inline. Only these are matched, fetched and posted;
+/// inline pictures, item attachments and reference attachments stay as Outlook has them.
+pub(super) fn plain_file(odata_type: Option<&str>, is_inline: bool) -> bool {
+    let kind = odata_type.map(|t| t.strip_prefix('#').unwrap_or(t));
+    !is_inline && kind == FILE_ATTACHMENT.strip_prefix('#')
+}
+
 /// Attachments one listing asks for; Rail sends at most 50.
 const MAX_LISTED: usize = 100;
 /// Below this a file is posted whole; at it or above it goes through an upload session.
@@ -137,7 +145,7 @@ impl GraphProvider {
         }
         page.value
             .into_iter()
-            .filter(|a| a.odata_type.as_deref() == Some(FILE_ATTACHMENT) && !a.is_inline)
+            .filter(|a| plain_file(a.odata_type.as_deref(), a.is_inline))
             .map(listed_of)
             .collect()
     }

@@ -221,6 +221,8 @@ pub struct ReplyAttachment {
     pub filename: String,
     pub mime_type: String,
     pub size: i64,
+    /// `AttachmentMeta::plain_file`: a forward carries it and an import fetches it.
+    pub plain_file: bool,
 }
 
 impl std::fmt::Debug for ReplyAttachment {
@@ -463,7 +465,7 @@ pub(super) fn attachments_of(
     message: i64,
 ) -> Result<Vec<ReplyAttachment>, StoreError> {
     let mut stmt = conn.prepare(
-        "SELECT remote_part_id, filename, mime_type, size FROM attachments
+        "SELECT remote_part_id, filename, mime_type, size, plain_file FROM attachments
          WHERE message_id = ?1 ORDER BY id",
     )?;
     let rows = stmt.query_map([message], |r| {
@@ -472,6 +474,7 @@ pub(super) fn attachments_of(
             filename: r.get(1)?,
             mime_type: r.get(2)?,
             size: r.get(3)?,
+            plain_file: r.get(4)?,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)

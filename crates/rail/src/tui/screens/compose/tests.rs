@@ -138,6 +138,7 @@ fn source() -> ReplySource {
             filename: "menu.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 10,
+            plain_file: true,
         }],
     }
 }

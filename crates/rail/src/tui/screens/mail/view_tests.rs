@@ -85,6 +85,7 @@ async fn screen(icons: Icons) -> (tempfile::TempDir, MailScreen) {
             filename: "plan.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 2048,
+            plain_file: true,
         }],
         ..Body::default()
     };

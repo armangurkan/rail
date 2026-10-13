@@ -22,7 +22,9 @@ use crate::ops::{
 use crate::paths::Paths;
 use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
-use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
+use crate::store::drafts::{
+    Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite, ReplyAttachment,
+};
 use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
 use crate::sync::Wants;
 
@@ -160,6 +162,22 @@ pub(super) fn header_id(id: &str) -> Option<String> {
     valid_message_id_inner(inner).then(|| format!("<{inner}>"))
 }
 
+/// The parts a forward of `message` carries: only plain files. Graph's `createForward` copies
+/// inline pictures, attached messages and links itself; every Gmail part is a plain file.
+fn forwarded_parts(message: i64, attachments: &[ReplyAttachment]) -> Vec<Attachment> {
+    attachments
+        .iter()
+        .filter(|a| a.plain_file)
+        .map(|a| Attachment::Part {
+            message,
+            part: a.part_id.clone(),
+            name: a.filename.clone(),
+            mime: a.mime_type.clone(),
+            size: a.size,
+        })
+        .collect()
+}
+
 fn threading_for(
     store: &Store,
     kind: DraftKind,
@@ -184,17 +202,7 @@ fn threading_for(
         .collect();
     references.extend(in_reply_to.clone());
     let parts = match kind {
-        DraftKind::Forward => source
-            .attachments
-            .iter()
-            .map(|a| Attachment::Part {
-                message: reply.message,
-                part: a.part_id.clone(),
-                name: a.filename.clone(),
-                mime: a.mime_type.clone(),
-                size: a.size,
-            })
-            .collect(),
+        DraftKind::Forward => forwarded_parts(reply.message, &source.attachments),
         _ => Vec::new(),
     };
     Ok(Threading {
