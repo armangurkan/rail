@@ -15,6 +15,8 @@ pub mod writer;
 
 #[cfg(test)]
 mod engine_tests;
+#[cfg(test)]
+mod graph_engine_tests;
 
 pub use batch::{Batch, BatchOutcome, Origin, Prune, ResumeToken, StateUpdate, Sweep};
 pub use engine::{Clock, Engine, EngineParts, SyncError};

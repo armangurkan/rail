@@ -276,10 +276,13 @@ impl Engine {
     }
 
     async fn end_backfill(&self, run: Run) -> Result<(), SyncError> {
+        // A delta-first provider listed nothing: its first delta is the load, and the sweep
+        // waits for it to catch up (`pass::delta`), so nothing it still has is deleted first.
+        let deferred = run.full && self.provider.backfills_by_delta();
         let mut state = StateUpdate {
             backfill_before: Some(None),
             backfill_cursor: Some(None),
-            backfill_started_at: Some(None),
+            backfill_started_at: Some(deferred.then_some(run.started)),
             backfill_resume: Some(None),
             backfill_window: Some(Some(run.window.unwrap_or(0))),
             ..StateUpdate::default()
@@ -289,7 +292,7 @@ impl Engine {
         }
         let batch = Batch {
             state,
-            sweep: run.full.then_some(Sweep {
+            sweep: (run.full && !deferred).then_some(Sweep {
                 started_at: run.started,
                 window_start_ms: run.window,
             }),

@@ -43,6 +43,12 @@ pub trait Provider: Send + Sync {
     ) -> Result<IdPage, ProviderError>;
     /// How many ids one `list` page holds at most.
     fn list_page_size(&self) -> usize;
+    /// True when the provider's first sync is its delta (Graph): `list` finds nothing, the
+    /// full backfill's sweep waits until that delta has caught up, and a grown window starts
+    /// the delta over.
+    fn backfills_by_delta(&self) -> bool {
+        false
+    }
     /// What changed since `cursor`. `ProviderError::CursorExpired` means a full resync.
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError>;
     /// One message's body, rendered to text.

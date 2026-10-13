@@ -51,6 +51,16 @@ impl Graph {
         Self { server, batch }
     }
 
+    /// Forget every mock, and serve `$batch` again (its answers are kept).
+    pub(crate) async fn reset(&self) {
+        self.server.reset().await;
+        Mock::given(method("POST"))
+            .and(path(format!("{ROOT}/$batch")))
+            .respond_with(self.batch.clone())
+            .mount(&self.server)
+            .await;
+    }
+
     pub(crate) fn base(&self) -> String {
         format!("{}{ROOT}/", self.server.uri())
     }
@@ -134,6 +144,11 @@ impl Graph {
                 .await;
         }
     }
+}
+
+/// A Graph date `minutes` before now.
+pub(crate) fn recent(minutes: i64) -> String {
+    super::dates::iso((crate::auth::unix_now() - minutes * 60) * 1000)
 }
 
 /// A `mailFolder` as Graph lists it.

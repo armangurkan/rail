@@ -160,6 +160,10 @@ impl super::Provider for GraphProvider {
         DELTA_PAGE as usize
     }
 
+    fn backfills_by_delta(&self) -> bool {
+        true
+    }
+
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {
         self.delta(cursor).await
     }
