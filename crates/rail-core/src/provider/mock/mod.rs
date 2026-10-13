@@ -398,7 +398,7 @@ impl Provider for MockProvider {
         let m = self.lock();
         Ok(Profile {
             cursor: SyncCursor(m.history_id.to_string()),
-            messages_total: m.messages.len() as u64,
+            messages_total: Some(m.messages.len() as u64),
         })
     }
 

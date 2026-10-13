@@ -545,7 +545,7 @@ async fn the_profile_gives_the_current_history_id() {
         .await;
     let profile = gmail.provider().read_profile().await.unwrap();
     assert_eq!(profile.cursor, SyncCursor("98765".into()));
-    assert_eq!(profile.messages_total, 1234);
+    assert_eq!(profile.messages_total, Some(1234));
 }
 
 #[test]

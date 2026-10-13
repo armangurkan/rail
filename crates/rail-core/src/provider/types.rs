@@ -204,7 +204,8 @@ pub struct Body {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Profile {
     pub cursor: SyncCursor,
-    pub messages_total: u64,
+    /// The mailbox's size, when the provider can tell it cheaply (Gmail can; Graph cannot).
+    pub messages_total: Option<u64>,
 }
 
 #[cfg(test)]

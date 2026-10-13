@@ -7,11 +7,15 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use url::Url;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{headers, method, path, query_param};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
+use super::delta::PAGE_SIZE;
+use super::search::MESSAGE_FIELDS;
 use super::{GRAPH_CONCURRENCY, GraphProvider};
-use crate::provider::http::{ApiClient, Dialect, Quota, RetryPolicy, api_http_client};
+use crate::provider::http::{
+    ApiClient, Dialect, IMMUTABLE_IDS, Quota, RetryPolicy, api_http_client,
+};
 use crate::provider::tokens::FixedTokens;
 
 /// Where the fake API lives on the mock server.
@@ -53,6 +57,45 @@ impl Graph {
 
     pub(crate) fn provider(&self) -> GraphProvider {
         GraphProvider::new(api_at(&self.base()))
+    }
+
+    pub(crate) fn provider_with_days(&self, days: u32) -> GraphProvider {
+        self.provider().with_history_days(days)
+    }
+
+    /// Serve `page` as `folder`'s initial delta (the request that carries `$select`).
+    pub(crate) async fn mount_initial(&self, folder: &str, page: Value) {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{ROOT}/me/mailFolders/{folder}/messages/delta"
+            )))
+            .and(query_param("$select", MESSAGE_FIELDS))
+            .and(headers("Prefer", vec![IMMUTABLE_IDS, PAGE_SIZE]))
+            .respond_with(ResponseTemplate::new(200).set_body_json(page))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Serve the delta `page` at the link `name` (see `link_to`).
+    pub(crate) async fn mount_link(&self, name: &str, page: Value) {
+        Mock::given(method("GET"))
+            .and(path(format!("{ROOT}/links/{name}")))
+            .and(headers("Prefer", vec![IMMUTABLE_IDS, PAGE_SIZE]))
+            .respond_with(ResponseTemplate::new(200).set_body_json(page))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// A delta page of `items`, linking to its next page or to the next round.
+    pub(crate) fn page(&self, items: Vec<Value>, next: Option<&str>, delta: Option<&str>) -> Value {
+        let mut page = json!({"value": items});
+        if let Some(next) = next {
+            page["@odata.nextLink"] = json!(self.link_to(next));
+        }
+        if let Some(delta) = delta {
+            page["@odata.deltaLink"] = json!(self.link_to(delta));
+        }
+        page
     }
 
     /// An absolute link under the fake API, as Graph writes its next and delta links.
@@ -118,6 +161,11 @@ pub(crate) fn message(id: &str, conversation: &str, folder: &str, received: &str
         "bodyPreview": format!("preview {id}"), "parentFolderId": folder,
         "hasAttachments": false
     })
+}
+
+/// A delta item for a message gone from the folder (deleted, or moved out).
+pub(crate) fn removed(id: &str) -> Value {
+    json!({"@odata.type": "#microsoft.graph.message", "id": id, "@removed": {"reason": "deleted"}})
 }
 
 /// Answers `$batch` posts from a table keyed by `METHOD /path` (the query left out), in reverse

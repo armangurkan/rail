@@ -74,9 +74,12 @@ impl GraphProvider {
         Ok(page)
     }
 
-    /// `wire`'s envelope, in the folder it names.
+    /// `wire`'s envelope, in the folder it names when Rail syncs that folder.
     fn located(&self, wire: MessageWire) -> Option<Envelope> {
-        let folder = wire.parent_folder_id.clone().filter(|f| graph_id(f));
+        let folder = wire
+            .parent_folder_id
+            .clone()
+            .filter(|f| graph_id(f) && self.syncs(f));
         envelope(wire, folder.as_deref())
     }
 }

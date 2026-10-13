@@ -1,16 +1,20 @@
 //! Microsoft 365 through Microsoft Graph v1.0, over the shared `ApiClient` in its Graph dialect
 //! (immutable ids on every request, Graph's error envelope, at most `GRAPH_CONCURRENCY`
-//! requests in flight): folders, search and envelopes so far. Graph's own JSON never leaves this module; every string
-//! it returns is outside text.
+//! requests in flight): folders, search, envelopes, and the delta under one combined cursor.
+//! Graph's own JSON never leaves this module; every string it returns is outside text.
 
 mod batch;
+mod cursor;
 mod dates;
+mod delta;
 pub mod errors;
 mod folders;
 mod message;
 mod search;
 mod wire;
 
+#[cfg(test)]
+mod delta_tests;
 #[cfg(test)]
 mod errors_tests;
 #[cfg(test)]
@@ -22,14 +26,20 @@ mod message_tests;
 #[cfg(test)]
 mod search_tests;
 
+use std::sync::{Mutex, PoisonError};
+use std::time::Duration;
+
 use super::http::ApiClient;
 use super::{
     Body, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
     RemoteFolder, RemoteId, SentReceipt, SyncCursor, Window,
 };
+use crate::config::SyncSettings;
 use crate::ops::M365_NOT_YET;
 
 pub use batch::MAX_BATCH;
+pub use cursor::MAX_CURSOR_BYTES;
+pub use delta::{GRAPH_PAGES_PER_CALL, PAGE_SIZE};
 pub use folders::{MAX_FOLDER_DEPTH, MAX_FOLDERS, SKIPPED_ROOTS, WELL_KNOWN};
 pub use search::{MAX_GRAPH_SEARCH, MESSAGE_FIELDS};
 
@@ -47,11 +57,62 @@ pub(crate) const COST_REQUEST: u32 = 1;
 /// Microsoft 365 through Graph.
 pub struct GraphProvider {
     api: ApiClient,
+    /// The account's `history_days` (0: the whole mailbox): the cutoff of a new cursor.
+    history_days: u32,
+    /// What the last folder listing found: the delta's folders and their order.
+    folders: Mutex<Vec<RemoteFolder>>,
 }
 
 impl GraphProvider {
     pub fn new(api: ApiClient) -> Self {
-        Self { api }
+        Self {
+            api,
+            history_days: 0,
+            folders: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Initial deltas ask only for mail received in the last `days` (0: all of it).
+    pub fn with_history_days(mut self, days: u32) -> Self {
+        self.history_days = days;
+        self
+    }
+
+    /// List the folders, and remember them.
+    async fn listed_folders(&self) -> Result<Vec<RemoteFolder>, ProviderError> {
+        let listed = self.list_folders().await?;
+        *self.folders.lock().unwrap_or_else(PoisonError::into_inner) = listed.clone();
+        Ok(listed)
+    }
+
+    /// The folders the last listing found; listed now when none has run.
+    pub(crate) async fn known_folders(&self) -> Result<Vec<RemoteFolder>, ProviderError> {
+        let cached = self
+            .folders
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if cached.is_empty() {
+            self.listed_folders().await
+        } else {
+            Ok(cached)
+        }
+    }
+
+    /// Whether the last listing found `folder` (true before any listing).
+    pub(crate) fn syncs(&self, folder: &str) -> bool {
+        let folders = self.folders.lock().unwrap_or_else(PoisonError::into_inner);
+        folders.is_empty() || folders.iter().any(|f| f.remote_id == folder)
+    }
+
+    /// The receive-time cutoff of a new cursor, as the engine's window computes it.
+    fn cutoff_ms(&self) -> Option<i64> {
+        let settings = SyncSettings {
+            history_days: self.history_days,
+            body_cache_days: 0,
+            poll_interval: Duration::ZERO,
+        };
+        settings.window_start_ms(crate::auth::unix_now())
     }
 }
 
@@ -73,23 +134,24 @@ pub(crate) fn graph_id(text: &str) -> bool {
 #[async_trait::async_trait]
 impl super::Provider for GraphProvider {
     async fn folders(&self) -> Result<Vec<RemoteFolder>, ProviderError> {
-        self.list_folders().await
+        self.listed_folders().await
     }
 
     async fn profile(&self) -> Result<Profile, ProviderError> {
-        Err(not_yet())
+        self.read_profile().await
     }
 
+    /// The first sync is the delta (`profile` leaves every folder unstarted): no listing.
     async fn list(&self, _: &Window, _: Option<&PageToken>) -> Result<IdPage, ProviderError> {
-        Err(not_yet())
+        Ok(IdPage::default())
     }
 
     fn list_page_size(&self) -> usize {
         DELTA_PAGE as usize
     }
 
-    async fn changes(&self, _: &SyncCursor) -> Result<ChangeSet, ProviderError> {
-        Err(not_yet())
+    async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {
+        self.delta(cursor).await
     }
 
     async fn body(&self, _: &str) -> Result<Body, ProviderError> {

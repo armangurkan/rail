@@ -111,7 +111,7 @@ impl GmailProvider {
         }
         Ok(Profile {
             cursor: SyncCursor(profile.history_id),
-            messages_total: profile.messages_total,
+            messages_total: Some(profile.messages_total),
         })
     }
 

@@ -2,12 +2,14 @@
 //! Gmail's are; ids Rail would not send are refused. Graph has no `In-Reply-To`, `References`
 //! or size: they stay empty in Part A.
 
+use serde_json::Value;
+
 use super::dates::parse_ms;
 use super::graph_id;
 use super::wire::{Flag, MessageWire, Recipient};
 use crate::provider::gmail::metadata::one_line_capped;
 use crate::provider::gmail::{MAX_ADDRESSES, MAX_SNIPPET_CHARS, MAX_SUBJECT_CHARS};
-use crate::provider::{Envelope, Mailbox};
+use crate::provider::{Envelope, Mailbox, Relabel, RemoteId};
 
 const MAX_NAME_CHARS: usize = 200;
 const MAX_ADDRESS_CHARS: usize = 254;
@@ -106,4 +108,40 @@ fn mailboxes(list: Option<&[Recipient]>) -> Vec<Mailbox> {
         .filter_map(mailbox)
         .take(MAX_ADDRESSES)
         .collect()
+}
+
+/// One delta item, read.
+pub(crate) enum Item {
+    /// Gone from the folder: deleted, or moved out.
+    Removed(RemoteId),
+    Full(Box<Envelope>),
+    /// An update carrying less than an envelope: only its flags can change.
+    Partial(Relabel),
+    /// Rail cannot read it: its id, when that much could be read.
+    Unreadable(Option<RemoteId>),
+}
+
+/// `value`, an item of `folder`'s delta.
+pub(crate) fn item(value: Value, folder: &str) -> Item {
+    let Ok(wire) = serde_json::from_value::<MessageWire>(value) else {
+        return Item::Unreadable(None);
+    };
+    let Some(id) = wire.id.clone().filter(|id| graph_id(id)) else {
+        return Item::Unreadable(None);
+    };
+    if wire.removed.is_some() {
+        return Item::Removed(id);
+    }
+    if wire.conversation_id.is_none() || wire.received.is_none() {
+        return Item::Partial(Relabel {
+            remote_id: id,
+            read: wire.is_read,
+            starred: wire.flag.as_ref().map(flagged),
+            ..Relabel::default()
+        });
+    }
+    match envelope(wire, Some(folder)) {
+        Some(found) => Item::Full(Box::new(found)),
+        None => Item::Unreadable(Some(id)),
+    }
 }

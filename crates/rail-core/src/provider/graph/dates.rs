@@ -50,6 +50,37 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
+/// Unix milliseconds in Graph's UTC form, to the second: `2026-10-12T08:30:15Z`.
+pub(crate) fn iso(ms: i64) -> String {
+    let seconds = ms.div_euclid(1000);
+    let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rest / 3_600,
+        rest % 3_600 / 60,
+        rest % 60
+    )
+}
+
+/// The proleptic Gregorian date of a day count since 1970-01-01 (Howard Hinnant's algorithm).
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    (year_of_era + era * 400 + i64::from(month <= 2), month, day)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,6 +109,16 @@ mod tests {
             "2026-10-12T08:30:15.x1Z",
         ] {
             assert_eq!(parse_ms(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn unix_milliseconds_write_as_graph_dates_and_read_back() {
+        assert_eq!(iso(0), "1970-01-01T00:00:00Z");
+        assert_eq!(iso(1_791_793_815_123), "2026-10-12T08:30:15Z");
+        assert_eq!(iso(951_868_799_000), "2000-02-29T23:59:59Z");
+        for ms in [0, 951_868_799_000, 1_791_793_815_000, 4_102_444_800_000] {
+            assert_eq!(parse_ms(&iso(ms)), Some(ms));
         }
     }
 }

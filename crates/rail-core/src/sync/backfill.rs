@@ -270,7 +270,7 @@ impl Engine {
             .await?;
         self.status(|s| {
             s.backfill_fetched = 0;
-            s.backfill_estimate = Some(profile.messages_total);
+            s.backfill_estimate = profile.messages_total;
         });
         Ok((Some(profile.cursor.0), (self.clock)()))
     }

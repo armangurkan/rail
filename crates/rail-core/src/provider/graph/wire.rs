@@ -10,6 +10,8 @@ pub(crate) struct Page<T> {
     pub value: Vec<T>,
     #[serde(rename = "@odata.nextLink")]
     pub next_link: Option<String>,
+    #[serde(rename = "@odata.deltaLink")]
+    pub delta_link: Option<String>,
 }
 
 /// A `mailFolder` (or a `mailSearchFolder`, told apart by its type).
@@ -62,6 +64,9 @@ pub(crate) struct MessageWire {
     pub body_preview: Option<String>,
     #[serde(rename = "parentFolderId")]
     pub parent_folder_id: Option<String>,
+    /// Set on a delta item gone from the folder: deleted, or moved out.
+    #[serde(rename = "@removed")]
+    pub removed: Option<Value>,
 }
 
 #[derive(Deserialize)]
