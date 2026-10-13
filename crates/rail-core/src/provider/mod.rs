@@ -1,8 +1,9 @@
 //! Mail providers: the read side of the `Provider` trait, the types it speaks, the HTTP layer
-//! providers share, and the Gmail implementation.
+//! providers share, and the Gmail and Microsoft Graph implementations.
 
 pub mod error;
 pub mod gmail;
+pub mod graph;
 pub mod http;
 pub mod links;
 #[cfg(test)]
