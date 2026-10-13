@@ -8,13 +8,19 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- Microsoft 365 thread actions over Microsoft Graph: `e` archives to Outlook's Archive folder,
+  `d` moves to Deleted Items, `m` moves to Inbox, Archive, Junk Email or one of the account's
+  folders, `s` flags the newest message or clears every flag, and `u` marks every unread message
+  read or the newest one unread, each with the ten second `z` undo. Archive, trash and move leave
+  Sent Items and Drafts where they are. `l` answers `Outlook uses folders, not labels: press m to
+  move.`, and archive in a mailbox with no Archive folder answers `This mailbox has no Archive
+  folder; press m to move.` The trash prompt names the provider's trash.
 - Microsoft 365 sync and reading over Microsoft Graph: every mail folder (nested ones as
   `Parent/Child`, the well-known ones in their usual places, search and non-mail folders left
   out), threads by conversation, read and flag state, one combined delta cursor per account, new
   mail within one poll interval, `$search` server search, bodies through the shared HTML
-  renderer, attachment lists, and marking read on open reaching Outlook. Every other action and
-  every compose start on a Microsoft 365 account answers `Not supported for Microsoft 365
-  accounts yet.` at once.
+  renderer, attachment lists, and marking read on open reaching Outlook. Labels (`l`) and writing
+  (compose, send, drafts) on a Microsoft 365 account are refused at once.
 - The HTTP layer speaks Microsoft Graph: immutable ids on every request, Graph's error envelope,
   at most four requests in flight per mailbox, and `$batch` with throttled items sent again.
 - Writing mail: `c` new message, `r` reply, `R` reply-all, `f` forward, written in your editor
@@ -152,9 +158,12 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Changed
 
-- `Provider::modify_threads` and `trash_threads` take `ThreadTarget`s (a thread and its stored
-  message ids); `Profile.messages_total` is optional; `RemoteFolder` has a `parent`, stored in
-  `folders.parent_id`; `SearchFailure` names the account's kind.
+- `Provider::apply(threads, change)` replaces `modify_threads` and `trash_threads`: a semantic
+  `Change` (archive, trash, star, read, labels, move) that each adapter turns into its own calls;
+  Gmail's wire calls are unchanged. `ThreadTarget`s carry each stored message's folder, flags and
+  date, as they were before the action's own local change. `Profile.messages_total` is optional;
+  `RemoteFolder` has a `parent`, stored in `folders.parent_id`; `SearchFailure` names the
+  account's kind.
 - The HTML-to-text renderer moved from `provider/gmail/html.rs` to `provider/html.rs`.
 - A provider whose first sync is its delta defers the full backfill's sweep until the delta has
   caught up, and a larger `history_days` resyncs it.
@@ -215,6 +224,14 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- Microsoft 365 marking read touched every stored message of a thread, and one message Graph
+  refused failed the whole action. Only the messages that need the change are sent, a refused one
+  is skipped and logged by id, and the action fails only when every message is refused (#30).
+- A 410 from Microsoft Graph outside a delta request was read as an expired delta and resynced
+  the account; it is now a refusal. A throttled item inside a `$batch` waits for its own
+  `Retry-After` (at most 30 seconds, one second when it names none) before it is sent again, and
+  `draft.discard` on a Microsoft 365 account answers `Not supported for Microsoft 365 accounts
+  yet.` (#31, in part).
 - A send or a save to Gmail whose review was closed, followed by a new message or reply before
   the daemon answered, lost its answer: no `sent · z undoes` record and no error when it failed.
   Its answer now makes its record (or shows its error) whatever is open. A thread action whose

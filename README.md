@@ -382,8 +382,8 @@ first, `Trash "subject"?` or `Trash 3 threads?`, and says what the trash does: G
 mail in its Trash for 30 days, and on Microsoft 365 it `Moves to Deleted Items.`; Rail never
 deletes mail for good), `s` stars or unstars (it stars unless every thread is already
 starred), `u` marks read or unread (it marks read if any thread is unread). An action applies to
-the whole thread, as in Gmail. The list changes at once; the daemon sends the change to Gmail in
-the background, so it also goes through if you quit Rail.
+the whole thread, as in Gmail. The list changes at once; the daemon sends the change to the account's server (Gmail or
+Microsoft 365) in the background, so it also goes through if you quit Rail.
 
 `l` opens the account's labels: type to filter, `Space` ticks or unticks, `Enter` applies (labels
 you ticked are added, labels you unticked are removed; for a selection, the ticks start from every
@@ -431,7 +431,8 @@ pick. Archive, trash and move leave your own messages in Sent Items and Drafts w
 `s` flags the newest message, or clears every flag of a flagged thread; `u` marks every unread
 message read, or the newest message unread. `l` answers
 `Outlook uses folders, not labels: press m to move.` A selection may hold threads of both kinds:
-each account gets its own change, and `l` is refused for the whole selection. When Outlook
+each account gets its own change, and `l` is refused for the whole selection. `m` is refused
+for a selection spanning accounts: `Labels belong to one account: select threads from one account.` When Outlook
 refuses some messages of a thread (one deleted meanwhile, say), the others still change and the
 refusals are logged; only when it refuses every message does the action fail. Opening an unread
 thread marks it read in Outlook (the status bar shows `1 queued` meanwhile).
