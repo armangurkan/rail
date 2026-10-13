@@ -8,32 +8,34 @@ use super::model::Composing;
 use crate::tui::modals::confirm::human_size;
 use crate::tui::text::{Block, blocks, escape, expand_tabs, fold_label, shown_host, wrap};
 
-/// The keys the bottom row names, in its order: send, push, edit, headers, attach, remove,
-/// keep, discard.
+/// The keys the bottom row names, in its order: send, push (named with the provider), edit,
+/// headers, attach, remove, keep, discard.
 pub(super) const HINT_WORDS: [&str; 8] = [
-    "send",
-    "save to Gmail",
-    "edit",
-    "headers",
-    "attach",
-    "remove",
-    "keep",
-    "discard",
+    "send", "save to", "edit", "headers", "attach", "remove", "keep", "discard",
 ];
+/// The word the provider's name follows.
+const PUSH_WORD: usize = 1;
 
-/// The bottom row for these key labels (in `HINT_WORDS`' order).
-pub(super) fn hint(labels: &[String; 8]) -> String {
+/// The bottom row for these key labels (in `HINT_WORDS`' order), `s` saving to `provider`.
+pub(super) fn hint(labels: &[String; 8], provider: &str) -> String {
     labels
         .iter()
         .zip(HINT_WORDS)
-        .map(|(key, word)| format!("{key} {word}"))
+        .enumerate()
+        .map(|(i, (key, word))| match i {
+            PUSH_WORD => format!("{key} {word} {provider}"),
+            _ => format!("{key} {word}"),
+        })
         .collect::<Vec<_>>()
         .join(" · ")
 }
 
-/// The bottom row with the default keys.
+/// The bottom row with the default keys, for a Gmail account.
 pub(super) fn default_hint() -> String {
-    hint(&["y", "s", "e", "t", "a", "x", "q", "d"].map(String::from))
+    hint(
+        &["y", "s", "e", "t", "a", "x", "q", "d"].map(String::from),
+        "Gmail",
+    )
 }
 /// The bottom row while the discard question is open.
 pub(super) const DISCARD_QUESTION: &str = "Discard this draft? (y/n)";

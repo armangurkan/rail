@@ -1,10 +1,10 @@
 //! The send path of a `Send` row, and the one place that decides whether a message may go out
-//! again. Before its first send call the draft is stamped (`send_attempted_at`, kept through a
+//! again. Before its send call the draft is stamped (`send_attempted_at`, kept through a
 //! failure, a retry or a new `Send` row). A stamped draft, a row with an attempt counted, and a
-//! row found in flight at start (the recovered set) all ask Gmail for the draft's `Message-ID`
-//! first: found means it was sent, and the row completes as if this send succeeded; not found
-//! means it sends, with the same `Message-ID`. `Provider::send` is never retried inside the
-//! HTTP layer, and any 2xx answer to it is a send.
+//! row found in flight at start (the recovered set) all ask the provider first
+//! (`Provider::sent_already`): sent means the row completes as if this send succeeded; not
+//! sent means it sends, with the same `Message-ID`. `Provider::send` is never retried inside
+//! the HTTP layer, and any 2xx answer to it is a send.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -14,18 +14,15 @@ use super::Worker;
 use super::compose::{self, Assembly};
 use crate::ops::{DraftId, OutboxId};
 use crate::paths::{import_dir_in, remove_dir_if_present};
-use crate::provider::ProviderError;
-use crate::provider::gmail::build_message;
+use crate::provider::{DraftIds, ProviderError};
+use crate::store::drafts::ListedFile;
 use crate::store::outbox::{OutboxOutcome, OutboxRow, OutboxWrite};
 
 /// What a send or a push reads from the store in one go.
 pub(super) struct Loaded {
-    pub(super) message_id: String,
-    pub(super) remote_thread: Option<String>,
-    /// The draft's Gmail draft id, once a push created it.
-    pub(super) remote_draft_id: Option<String>,
     pub(super) send_attempted: bool,
     pub(super) attachments_readable: bool,
+    /// The message with its provider copy and thread, and what is left to read.
     pub(super) assembly: Assembly,
 }
 
@@ -67,16 +64,28 @@ impl Worker {
         loaded.send_attempted || row.attempts > 0 || self.recovered_ids().contains(&row.id)
     }
 
-    /// Stamp the draft before its send call; no send without the stamp.
-    async fn stamp(&self, draft: DraftId) -> Result<(), ProviderError> {
+    /// Stamp the draft before its send call, with the provider's draft that call sends and
+    /// the sizes it lists for the draft's files (Graph); no send without the stamp.
+    async fn stamp(
+        &self,
+        draft: DraftId,
+        remote: Option<DraftIds>,
+        listed: Vec<ListedFile>,
+    ) -> Result<(), ProviderError> {
         self.writer
-            .outbox(OutboxWrite::DraftSendAttempted { draft })
+            .outbox(OutboxWrite::DraftSendAttempted {
+                draft,
+                remote,
+                listed,
+            })
             .await
             .map(|_| ())
             .map_err(|e| ProviderError::transient(&e.message))
     }
 
-    /// Send the draft of a `Send` row, unless Gmail already holds it.
+    /// Send the draft of a `Send` row, unless the provider already holds it as sent. A
+    /// provider that sends its own draft (Graph) gets it saved first, and its id is kept
+    /// before the send: a send cut off from there finds that draft instead of making another.
     pub(super) async fn send_draft(
         &self,
         row: &OutboxRow,
@@ -84,11 +93,7 @@ impl Worker {
     ) -> Result<(), ProviderError> {
         let loaded = self.load(draft).await?;
         if self.may_have_been_sent(row, &loaded)
-            && self
-                .provider
-                .message_by_header_id(&loaded.message_id)
-                .await?
-                .is_some()
+            && self.provider.sent_already(&loaded.assembly.mail).await?
         {
             tracing::info!(account = %self.name, row = row.id, "the message was sent already");
             return Ok(());
@@ -98,22 +103,23 @@ impl Worker {
                 "the draft's attachments could not be read",
             ));
         }
-        let outgoing = compose::attach(loaded.assembly, self.provider.as_ref()).await?;
-        let raw = build_message(&outgoing)?;
-        self.stamp(draft).await?;
-        let thread = loaded.remote_thread.as_deref();
-        match self.provider.send(&raw, thread).await {
-            // A thread deleted at Gmail is refused with 404 before anything is accepted, so
-            // sending once more on a thread of its own cannot make a duplicate.
-            Err(ProviderError::NotFound) if thread.is_some() => {
-                tracing::info!(account = %self.name, row = row.id, "the reply's thread is gone at Gmail; sending it on its own");
-                self.provider.send(&raw, None).await?;
-            }
-            result => {
-                result?;
-            }
+        let paths = compose::file_paths(&loaded.assembly);
+        let mut mail = compose::attach(
+            loaded.assembly,
+            self.provider.as_ref(),
+            self.kind.provider_name(),
+        )
+        .await?;
+        let (mut remote, mut listed) = (None, Vec::new());
+        if self.provider.send_consumes_draft() {
+            let saved = self.provider.draft_save(&mail).await?;
+            listed = compose::listed_files(&paths, &mail, &saved.listed);
+            compose::with_listed(&mut mail, &saved.listed);
+            mail.remote = Some(saved.ids.clone());
+            remote = Some(saved.ids);
         }
-        Ok(())
+        self.stamp(draft, remote, listed).await?;
+        self.provider.send(&mail).await.map(|_| ())
     }
 
     /// The import directory the draft owns: the one its own client token names under the draft
@@ -149,9 +155,6 @@ impl Worker {
                 let attachments_readable = store.draft_attachments_readable(draft)?;
                 let assembly = compose::outgoing_for(store, &d, &from, from_name.as_deref())?;
                 Ok(Some(Loaded {
-                    message_id: d.message_id,
-                    remote_thread: d.remote_thread_id,
-                    remote_draft_id: d.remote_draft_id,
                     send_attempted: d.send_attempted_at.is_some(),
                     attachments_readable,
                     assembly,

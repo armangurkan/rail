@@ -13,8 +13,9 @@ use std::time::Duration;
 use super::gmail::actions::GmailCall;
 use super::http::{RetryPolicy, retry_policy_override};
 use super::{
-    Body, ChangeSet, DraftIds, Envelope, EnvelopePage, IdPage, PageToken, Profile, Provider,
-    ProviderError, Relabel, RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
+    Body, ChangeSet, Envelope, EnvelopePage, IdPage, OutgoingMail, PageToken, Profile, Provider,
+    ProviderError, Relabel, RemoteFolder, RemoteId, SavedDraft, SentReceipt, SyncCursor,
+    ThreadTarget, Window,
 };
 use crate::provider::FolderKind;
 
@@ -128,6 +129,11 @@ pub(crate) struct Mailbox {
     pub next_draft: u64,
     /// Draft ids "deleted at Gmail": an update or delete naming one is `NotFound`.
     pub missing_drafts: HashSet<String>,
+    /// Play Graph's draft model: a send consumes the draft it names (`OutgoingMail::remote`),
+    /// and a forward carries its originals.
+    pub graph_model: bool,
+    /// Every `OutgoingMail` a send took, in order (refused ones left out).
+    pub sent_mail: Vec<OutgoingMail>,
 }
 
 impl Default for Mailbox {
@@ -176,6 +182,8 @@ impl Default for Mailbox {
             drafts: BTreeMap::new(),
             next_draft: 0,
             missing_drafts: HashSet::new(),
+            graph_model: false,
+            sent_mail: Vec::new(),
         }
     }
 }
@@ -589,41 +597,24 @@ impl Provider for MockProvider {
         }
     }
 
-    async fn send(
-        &self,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Result<SentReceipt, ProviderError> {
-        self.enter(Call::Send, None)?;
-        let delay = self.lock().action_delay;
-        tokio::time::sleep(delay).await;
-        let mut m = self.lock();
-        if thread_id.is_some_and(|t| m.missing_threads.contains(t)) {
-            return Err(ProviderError::NotFound);
-        }
-        m.sent.push(SentRaw {
-            raw: raw.to_vec(),
-            thread_id: thread_id.map(str::to_string),
-        });
-        if let Some(id) = header_message_id(raw) {
-            m.known_header_ids.insert(id);
-        }
-        let n = m.sent.len();
-        Ok(SentReceipt {
-            message_id: Some(format!("sent-{n}")),
-            thread_id: Some(thread_id.map_or_else(|| format!("t-sent-{n}"), str::to_string)),
-        })
+    async fn send(&self, mail: &OutgoingMail) -> Result<SentReceipt, ProviderError> {
+        self.send_mail(mail).await
     }
 
-    async fn message_by_header_id(
-        &self,
-        rfc822_message_id: &str,
-    ) -> Result<Option<RemoteId>, ProviderError> {
-        self.enter(Call::FindByHeader, None)?;
-        let m = self.lock();
-        Ok(m.known_header_ids
-            .contains(rfc822_message_id)
-            .then(|| format!("found-{rfc822_message_id}")))
+    async fn draft_save(&self, mail: &OutgoingMail) -> Result<SavedDraft, ProviderError> {
+        self.save_mail(mail).await.map(SavedDraft::from)
+    }
+
+    async fn sent_already(&self, mail: &OutgoingMail) -> Result<bool, ProviderError> {
+        Ok(self.find_header(&mail.outgoing.message_id).await?.is_some())
+    }
+
+    fn send_consumes_draft(&self) -> bool {
+        self.lock().graph_model
+    }
+
+    fn forward_carries_originals(&self) -> bool {
+        self.lock().graph_model
     }
 
     async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError> {
@@ -633,29 +624,6 @@ impl Provider for MockProvider {
             .get(&(message.clone(), part.to_string()))
             .cloned()
             .ok_or(ProviderError::NotFound)
-    }
-
-    async fn draft_create(
-        &self,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Result<DraftIds, ProviderError> {
-        self.enter(Call::DraftCreate, None)?;
-        let delay = self.lock().action_delay;
-        tokio::time::sleep(delay).await;
-        drafts::create(&mut self.lock(), raw, thread_id)
-    }
-
-    async fn draft_update(
-        &self,
-        draft_id: &str,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Result<DraftIds, ProviderError> {
-        self.enter(Call::DraftUpdate, None)?;
-        let delay = self.lock().action_delay;
-        tokio::time::sleep(delay).await;
-        drafts::update(&mut self.lock(), draft_id, raw, thread_id)
     }
 
     async fn draft_delete(&self, draft_id: &str) -> Result<(), ProviderError> {
@@ -669,22 +637,6 @@ impl Provider for MockProvider {
         self.enter(Call::DraftList, None)?;
         Ok(drafts::find(&self.lock(), message_id))
     }
-}
-
-/// The `Message-ID` of raw bytes (brackets kept), by a line scan of the header block.
-fn header_message_id(raw: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(raw);
-    for line in text.lines() {
-        if line.is_empty() {
-            return None;
-        }
-        if let (Some(name), Some(value)) = (line.get(..11), line.get(11..))
-            && name.eq_ignore_ascii_case("message-id:")
-        {
-            return Some(value.trim().to_string());
-        }
-    }
-    None
 }
 
 #[cfg(test)]

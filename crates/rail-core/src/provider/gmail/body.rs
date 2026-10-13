@@ -181,6 +181,7 @@ fn collect_attachments(part: &Part, attachments: &mut Vec<AttachmentMeta>, depth
                 filename: one_line_capped(&part.filename, MAX_FILENAME_CHARS),
                 mime_type: one_line_capped(&mime, MAX_MIME_CHARS),
                 size: part.body.size.max(0),
+                plain_file: true,
             });
         }
         return;

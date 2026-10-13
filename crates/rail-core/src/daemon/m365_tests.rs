@@ -1,7 +1,7 @@
 //! A Microsoft 365 account through a real daemon over fake Graph: the first sync, a new
 //! message one pass later, read on open reaching Graph as a PATCH and archive as a move to
-//! Archive; labels, a crafted move into Sent Items, and every draft operation refused with
-//! nothing queued.
+//! Archive; labels and a crafted move into Sent Items refused with nothing queued (writing:
+//! `m365_draft_tests`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,27 +10,26 @@ use serde_json::json;
 
 use super::client::DaemonClient;
 use super::{Connector, ServeConfig};
-use crate::ops::op::{ActionApply, DraftDiscard, DraftSave, SyncNow, SyncStatus};
+use crate::ops::op::{ActionApply, SyncNow, SyncStatus};
 use crate::ops::{
-    AccountSyncStatus, Action, ActionApplyRequest, DraftDiscardRequest, DraftSaveRequest,
-    ErrorCode, M365_LABELS, M365_NOT_YET, SyncNowRequest, SyncStatusRequest,
+    AccountSyncStatus, Action, ActionApplyRequest, ErrorCode, M365_LABELS, SyncNowRequest,
+    SyncStatusRequest,
 };
 use crate::paths::Paths;
 use crate::provider::Provider;
 use crate::provider::graph::GraphProvider;
 use crate::provider::graph::fixtures::{Graph, api_at, folder, message, recent};
 use crate::store::Store;
-use crate::store::drafts::DraftKind;
 use crate::test_support::{daemon_context, start_daemon};
 
-const CORP: &str = "[general]\nsecrets = \"file\"\npoll_interval = \"60s\"\n\n[[accounts]]\nname = \"corp\"\nkind = \"m365\"\naddress = \"me@corp.example\"\nclient_id = \"cid\"\n";
-const BOUND: Duration = Duration::from_secs(15);
+pub(super) const CORP: &str = "[general]\nsecrets = \"file\"\npoll_interval = \"60s\"\n\n[[accounts]]\nname = \"corp\"\nkind = \"m365\"\naddress = \"me@corp.example\"\nclient_id = \"cid\"\n";
+pub(super) const BOUND: Duration = Duration::from_secs(15);
 
-fn graph_factory(base: String) -> crate::sync::ProviderFactory {
+pub(super) fn graph_factory(base: String) -> crate::sync::ProviderFactory {
     Arc::new(move |_| Ok(Arc::new(GraphProvider::new(api_at(&base))) as Arc<dyn Provider>))
 }
 
-async fn until(
+pub(super) async fn until(
     client: &DaemonClient,
     done: impl Fn(&AccountSyncStatus) -> bool,
 ) -> AccountSyncStatus {
@@ -139,7 +138,7 @@ async fn mailbox(g: &Graph) {
 }
 
 #[tokio::test]
-async fn a_microsoft_365_account_acts_through_graph_and_refuses_labels_and_writing() {
+async fn a_microsoft_365_account_acts_through_graph_and_refuses_labels() {
     let g = Graph::start().await;
     mailbox(&g).await;
     let read = json!({"id": "m1", "isRead": true});
@@ -217,43 +216,7 @@ async fn a_microsoft_365_account_acts_through_graph_and_refuses_labels_and_writi
             "a folder is not one of this account's move targets"
         )
     );
-    let draft = DraftSaveRequest {
-        account: "corp".into(),
-        draft: None,
-        kind: DraftKind::New,
-        reply_to: None,
-        to: vec!["ann@example.com".into()],
-        cc: vec![],
-        bcc: vec![],
-        subject: "hello".into(),
-        body: "hi".into(),
-        attachments: vec![],
-        client_token: "draft-1".into(),
-    };
-    let error = client.call::<DraftSave>(&draft).await.unwrap_err();
-    assert_eq!(error.message, M365_NOT_YET);
-    let draft = {
-        let store = Store::open(&paths.db_file()).unwrap();
-        store
-            .conn()
-            .execute(
-                "INSERT INTO drafts (account_id, kind, message_id, created_at, updated_at)
-                 VALUES (1, 'new', '<d1@corp.example>', 0, 0)",
-                [],
-            )
-            .unwrap();
-        store.conn().last_insert_rowid()
-    };
-    let error = client
-        .call::<DraftDiscard>(&DraftDiscardRequest { draft })
-        .await
-        .unwrap_err();
-    assert_eq!(
-        (error.code, error.message.as_str()),
-        (ErrorCode::Unsupported, M365_NOT_YET)
-    );
     let reader = Store::open_reader(&paths.db_file()).unwrap();
-    assert!(reader.draft(draft).unwrap().is_some(), "not discarded");
     let queued: i64 = reader
         .conn()
         .query_row(

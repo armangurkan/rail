@@ -66,6 +66,7 @@ pub(super) fn seed_drafts(mock: &MockProvider) {
                     filename: "plan.pdf".into(),
                     mime_type: "application/pdf".into(),
                     size: 1234,
+                    plain_file: true,
                 }],
                 ..Body::default()
             },
@@ -269,6 +270,7 @@ async fn a_push_is_refused_for_a_draft_being_sent_an_empty_draft_and_another_acc
             body: "b".into(),
             attachments: vec![],
             message_id: "<o1@example.com>".into(),
+            source_remote_id: None,
         };
         store.draft_upsert(&write, h.now()).unwrap().unwrap()
     };
@@ -306,6 +308,7 @@ async fn an_import_with_its_body_stored_makes_a_draft_with_its_gmail_identity() 
             name: "plan.pdf".into(),
             mime: "application/pdf".into(),
             size: i64::try_from(PLAN.len()).unwrap(),
+            listed: Some(1234),
         }]
     );
     assert_eq!(d.thread_id, Some(source.thread_id));

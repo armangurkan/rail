@@ -31,11 +31,15 @@ fn outgoing() -> Outgoing {
                 name: "notes.txt".into(),
                 mime: "text/plain".into(),
                 bytes: b"notes".to_vec(),
+                carried: None,
+                listed: None,
             },
             OutgoingAttachment {
                 name: "../evil\u{202E}.pdf".into(),
                 mime: "application/pdf".into(),
                 bytes: vec![1, 2, 3],
+                carried: None,
+                listed: None,
             },
         ],
     }
@@ -103,6 +107,8 @@ fn a_message_over_the_cap_is_refused_before_any_call() {
             name: "big.bin".into(),
             mime: "application/octet-stream".into(),
             bytes: vec![0; MAX_MESSAGE_BYTES],
+            carried: None,
+            listed: None,
         }],
         ..outgoing()
     };
@@ -125,6 +131,8 @@ fn estimated_raw_size_is_what_build_checks() {
             name: "big.bin".into(),
             mime: "application/octet-stream".into(),
             bytes: vec![0; bytes],
+            carried: None,
+            listed: None,
         }],
         ..outgoing()
     };
@@ -134,7 +142,7 @@ fn estimated_raw_size_is_what_build_checks() {
     assert_eq!(estimate, body + twenty.div_ceil(3) * 4 + 200);
     assert!(estimate > MAX_MESSAGE_BYTES, "20 MiB is over once encoded");
     let text = build(&with(twenty)).unwrap_err().to_string();
-    assert!(text.contains(&too_large_text(estimate)), "{text}");
+    assert!(text.contains(&too_large_text(estimate, "Gmail")), "{text}");
     assert!(text.contains("26.6 MiB"), "{text}");
     let eighteen = 18 * 1024 * 1024;
     assert!(estimated_raw_size(body, &[eighteen]) <= MAX_MESSAGE_BYTES);
@@ -332,4 +340,17 @@ fn plain_addresses_and_display_names_with_specials_still_build() {
     let raw = build(&named).unwrap();
     let parsed = MessageParser::default().parse(&raw).unwrap();
     assert_eq!(parsed.to().map(|a| a.iter().count()), Some(1));
+}
+
+#[test]
+fn the_size_refusal_names_the_provider() {
+    let bytes = 27 * 1024 * 1024 + 700 * 1024;
+    assert_eq!(
+        too_large_text(bytes, "Gmail"),
+        "the message is 27.6 MiB, larger than Gmail's 25 MiB limit"
+    );
+    assert_eq!(
+        too_large_text(bytes, "Microsoft 365"),
+        "the message is 27.6 MiB, larger than Microsoft 365's 25 MiB limit"
+    );
 }

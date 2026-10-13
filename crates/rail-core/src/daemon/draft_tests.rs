@@ -229,6 +229,7 @@ async fn save_creates_then_updates_and_send_queues_with_the_grace() {
     );
     let draft = h.store(|s| s.draft(first.draft).unwrap().unwrap());
     assert_eq!(draft.subject, "Edited", "a replayed create changes nothing");
+    assert_eq!(draft.source_remote_id, None, "a new message answers none");
     let row = h.send(first.draft, "send-1").await.unwrap();
     assert!(h.store(|s| s.failed_rows(1).unwrap()).is_empty());
     let pending = h.store(|s| s.pending_rows_for_draft(first.draft).unwrap());
@@ -309,6 +310,18 @@ async fn a_reply_gets_its_headers_from_the_store_and_a_forward_its_parts() {
         Some("<m0@example.com> <m1@example.com>")
     );
     assert_eq!(draft.remote_thread_id.as_deref(), Some("t1"));
+    assert_eq!(
+        draft.source_remote_id.as_deref(),
+        Some("m1"),
+        "the message answered"
+    );
+    assert_eq!(
+        (
+            draft.remote_draft_id.as_deref(),
+            draft.remote_message_id.as_deref()
+        ),
+        (None, None)
+    );
     assert!(draft.attachments.is_empty());
     assert!(reply.attachments.is_empty());
     let forward = DraftSaveRequest {
@@ -318,6 +331,7 @@ async fn a_reply_gets_its_headers_from_the_store_and_a_forward_its_parts() {
     };
     let forward = h.call::<DraftSave>(&forward).await.unwrap();
     let draft = h.store(|s| s.draft(forward.draft).unwrap().unwrap());
+    assert_eq!(draft.source_remote_id.as_deref(), Some("m1"));
     assert!(matches!(draft.attachments[0], Attachment::Part { ref part, .. } if part == "p1"));
     assert_eq!(
         (
@@ -393,6 +407,11 @@ async fn an_update_without_reply_to_keeps_the_drafts_threading_and_parts() {
         )
     );
     assert_eq!(after.in_reply_to.as_deref(), Some("<m1@example.com>"));
+    assert_eq!(
+        after.source_remote_id.as_deref(),
+        Some("m1"),
+        "kept through an update that names no message"
+    );
     assert_eq!(
         after.attachments, before.attachments,
         "the forwarded part it lists stays"

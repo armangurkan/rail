@@ -125,6 +125,7 @@ async fn discarding_an_imported_draft_removes_its_files() {
         name: "f.pdf".into(),
         mime: "application/pdf".into(),
         size: 1,
+        listed: None,
     });
     Store::open(&h.paths.db_file())
         .unwrap()
@@ -190,6 +191,7 @@ async fn attachments_named_like_temp_files_and_at_the_name_limit_import() {
                 filename: name.clone(),
                 mime_type: "application/octet-stream".into(),
                 size: 1,
+                plain_file: true,
             })
             .collect();
         for i in 0..names.len() {

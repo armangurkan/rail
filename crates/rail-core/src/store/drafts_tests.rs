@@ -27,8 +27,10 @@ fn write(account_id: i64) -> DraftWrite {
             name: "a.pdf".into(),
             mime: "application/pdf".into(),
             size: 10,
+            listed: None,
         }],
         message_id: "<11111111-2222-4333-8444-555555555555@example.com>".into(),
+        source_remote_id: None,
     }
 }
 
@@ -265,5 +267,38 @@ fn the_writers_save_replays_by_token_and_leaves_a_draft_being_sent_alone() -> Re
         OutboxOutcome::DraftDeleted(DraftDeleteOutcome::Deleted)
     );
     assert!(store.draft(id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn a_drafts_source_is_stored_on_create_and_replaced_on_update() -> Result<(), StoreError> {
+    let (mut store, account_id) = store_with_account();
+    let reply = DraftWrite {
+        kind: DraftKind::Reply,
+        source_remote_id: Some("m1".into()),
+        ..write(account_id)
+    };
+    let id = store.draft_upsert(&reply, 1)?.expect("created");
+    let stored = store.draft(id)?.expect("stored");
+    assert_eq!(stored.source_remote_id.as_deref(), Some("m1"));
+    assert_eq!(
+        (stored.remote_draft_id, stored.remote_message_id),
+        (None, None),
+        "not at the provider yet"
+    );
+    let again = DraftWrite {
+        id: Some(id),
+        source_remote_id: Some("m2".into()),
+        ..reply.clone()
+    };
+    store.draft_upsert(&again, 2)?;
+    let stored = store.draft(id)?.expect("stored");
+    assert_eq!(stored.source_remote_id.as_deref(), Some("m2"));
+    let new = DraftWrite {
+        message_id: "<other@example.com>".into(),
+        ..write(account_id)
+    };
+    let new = store.draft_upsert(&new, 3)?.expect("created");
+    assert_eq!(store.draft(new)?.expect("stored").source_remote_id, None);
     Ok(())
 }

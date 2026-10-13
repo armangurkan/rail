@@ -567,7 +567,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!((version, migrations::LATEST_VERSION), (7, 7));
+        assert_eq!((version, migrations::LATEST_VERSION), (8, 8));
         let store = Store { conn };
         let state = store.sync_state(1).unwrap();
         assert_eq!(state.backfill_before, Some(1_700_000_000_000));
@@ -730,7 +730,7 @@ mod tests {
                 .unwrap();
         }
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 7);
+        assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
         let draft: Option<i64> = store
             .conn()
             .query_row("SELECT draft_id FROM outbox", [], |r| r.get(0))
@@ -746,5 +746,54 @@ mod tests {
             .query_row("SELECT count(*) FROM drafts", [], |r| r.get(0))
             .unwrap();
         assert_eq!(drafts, 0);
+    }
+
+    /// 0008 adds `drafts.source_remote_id` to a version-7 store and keeps its drafts, the new
+    /// column empty; attachments become plain files, and a Microsoft 365 message with any is
+    /// marked unfetched (its text kept) so the next fetch says which they are.
+    #[test]
+    fn version_8_adds_the_drafts_source_and_keeps_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rail.db");
+        {
+            let store = Store::open_at_version(&path, 7).unwrap();
+            store
+                .conn()
+                .execute_batch(
+                    "INSERT INTO accounts (name, kind, address) VALUES ('a', 'm365', 'a@example.com');
+                     INSERT INTO drafts (account_id, kind, message_id, created_at, updated_at)
+                       VALUES (1, 'reply', '<d1@example.com>', 0, 0);
+                     INSERT INTO accounts (name, kind, address) VALUES ('g', 'gmail', 'g@example.com');
+                     INSERT INTO threads (account_id, remote_id) VALUES (1, 't1'), (2, 't2');
+                     INSERT INTO messages (account_id, thread_id, remote_id, body_text, body_fetched_at)
+                       VALUES (1, 1, 'm1', 'kept', 5), (2, 2, 'm2', 'kept', 5);
+                     INSERT INTO attachments (message_id, remote_part_id) VALUES (1, 'a1'), (2, 'a2');",
+                )
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 8);
+        let (kind, source): (String, Option<String>) = store
+            .conn()
+            .query_row("SELECT kind, source_remote_id FROM drafts", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((kind.as_str(), source), ("reply", None));
+        let rows: Vec<(String, Option<i64>, i64)> = store
+            .conn()
+            .prepare(
+                "SELECT m.body_text, m.body_fetched_at, a.plain_file FROM messages m
+                      JOIN attachments a ON a.message_id = m.id ORDER BY m.id",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            [("kept".into(), None, 1), ("kept".into(), Some(5), 1)]
+        );
     }
 }

@@ -38,6 +38,7 @@ fn seed_local(f: &Fixture, id: i64, account_id: i64, subject: &str, to: Recipien
         body: format!("body of {subject}\n"),
         attachments: vec![],
         message_id: format!("<d{id}@example.com>"),
+        source_remote_id: None,
     };
     let made = writer(f).draft_upsert(&write, at).unwrap();
     assert_eq!(made, Some(id), "drafts are numbered in order");
@@ -552,6 +553,7 @@ fn store_saves(f: &Fixture) {
             body: r.body.clone(),
             attachments: vec![],
             message_id: format!("<{}@example.com>", r.client_token),
+            source_remote_id: None,
         };
         let mut store = rail_core::store::Store::open(&db).unwrap();
         let draft = store

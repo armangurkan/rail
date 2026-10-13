@@ -22,9 +22,11 @@ use crate::ops::{
 use crate::paths::Paths;
 use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
-use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
+use crate::store::drafts::{
+    Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite, ReplyAttachment,
+};
 use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
-use crate::sync::{Wants, m365_not_yet};
+use crate::sync::Wants;
 
 pub(super) fn unexpected() -> OpError {
     OpError::internal("the store answered a draft write unexpectedly")
@@ -38,13 +40,16 @@ pub(super) fn being_sent() -> OpError {
     OpError::invalid_input("draft: this draft is being sent; undo first")
 }
 
-/// A push of the draft is in flight: its Gmail id may be about to change, so a discard now
-/// could leave the Gmail copy behind. It clears up once the push lands.
-fn being_pushed() -> OpError {
+/// A push of the draft is in flight: its provider id may be about to change, so a discard now
+/// could leave the provider's copy behind. It clears up once the push lands.
+fn being_pushed(kind: AccountKind) -> OpError {
     OpError::new(
         ErrorCode::InvalidInput,
         ErrorClass::Transient,
-        "draft: saving to Gmail, try again in a moment",
+        format!(
+            "draft: saving to {}, try again in a moment",
+            kind.provider_name()
+        ),
     )
 }
 
@@ -84,6 +89,7 @@ fn file_attachment(path: String) -> Result<Attachment, OpError> {
         name,
         path,
         size: i64::try_from(meta.len()).unwrap_or(i64::MAX),
+        listed: None,
     })
 }
 
@@ -92,11 +98,13 @@ fn file_attachments(paths: Vec<String>) -> Result<Vec<Attachment>, OpError> {
     paths.into_iter().map(file_attachment).collect()
 }
 
-/// At most `MAX_ATTACHMENTS`, and the message with `body_bytes` of text at most Gmail's
-/// 25 MiB as the MIME builder estimates it (attachments grow by a third once encoded).
+/// At most `MAX_ATTACHMENTS`, and the message with `body_bytes` of text at most the 25 MiB the
+/// MIME builder estimates (Gmail's limit, kept for every provider; attachments grow by a third
+/// once encoded). The refusal names `provider`.
 fn check_total<'a>(
     body_bytes: usize,
     attachments: impl Iterator<Item = &'a Attachment>,
+    provider: &str,
 ) -> Result<(), OpError> {
     let sizes: Vec<usize> = attachments
         .map(|a| usize::try_from(a.size()).unwrap_or(0))
@@ -110,7 +118,7 @@ fn check_total<'a>(
     if estimated > MAX_MESSAGE_BYTES {
         return Err(OpError::invalid_input(format!(
             "attachments: {}",
-            too_large_text(estimated)
+            too_large_text(estimated, provider)
         )));
     }
     Ok(())
@@ -138,6 +146,8 @@ fn mime_of(name: &str) -> &'static str {
 struct Threading {
     thread_id: Option<i64>,
     remote_thread_id: Option<String>,
+    /// The provider id of the message answered.
+    source_remote_id: Option<String>,
     in_reply_to: Option<String>,
     references: Option<String>,
     parts: Vec<Attachment>,
@@ -151,6 +161,23 @@ pub(super) fn header_id(id: &str) -> Option<String> {
     let inner = id.strip_prefix('<').unwrap_or(id);
     let inner = inner.strip_suffix('>').unwrap_or(inner);
     valid_message_id_inner(inner).then(|| format!("<{inner}>"))
+}
+
+/// The parts a forward of `message` carries: only plain files. Graph's `createForward` copies
+/// inline pictures (which the reconcile then deletes), attached messages and links itself;
+/// every Gmail part is a plain file.
+fn forwarded_parts(message: i64, attachments: &[ReplyAttachment]) -> Vec<Attachment> {
+    attachments
+        .iter()
+        .filter(|a| a.plain_file)
+        .map(|a| Attachment::Part {
+            message,
+            part: a.part_id.clone(),
+            name: a.filename.clone(),
+            mime: a.mime_type.clone(),
+            size: a.size,
+        })
+        .collect()
 }
 
 fn threading_for(
@@ -177,22 +204,13 @@ fn threading_for(
         .collect();
     references.extend(in_reply_to.clone());
     let parts = match kind {
-        DraftKind::Forward => source
-            .attachments
-            .iter()
-            .map(|a| Attachment::Part {
-                message: reply.message,
-                part: a.part_id.clone(),
-                name: a.filename.clone(),
-                mime: a.mime_type.clone(),
-                size: a.size,
-            })
-            .collect(),
+        DraftKind::Forward => forwarded_parts(reply.message, &source.attachments),
         _ => Vec::new(),
     };
     Ok(Threading {
         thread_id: Some(source.thread_id),
         remote_thread_id: Some(source.remote_thread_id),
+        source_remote_id: Some(source.remote_id),
         in_reply_to,
         references: (!references.is_empty()).then(|| references.join(" ")),
         parts,
@@ -204,6 +222,7 @@ fn kept_threading(d: &Draft) -> Threading {
     Threading {
         thread_id: d.thread_id,
         remote_thread_id: d.remote_thread_id.clone(),
+        source_remote_id: d.source_remote_id.clone(),
         in_reply_to: d.in_reply_to.clone(),
         references: d.references.clone(),
         parts: Vec::new(),
@@ -217,6 +236,8 @@ struct SaveInput {
     request: DraftSaveRequest,
     recipients: CheckedRecipients,
     files: Vec<Attachment>,
+    /// The account's provider, named by the size refusal.
+    provider: &'static str,
 }
 
 /// The draft an update names: the account's, and not being sent.
@@ -283,6 +304,43 @@ fn kept_parts(
         .collect())
 }
 
+/// The files to write, each taking the size the provider listed for the draft's entry with the
+/// same path and size in bytes: the same file, saved again. A file replaced since (other bytes)
+/// takes none, so the next save uploads it again.
+fn with_recorded(files: Vec<Attachment>, existing: Option<&Draft>) -> Vec<Attachment> {
+    let stored = existing.map_or(&[][..], |d| d.attachments.as_slice());
+    files
+        .into_iter()
+        .map(|file| match file {
+            Attachment::File {
+                path,
+                name,
+                mime,
+                size,
+                listed: None,
+            } => {
+                let listed = stored.iter().find_map(|a| match a {
+                    Attachment::File {
+                        path: p,
+                        size: s,
+                        listed,
+                        ..
+                    } if *p == path && *s == size => *listed,
+                    _ => None,
+                });
+                Attachment::File {
+                    path,
+                    name,
+                    mime,
+                    size,
+                    listed,
+                }
+            }
+            other => other,
+        })
+        .collect()
+}
+
 /// The draft to write: the existing one (the account's, not being sent) updated, or a new
 /// one with a fresh `Message-ID`. An update keeps the forwarded parts the request lists; the
 /// request's files replace its files.
@@ -294,6 +352,7 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
         request,
         recipients,
         files,
+        provider,
     } = input;
     let existing = editable(&store, request.draft, account_id)?;
     let threading = match (&existing, request.reply_to.as_ref()) {
@@ -303,8 +362,8 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
         (_, reply_to) => threading_for(&store, request.kind, reply_to, account_id)?,
     };
     let mut attachments = kept_parts(existing.as_ref(), &request.attachments, threading.parts)?;
-    attachments.extend(files);
-    check_total(request.body.len(), attachments.iter())?;
+    attachments.extend(with_recorded(files, existing.as_ref()));
+    check_total(request.body.len(), attachments.iter(), provider)?;
     Ok(DraftWrite {
         id: existing.as_ref().map(|d| d.id),
         account_id,
@@ -320,6 +379,7 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
         body: request.body,
         attachments,
         message_id: existing.map_or_else(|| new_message_id(&address), |d| d.message_id),
+        source_remote_id: threading.source_remote_id,
     })
 }
 
@@ -386,6 +446,7 @@ pub(super) async fn save(
         request,
         recipients,
         files,
+        provider: target.kind.provider_name(),
     };
     let reader = db.clone();
     let write = call
@@ -427,8 +488,9 @@ pub(super) fn draft_and_address(db: &Path, id: DraftId) -> Result<(Draft, String
     Ok((draft, address))
 }
 
-/// Every file still there and readable, and the total still under the cap.
-fn check_sendable(draft: &Draft) -> Result<(), OpError> {
+/// Every file still there and readable, and the total still under the cap (the refusal names
+/// `provider`).
+fn check_sendable(draft: &Draft, provider: &str) -> Result<(), OpError> {
     if draft.to.is_empty() && draft.cc.is_empty() && draft.bcc.is_empty() {
         return Err(OpError::invalid_input("to: add at least one recipient"));
     }
@@ -445,7 +507,7 @@ fn check_sendable(draft: &Draft) -> Result<(), OpError> {
         .attachments
         .iter()
         .filter(|a| matches!(a, Attachment::Part { .. }));
-    check_total(draft.body.len(), files.iter().chain(parts))
+    check_total(draft.body.len(), files.iter().chain(parts), provider)
 }
 
 /// Why an enqueue wrote no row: the draft is being sent, or it is gone.
@@ -503,7 +565,10 @@ pub(super) async fn send(
         return Err(no_such_draft());
     }
     let account_id = draft.account_id;
-    call.ctx.blocking(move || check_sendable(&draft)).await?;
+    let provider = target.kind.provider_name();
+    call.ctx
+        .blocking(move || check_sendable(&draft, provider))
+        .await?;
     let new = send_action(account_id, id, request.client_token);
     let outcome = call
         .ctx
@@ -557,12 +622,13 @@ pub(super) async fn discard(
     request: DraftDiscardRequest,
 ) -> Result<DraftDiscardResponse, OpError> {
     checked_id(request.draft)?;
-    // A Microsoft 365 draft is refused like any other write (#31), decided from the store so a
-    // Gmail draft still goes while its account is not live; a draft already gone is a no-op.
+    // The provider's name for a refusal; a draft already gone is a no-op.
     let (db, id) = (call.ctx.paths.db_file(), request.draft);
-    if call.ctx.blocking(move || draft_owner(&db, id)).await? == Some(AccountKind::M365) {
-        return Err(m365_not_yet());
-    }
+    let kind = call
+        .ctx
+        .blocking(move || draft_owner(&db, id))
+        .await?
+        .unwrap_or(AccountKind::Gmail);
     let (db, paths, id) = (
         call.ctx.paths.db_file(),
         call.ctx.paths.clone(),
@@ -582,7 +648,9 @@ pub(super) async fn discard(
     match outcome {
         OutboxOutcome::DraftDeleted(DraftDeleteOutcome::Deleted) => {}
         OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingSent) => return Err(being_sent()),
-        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingPushed) => return Err(being_pushed()),
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingPushed) => {
+            return Err(being_pushed(kind));
+        }
         _ => return Err(unexpected()),
     }
     let files = remove_dirs(&owned);

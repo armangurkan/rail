@@ -313,37 +313,33 @@ impl crate::provider::Provider for Panics {
     }
     async fn send(
         &self,
-        _: &[u8],
-        _: Option<&str>,
+        _: &crate::provider::OutgoingMail,
     ) -> Result<crate::provider::SentReceipt, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
-    async fn message_by_header_id(
+    async fn draft_save(
         &self,
-        _: &str,
-    ) -> Result<Option<crate::provider::RemoteId>, crate::provider::ProviderError> {
+        _: &crate::provider::OutgoingMail,
+    ) -> Result<crate::provider::SavedDraft, crate::provider::ProviderError> {
         panic!("test: the engine panics")
+    }
+    async fn sent_already(
+        &self,
+        _: &crate::provider::OutgoingMail,
+    ) -> Result<bool, crate::provider::ProviderError> {
+        panic!("test: the engine panics")
+    }
+    fn send_consumes_draft(&self) -> bool {
+        false
+    }
+    fn forward_carries_originals(&self) -> bool {
+        false
     }
     async fn attachment(
         &self,
         _: &crate::provider::RemoteId,
         _: &str,
     ) -> Result<Vec<u8>, crate::provider::ProviderError> {
-        panic!("test: the engine panics")
-    }
-    async fn draft_create(
-        &self,
-        _: &[u8],
-        _: Option<&str>,
-    ) -> Result<crate::provider::DraftIds, crate::provider::ProviderError> {
-        panic!("test: the engine panics")
-    }
-    async fn draft_update(
-        &self,
-        _: &str,
-        _: &[u8],
-        _: Option<&str>,
-    ) -> Result<crate::provider::DraftIds, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
     async fn draft_delete(&self, _: &str) -> Result<(), crate::provider::ProviderError> {
@@ -675,31 +671,27 @@ impl crate::provider::Provider for RetryingSearch {
     }
     async fn send(
         &self,
-        raw: &[u8],
-        thread_id: Option<&str>,
+        mail: &crate::provider::OutgoingMail,
     ) -> Answer<crate::provider::SentReceipt> {
-        self.inner.send(raw, thread_id).await
+        self.inner.send(mail).await
     }
-    async fn message_by_header_id(&self, id: &str) -> Answer<Option<crate::provider::RemoteId>> {
-        self.inner.message_by_header_id(id).await
+    async fn draft_save(
+        &self,
+        mail: &crate::provider::OutgoingMail,
+    ) -> Answer<crate::provider::SavedDraft> {
+        self.inner.draft_save(mail).await
+    }
+    async fn sent_already(&self, mail: &crate::provider::OutgoingMail) -> Answer<bool> {
+        self.inner.sent_already(mail).await
+    }
+    fn send_consumes_draft(&self) -> bool {
+        self.inner.send_consumes_draft()
+    }
+    fn forward_carries_originals(&self) -> bool {
+        self.inner.forward_carries_originals()
     }
     async fn attachment(&self, message: &crate::provider::RemoteId, part: &str) -> Answer<Vec<u8>> {
         self.inner.attachment(message, part).await
-    }
-    async fn draft_create(
-        &self,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Answer<crate::provider::DraftIds> {
-        self.inner.draft_create(raw, thread_id).await
-    }
-    async fn draft_update(
-        &self,
-        draft_id: &str,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Answer<crate::provider::DraftIds> {
-        self.inner.draft_update(draft_id, raw, thread_id).await
     }
     async fn draft_delete(&self, draft_id: &str) -> Answer<()> {
         self.inner.draft_delete(draft_id).await

@@ -135,9 +135,6 @@ impl Action {
     }
 }
 
-/// What Rail answers at once to writing on a Microsoft 365 account in this version (compose,
-/// reply, forward, send, and every draft operation).
-pub const M365_NOT_YET: &str = "Not supported for Microsoft 365 accounts yet.";
 /// What Rail answers at once to a labels action (`l`) on a Microsoft 365 account: Outlook has
 /// folders, and `m` moves to one.
 pub const M365_LABELS: &str = "Outlook uses folders, not labels: press m to move.";

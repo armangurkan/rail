@@ -93,6 +93,10 @@ pub enum Attachment {
         name: String,
         mime: String,
         size: i64,
+        /// The size the provider lists for its copy of this file, once Rail uploaded or
+        /// imported it: Graph lists a file larger than its bytes. `None` until then.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        listed: Option<i64>,
     },
     Part {
         message: i64,
@@ -139,6 +143,25 @@ impl std::fmt::Debug for Attachment {
     }
 }
 
+/// The size the provider listed for one of a draft's files, by its path and its size in
+/// bytes: recorded on the draft's entry with that path and size, so a file replaced since does
+/// not take it. The path holds the file's name, so `Debug` shows sizes only.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ListedFile {
+    pub path: String,
+    pub size: i64,
+    pub listed: i64,
+}
+
+impl std::fmt::Debug for ListedFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ListedFile")
+            .field("size", &self.size)
+            .field("listed", &self.listed)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A stored draft. Every string but the ids is outside text or mail content.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Draft {
@@ -162,6 +185,9 @@ pub struct Draft {
     pub updated_at: i64,
     /// Set before the first send call: Gmail may hold the message from then on.
     pub send_attempted_at: Option<i64>,
+    /// The provider id of the message a reply or forward answers (Graph makes the reply on
+    /// it); `None` for a new message, an imported draft, and one saved before schema 8.
+    pub source_remote_id: Option<String>,
 }
 
 impl std::fmt::Debug for Draft {
@@ -197,6 +223,8 @@ pub struct DraftWrite {
     pub body: String,
     pub attachments: Vec<Attachment>,
     pub message_id: String,
+    /// The provider id of the message answered; written on create and on every update.
+    pub source_remote_id: Option<String>,
 }
 
 impl std::fmt::Debug for DraftWrite {
@@ -216,6 +244,8 @@ pub struct ReplyAttachment {
     pub filename: String,
     pub mime_type: String,
     pub size: i64,
+    /// `AttachmentMeta::plain_file`: a forward carries it and an import fetches it.
+    pub plain_file: bool,
 }
 
 impl std::fmt::Debug for ReplyAttachment {
@@ -262,10 +292,10 @@ impl std::fmt::Debug for ReplySource {
 
 const DRAFT_COLUMNS: &str = "id, account_id, kind, thread_id, remote_thread_id, in_reply_to, \
     references_ids, to_json, cc_json, bcc_json, subject, body, attachments_json, message_id, \
-    remote_draft_id, remote_message_id, state, updated_at, send_attempted_at";
+    remote_draft_id, remote_message_id, state, updated_at, send_attempted_at, source_remote_id";
 
 /// Rail's own types as JSON; serialising them cannot fail.
-fn json<T: Serialize>(value: &T) -> String {
+pub(super) fn json<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "[]".into())
 }
 
@@ -296,6 +326,7 @@ fn read_draft(r: &Row<'_>) -> rusqlite::Result<Draft> {
         state: DraftState::parse(&text(16)?),
         updated_at: r.get(17)?,
         send_attempted_at: r.get(18)?,
+        source_remote_id: r.get(19)?,
     })
 }
 
@@ -333,8 +364,8 @@ fn insert_draft(
     conn.execute(
         "INSERT INTO drafts (account_id, kind, thread_id, remote_thread_id, in_reply_to,
            references_ids, to_json, cc_json, bcc_json, subject, body, attachments_json,
-           message_id, created_at, updated_at, client_token)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15)",
+           message_id, created_at, updated_at, client_token, source_remote_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15, ?16)",
         params![
             w.account_id,
             w.kind.as_str(),
@@ -350,7 +381,8 @@ fn insert_draft(
             json(&w.attachments),
             w.message_id,
             now,
-            token
+            token,
+            w.source_remote_id
         ],
     )?;
     Ok(())
@@ -366,7 +398,7 @@ fn update_draft(
     Ok(conn.execute(
         "UPDATE drafts SET kind = ?2, thread_id = ?3, remote_thread_id = ?4, in_reply_to = ?5,
            references_ids = ?6, to_json = ?7, cc_json = ?8, bcc_json = ?9, subject = ?10,
-           body = ?11, attachments_json = ?12, updated_at = ?13
+           body = ?11, attachments_json = ?12, updated_at = ?13, source_remote_id = ?15
          WHERE id = ?1 AND account_id = ?14",
         params![
             id,
@@ -382,7 +414,8 @@ fn update_draft(
             w.body,
             json(&w.attachments),
             now,
-            w.account_id
+            w.account_id,
+            w.source_remote_id
         ],
     )?)
 }
@@ -455,7 +488,7 @@ pub(super) fn attachments_of(
     message: i64,
 ) -> Result<Vec<ReplyAttachment>, StoreError> {
     let mut stmt = conn.prepare(
-        "SELECT remote_part_id, filename, mime_type, size FROM attachments
+        "SELECT remote_part_id, filename, mime_type, size, plain_file FROM attachments
          WHERE message_id = ?1 ORDER BY id",
     )?;
     let rows = stmt.query_map([message], |r| {
@@ -464,6 +497,7 @@ pub(super) fn attachments_of(
             filename: r.get(1)?,
             mime_type: r.get(2)?,
             size: r.get(3)?,
+            plain_file: r.get(4)?,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)

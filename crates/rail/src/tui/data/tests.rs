@@ -898,6 +898,7 @@ async fn the_reader_answers_the_drafts_folder_of_the_accounts_asked_for() {
         body: String::new(),
         attachments: vec![],
         message_id: "<a@example.com>".into(),
+        source_remote_id: None,
     };
     store.draft_upsert(&write, 1_760_000_000).unwrap();
     let reader = StoreReader::new(paths.db_file());

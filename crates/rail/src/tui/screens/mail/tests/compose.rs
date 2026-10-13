@@ -81,6 +81,7 @@ impl Fixture {
             body: body.into(),
             attachments: vec![],
             message_id: "<seeded@example.com>".into(),
+            source_remote_id: None,
         };
         let made = writer(self).draft_upsert(&write, BASE_MS / 1000).unwrap();
         assert_eq!(made, Some(id), "drafts are numbered in order");

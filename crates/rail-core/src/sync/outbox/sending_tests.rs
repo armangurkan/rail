@@ -39,6 +39,14 @@ impl Harness {
         Self::build(Some(name.to_string())).await
     }
 
+    /// A harness whose mock plays Graph's draft model: a send consumes the draft it names and
+    /// a forward carries its originals.
+    pub(super) async fn graph() -> Self {
+        let h = Self::new().await;
+        h.mock.with(|m| m.graph_model = true);
+        h
+    }
+
     async fn build(from_name: Option<String>) -> Self {
         let rig = rig().await;
         let sync_wake = Arc::new(Notify::new());
@@ -100,7 +108,7 @@ impl Harness {
     }
 
     /// Leave `id` inflight, as a daemon that died mid-send would.
-    async fn claim(&self, id: OutboxId) {
+    pub(super) async fn claim(&self, id: OutboxId) {
         let claimed = self
             .rig
             .writer
@@ -113,7 +121,7 @@ impl Harness {
     }
 
     /// A second worker over the same store, as after a daemon restart.
-    fn fresh_worker(&self) -> Worker {
+    pub(super) fn fresh_worker(&self) -> Worker {
         self.rig
             .worker_with(self.from_name.clone(), self.sync_wake.clone())
     }
@@ -140,7 +148,7 @@ impl Harness {
     }
 
     /// The store id of the message whose provider id is `remote`.
-    fn message_id(&self, remote: &str) -> i64 {
+    pub(super) fn message_id(&self, remote: &str) -> i64 {
         self.rig
             .store()
             .conn()
@@ -155,7 +163,7 @@ impl Harness {
 
 impl Worker {
     /// What `run` does first, then one step.
-    async fn recover_and_step(&self) {
+    pub(super) async fn recover_and_step(&self) {
         self.recover().await;
         self.step().await;
     }
@@ -183,6 +191,7 @@ pub(super) fn new_draft(h: &Harness, n: i64, attachments: Vec<Attachment>) -> Dr
                 body: "hi\n".into(),
                 attachments,
                 message_id: format!("<d{n}@example.com>"),
+                source_remote_id: None,
             },
             1,
         )
@@ -191,7 +200,11 @@ pub(super) fn new_draft(h: &Harness, n: i64, attachments: Vec<Attachment>) -> Dr
     })
 }
 
-async fn queued_draft(h: &Harness, n: i64, attachments: Vec<Attachment>) -> (DraftId, OutboxId) {
+pub(super) async fn queued_draft(
+    h: &Harness,
+    n: i64,
+    attachments: Vec<Attachment>,
+) -> (DraftId, OutboxId) {
     let draft = new_draft(h, n, attachments);
     let row = h
         .enqueue(NewAction {
@@ -205,7 +218,7 @@ async fn queued_draft(h: &Harness, n: i64, attachments: Vec<Attachment>) -> (Dra
     (draft, row)
 }
 
-fn sends(h: &Harness) -> usize {
+pub(super) fn sends(h: &Harness) -> usize {
     h.mock.calls().iter().filter(|c| **c == Call::Send).count()
 }
 
@@ -370,6 +383,7 @@ async fn a_vanished_attachment_fails_the_send_permanently() {
             name: "gone.pdf".into(),
             mime: "application/pdf".into(),
             size: 1,
+            listed: None,
         }],
     )
     .await;
@@ -654,6 +668,7 @@ async fn imported_draft(h: &Harness, n: i64, token: &str) -> (DraftId, std::path
         name: "plan.pdf".into(),
         mime: "application/pdf".into(),
         size: 17,
+        listed: None,
     };
     let (draft, _) = queued_draft(h, n, vec![attachment]).await;
     h.with_store(|s| {

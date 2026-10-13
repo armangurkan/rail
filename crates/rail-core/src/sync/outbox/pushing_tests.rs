@@ -11,8 +11,8 @@ use mail_parser::MessageParser;
 use super::sending_tests::{Harness, new_draft};
 use super::tests::ADDRESS;
 use crate::ops::{Action, DraftId, OutboxId};
+use crate::provider::ProviderError;
 use crate::provider::mock::Call;
-use crate::provider::{Provider, ProviderError};
 use crate::store::drafts::DraftState;
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
 
@@ -162,7 +162,7 @@ async fn a_delete_row_deletes_at_gmail_and_a_404_is_done() {
     let h = Harness::new().await;
     let created = h
         .mock
-        .draft_create(b"Subject: x\r\n\r\nx", None)
+        .create_raw(b"Subject: x\r\n\r\nx", None)
         .await
         .unwrap();
     let held = new_draft(&h, 4, vec![]);

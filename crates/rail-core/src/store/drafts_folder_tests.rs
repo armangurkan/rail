@@ -38,6 +38,7 @@ fn local(store: &mut Store, account_id: i64, n: i64, at: i64) -> DraftId {
         body: String::new(),
         attachments: vec![],
         message_id: format!("<a{account_id}-d{n}@example.com>"),
+        source_remote_id: None,
     };
     store.draft_upsert(&write, at).unwrap().unwrap()
 }
@@ -120,12 +121,12 @@ fn the_folder_lists_local_and_gmail_drafts_and_a_pushed_one_once() {
         vec![
             DraftsRowKind::Local {
                 draft: pushed,
-                on_gmail: true
+                on_remote: true
             },
-            DraftsRowKind::Gmail { message: dm2 },
+            DraftsRowKind::Remote { message: dm2 },
             DraftsRowKind::Local {
                 draft: never_pushed,
-                on_gmail: false
+                on_remote: false
             },
         ],
         "newest first; dm1 is the pushed draft's copy, not a row of its own"
@@ -161,12 +162,12 @@ fn a_gmail_draft_sorts_between_local_drafts_by_seconds() {
         vec![
             DraftsRowKind::Local {
                 draft: newer,
-                on_gmail: false
+                on_remote: false
             },
-            DraftsRowKind::Gmail { message: dm1 },
+            DraftsRowKind::Remote { message: dm1 },
             DraftsRowKind::Local {
                 draft: older,
-                on_gmail: false
+                on_remote: false
             },
         ]
     );
@@ -185,7 +186,7 @@ fn the_folder_is_filtered_by_account_and_capped() {
         rows.iter().map(|r| r.kind).collect::<Vec<_>>(),
         vec![DraftsRowKind::Local {
             draft: mine,
-            on_gmail: false
+            on_remote: false
         }]
     );
     assert_eq!(store.drafts_folder(&[first, second]).unwrap().len(), 3);
@@ -201,7 +202,7 @@ fn the_folder_is_filtered_by_account_and_capped() {
     let dy = message(&store, first, "dy");
     let rows = store.drafts_folder(&[first]).unwrap();
     assert_eq!(rows.len(), MAX_DRAFTS_ROWS);
-    assert_eq!(rows[0].kind, DraftsRowKind::Gmail { message: dy });
+    assert_eq!(rows[0].kind, DraftsRowKind::Remote { message: dy });
     assert_eq!(rows[MAX_DRAFTS_ROWS - 1].date, 103, "the two oldest went");
 }
 
@@ -224,10 +225,10 @@ fn a_large_mailbox_with_few_drafts_answers_only_its_drafts_from_the_drafts_folde
     assert_eq!(
         rows.iter().map(|r| r.kind).collect::<Vec<_>>(),
         vec![
-            DraftsRowKind::Gmail {
+            DraftsRowKind::Remote {
                 message: message(&store, account, "dm2")
             },
-            DraftsRowKind::Gmail {
+            DraftsRowKind::Remote {
                 message: message(&store, account, "dm1")
             },
         ]
@@ -269,7 +270,7 @@ fn another_accounts_draft_does_not_hide_a_gmail_draft() {
             .iter()
             .map(|r| r.kind)
             .collect::<Vec<_>>(),
-        vec![DraftsRowKind::Gmail { message: dm1 }],
+        vec![DraftsRowKind::Remote { message: dm1 }],
         "the same Gmail id in another account is not this message"
     );
 }
@@ -338,6 +339,7 @@ fn every_drafts_file_paths_are_listed_and_an_unreadable_list_stops_the_answer() 
         name: "n".into(),
         mime: "m".into(),
         size: 1,
+        listed: None,
     };
     let part = Attachment::Part {
         message: 1,
@@ -393,6 +395,7 @@ fn the_import_source_carries_threading_bcc_and_the_draft_flag() {
             filename: "a.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 10,
+            plain_file: true,
         }],
         ..Body::default()
     };

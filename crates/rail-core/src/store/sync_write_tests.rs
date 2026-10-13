@@ -547,6 +547,7 @@ fn bodies_record_attachments_for_the_thread_rollup() {
             filename: "a.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 10,
+            plain_file: true,
         }],
         ..Body::default()
     };

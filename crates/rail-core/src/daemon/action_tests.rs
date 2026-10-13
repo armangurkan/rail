@@ -12,8 +12,7 @@ use crate::error::ErrorClass;
 use crate::ops::op::{ActionApply, ActionRetry, ActionUndo, DraftSave, SyncNow, SyncStatus};
 use crate::ops::{
     Action, ActionApplyRequest, ActionRetryRequest, ActionUndoRequest, DraftSaveRequest, ErrorCode,
-    M365_LABELS, M365_NO_ARCHIVE, M365_NOT_YET, OpError, RowToken, SyncNowRequest,
-    SyncStatusRequest, names,
+    M365_LABELS, M365_NO_ARCHIVE, OpError, RowToken, SyncNowRequest, SyncStatusRequest, names,
 };
 use crate::paths::Paths;
 use crate::provider::mock::{Call, MockProvider, envelope};
@@ -295,10 +294,10 @@ async fn a_users_label_is_sent_to_gmail_by_its_remote_id() {
 }
 
 /// Microsoft 365 takes every thread action but labels: labels answer the folder text, an
-/// archive with no Archive folder is refused at once, writing stays refused, nothing refused
+/// archive with no Archive folder is refused at once, writing goes through, nothing refused
 /// is queued, and a move to its Inbox is.
 #[tokio::test]
-async fn microsoft_365_refuses_labels_archive_without_a_folder_and_writing() {
+async fn microsoft_365_refuses_labels_and_archive_without_a_folder_and_takes_writing() {
     let d = daemon(&format!("{WORK}{CORP}")).await;
     d.until("corp synced", |d| d.corp_thread("t1").is_some())
         .await;
@@ -350,8 +349,8 @@ async fn microsoft_365_refuses_labels_archive_without_a_folder_and_writing() {
         attachments: vec![],
         client_token: "s1".into(),
     };
-    let error = d.client.call::<DraftSave>(&save).await.unwrap_err();
-    assert_eq!(error.message, M365_NOT_YET);
+    let saved = d.client.call::<DraftSave>(&save).await.unwrap();
+    assert!(saved.draft > 0, "writing reaches Microsoft 365");
     let rows: i64 = Store::open_reader(&d.paths.db_file())
         .unwrap()
         .conn()

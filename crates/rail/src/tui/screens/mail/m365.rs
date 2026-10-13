@@ -1,17 +1,16 @@
-//! Microsoft 365 in the mail screen: its thread actions go through, `l` is refused with
-//! `M365_LABELS` (Outlook has folders, not labels), and every way to start writing from it
-//! says `M365_NOT_YET` at once, before anything is queued. The trash prompt names each
-//! provider's trash.
+//! Microsoft 365 in the mail screen: its thread actions and its writing go through like
+//! Gmail's, `l` is refused with `M365_LABELS` (Outlook has folders, not labels), the trash
+//! prompt names each provider's trash, and what writing says names the account's provider.
 
 use rail_core::config::AccountKind;
-use rail_core::ops::{M365_LABELS, M365_NOT_YET};
+use rail_core::ops::M365_LABELS;
 
 use super::MailScreen;
 use super::selection::Picked;
 
 impl MailScreen {
     /// The kind of the account with this store id.
-    fn kind_of(&self, account_id: i64) -> Option<AccountKind> {
+    pub(super) fn kind_of(&self, account_id: i64) -> Option<AccountKind> {
         self.account_index_of(account_id)
             .and_then(|index| self.accounts.get(index))
             .map(|a| a.kind)
@@ -22,29 +21,26 @@ impl MailScreen {
         self.kind_of(account_id) == Some(AccountKind::M365)
     }
 
-    /// True when the configured account at `index` is a Microsoft 365 account.
-    pub(super) fn is_m365_at(&self, index: usize) -> bool {
+    /// The kind of the configured account at `index` (Gmail when there is none).
+    pub(super) fn kind_at(&self, index: usize) -> AccountKind {
         self.accounts
             .get(index)
-            .is_some_and(|a| a.kind == AccountKind::M365)
+            .map_or(AccountKind::Gmail, |a| a.kind)
     }
 
-    /// Say the writing refusal when `refused`; answers `refused`.
-    pub(super) fn refuse_m365(&mut self, refused: bool) -> bool {
-        if refused {
-            self.status.notify(M365_NOT_YET, self.tick);
-        }
-        refused
+    /// The kind of the account the open message is written from (Gmail with none open).
+    pub(super) fn compose_kind(&self) -> AccountKind {
+        self.compose.as_ref().map_or(AccountKind::Gmail, |c| {
+            self.kind_at(c.composing().account_index)
+        })
     }
 
-    /// The backstop of the review's save and send: refuse when the message being written is
-    /// from a Microsoft 365 account.
-    pub(super) fn refuse_m365_compose(&mut self) -> bool {
-        let refused = self
-            .compose
-            .as_ref()
-            .is_some_and(|c| self.is_m365_at(c.composing().account_index));
-        self.refuse_m365(refused)
+    /// The kind of the account named `name` (Gmail when it is not configured).
+    pub(super) fn kind_named(&self, name: &str) -> AccountKind {
+        self.accounts
+            .iter()
+            .find(|a| a.name == name)
+            .map_or(AccountKind::Gmail, |a| a.kind)
     }
 
     /// `l` on targets holding a Microsoft 365 thread: refused whole, with the folder text.

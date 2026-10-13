@@ -1,7 +1,8 @@
 //! Microsoft 365 through Microsoft Graph v1.0, over the shared `ApiClient` in its Graph dialect
 //! (immutable ids on every request, Graph's error envelope, at most `GRAPH_CONCURRENCY`
 //! requests in flight): folders, the delta under one combined cursor, search, envelopes,
-//! bodies and attachments, and thread actions (moves and PATCHes per message through `$batch`).
+//! bodies and attachments, thread actions (moves and PATCHes per message through `$batch`), and
+//! writing through Outlook drafts (create, update, attachments, upload sessions, send).
 //! Graph's own JSON never leaves this module; every string it returns is outside text.
 
 mod actions;
@@ -11,10 +12,14 @@ mod body;
 mod cursor;
 mod dates;
 mod delta;
+mod drafts;
 pub mod errors;
 mod folders;
 mod message;
+mod reconcile;
 mod search;
+mod send;
+mod upload;
 mod wire;
 
 #[cfg(test)]
@@ -26,6 +31,8 @@ mod body_tests;
 #[cfg(test)]
 mod delta_tests;
 #[cfg(test)]
+mod drafts_tests;
+#[cfg(test)]
 mod errors_tests;
 #[cfg(test)]
 pub(crate) mod fixtures;
@@ -34,18 +41,24 @@ mod folders_tests;
 #[cfg(test)]
 mod message_tests;
 #[cfg(test)]
+mod reconcile_tests;
+#[cfg(test)]
 mod search_tests;
+#[cfg(test)]
+mod send_tests;
+#[cfg(test)]
+mod upload_tests;
 
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use super::http::ApiClient;
 use super::{
-    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
-    RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
+    Body, Change, ChangeSet, EnvelopePage, FolderKind, IdPage, OutgoingMail, PageToken, Profile,
+    ProviderError, RemoteFolder, RemoteId, SavedDraft, SentReceipt, SyncCursor, ThreadTarget,
+    Window,
 };
 use crate::config::SyncSettings;
-use crate::ops::M365_NOT_YET;
 
 pub use actions::MOVE_TARGET_GONE;
 pub use attachment::REFERENCE_ATTACHMENT;
@@ -54,7 +67,9 @@ pub use body::HTML_BODY;
 pub use cursor::MAX_CURSOR_BYTES;
 pub use delta::{GRAPH_PAGES_PER_CALL, PAGE_SIZE};
 pub use folders::{MAX_FOLDER_DEPTH, MAX_FOLDERS, SKIPPED_ROOTS, WELL_KNOWN};
+pub use reconcile::SMALL_ATTACHMENT_BYTES;
 pub use search::{MAX_GRAPH_SEARCH, MESSAGE_FIELDS};
+pub use upload::{UPLOAD_CHUNK, UPLOAD_TRIES};
 
 /// The API root every request is relative to; `me` is the signed-in mailbox.
 pub const GRAPH_API: &str = "https://graph.microsoft.com/v1.0/";
@@ -112,6 +127,15 @@ impl GraphProvider {
         }
     }
 
+    /// The id of the folder of `kind` the last listing found; `None` before any listing.
+    pub(crate) fn known_folder(&self, kind: FolderKind) -> Option<RemoteId> {
+        let folders = self.folders.lock().unwrap_or_else(PoisonError::into_inner);
+        folders
+            .iter()
+            .find(|f| f.kind == kind)
+            .map(|f| f.remote_id.clone())
+    }
+
     /// Whether the last listing found `folder` (true before any listing).
     pub(crate) fn syncs(&self, folder: &str) -> bool {
         let folders = self.folders.lock().unwrap_or_else(PoisonError::into_inner);
@@ -127,11 +151,6 @@ impl GraphProvider {
         };
         settings.window_start_ms(crate::auth::unix_now())
     }
-}
-
-/// Part A's answer for everything Microsoft 365 cannot do yet.
-fn not_yet() -> ProviderError {
-    ProviderError::permanent(M365_NOT_YET)
 }
 
 /// Whether `text` is a Graph id Rail puts in a URL path: 1 to `MAX_GRAPH_ID_BYTES` bytes of
@@ -187,36 +206,37 @@ impl super::Provider for GraphProvider {
         self.apply_change(threads, change).await
     }
 
-    async fn send(&self, _: &[u8], _: Option<&str>) -> Result<SentReceipt, ProviderError> {
-        Err(not_yet())
+    async fn send(&self, mail: &OutgoingMail) -> Result<SentReceipt, ProviderError> {
+        self.send_mail(mail).await
     }
 
-    async fn message_by_header_id(&self, _: &str) -> Result<Option<RemoteId>, ProviderError> {
-        Err(not_yet())
+    async fn draft_save(&self, mail: &OutgoingMail) -> Result<SavedDraft, ProviderError> {
+        self.save_draft(mail).await
+    }
+
+    async fn sent_already(&self, mail: &OutgoingMail) -> Result<bool, ProviderError> {
+        self.was_sent(mail).await
+    }
+
+    /// Graph sends its draft itself: the sent message keeps the draft's (immutable) id.
+    fn send_consumes_draft(&self) -> bool {
+        true
+    }
+
+    /// `createForward` copies the original's attachments onto the draft.
+    fn forward_carries_originals(&self) -> bool {
+        true
     }
 
     async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError> {
         self.attachment_bytes(message, part).await
     }
 
-    async fn draft_create(&self, _: &[u8], _: Option<&str>) -> Result<DraftIds, ProviderError> {
-        Err(not_yet())
+    async fn draft_delete(&self, draft_id: &str) -> Result<(), ProviderError> {
+        self.delete_draft(draft_id).await
     }
 
-    async fn draft_update(
-        &self,
-        _: &str,
-        _: &[u8],
-        _: Option<&str>,
-    ) -> Result<DraftIds, ProviderError> {
-        Err(not_yet())
-    }
-
-    async fn draft_delete(&self, _: &str) -> Result<(), ProviderError> {
-        Err(not_yet())
-    }
-
-    async fn draft_find(&self, _: &str) -> Result<Option<RemoteId>, ProviderError> {
-        Err(not_yet())
+    async fn draft_find(&self, message_id: &str) -> Result<Option<RemoteId>, ProviderError> {
+        self.find_draft(message_id).await
     }
 }

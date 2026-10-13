@@ -2,9 +2,11 @@
 //! `Prefer: outlook.body-content-type="html"`, rendered as Gmail's are (`gmail::body::render`:
 //! HTML through `provider::html`, text as it is, both cut at `MAX_BODY_BYTES`). With
 //! `hasAttachments`, the attachment list comes with it, inline ones included, as Gmail lists
-//! every named part. Graph says `hasAttachments` is false when every attachment is inline, and
-//! then none is listed.
+//! every named part; each says whether it is a plain file (`reconcile::plain_file`), the only
+//! kind a forward carries and an import fetches. Graph says `hasAttachments` is false when
+//! every attachment is inline, and then none is listed.
 
+use super::reconcile::plain_file;
 use super::wire::{AttachmentWire, BodyWire, Page};
 use super::{COST_REQUEST, GraphProvider, graph_id};
 use crate::provider::gmail::body::{Kind, render};
@@ -34,6 +36,7 @@ fn meta(wire: AttachmentWire) -> AttachmentMeta {
         ),
         mime_type: one_line_capped(&mime, MAX_MIME_CHARS),
         size: wire.size.unwrap_or(0).max(0),
+        plain_file: plain_file(wire.odata_type.as_deref(), wire.is_inline),
         part_id: wire.id,
     }
 }

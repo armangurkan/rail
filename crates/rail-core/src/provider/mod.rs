@@ -19,10 +19,10 @@ pub(crate) mod mock;
 
 pub use error::ProviderError;
 pub use types::{
-    AttachmentMeta, Body, Change, ChangeSet, DraftIds, Envelope, EnvelopePage, FolderKind,
-    INBOX_LABEL, IdPage, MAX_PAGE_TOKEN_BYTES, Mailbox, Outgoing, OutgoingAttachment, PageToken,
-    Profile, Relabel, RemoteFolder, RemoteId, STARRED_LABEL, SentReceipt, SyncCursor,
-    TargetMessage, ThreadTarget, UNREAD_LABEL, Window,
+    AttachmentMeta, Body, Carried, Change, ChangeSet, DraftIds, Envelope, EnvelopePage, FolderKind,
+    INBOX_LABEL, IdPage, MAX_PAGE_TOKEN_BYTES, Mailbox, Outgoing, OutgoingAttachment, OutgoingMail,
+    PageToken, Profile, Relabel, RemoteFolder, RemoteId, STARRED_LABEL, SavedDraft, SentReceipt,
+    SyncCursor, TargetMessage, ThreadTarget, UNREAD_LABEL, Window,
 };
 
 /// One account's mailbox, read through its provider's API. Every method speaks Rail types;
@@ -62,35 +62,30 @@ pub trait Provider: Send + Sync {
     /// scope rule (`actions::scope`) picks from each target's facts. Trash is restorable.
     async fn apply(&self, threads: &[ThreadTarget], change: &Change) -> Result<(), ProviderError>;
 
-    /// Send the RFC 5322 message `raw`, in `thread_id` when given. NEVER retried blindly: a
-    /// request that may have reached the provider is not repeated, so a transient error here
-    /// means "unknown"; the caller looks the message up (`message_by_header_id`) before it
-    /// sends again.
-    async fn send(&self, raw: &[u8], thread_id: Option<&str>)
-    -> Result<SentReceipt, ProviderError>;
-    /// The message whose `Message-ID` header is `rfc822_message_id` (angle brackets
-    /// included), if the mailbox holds it: the "was it sent already" check.
-    async fn message_by_header_id(
-        &self,
-        rfc822_message_id: &str,
-    ) -> Result<Option<RemoteId>, ProviderError>;
+    /// Send `mail`. NEVER retried blindly: a request that may have reached the provider is not
+    /// repeated, so a transient error here means "unknown" and the caller asks `sent_already`
+    /// before it sends again. A thread or source the provider no longer has (404) sends it as
+    /// a message of its own. Gmail sends the message Rail built; Graph sends its own draft of
+    /// it, saving it first.
+    async fn send(&self, mail: &OutgoingMail) -> Result<SentReceipt, ProviderError>;
+    /// Save `mail` as the provider's draft: create it when `mail.remote` is `None`, else
+    /// update that draft (one deleted at the provider is created again; one in a thread or on
+    /// a source the provider no longer has is saved on its own). Its ids at the provider, and
+    /// the size it lists for each attachment. A create is tried once: a transient error means
+    /// unknown.
+    async fn draft_save(&self, mail: &OutgoingMail) -> Result<SavedDraft, ProviderError>;
+    /// Whether the provider already holds `mail` as sent, by its `Message-ID`: the check
+    /// before sending a message that may have reached the provider before.
+    async fn sent_already(&self, mail: &OutgoingMail) -> Result<bool, ProviderError>;
+    /// True when a send consumes the provider's draft of the message (Graph: the sent message
+    /// keeps the draft's id), so nothing may delete "the draft" afterwards.
+    /// The worker saves such a draft and keeps its id before every send.
+    fn send_consumes_draft(&self) -> bool;
+    /// True when the provider's forward already carries the original's attachments (Graph's
+    /// `createForward`): the caller passes them as `Carried` instead of reading them.
+    fn forward_carries_originals(&self) -> bool;
     /// The bytes of one attachment part of a message.
     async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError>;
-    /// Save the RFC 5322 message `raw` as a draft, in `thread_id` when given. Tried once: a
-    /// transient error means unknown (the draft may exist), and the caller decides.
-    async fn draft_create(
-        &self,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Result<DraftIds, ProviderError>;
-    /// Replace the provider draft's message with `raw`. `ProviderError::NotFound` when the
-    /// draft was deleted at the provider.
-    async fn draft_update(
-        &self,
-        draft_id: &str,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Result<DraftIds, ProviderError>;
     /// Delete the provider draft. `ProviderError::NotFound` when it is gone already.
     async fn draft_delete(&self, draft_id: &str) -> Result<(), ProviderError>;
     /// The provider draft whose message is `message_id`, looked for in at most

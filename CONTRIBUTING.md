@@ -19,8 +19,8 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
     store/filter.rs      The filter line's syntax as SQL conditions
     store/outbox.rs      The outbox queue the action operations and the worker share
     store/drafts.rs      Local drafts, their recipients and attachments
-    store/drafts_folder.rs The Drafts folder's rows (local and Gmail) and the import's source query
-    store/outbox_drafts.rs The outbox rows that save a draft to Gmail and delete its Gmail copy
+    store/drafts_folder.rs The Drafts folder's rows (local and provider) and the import's source query
+    store/outbox_drafts.rs The outbox rows that save a draft to the provider and delete its provider copy
     store/addresses.rs   The addresses mail has taught the store, for `To:` completion
     store/apply_local.rs Local changes of actions and their exact reverse, and the conflict rule
   src/auth/              Secret stores (keyring, file, 1Password), OAuth endpoints, loopback listener, login and admin consent, token refresh
@@ -29,20 +29,24 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
     ops/drafts.rs        The draft operations' types and the limits on a message
   src/daemon/            JSON-RPC wire format, client and connector, the socket server and its handlers
     daemon/handlers/drafts.rs  The `draft.save`, `draft.send` and `draft.discard` handlers
-    daemon/handlers/drafts_gmail.rs  The `draft.push` and `draft.import` handlers
+    daemon/handlers/drafts_gmail.rs  The `draft.push` and `draft.import` handlers (either provider)
     daemon/handlers/draft_files.rs  The private files of an imported draft: fetch, removal, the start-up sweep
   src/accounts/          The add, login and remove pipeline the daemon runs
   src/guide/             Google and Microsoft setup steps as versioned data
   src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries, the Graph dialect and limiter), the HTML-to-text scanner (`provider/html.rs`), and the Gmail and Graph providers
-    provider/graph/      Microsoft 365 over Graph: folders, the combined delta cursor, $batch, search, bodies, mark read
-    provider/gmail/mime.rs, send.rs  Building an outgoing message and sending it
+    provider/graph/      Microsoft 365 over Graph: folders, the combined delta cursor, $batch, search, bodies, mark read, and writing through Outlook drafts
+    provider/graph/drafts.rs, upload.rs, send.rs  Outlook drafts, attachment upload sessions, and sending a draft once
+    provider/graph/reconcile.rs  Matching an Outlook draft's file attachments to Rail's: keep, delete, upload
+    provider/http_upload.rs  One upload-session chunk: a `PUT` with no `Authorization`, its address never logged
+    provider/gmail/write.rs  Gmail's writing entry point: an `OutgoingMail` built with the MIME builder, then sent or saved
+    provider/gmail/mime.rs, send.rs  The MIME builder (RFC 5322 bytes), and Gmail's raw send and "sent already" lookup
     provider/gmail/drafts.rs  Gmail's drafts: create, update, delete, find
     provider/mock/       The in-memory provider the tests use (a module: `mod.rs`, `drafts.rs`, `tests.rs`)
   src/sync/              Per-account sync engines, backfill and delta passes (a delta-first provider's deferred sweep), the single store writer, search
     sync/body_fetch.rs   Fetches bodies the store does not hold yet (the `body.fetch` operation)
     sync/outbox/         The per-account outbox worker that sends actions to the account's provider
-    sync/outbox/compose.rs Assembles a draft into the message the Gmail provider sends
-    sync/outbox/pushing.rs Saves a draft to Gmail (create or update) and deletes a Gmail draft
+    sync/outbox/compose.rs Assembles a draft into the `OutgoingMail` the provider sends
+    sync/outbox/pushing.rs Saves a draft to the provider (create or update) and deletes its provider copy
   src/doctor.rs          The `rail doctor` checks
 crates/rail/             Binary: clap CLI, logging, and the account, daemon, doctor, mcp, search, secrets, setup and sync commands
   src/cmd/mcp/           The MCP server: tools, the setup prompt, confirmation through elicitation, summaries

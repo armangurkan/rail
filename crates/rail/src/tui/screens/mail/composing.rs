@@ -25,7 +25,7 @@ pub(super) enum After {
     Edit,
     /// Show (or refresh) the review.
     Review,
-    /// Save the draft to Gmail's Drafts once it is saved.
+    /// Save the draft to the account's Drafts once it is saved.
     Push,
 }
 
@@ -52,17 +52,18 @@ pub(super) enum Pending {
     Editing,
     /// `draft.send` is in flight for `draft`.
     Sending { seq: u64, draft: DraftId },
-    /// `draft.push` is in flight for `draft` under `client_token`.
+    /// `draft.push` is in flight for `draft` under `client_token`, to `provider`'s Drafts.
     Pushing {
         seq: u64,
         draft: DraftId,
         client_token: String,
+        provider: &'static str,
     },
     /// A draft is read to resume it.
     Resuming { seq: u64 },
     /// The drafts picker's list is read.
     Drafts { seq: u64 },
-    /// `draft.import` is in flight for a Gmail draft; `then` is what its answer is for.
+    /// `draft.import` is in flight for a provider draft; `then` is what its answer is for.
     Importing {
         seq: u64,
         then: super::drafts_flow::AfterImport,
@@ -137,7 +138,7 @@ fn named(row: &AttachmentRow) -> Option<DraftAttachment> {
 
 /// The file at `path` can be attached to `c`: its size, or the refusal. The message is
 /// counted as the daemon and the worker count it, attachments as encoded.
-pub(super) fn attachable(path: &str, c: &Composing) -> Result<i64, String> {
+pub(super) fn attachable(path: &str, c: &Composing, provider: &str) -> Result<i64, String> {
     let name = Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -157,7 +158,10 @@ pub(super) fn attachable(path: &str, c: &Composing) -> Result<i64, String> {
         .collect();
     let estimated = estimated_raw_size(c.body.len(), &sizes);
     if estimated > MAX_MESSAGE_BYTES {
-        return Err(format!("attachments: {}", too_large_text(estimated)));
+        return Err(format!(
+            "attachments: {}",
+            too_large_text(estimated, provider)
+        ));
     }
     Ok(size)
 }
@@ -199,7 +203,10 @@ impl MailScreen {
             Action::ComposeDiscard,
         ]
         .map(|a| keymap.label(a));
-        self.compose = Some(composer.with_hint(&labels));
+        let provider = self
+            .kind_at(composer.composing().account_index)
+            .provider_name();
+        self.compose = Some(composer.with_hint(&labels, provider));
         self.composing.unsaved = false;
         self.focus = Focus::Compose;
     }

@@ -249,7 +249,13 @@ fn a_delta_that_already_shows_the_move_keeps_it_and_undo_is_too_late() {
     );
     assert_eq!(places(&store)[0], ["f-arch"], "undo changed nothing");
     store
-        .outbox_write(&OutboxWrite::Complete { id }, NOW + 22)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id,
+                draft_consumed: false,
+            },
+            NOW + 22,
+        )
         .unwrap();
     assert_eq!(places(&store)[0], ["f-arch"], "what Outlook said stands");
 }
@@ -273,7 +279,13 @@ fn a_rows_targets_show_each_message_as_it_was_before_the_row() {
         "the archive row sees m1 where it was"
     );
     store
-        .outbox_write(&OutboxWrite::Complete { id: archive }, NOW + 20)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: archive,
+                draft_consumed: false,
+            },
+            NOW + 20,
+        )
         .unwrap();
     let read = claim(&mut store);
     let facts: Vec<TargetMessage> = store.row_targets(&read).unwrap().remove(0).messages;
@@ -412,7 +424,13 @@ fn a_stacked_rows_targets_show_the_exact_folder_each_message_left() {
         "the archive row sees m1 in the Inbox"
     );
     store
-        .outbox_write(&OutboxWrite::Complete { id: archive }, NOW + 20)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: archive,
+                draft_consumed: false,
+            },
+            NOW + 20,
+        )
         .unwrap();
     let trash = claim(&mut store);
     let m1 = store
@@ -442,7 +460,13 @@ fn a_stacked_archive_is_sent_for_the_inbox_message_when_the_trash_after_it_fails
         "the archive request names m1"
     );
     store
-        .outbox_write(&OutboxWrite::Complete { id: archive }, NOW + 20)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: archive,
+                draft_consumed: false,
+            },
+            NOW + 20,
+        )
         .unwrap();
     fail_for_good(&mut store, trash);
     assert_eq!(

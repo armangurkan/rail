@@ -399,6 +399,7 @@ fn seed(f: &Fixture, id: i64, subject: &str, at: i64) {
         body: format!("body of {subject}\n"),
         attachments: vec![],
         message_id: format!("<d{id}@example.com>"),
+        source_remote_id: None,
     };
     let made = writer(f).draft_upsert(&write, at).unwrap();
     assert_eq!(made, Some(id), "drafts are numbered in order");
