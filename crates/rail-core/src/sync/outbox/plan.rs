@@ -73,7 +73,8 @@ pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
         } => return Ok(Plan::DeleteDraft(remote_draft_id.clone())),
         _ => {}
     }
-    let threads = store.thread_targets(row.account_id, &row.thread_ids)?;
+    // The store already shows this row's change: the provider sees each message as it was.
+    let threads = store.row_targets(row)?;
     if threads.is_empty() {
         return Ok(Plan::Nothing);
     }

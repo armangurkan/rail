@@ -7,6 +7,9 @@ mod addresses_tests;
 mod apply_local;
 #[cfg(test)]
 mod apply_local_tests;
+mod apply_single;
+#[cfg(test)]
+mod apply_single_tests;
 pub mod drafts;
 pub mod drafts_folder;
 #[cfg(test)]

@@ -718,13 +718,6 @@ impl Store {
         account_id: i64,
         folder_id: i64,
     ) -> Result<Option<String>, StoreError> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT remote_id FROM folders WHERE account_id = ?1 AND id = ?2",
-                params![account_id, folder_id],
-                |r| r.get(0),
-            )
-            .optional()?)
+        super::targets::folder_remote_in(&self.conn, account_id, folder_id)
     }
 }

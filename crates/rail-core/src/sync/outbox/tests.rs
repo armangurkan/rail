@@ -554,7 +554,7 @@ async fn a_row_that_gave_up_is_reported_as_final() {
 }
 
 #[tokio::test]
-async fn a_read_row_carries_each_threads_stored_messages_with_their_facts() {
+async fn a_read_row_hands_the_provider_each_message_as_it_was_before_the_row() {
     let mut rig = rig().await;
     let t1 = t(&rig.store(), "t1");
     rig.enqueue(Action::Read { on: true }, vec![t1], "a").await;
@@ -567,7 +567,7 @@ async fn a_read_row_carries_each_threads_stored_messages_with_their_facts() {
             id: "m1".into(),
             folder: Some(FolderKind::Inbox),
             folder_remote: Some("INBOX".into()),
-            unread: false,
+            unread: true,
             starred: false,
             date: 1,
         }],

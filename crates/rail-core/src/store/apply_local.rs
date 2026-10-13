@@ -1,16 +1,19 @@
-//! The optimistic local change of an action, and its exact reverse. `apply` records, per
-//! message, only what it changed (the old flag, the folders it added or removed); `revert`
+//! The optimistic local change of an action, and its exact reverse. `apply` follows the
+//! account's folder model (Gmail's labels here, one folder per message in `apply_single`) and
+//! records, per message, only what it changed (the old flag, the folders it added or removed); `revert`
 //! puts that back, touching a message only while it still belongs to the thread recorded
 //! (rowids can be reused). `restack` drops or brings back rows among overlapping ones;
 //! `reapply_live` is the conflict rule; `forget_threads` removes deleted threads from rows.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 
+use super::accounts::folder_model_in;
 use super::outbox::{live_rows_touching, save_threads_and_reversal};
 use super::{StoreError, rollup};
+use crate::config::FolderModel;
 use crate::ops::{Action, OutboxId};
 
 /// What an action changed on one message.
@@ -31,6 +34,16 @@ pub struct Prior {
     pub removed: Vec<i64>,
 }
 
+impl Prior {
+    /// True when the action changed anything on the message.
+    pub(super) fn changed(&self) -> bool {
+        self.read.is_some()
+            || self.starred.is_some()
+            || !self.added.is_empty()
+            || !self.removed.is_empty()
+    }
+}
+
 /// One action as folder and flag changes.
 #[derive(Default)]
 struct Change {
@@ -40,8 +53,13 @@ struct Change {
     starred: Option<bool>,
 }
 
-fn system_folder(tx: &Transaction, account: i64, kind: &str) -> Result<Option<i64>, StoreError> {
-    Ok(tx
+/// The account's folder of `kind` (the lowest-numbered one).
+pub(super) fn system_folder(
+    conn: &Connection,
+    account: i64,
+    kind: &str,
+) -> Result<Option<i64>, StoreError> {
+    Ok(conn
         .query_row(
             "SELECT id FROM folders WHERE account_id = ?1 AND kind = ?2 ORDER BY id LIMIT 1",
             params![account, kind],
@@ -105,7 +123,7 @@ fn messages_of(
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-fn in_folder(tx: &Transaction, message: i64, folder: i64) -> Result<bool, StoreError> {
+pub(super) fn in_folder(tx: &Transaction, message: i64, folder: i64) -> Result<bool, StoreError> {
     Ok(tx.query_row(
         "SELECT EXISTS (SELECT 1 FROM message_folders WHERE message_id = ?1 AND folder_id = ?2)",
         params![message, folder],
@@ -115,7 +133,7 @@ fn in_folder(tx: &Transaction, message: i64, folder: i64) -> Result<bool, StoreE
 
 /// Add `folder` to `message` when both still exist and the message is in `thread` (a folder
 /// deleted by a labels sync, or a reused rowid, adds nothing).
-fn add_membership(
+pub(super) fn add_membership(
     tx: &Transaction,
     message: i64,
     thread: i64,
@@ -130,7 +148,7 @@ fn add_membership(
     Ok(())
 }
 
-fn remove_membership(
+pub(super) fn remove_membership(
     tx: &Transaction,
     message: i64,
     thread: i64,
@@ -144,7 +162,7 @@ fn remove_membership(
     Ok(())
 }
 
-fn set_flag(
+pub(super) fn set_flag(
     tx: &Transaction,
     column: &str,
     message: i64,
@@ -159,8 +177,22 @@ fn set_flag(
     Ok(())
 }
 
-/// Apply `action` to every message of `threads`; what it changed. Rollups are the caller's.
+/// Apply `action` to the messages of `threads` its account's folder model picks; what it
+/// changed. Rollups are the caller's.
 pub(crate) fn apply(
+    tx: &Transaction,
+    account: i64,
+    action: &Action,
+    threads: &[i64],
+) -> Result<Vec<Prior>, StoreError> {
+    match folder_model_in(tx, account)? {
+        FolderModel::Labels => apply_labels(tx, account, action, threads),
+        FolderModel::SingleFolder => super::apply_single::apply(tx, account, action, threads),
+    }
+}
+
+/// Gmail's labels: `action` on every message of `threads`.
+fn apply_labels(
     tx: &Transaction,
     account: i64,
     action: &Action,
@@ -194,13 +226,7 @@ pub(crate) fn apply(
                 prior.removed.push(folder);
             }
         }
-        if prior
-            != (Prior {
-                message,
-                thread,
-                ..Prior::default()
-            })
-        {
+        if prior.changed() {
             priors.push(prior);
         }
     }
