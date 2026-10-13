@@ -1,10 +1,14 @@
 //! Microsoft 365 through Microsoft Graph v1.0, over the shared `ApiClient` in its Graph dialect
 //! (immutable ids on every request, Graph's error envelope, at most `GRAPH_CONCURRENCY`
-//! requests in flight): folders so far. Graph's own JSON never leaves this module; every string
+//! requests in flight): folders, search and envelopes so far. Graph's own JSON never leaves this module; every string
 //! it returns is outside text.
 
+mod batch;
+mod dates;
 pub mod errors;
 mod folders;
+mod message;
+mod search;
 mod wire;
 
 #[cfg(test)]
@@ -13,6 +17,10 @@ mod errors_tests;
 pub(crate) mod fixtures;
 #[cfg(test)]
 mod folders_tests;
+#[cfg(test)]
+mod message_tests;
+#[cfg(test)]
+mod search_tests;
 
 use super::http::ApiClient;
 use super::{
@@ -21,7 +29,9 @@ use super::{
 };
 use crate::ops::M365_NOT_YET;
 
+pub use batch::MAX_BATCH;
 pub use folders::{MAX_FOLDER_DEPTH, MAX_FOLDERS, SKIPPED_ROOTS, WELL_KNOWN};
+pub use search::{MAX_GRAPH_SEARCH, MESSAGE_FIELDS};
 
 /// The API root every request is relative to; `me` is the signed-in mailbox.
 pub const GRAPH_API: &str = "https://graph.microsoft.com/v1.0/";
@@ -86,12 +96,12 @@ impl super::Provider for GraphProvider {
         Err(not_yet())
     }
 
-    async fn search(&self, _: &str, _: usize) -> Result<Vec<RemoteId>, ProviderError> {
-        Err(not_yet())
+    async fn search(&self, query: &str, limit: usize) -> Result<Vec<RemoteId>, ProviderError> {
+        self.search_ids(query, limit).await
     }
 
-    async fn envelopes(&self, _: &[RemoteId]) -> Result<EnvelopePage, ProviderError> {
-        Err(not_yet())
+    async fn envelopes(&self, ids: &[RemoteId]) -> Result<EnvelopePage, ProviderError> {
+        self.envelopes_of(ids).await
     }
 
     async fn modify_threads(

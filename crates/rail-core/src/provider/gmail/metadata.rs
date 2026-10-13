@@ -156,7 +156,7 @@ fn one_line(text: &str) -> String {
 }
 
 /// The first `max` characters of `text` on one line (each control character a space).
-pub(super) fn one_line_capped(text: &str, max: usize) -> String {
+pub(crate) fn one_line_capped(text: &str, max: usize) -> String {
     one_line_chars(text).take(max).collect()
 }
 
