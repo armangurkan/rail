@@ -17,6 +17,7 @@ mod folders;
 mod message;
 mod reconcile;
 mod search;
+mod upload;
 mod wire;
 
 #[cfg(test)]
@@ -41,6 +42,8 @@ mod message_tests;
 mod reconcile_tests;
 #[cfg(test)]
 mod search_tests;
+#[cfg(test)]
+mod upload_tests;
 
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
@@ -60,7 +63,9 @@ pub use body::HTML_BODY;
 pub use cursor::MAX_CURSOR_BYTES;
 pub use delta::{GRAPH_PAGES_PER_CALL, PAGE_SIZE};
 pub use folders::{MAX_FOLDER_DEPTH, MAX_FOLDERS, SKIPPED_ROOTS, WELL_KNOWN};
+pub use reconcile::SMALL_ATTACHMENT_BYTES;
 pub use search::{MAX_GRAPH_SEARCH, MESSAGE_FIELDS};
+pub use upload::{UPLOAD_CHUNK, UPLOAD_TRIES};
 
 /// The API root every request is relative to; `me` is the signed-in mailbox.
 pub const GRAPH_API: &str = "https://graph.microsoft.com/v1.0/";

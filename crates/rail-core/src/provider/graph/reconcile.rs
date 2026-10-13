@@ -20,6 +20,8 @@ use crate::provider::{Carried, OutgoingAttachment, OutgoingMail, ProviderError};
 pub(super) const FILE_ATTACHMENT: &str = "#microsoft.graph.fileAttachment";
 /// Attachments one listing asks for; Rail sends at most 50.
 const MAX_LISTED: usize = 100;
+/// Below this a file is posted whole; at it or above it goes through an upload session.
+pub const SMALL_ATTACHMENT_BYTES: usize = 3 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct ListedWire {
@@ -152,7 +154,8 @@ impl GraphProvider {
         }
     }
 
-    /// Upload one of Rail's attachments; a carried original is fetched from its message first.
+    /// Upload one of Rail's attachments, whole or through a session; a carried original is fetched
+    /// from its message first.
     async fn upload(
         &self,
         draft: &str,
@@ -166,7 +169,11 @@ impl GraphProvider {
             }
             None => attachment.bytes.as_slice(),
         };
-        self.upload_small(draft, attachment, bytes).await
+        if bytes.len() < SMALL_ATTACHMENT_BYTES {
+            self.upload_small(draft, attachment, bytes).await
+        } else {
+            self.upload_large(draft, attachment, bytes).await
+        }
     }
 
     async fn carried_bytes(&self, carried: &Carried) -> Result<Vec<u8>, ProviderError> {

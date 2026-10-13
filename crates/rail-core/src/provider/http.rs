@@ -4,8 +4,9 @@
 //! 401 (shared by every request refused with the same token), a shorter retry policy for
 //! interactive work, capped response reads, and two dialects: Google's, and Microsoft Graph's
 //! (immutable ids on every request, Graph's error envelope, an optional limiter of requests in
-//! flight, `$batch`). Requests are logged with method, path, status and duration at debug:
-//! never the query string, a body or a token.
+//! flight, `$batch`). An upload session's chunks go without the token (`http_upload.rs`).
+//! Requests are logged with method, path, status and duration at debug: never the query
+//! string, a body or a token.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -753,6 +754,10 @@ fn busy(code: u16, retry_after: Option<Duration>, detail: Option<String>) -> Pro
         retry_after,
     }
 }
+
+#[path = "http_upload.rs"]
+mod upload;
+pub(crate) use upload::ChunkAnswer;
 
 #[cfg(test)]
 #[path = "http_tests.rs"]
