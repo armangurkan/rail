@@ -107,3 +107,25 @@ async fn a_throttled_item_refused_on_its_resend_is_skipped_and_the_others_stand(
         .unwrap();
     assert_eq!(g.batch.posts(), 1);
 }
+
+#[tokio::test(start_paused = true)]
+async fn throttled_items_of_a_chunk_wait_once_for_the_longest_capped_retry_after() {
+    let g = Graph::start().await;
+    for (id, after) in [("m1", "5"), ("m2", "20"), ("m3", "60")] {
+        g.batch
+            .throttle_with("PATCH", &format!("/me/messages/{id}"), Some(after));
+        Mock::given(method("PATCH"))
+            .and(path(format!("{ROOT}/me/messages/{id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": id})))
+            .expect(1)
+            .mount(&g.server)
+            .await;
+    }
+    let provider = GraphProvider::new(api_untimed(&g.base()));
+    let started = tokio::time::Instant::now();
+    provider
+        .apply(&[inbox(&["m1", "m2", "m3"])], &Change::Read { on: true })
+        .await
+        .unwrap();
+    assert_eq!(started.elapsed(), MAX_ITEM_RETRY_AFTER);
+}

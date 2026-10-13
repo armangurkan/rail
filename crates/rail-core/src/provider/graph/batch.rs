@@ -157,21 +157,31 @@ impl GraphProvider {
             .into_iter()
             .map(|item| (item.id.clone(), item))
             .collect();
-        let mut answers = Vec::with_capacity(chunk.len());
-        for (index, request) in chunk.iter().enumerate() {
-            let answer = match by_id.remove(&index.to_string()) {
-                Some(item) if item.status == 429 => {
-                    tokio::time::sleep(item_wait(&item.headers)).await;
-                    self.alone(request).await?
-                }
-                Some(item) => BatchAnswer {
+        let mut slots = Vec::with_capacity(chunk.len());
+        let mut wait = None;
+        for index in 0..chunk.len() {
+            let item = by_id.remove(&index.to_string()).ok_or_else(unreadable)?;
+            if item.status == 429 {
+                wait = wait.max(Some(item_wait(&item.headers)));
+                slots.push(None);
+            } else {
+                slots.push(Some(BatchAnswer {
                     status: item.status,
                     body: item.body,
                     refused: None,
-                },
-                None => return Err(unreadable()),
-            };
-            answers.push(answer);
+                }));
+            }
+        }
+        // One wait for the chunk's throttled items: the longest any asks, never past the cap.
+        if let Some(wait) = wait {
+            tokio::time::sleep(wait).await;
+        }
+        let mut answers = Vec::with_capacity(chunk.len());
+        for (slot, request) in slots.into_iter().zip(chunk) {
+            answers.push(match slot {
+                Some(answer) => answer,
+                None => self.alone(request).await?,
+            });
         }
         Ok(answers)
     }
