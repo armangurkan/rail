@@ -192,10 +192,17 @@ fn layout_pins_the_split_threshold_and_the_sidebar_rule() {
     assert!(!layout::fits_border(ratatui::layout::Rect::new(0, 0, 4, 2)));
     let theme = Theme::default();
     assert_eq!(
-        layout::pane_block(&theme, true).inner(area),
+        layout::pane_block(&theme, Icons::Unicode, true).inner(area),
         ratatui::layout::Rect::new(1, 1, 148, 38),
         "a boxed pane loses one cell on each side"
     );
+    let boxed = |icons| {
+        crate::tui::test_util::render_lines(4, 3, |frame| {
+            frame.render_widget(layout::pane_block(&theme, icons, false), frame.area());
+        })
+    };
+    assert_eq!(boxed(Icons::Ascii), ["+--+", "|  |", "+--+"], "ASCII boxes");
+    assert_eq!(boxed(Icons::Unicode), ["┌──┐", "│  │", "└──┘"]);
 }
 
 #[tokio::test]
@@ -324,4 +331,14 @@ async fn a_two_row_body_in_split_mode_has_no_borders() {
         "{}",
         lines[1]
     );
+}
+
+#[tokio::test]
+async fn ascii_icons_draw_the_stacked_sidebar_rule_with_a_bar() {
+    let (_tmp, screen) = screen(Icons::Ascii).await;
+    let lines =
+        crate::tui::test_util::render_lines(120, 30, |frame| screen.view(frame, &Theme::default()));
+    let rule = |line: &str| line.chars().nth(usize::from(layout::SIDEBAR_WIDTH) - 1);
+    assert_eq!(rule(&lines[1]), Some('|'), "{}", lines[1]);
+    assert!(lines[0].starts_with("|Rail | All inboxes"), "{}", lines[0]);
 }

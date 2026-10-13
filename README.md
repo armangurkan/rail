@@ -284,8 +284,10 @@ The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 un
 (`/ Search`; the filter shows there once set), and on the right one line for every account's
 sync: `● Synced 14:47` when all are caught up (the earliest account's time), else the worst
 state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
-`! work needs login`, `! work sync failed`, or the daemon's state). At 140 columns and wider the
-sidebar, the list and the reader are boxed, the focused pane in the accent colour. The last row
+`! work needs login`, `! work sync failed`, or the daemon's state). At `split_threshold` (140
+columns by default) and wider the sidebar, the list and the reader are boxed, the focused pane in
+the accent colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and the
+header reads `|Rail | All inboxes …`. The last row
 names the keys of the pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`,
 with the keys your `config.toml` sets) and shows each account's state on the right.
 

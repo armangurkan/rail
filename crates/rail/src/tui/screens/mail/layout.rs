@@ -2,7 +2,9 @@
 //! when split) and the hint row. In split mode every pane is boxed; the focused one's border
 //! takes the theme's focus style.
 
+use rail_core::config::Icons;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::symbols::border;
 use ratatui::widgets::{Block, Borders};
 
 use crate::tui::theme::Theme;
@@ -43,14 +45,38 @@ pub fn fits_border(area: Rect) -> bool {
     area.width >= 4 && area.height >= 3
 }
 
-/// A pane's box: the focused pane's in `border_focus`, the others' in `border`.
-pub fn pane_block(theme: &Theme, focused: bool) -> Block<'static> {
+/// The box `icons = "ascii"` draws: `+` corners, `-` and `|` sides.
+const ASCII_BORDER: border::Set<'static> = border::Set {
+    top_left: "+",
+    top_right: "+",
+    bottom_left: "+",
+    bottom_right: "+",
+    vertical_left: "|",
+    vertical_right: "|",
+    horizontal_top: "-",
+    horizontal_bottom: "-",
+};
+
+/// The lines boxes and rules are drawn with.
+pub fn border_set(icons: Icons) -> border::Set<'static> {
+    match icons {
+        Icons::Unicode => border::PLAIN,
+        Icons::Ascii => ASCII_BORDER,
+    }
+}
+
+/// A pane's box: the focused pane's in `border_focus`, the others' in `border`; ASCII lines
+/// with `icons = "ascii"`.
+pub fn pane_block(theme: &Theme, icons: Icons, focused: bool) -> Block<'static> {
     let style = if focused {
         theme.border_focus
     } else {
         theme.border
     };
-    Block::new().borders(Borders::ALL).border_style(style)
+    Block::new()
+        .borders(Borders::ALL)
+        .border_set(border_set(icons))
+        .border_style(style)
 }
 
 pub fn areas(area: Rect, sidebar: bool, pane: bool) -> Areas {

@@ -43,6 +43,8 @@ pub struct Glyphs {
     pub closed: &'static str,
     /// Before a draft kept only on this computer, in the Drafts folder.
     pub draft: &'static str,
+    /// Between `Rail` and the scope in the header.
+    pub separator: &'static str,
 }
 
 impl Glyphs {
@@ -60,6 +62,7 @@ impl Glyphs {
                 open: "▾",
                 closed: "▸",
                 draft: "✎",
+                separator: "│",
             },
             Icons::Ascii => Self {
                 bar: "|",
@@ -73,6 +76,7 @@ impl Glyphs {
                 open: "v",
                 closed: ">",
                 draft: "*",
+                separator: "|",
             },
         }
     }
@@ -130,14 +134,14 @@ impl MailScreen {
                 (Some(reader), Some(pane)) => {
                     self.render_browse(frame, &parts, boxed, theme, &glyphs);
                     let focused = self.focus == Focus::Reader;
-                    let inner = Self::boxed(frame, pane, boxed, focused, theme);
+                    let inner = self.boxed(frame, pane, boxed, focused, theme);
                     reader.render(frame, inner, theme, hyperlinks, focused);
                 }
                 (Some(reader), None) => reader.render(frame, parts.body, theme, hyperlinks, true),
                 (None, pane) => {
                     self.render_browse(frame, &parts, boxed, theme, &glyphs);
                     if let Some(pane) = pane {
-                        let inner = Self::boxed(frame, pane, boxed, false, theme);
+                        let inner = self.boxed(frame, pane, boxed, false, theme);
                         self.render_pane(frame, inner, theme);
                     }
                 }
@@ -159,11 +163,18 @@ impl MailScreen {
     }
 
     /// Box `area` in split mode (when it is big enough) and give back the inside.
-    fn boxed(frame: &mut Frame, area: Rect, boxed: bool, focused: bool, theme: &Theme) -> Rect {
+    fn boxed(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        boxed: bool,
+        focused: bool,
+        theme: &Theme,
+    ) -> Rect {
         if !boxed || !layout::fits_border(area) {
             return area;
         }
-        let block = layout::pane_block(theme, focused);
+        let block = layout::pane_block(theme, self.ctx.icons, focused);
         let inner = block.inner(area);
         frame.render_widget(block, area);
         inner
@@ -180,10 +191,10 @@ impl MailScreen {
     ) {
         if let Some(side) = parts.sidebar {
             let focused = self.focus == Focus::Sidebar;
-            let inner = Self::boxed(frame, side, boxed, focused, theme);
+            let inner = self.boxed(frame, side, boxed, focused, theme);
             self.render_sidebar(frame, inner, boxed, theme, glyphs);
         }
-        let inner = Self::boxed(frame, parts.list, boxed, self.focus == Focus::List, theme);
+        let inner = self.boxed(frame, parts.list, boxed, self.focus == Focus::List, theme);
         self.render_list(frame, inner, theme, glyphs);
     }
 
@@ -220,6 +231,7 @@ impl MailScreen {
         } else {
             let block = Block::new()
                 .borders(Borders::RIGHT)
+                .border_set(layout::border_set(self.ctx.icons))
                 .border_style(theme.border);
             let inner = block.inner(area);
             frame.render_widget(block, area);

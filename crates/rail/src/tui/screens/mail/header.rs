@@ -182,7 +182,12 @@ impl MailScreen {
     /// The scope, its account count and its unread count.
     fn scope_left(&self) -> String {
         let glyphs = Glyphs::of(self.ctx.icons);
-        let mut left = format!("{}Rail │ {}", glyphs.bar, self.scope_title());
+        let mut left = format!(
+            "{}Rail {} {}",
+            glyphs.bar,
+            glyphs.separator,
+            self.scope_title()
+        );
         if self.scope == ScopeChoice::Unified {
             let n = u64::try_from(self.accounts.len()).unwrap_or(u64::MAX);
             let plural = if n == 1 { "" } else { "s" };
