@@ -9,7 +9,8 @@ All notable changes to Rail are recorded here. The format follows
 ### Added
 
 - The mail screen's frame: a header row with the scope, its counts, a search slot and one sync
-  summary (`● Synced 14:47`, or the worst account's state); the sidebar, the list and the reader
+  summary (`● Synced 14:47`, or the worst account's state; kept whole, the scope is cut when both
+  do not fit); the sidebar, the list and the reader
   boxed at `split_threshold` (140 columns by default) and wider, the focused pane in the accent
   colour (`+`, `-` and `|` with `icons = "ascii"`); and a last row of key hints for the pane you
   are in, built from your keymap, with each account's state on the right.
@@ -180,7 +181,8 @@ All notable changes to Rail are recorded here. The format follows
 ### Changed
 
 - The filter is typed in the header's search slot, and the compose review's key row is the last
-  row's hints, so the review has one more row for its content.
+  row's hints, so the review has one more row for its content. While a `t` or `a` prompt is open
+  the row shows `Enter accept  Tab complete  Esc cancel`.
 - What writing says names the account's provider: `saved to Microsoft 365 · z undoes`,
   `Its copy in Outlook's Drafts is deleted too.`, `Microsoft 365 no longer has this draft`,
   `draft: saving to Microsoft 365, try again in a moment`, `s save to Microsoft 365` on the review

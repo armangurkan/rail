@@ -287,9 +287,10 @@ state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopp
 `! work needs login`, `! work sync failed`, or the daemon's state). At `split_threshold` (140
 columns by default) and wider the sidebar, the list and the reader are boxed, the focused pane in
 the accent colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and the
-header reads `|Rail | All inboxes …`. The last row
-names the keys of the pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`,
-with the keys your `config.toml` sets) and shows each account's state on the right.
+header reads `|Rail | All inboxes …`. When the scope and the summary do not both fit, the
+summary stays whole and the scope is cut. The last row, the status bar, names the keys of the
+pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your
+`config.toml` sets) and shows each account's state on the right.
 
 `Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
 beside the list; narrower, it covers the screen. `q` or `Esc` closes it. Messages are oldest
@@ -334,13 +335,15 @@ Bodies of recent mail (`body_cache_days`) are already in the store. An older mes
 the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
 
-`/` opens the filter line in the header's search slot (on the last row when the terminal is
-narrower than 60 columns) and filters the list as you type: plain words search subjects, the
-names and addresses of senders and recipients (To, Cc and Bcc) and stored bodies; `from:`, `to:` (also Cc and Bcc), `subject:`,
-`has:attachment`, `is:unread`, `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates,
-by when the mail arrived) and `account:<name>` narrow it; quote values with spaces
-(`from:"Dana Reyes"`). A thread matches when one of its messages matches all of them. Anything else
-is searched as words, and the header's search slot shows how Rail read your filter
+`/` opens the filter line in the header's search slot and filters the list as you type. The
+slot is not drawn when the terminal is narrower than 60 columns, or when fewer than 8 cells are
+left for it after the counts and the summary; the line then opens on the last row. Plain words
+search subjects, the names and addresses of senders and recipients (To, Cc and Bcc) and stored
+bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`, `is:unread`,
+`is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
+`account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread matches
+when one of its messages matches all of them. Anything else is searched as words, and the header's
+search slot shows how Rail read your filter
 (`/ is:unread · words: form:dana`), so a typo such as
 `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
 local store only (`rail search` also asks each account's server).
@@ -353,19 +356,21 @@ marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.h
 `Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more`
 line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond the box.
 
-The last row shows, on the right, each account's sync state (`✓` caught up, `⟳` syncing, with a count during
-the first sync, `retrying`, `stopped`, and `!` for `needs login` or `sync failed`). After the state
-come `sending…` while a message is on its way, `saving to Gmail…` (`saving to Microsoft 365…`)
-while a draft is saved, `2 queued` for actions on their way to the account's server and
+The status bar shows, on the right, each account's sync state (`✓` caught up, `⟳` syncing, with
+a count during the first sync, `retrying`, `stopped`, and `!` for `needs login` or
+`sync failed`). After the state come `sending…` while a message is on its way,
+`saving to Gmail…` (`saving to Microsoft 365…`) while a draft is saved, `2 queued` for actions on
+their way to the account's server and
 `1 failed` for actions it refused; see
 [Doing things to mail](#doing-things-to-mail).
-With threads selected, the header ends with `3 selected`. Whether the daemon can be reached shows
-in the header (`connecting to the daemon…`, `daemon unreachable (Ctrl-r retries)`, or
-`daemon reachable again (Ctrl-r resumes live updates)` once a message fetch gets through after the
-connection was lost); notices show on the last row, in place of the key hints. When the daemon cannot be reached the list still reads from the store; `Ctrl-r`
-reconnects (and starts a sync) and resumes live updates. A store read that fails says so where it
-was shown (the list, the top of the sidebar, or the reader's title) and in the status bar;
-`:errors` keeps it.
+With threads selected, the header's left part ends with `3 selected`. Whether the daemon can be
+reached shows in the header's summary (`connecting to the daemon…`,
+`daemon unreachable (Ctrl-r retries)`, or `daemon reachable again (Ctrl-r resumes live updates)`
+once a message fetch gets through after the connection was lost); notices show on the status bar,
+in place of the key hints. When the daemon cannot be reached the list still reads from the store;
+`Ctrl-r` reconnects (and starts a sync) and resumes live updates. A store read that fails says so
+where it was shown (the list, the top of the sidebar, or the reader's title) and in the status
+bar; `:errors` keeps it.
 
 ### Themes
 
@@ -375,9 +380,11 @@ Rail paints itself from a colour scheme of its own, on any terminal that shows 2
 `Rail default` first; letters filter, `↓`/`↑` and `Ctrl-n`/`Ctrl-p` move, and the screen takes
 each scheme as the highlight reaches it. `Enter` keeps it and writes `theme = "Name"` under
 `[general]` in `config.toml` (choosing `Rail default` removes the key); `Esc` puts the previous
-look back. `:accent` does the same for the accent (the focused pane's border, box borders, titles and headings, what you
-type in the palette and the filter, the sync spinner): `scheme default` or one of the scheme's
-sixteen palette slots, saved as `accent = N`. The status bar confirms `theme: Dracula` or
+look back. `:accent` does the same for the accent (the focused pane's border, box borders, titles
+and headings, what you type in the palette and the filter, the sync spinner): `scheme default`
+or one of the scheme's sixteen palette slots, saved as `accent = N`. The other panes' borders take
+the muted colour
+(palette slot 8 of a scheme) whatever the accent. The status bar confirms `theme: Dracula` or
 `accent: 5 magenta`; a save that fails says `Could not save the theme: …` (`:errors` keeps it)
 and keeps the look for this session.
 
@@ -528,8 +535,9 @@ the mail system sees. The last row names the keys:
 These are the `compose.*` actions in the key table and can be changed. While a `t` or `a` prompt
 is open the last row shows the prompt's keys instead: `Enter accept  Tab complete  Esc cancel`.
 `y` is refused with a reason when there is no recipient (`Add a recipient first`), while a save
-is pending, or after a save failed. If a save failed, `q` asks `Discard the unsaved changes?` and then says `unsaved
-changes discarded`; a message closed before anything was saved says `The message was not saved.`
+is pending, or after a save failed. If a save failed, `q` asks `Discard the unsaved changes?` and
+then says `unsaved changes discarded`; a message closed before anything was saved says
+`The message was not saved.`
 
 **Sending.** `y` hands the message to the daemon, which sends it ten seconds later. The status
 bar says `sent · z undoes` and `z` takes it back inside that window: the review opens again with
