@@ -198,23 +198,23 @@ fn finish(ended: Ended) -> ExitCode {
     }
 }
 
-/// No engine to wake: say why for each Gmail account (a sync that could not start shows its
-/// error), or that there is none.
+/// No engine to wake: say why for each account (a sync that could not start shows its error),
+/// or that there is none.
 async fn nothing_to_follow(client: &DaemonClient) -> color_eyre::Result<ExitCode> {
     let all = client
         .call::<SyncStatus>(&SyncStatusRequest::default())
         .await
         .map_err(report)?
         .accounts;
-    let gmail: Vec<AccountSyncStatus> = all
+    let syncing: Vec<AccountSyncStatus> = all
         .into_iter()
         .filter(|s| s.phase != SyncPhase::Unsupported)
         .collect();
-    if gmail.is_empty() {
-        println!("No Gmail account to sync; add one with `rail account add gmail`.");
+    if syncing.is_empty() {
+        println!("No account to sync; add one with `rail account add <gmail|m365>`.");
         return Ok(ExitCode::SUCCESS);
     }
-    Ok(print_finals(&gmail))
+    Ok(print_finals(&syncing))
 }
 
 fn print_finals(finals: &[AccountSyncStatus]) -> ExitCode {
@@ -355,10 +355,13 @@ pub fn progress_line(status: &AccountSyncStatus, now: i64) -> String {
         SyncPhase::Delta => "fetching changes".to_string(),
         SyncPhase::Bodies => format!("fetching bodies ({})", status.bodies_fetched),
         SyncPhase::Prune => "tidying the store".to_string(),
-        SyncPhase::Retrying => match status.next_attempt_at {
-            Some(at) => format!("Gmail is busy; retrying in {}s", (at - now).max(0)),
-            None => "Gmail is busy; retrying".to_string(),
-        },
+        SyncPhase::Retrying => {
+            let name = status.kind.provider_name();
+            match status.next_attempt_at {
+                Some(at) => format!("{name} is busy; retrying in {}s", (at - now).max(0)),
+                None => format!("{name} is busy; retrying"),
+            }
+        }
         SyncPhase::NeedsAuth => "needs a login".to_string(),
         SyncPhase::Idle | SyncPhase::Unsupported | SyncPhase::Stopped => {
             status.phase.as_str().to_string()
@@ -461,6 +464,17 @@ mod tests {
         assert_eq!(
             progress_line(&s, 1_700_000_000),
             "work: Gmail is busy; retrying in 30s"
+        );
+    }
+
+    #[test]
+    fn a_microsoft_365_account_that_retries_says_microsoft_365() {
+        let mut s = AccountSyncStatus::new("corp", "c@corp.example", AccountKind::M365);
+        s.phase = SyncPhase::Retrying;
+        s.next_attempt_at = Some(1_030);
+        assert_eq!(
+            progress_line(&s, 1_000),
+            "corp: Microsoft 365 is busy; retrying in 30s"
         );
     }
 

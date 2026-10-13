@@ -44,10 +44,18 @@ async fn daemon(paths: &Paths, mock: &MockProvider) -> DaemonClient {
 }
 
 async fn until(client: &DaemonClient, done: impl Fn(&AccountSyncStatus) -> bool) {
+    until_for(client, "work", done).await;
+}
+
+async fn until_for(
+    client: &DaemonClient,
+    account: &str,
+    done: impl Fn(&AccountSyncStatus) -> bool,
+) {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let request = SyncStatusRequest {
-                account: Some("work".into()),
+                account: Some(account.into()),
             };
             if let Ok(mut found) = client.call::<SyncStatus>(&request).await
                 && done(&found.accounts.remove(0))
@@ -194,19 +202,46 @@ async fn a_paused_account_answers_its_login_error_for_every_id() {
     );
 }
 
+/// A Microsoft 365 account's bodies come from its own engine's provider, into its own rows.
 #[tokio::test]
-async fn microsoft_365_answers_unsupported_and_an_unknown_account_fails() {
+async fn microsoft_365_reaches_its_engine_and_an_unknown_account_fails() {
     let tmp = tempfile::tempdir().unwrap();
     let paths = paths_with(&tmp, &format!("{WORK}{CORP}"));
-    let client = daemon(&paths, &MockProvider::new()).await;
-    until(&client, |s| s.passes_completed >= 1).await;
-    let results = fetch(&client, "corp", &["a"]).await.unwrap();
-    assert!(
-        matches!(&results[0].1, BodyOutcome::Failed(e) if e.code == ErrorCode::Unsupported),
-        "{results:?}"
+    let mock = MockProvider::new();
+    mock.seed(envelope("old", "t1", now_ms(10)));
+    let client = daemon(&paths, &mock).await;
+    until_for(&client, "corp", |s| {
+        s.passes_completed >= 1 && !s.pass_running
+    })
+    .await;
+    assert_eq!(corp_body(&paths, "old"), None, "older than the body cache");
+    let before = body_calls(&mock);
+    let results = fetch(&client, "corp", &["old", "nowhere"]).await.unwrap();
+    assert_eq!(
+        results,
+        [
+            ("old".to_string(), BodyOutcome::Fetched),
+            ("nowhere".to_string(), BodyOutcome::Missing),
+        ]
     );
+    assert_eq!(body_calls(&mock), before + 1, "the provider was asked once");
+    assert_eq!(corp_body(&paths, "old").as_deref(), Some("body of old"));
     let error = fetch(&client, "nobody", &["a"]).await.unwrap_err();
     assert_eq!(error.code, ErrorCode::NotFound);
+}
+
+/// The body the store holds for `remote` in the Microsoft 365 account.
+fn corp_body(paths: &Paths, remote: &str) -> Option<String> {
+    Store::open_reader(&paths.db_file())
+        .unwrap()
+        .conn()
+        .query_row(
+            "SELECT m.body_text FROM messages m JOIN accounts a ON a.id = m.account_id \
+             WHERE a.address = 'me@corp.example' AND m.remote_id = ?1",
+            [remote],
+            |r| r.get(0),
+        )
+        .unwrap()
 }
 
 #[tokio::test]

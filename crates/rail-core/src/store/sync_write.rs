@@ -109,6 +109,15 @@ fn replace_folders(
             params![account, folder.remote_id, folder.name, folder.kind.as_str()],
         )?;
     }
+    // A second pass: a child may be listed before its parent.
+    for folder in folders {
+        tx.execute(
+            "UPDATE folders SET parent_id = (SELECT p.id FROM folders p
+                 WHERE p.account_id = ?1 AND p.remote_id = ?3)
+             WHERE account_id = ?1 AND remote_id = ?2",
+            params![account, folder.remote_id, folder.parent],
+        )?;
+    }
     let keep: HashSet<&str> = folders.iter().map(|f| f.remote_id.as_str()).collect();
     let mut stmt = tx.prepare("SELECT id, remote_id FROM folders WHERE account_id = ?1")?;
     let rows: Vec<(i64, String)> = stmt

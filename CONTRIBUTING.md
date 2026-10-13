@@ -33,13 +33,14 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
     daemon/handlers/draft_files.rs  The private files of an imported draft: fetch, removal, the start-up sweep
   src/accounts/          The add, login and remove pipeline the daemon runs
   src/guide/             Google and Microsoft setup steps as versioned data
-  src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries) and the Gmail provider with its HTML-to-text scanner
+  src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries, the Graph dialect and limiter), the HTML-to-text scanner (`provider/html.rs`), and the Gmail and Graph providers
+    provider/graph/      Microsoft 365 over Graph: folders, the combined delta cursor, $batch, search, bodies, mark read
     provider/gmail/mime.rs, send.rs  Building an outgoing message and sending it
     provider/gmail/drafts.rs  Gmail's drafts: create, update, delete, find
     provider/mock/       The in-memory provider the tests use (a module: `mod.rs`, `drafts.rs`, `tests.rs`)
-  src/sync/              Per-account sync engines, backfill and history passes, the single store writer, search
+  src/sync/              Per-account sync engines, backfill and delta passes (a delta-first provider's deferred sweep), the single store writer, search
     sync/body_fetch.rs   Fetches bodies the store does not hold yet (the `body.fetch` operation)
-    sync/outbox/         The per-account outbox worker that sends actions to Gmail
+    sync/outbox/         The per-account outbox worker that sends actions to the account's provider
     sync/outbox/compose.rs Assembles a draft into the message the Gmail provider sends
     sync/outbox/pushing.rs Saves a draft to Gmail (create or update) and deletes a Gmail draft
   src/doctor.rs          The `rail doctor` checks
@@ -70,6 +71,10 @@ scripts/                 update-schemes.sh: regenerates the vendored colour-sche
     cargo deny check
 
 `cargo test -p rail compose::` runs the composer's tests and renders its review snapshots.
+
+Run tests in the default (debug) profile. Under `cargo test --release` the test URL overrides
+(`with_graph_url`, `with_gmail_url`, `with_token_url`) are compiled out, so tests that rely on them
+cannot work.
 
 All four must pass before a pull request is opened. CI runs them on Linux and macOS, checks the
 minimum supported Rust version (1.88), and reports line coverage.

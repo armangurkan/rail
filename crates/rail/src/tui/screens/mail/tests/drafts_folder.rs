@@ -67,6 +67,7 @@ fn sync_drafts(f: &Fixture, upserts: Vec<Envelope>) {
     ]
     .into_iter()
     .map(|(remote_id, name, kind)| RemoteFolder {
+        parent: None,
         remote_id: remote_id.into(),
         name: name.into(),
         kind,

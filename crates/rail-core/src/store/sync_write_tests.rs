@@ -201,11 +201,13 @@ fn an_unseen_label_gets_a_placeholder_folder() {
     assert_eq!(folders_of(&store, "m1"), ["INBOX", "Label_new"]);
     let named = vec![
         RemoteFolder {
+            parent: None,
             remote_id: "INBOX".into(),
             name: "Inbox".into(),
             kind: FolderKind::Inbox,
         },
         RemoteFolder {
+            parent: None,
             remote_id: "Label_new".into(),
             name: "Projects".into(),
             kind: FolderKind::User,
@@ -239,6 +241,7 @@ fn a_deleted_label_keeps_its_messages() {
     env.folders = vec!["INBOX".into(), "Label_old".into()];
     store.apply(&upserts(vec![env]), NOW).unwrap();
     let inbox_only = vec![RemoteFolder {
+        parent: None,
         remote_id: "INBOX".into(),
         name: "Inbox".into(),
         kind: FolderKind::Inbox,
@@ -745,4 +748,40 @@ fn reply_to_is_stored_as_json_and_replaced_by_the_next_upsert() {
         .apply(&upserts(vec![envelope("m1", "t1", DAY_MS)]), NOW)
         .unwrap();
     assert_eq!(stored(&store), "[]", "no Reply-To any more");
+}
+
+fn parent_of(store: &Store, folder: &str) -> Option<String> {
+    store
+        .conn()
+        .query_row(
+            "SELECT p.remote_id FROM folders f LEFT JOIN folders p ON p.id = f.parent_id
+             WHERE f.remote_id = ?1",
+            params![folder],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_nested_folder_keeps_its_parent_even_when_listed_first() {
+    let mut store = store();
+    let folder = |id: &str, parent: Option<&str>| RemoteFolder {
+        remote_id: id.into(),
+        name: id.into(),
+        kind: FolderKind::User,
+        parent: parent.map(Into::into),
+    };
+    let nested = Batch {
+        folders: Some(vec![folder("child", Some("top")), folder("top", None)]),
+        ..Batch::new(1)
+    };
+    store.apply(&nested, NOW).unwrap();
+    assert_eq!(parent_of(&store, "child").as_deref(), Some("top"));
+    assert_eq!(parent_of(&store, "top"), None);
+    let flat = Batch {
+        folders: Some(vec![folder("child", None), folder("top", None)]),
+        ..Batch::new(1)
+    };
+    store.apply(&flat, NOW).unwrap();
+    assert_eq!(parent_of(&store, "child"), None, "moved to the top");
 }

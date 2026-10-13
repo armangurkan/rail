@@ -8,15 +8,16 @@ use std::time::Duration;
 
 use super::client::DaemonClient;
 use super::{Connector, ServeConfig};
-use crate::ops::op::{ActionApply, ActionRetry, ActionUndo, SyncNow, SyncStatus};
+use crate::ops::op::{ActionApply, ActionRetry, ActionUndo, DraftSave, SyncNow, SyncStatus};
 use crate::ops::{
-    Action, ActionApplyRequest, ActionRetryRequest, ActionUndoRequest, ErrorCode, OpError,
-    RowToken, SyncNowRequest, SyncStatusRequest, names,
+    Action, ActionApplyRequest, ActionRetryRequest, ActionUndoRequest, DraftSaveRequest, ErrorCode,
+    M365_NOT_YET, OpError, RowToken, SyncNowRequest, SyncStatusRequest, names,
 };
 use crate::paths::Paths;
 use crate::provider::mock::{Call, MockProvider, envelope};
 use crate::provider::{FolderKind, ProviderError, RemoteFolder};
 use crate::store::Store;
+use crate::store::drafts::DraftKind;
 use crate::test_support::{daemon_context, mock_factory, start_daemon};
 
 const WORK: &str = "[general]\nsecrets = \"file\"\npoll_interval = \"60s\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\n";
@@ -41,6 +42,7 @@ async fn daemon(config: &str) -> Daemon {
     mock.seed(envelope("m2", "t2", now - 2_000));
     mock.with(|m| {
         m.folders.push(RemoteFolder {
+            parent: None,
             remote_id: "Label_1".into(),
             name: "Projects".into(),
             kind: FolderKind::User,
@@ -95,6 +97,20 @@ impl Daemon {
                 |r| r.get(0),
             )
             .unwrap()
+    }
+
+    /// The Microsoft 365 account's thread `remote`, once its engine has stored it.
+    fn corp_thread(&self, remote: &str) -> Option<i64> {
+        Store::open_reader(&self.paths.db_file())
+            .unwrap()
+            .conn()
+            .query_row(
+                "SELECT t.id FROM threads t JOIN accounts a ON a.id = t.account_id \
+                 WHERE a.address = 'me@corp.example' AND t.remote_id = ?1",
+                [remote],
+                |r| r.get(0),
+            )
+            .ok()
     }
 
     fn label(&self, remote: &str) -> Option<i64> {
@@ -263,17 +279,81 @@ async fn a_users_label_is_sent_to_gmail_by_its_remote_id() {
 }
 
 #[tokio::test]
-async fn microsoft_365_is_unsupported() {
+async fn microsoft_365_refuses_every_action_but_mark_read_and_every_draft() {
     let d = daemon(&format!("{WORK}{CORP}")).await;
+    let actions = [
+        Action::Archive {},
+        Action::Trash {},
+        Action::Star { on: true },
+        Action::Read { on: false },
+        Action::Labels {
+            add: vec![1],
+            remove: vec![],
+        },
+        Action::Move { to: 1 },
+    ];
+    for (n, action) in actions.into_iter().enumerate() {
+        let request = ActionApplyRequest {
+            account: "corp".into(),
+            threads: vec![1],
+            action,
+            grace: true,
+            client_token: format!("a{n}"),
+        };
+        let error = d.client.call::<ActionApply>(&request).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unsupported);
+        assert_eq!(error.message, M365_NOT_YET);
+    }
+    let save = DraftSaveRequest {
+        account: "corp".into(),
+        draft: None,
+        kind: DraftKind::New,
+        reply_to: None,
+        to: vec![],
+        cc: vec![],
+        bcc: vec![],
+        subject: String::new(),
+        body: String::new(),
+        attachments: vec![],
+        client_token: "s1".into(),
+    };
+    let error = d.client.call::<DraftSave>(&save).await.unwrap_err();
+    assert_eq!(error.message, M365_NOT_YET);
+    let rows: i64 = Store::open_reader(&d.paths.db_file())
+        .unwrap()
+        .conn()
+        .query_row("SELECT count(*) FROM outbox", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 0, "nothing queued");
+}
+
+/// The gate's other side: now that Microsoft 365 accounts have engines, marking a thread
+/// read passes it and is queued in the account's outbox like a Gmail action.
+#[tokio::test]
+async fn microsoft_365_mark_read_passes_the_gate_and_is_queued() {
+    let d = daemon(&format!("{WORK}{CORP}")).await;
+    d.until("corp synced", |d| d.corp_thread("t1").is_some())
+        .await;
     let request = ActionApplyRequest {
         account: "corp".into(),
-        threads: vec![1],
-        action: Action::Archive {},
+        threads: vec![d.corp_thread("t1").unwrap()],
+        action: Action::Read { on: true },
         grace: true,
-        client_token: "a".into(),
+        client_token: "read-corp".into(),
     };
-    let error = d.client.call::<ActionApply>(&request).await.unwrap_err();
-    assert_eq!(error.code, ErrorCode::Unsupported);
+    let answer = d.client.call::<ActionApply>(&request).await.unwrap();
+    assert_eq!((answer.rows.len(), answer.applied), (1, 1));
+    let queued: (String, String) = Store::open_reader(&d.paths.db_file())
+        .unwrap()
+        .conn()
+        .query_row(
+            "SELECT a.address, o.kind FROM outbox o JOIN accounts a ON a.id = o.account_id \
+             WHERE o.client_token = 'read-corp'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(queued, ("me@corp.example".into(), "set_flags".into()));
 }
 
 #[tokio::test]

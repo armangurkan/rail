@@ -19,7 +19,9 @@ up without ever seeing your secrets.
 
 > **Rail is pre-1.0.** Account setup, background sync, search, reading mail, acting on threads
 > (archive, trash, star, read) and writing mail (new messages, replies and forwards, with undo
-> send, and drafts saved to Gmail) work today for Gmail; Microsoft 365 sync comes next.
+> send, and drafts saved to Gmail) work today for Gmail. Microsoft 365 accounts sync, search and
+> read today (opening a thread marks it read); acting on their threads and writing from them
+> come next.
 
 ## Contents
 
@@ -46,9 +48,15 @@ up without ever seeing your secrets.
   organisation presets and Microsoft admin consent.
 - OAuth login for Gmail / Google Workspace and Microsoft 365; tokens kept in the OS keyring, a
   private file, or 1Password.
-- Gmail sync into the local store: labels, message envelopes, and bodies of recent threads, kept
-  current by a background daemon that can start at login (`rail daemon install`).
-- `rail search` over the local store and, through Gmail's own search, the whole mailbox.
+- Gmail and Microsoft 365 sync into the local store: labels or folders, message envelopes, and
+  bodies of recent threads, kept current by a background daemon that can start at login
+  (`rail daemon install`).
+- Microsoft 365 sync and reading over Microsoft Graph: every mail folder, threads by conversation,
+  read and flag (star) state, new mail within one poll interval, server search, and marking read
+  on open. Archive, trash, star, move, labels, `u`, sending and drafts answer
+  `Not supported for Microsoft 365 accounts yet.` See [Microsoft 365 mail](#microsoft-365-mail).
+- `rail search` over the local store and, through each account's server (Gmail's search,
+  Microsoft Graph's `$search`), the mailbox itself.
 - Reading mail in the terminal: a unified inbox and per-account and per-label lists over the local
   store, a sidebar with unread counts, a reader with folded quotes and numbered (clickable) links,
   filter as you type, a command palette, keys you can change in `config.toml`, and `o` to open a
@@ -64,8 +72,8 @@ up without ever seeing your secrets.
 
 **Coming**
 
-- Next: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
-  sync, cannot write mail and are searched locally only.
+- Next: acting on and writing Microsoft 365 mail (archive, trash, flag, move, mark unread, send,
+  drafts, and reply threading headers).
 - After that: agent tools for drafts and sends, the last piece of mail work, governed by the per-account `ai_send` policy.
 - Later: search operators, layout options, inline images, display-quality HTML in the
   terminal.
@@ -114,9 +122,11 @@ rail daemon install        # keep syncing after you log out and back in
    Gmail's quota). Set [`history_days`](#sync-settings) to sync only recent mail. Ctrl-C stops
    watching, not the sync.
 4. **`rail search <query>`** prints date, account, sender and subject for each matching thread,
-   newest first. Gmail's search syntax works for the Gmail part. When Gmail is busy or
-   refuses the connection, the Gmail part is retried once after a short wait; the local
-   results still print.
+   newest first. Gmail's search syntax works for Gmail accounts; Microsoft 365 takes `from:`,
+   `subject:`, `to:`, `body:` and plain words (see [Microsoft 365 mail](#microsoft-365-mail)).
+   When a server is busy or refuses the connection (`not searched on Gmail` or
+   `not searched on Microsoft 365` says which), it is asked once more after a short wait; the
+   local results still print.
 5. **`rail doctor`** reports on the config, store, token backend, each account's tokens and sync,
    the daemon and the login unit.
 6. **`rail daemon install`** writes a systemd user unit (Linux) or a launchd agent (macOS) so the
@@ -290,7 +300,8 @@ five such parameters. Rail opens only `http`, `https` and `mailto` links of at m
 `a` lists the thread's attachments (name, type, size); opening and saving them is not possible in
 this version.
 
-`o` opens the message's original HTML in your browser. Rail writes it to a private (0600) file in
+`o` opens the message's original HTML in your browser, for a Microsoft 365 account too (the HTML
+Rail stored). Rail writes it to a private (0600) file in
 the `open` folder of its cache directory (`~/.cache/rail/open/` on Linux; `RAIL_CACHE_DIR`
 overrides the cache directory) with scripts, frames and connections blocked, and removes the file
 when you close the reader, quit Rail, close the terminal window or stop Rail with `kill`. Files a
@@ -307,7 +318,8 @@ such as `~/.cache`, so it shows a file-not-found page: set `RAIL_CACHE_DIR` to a
 it is open; the blocking above cannot stop it, so close the tab if the page moves.
 
 Bodies of recent mail (`body_cache_days`) are already in the store. An older message shows
-**fetching…** while the daemon fetches its body from Gmail; the rest of the thread stays readable,
+**fetching…** while the daemon fetches its body from its account's server (Gmail or Microsoft 365);
+the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
 
 `/` filters the list as you type: plain words search subjects, the names and addresses of senders
@@ -317,7 +329,7 @@ by when the mail arrived) and `account:<name>` narrow it; quote values with spac
 (`from:"Dana Reyes"`). A thread matches when one of its messages matches all of them. Anything else
 is searched as words, and the status bar shows how Rail read your filter, so a typo such as
 `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
-local store only (`rail search` also asks Gmail).
+local store only (`rail search` also asks each account's server).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account
 or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
@@ -328,9 +340,11 @@ marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.h
 line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond the box.
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
-the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`
-for Microsoft 365 accounts). After the state come `sending…` while a message is on its way to Gmail, `2 queued` for actions on their way to Gmail
-and `1 failed` for actions Gmail refused; see [Doing things to mail](#doing-things-to-mail).
+the first sync, `retrying`, `stopped`, and `!` for `needs login` or `sync failed`). After the state
+come `sending…` while a message is on its way to Gmail, `saving to Gmail…` while a draft is saved,
+`2 queued` for actions on their way to the
+account's server and `1 failed` for actions it refused; see
+[Doing things to mail](#doing-things-to-mail).
 With threads selected, `3 selected` leads the bar. Next to the accounts it shows whether the
 daemon can be reached (`connecting to the daemon…`, `daemon unreachable`, or
 `daemon reachable again` once a message fetch gets through after the connection was lost), and
@@ -395,8 +409,8 @@ undone if `z` was pressed for it; that undo says only `too late to undo` when it
 Opening an unread thread marks it read at once in the reader; the list row and the unread counts
 follow a moment later. `u` marks it unread again.
 
-Each account in the status bar shows actions on their way to Gmail (`2 queued`) and actions Gmail
-refused (`1 failed`). The daemon sends the actions on one thread in the order you made them;
+Each account in the status bar shows actions on their way to its server (`2 queued`) and actions
+the server refused (`1 failed`). The daemon sends the actions on one thread in the order you made them;
 an action waiting to be tried again holds back only the later actions on its own threads. When
 Gmail cannot be reached it tries again after 1, then 5, then 15 minutes, then every 15 minutes,
 and gives up on an action after 20 attempts. While an account needs a login, its actions wait and
@@ -406,7 +420,10 @@ list, shows "Could not archive: …" on the thread's row, and keeps the error in
 `Enter` on it sends the action again. Refusals are listed in `:errors` again whenever Rail
 connects to the daemon, so one that happened while Rail was closed or disconnected is not lost.
 A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed`.
-Microsoft 365 accounts cannot be changed yet.
+On a Microsoft 365 account, opening an unread thread marks every message in it read in Outlook
+(the status bar shows `1 queued` meanwhile). `e`, `d`, `s`, `u`, `l` and `m` answer
+`Not supported for Microsoft 365 accounts yet.` at once and queue nothing, also for a selection
+that holds one of its threads.
 
 ## Writing mail
 
@@ -419,8 +436,10 @@ reply goes to the message's `Reply-To` when it has one, otherwise to its sender;
 other recipients except you, keeping the old `Cc` in `Cc`. A reply starts with `Re:` once and the
 quoted text under `On <date>, <name> wrote:`; a forward starts with `Fwd:`, no recipients, and the
 original under a `Forwarded message` line, with its attachments. If the message's text is not in
-the store yet, Rail fetches it first (`fetching the message…`). Microsoft 365 accounts cannot
-write mail yet: the first save is refused.
+the store yet, Rail fetches it first (`fetching the message…`). From a Microsoft 365
+account, `c`, `r`, `R` and `f` (and picking it in `Write from`) answer
+`Not supported for Microsoft 365 accounts yet.` at once; writing from a Gmail account is
+unaffected.
 
 **A new message** starts with two prompts on the bottom row. `To:` completes from the addresses
 your mail has taught Rail: type a few letters and matching addresses appear above, none
@@ -519,8 +538,8 @@ later, closes the review and says `saved to Gmail · z undoes`. `z` inside that 
 (`kept on this computer`). The review closes after `s`, so pressing `s` again means opening the
 draft again from the Drafts folder or `:drafts`; done inside the ten seconds, it makes one save with
 the newest text, and `z` after it cancels that save. `s` is refused when the message holds nothing at all.
-The status bar shows `saving to Gmail…` while a save is on its way. A save Gmail refuses on the
-spot keeps the review open (`Could not save to Gmail: …`); one that fails later is listed in
+The status bar shows `saving to Gmail…` while a
+save is on its way. A save Gmail refuses on the spot keeps the review open (`Could not save to Gmail: …`); one that fails later is listed in
 `:errors` (`Could not save the draft to Gmail: …`), where `Enter` retries it. The first save
 creates the draft in Gmail and the next ones update it, so the draft keeps one place in Gmail's
 Drafts and opens on your phone. Rail's version wins: if the same draft was also edited in Gmail,
@@ -551,6 +570,8 @@ select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`, `space`, `r`, `R
 The filter line is hidden in this folder. The pane is read again whenever sync or the outbox
 changes something. `:drafts` (`Open a draft` in the palette) lists the same rows for the account
 in view; in the unified inbox it merges every account's, and `Enter` opens one the same way.
+A Microsoft 365 account's draft rows are refused: `Enter` and `d` on one answer
+`Not supported for Microsoft 365 accounts yet.`
 
 **Files of an imported draft.** The attachments of a Gmail draft are fetched once, when you open
 it, into private files the daemon keeps in the `draft-files` folder of the data directory
@@ -696,6 +717,34 @@ wizard shows the exact admin-consent URL. Press `c` to copy it, send it to an ad
 press `r` to retry once they have approved. Tenant policies (Conditional Access, app assignment,
 MFA) can still intervene after consent; see [Microsoft sign-in errors](#microsoft-sign-in-errors).
 
+### Microsoft 365 mail
+
+What a Microsoft 365 account does today. It syncs and reads over Microsoft Graph; acting on mail
+and writing it come next.
+
+- **Folders.** Every mail folder is synced, nested ones as `Parent/Child`. Inbox, Sent Items,
+  Drafts, Archive, Deleted Items and Junk Email take the Inbox, Sent, Drafts, Archive, Trash and
+  Spam places in the sidebar. Search folders and Conversation History, RSS Feeds, RSS
+  Subscriptions and Sync Issues are left out. Those last four are matched by their English names,
+  so a mailbox in another language may show them.
+- **Threads and stars.** A thread is an Outlook conversation, and a star is Outlook's flag.
+- **The first sync** shows `⟳` and a running count with no total, because Microsoft gives no cheap
+  one. It reads folder by folder, the inbox first. New mail then arrives within one
+  `poll_interval`.
+- **History.** With `history_days` set, Microsoft returns at most 5,000 messages per folder;
+  mail in a folder beyond that is not synced.
+  Raising `history_days` reads every folder again. When Microsoft forgets a folder's place (after
+  a long time offline), or a folder is deleted, the account reads every folder again and removes
+  what is gone.
+- **Search.** `from:`, `subject:`, `to:`, `body:` and plain words work; Gmail's `label:`, `is:`
+  and `has:` do not. A search returns at most 1,000 results from the server.
+- **Attachments.** A OneDrive or SharePoint link attachment is listed, and when Rail is asked for
+  its bytes it says `This attachment is a link (OneDrive or SharePoint); open the message in
+  Outlook on the web to reach it.` A message whose attachments are all inline lists none.
+- **Marking read.** Opening an unread thread marks its messages read in Outlook.
+- **Not yet.** `e`, `d`, `s`, `u`, `l` and `m`, and `c`, `r`, `R` and `f`, and the rows of the
+  Drafts folder answer `Not supported for Microsoft 365 accounts yet.` at once and send nothing.
+
 ### Presets for your organisation
 
 An administrator can save every colleague the portal work: register the app once (as above, with
@@ -792,11 +841,11 @@ Tokens, client secrets and authorization codes never appear in logs, error messa
 output. Files that hold mail or credentials are created owner-only (0600 files, 0700 directories)
 and written atomically.
 
-**What is stored locally.** For each Gmail account, `rail.db` holds every label; the envelope
+**What is stored locally.** For each account, `rail.db` holds every label; the envelope
 (sender, recipients, subject, date, flags, labels, snippet) of every message inside
 `history_days` (the whole mailbox by default); the text of bodies for threads with mail newer than
-`body_cache_days`; and attachment names, types and sizes (never attachment contents, except those of a Gmail draft you open, below). Drafts you write are kept
-there too, with the paths of the files you attached (the files are read when the message is sent,
+`body_cache_days`; and attachment names, types and sizes (never attachment contents, except those
+of a Gmail draft you open, below). Drafts you write are kept there too, with the paths of the files you attached (the files are read when the message is sent,
 so they must still be there then). A draft saved to Gmail also lives in Gmail's Drafts, which sync
 brings in like other mail. Opening a Gmail draft copies its attachments into private files owned by
 the daemon (the `draft-files` folder of the data directory, 0600 files in 0700 folders; see
@@ -806,10 +855,10 @@ folder of the cache directory until a save succeeds, and one a crash left behind
 the mail screen next starts, once it is seven days old. HTML bodies
 are converted to text by Rail's own scanner without running scripts or loading anything remote, so
 syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
-finds on Gmail outside the window is kept for 14 days after it was last searched for. Rail changes mail on
-the server only when you act on it (archive, trash, star, read, labels, move), send, or save or discard a
-draft. It never deletes mail permanently, except a Gmail draft you discard or send, and the daemon is the
-only process that talks to Gmail.
+finds on its server outside the window is kept for 14 days after it was last searched for. Rail
+changes mail on the server only when you act on it (archive, trash, star, read, labels, move),
+send, or save or discard a draft. It never deletes mail permanently, except a Gmail draft you
+discard or send, and the daemon is the only process that talks to Gmail or Microsoft 365.
 
 Remote content in mail is loaded only by your browser, never by Rail, and only when you ask for
 it: `o` opens a message's HTML there, after you confirm once per session, and `g x` opens a link
@@ -906,15 +955,19 @@ body_cache_days = 7
 ```
 
 - A `body_cache_days` larger than a non-zero `history_days` is treated as `history_days`.
-- Shrinking `history_days` removes local copies of older mail on the next pass (mail on Gmail is
-  never touched). Growing it fetches further back, at most 2,000 messages a pass, while new mail
+- Shrinking `history_days` removes local copies of older mail on the next pass (mail on the
+  server is never touched). Growing it fetches further back, at most 2,000 messages a pass, while new mail
   keeps arriving within one `poll_interval`.
 - Starred mail and threads with recent mail are never pruned.
-- A first sync is paced to stay under Gmail's per-user quota, about 250 messages a minute:
+- A first Gmail sync is paced to stay under Gmail's per-user quota, about 250 messages a minute:
   100,000 messages take about seven hours. Newest mail is fetched first. Mail that arrives during
   the first sync appears once it finishes; none is missed.
 - An interrupted sync resumes where it stopped. If Gmail's history for the account expires (after
   a long time offline), Rail does a full resync, which reads every message again.
+- A Microsoft 365 account is paced to Microsoft's limits, at most 900 requests a minute, and reads
+  folder by folder. With a non-zero `history_days`, Microsoft returns at most 5,000 messages per
+  folder, and growing `history_days` reads every folder again. See
+  [Microsoft 365 mail](#microsoft-365-mail).
 
 ### `ai_send`: what an AI agent may do with your mail
 
@@ -1030,8 +1083,8 @@ pass in.
 | `rail account remove <account>` | Removes the account's config entry and tokens; its mail stays in the store. Asks `Remove? [y/N]`; refuses (exit 1) when stdin or stdout is not a terminal. |
 | `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves them there (`--no-migrate`: setting only; each account then needs `rail account login`). Asks `Change? [y/N]`; interactive only. |
 | `rail sync [<account>] [--no-wait]` | Wakes the sync for one account or all and shows progress until caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs `rail account login`, 130 on Ctrl-C. If nothing changes for 10 minutes it stops watching (the sync goes on). If the daemon restarts, or restarts its sync, during the watch, it says which and waits for the new pass. `--no-wait` wakes it and exits 0. |
-| `rail search <query> [--account <account>] [--limit N]` | Searches the local store and, for Gmail, the whole mailbox. One line per thread: date (UTC), account, sender, subject; never a snippet or body. `--limit` is 1 to 100 (default 20). Results go to stdout, notes to stderr. Exits 1 for an unknown account, or when nothing was found and a Gmail search failed. |
-| `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit; notes a `general.layout` this version treats as `auto`, and prints a `theme` line when `general.theme` is set. Exits non-zero for config, store, token-backend and token-read errors, and for a Gmail account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
+| `rail search <query> [--account <account>] [--limit N]` | Searches the local store and each account's mailbox on its server (Gmail or Microsoft 365). One line per thread: date (UTC), account, sender, subject; never a snippet or body. `--limit` is 1 to 100 (default 20). Results go to stdout, notes to stderr. Exits 1 for an unknown account, or when nothing was found and a server search failed. |
+| `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit; notes a `general.layout` this version treats as `auto`, and prints a `theme` line when `general.theme` is set. Exits non-zero for config, store, token-backend and token-read errors, and for an account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
 | `rail daemon status` | Shows whether the daemon runs, with pid, version and build, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any save in flight is written; waits up to 35 seconds. |
 | `rail daemon run` | Runs the daemon in the foreground (Ctrl-C or SIGTERM stops it cleanly). Rarely needed. |
@@ -1059,6 +1112,10 @@ their own.
 | `rail doctor` warns that the login unit does not match this binary | You moved or reinstalled `rail` elsewhere; run `rail daemon install` again. |
 | A first sync is taking hours | Expected for a large mailbox; set `history_days` to sync only recent mail. `rail doctor` and `rail_sync_status` show progress. |
 | Colours look wrong or a theme does nothing inside tmux | Add `set -as terminal-features ",xterm-256color:RGB"` (tmux 3.2+) or `set -ga terminal-overrides ",*:Tc"` to `~/.tmux.conf`, and make sure `COLORTERM=truecolor` reaches the shell inside tmux. |
+| `Microsoft 365 refused access: an administrator may need to grant consent (see "Work or school accounts and admin consent" in the README)` | An administrator grants consent, as in [Work or school accounts and admin consent](#work-or-school-accounts-and-admin-consent), then run `rail account login <name>` if the login also fails. |
+| `this mailbox cannot be reached through Microsoft Graph (on-premises, unlicensed or inactive)` | The mailbox must be an Exchange Online mailbox with a licence. |
+| `Not supported for Microsoft 365 accounts yet.` | Expected: Rail reads Microsoft 365 mail today. Acting on it and writing come next. |
+| `Microsoft 365 is busy or unavailable (HTTP 429)`, or `retrying` in `rail sync` | Microsoft is throttling the mailbox. Rail waits as long as Microsoft asks (up to two minutes at a time) and tries again. |
 | `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |
 | `draft: saving to Gmail, try again in a moment` | A save of this draft to Gmail is still on its way, so it cannot be discarded yet. Wait for `saving to Gmail…` to leave the status bar and press `d` again. |
 | Two copies of one draft in Gmail's Drafts | Creating a Gmail draft is tried once; a failure that hid a success can leave a second copy. Delete the extra one in Gmail. |

@@ -3,12 +3,9 @@
 
 mod actions;
 mod attachment;
-mod body;
+pub(crate) mod body;
 mod drafts;
 mod history;
-mod html;
-#[cfg(test)]
-mod html_tests;
 mod labels;
 pub(crate) mod list;
 pub(crate) mod metadata;
@@ -40,7 +37,7 @@ mod tests;
 use super::http::{ApiClient, is_bad_request};
 use super::{
     Body, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
-    RemoteFolder, RemoteId, SentReceipt, SyncCursor, Window,
+    RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 
 pub use body::{MAX_BODY_BYTES, TRUNCATED_MARKER};
@@ -111,7 +108,7 @@ impl GmailProvider {
         }
         Ok(Profile {
             cursor: SyncCursor(profile.history_id),
-            messages_total: profile.messages_total,
+            messages_total: Some(profile.messages_total),
         })
     }
 
@@ -199,15 +196,16 @@ impl super::Provider for GmailProvider {
 
     async fn modify_threads(
         &self,
-        ids: &[RemoteId],
+        threads: &[ThreadTarget],
         add: &[RemoteId],
         remove: &[RemoteId],
     ) -> Result<(), ProviderError> {
-        self.modify(ids, add, remove).await
+        self.modify(&ThreadTarget::thread_ids(threads), add, remove)
+            .await
     }
 
-    async fn trash_threads(&self, ids: &[RemoteId]) -> Result<(), ProviderError> {
-        self.trash(ids).await
+    async fn trash_threads(&self, threads: &[ThreadTarget]) -> Result<(), ProviderError> {
+        self.trash(&ThreadTarget::thread_ids(threads)).await
     }
 
     async fn send(

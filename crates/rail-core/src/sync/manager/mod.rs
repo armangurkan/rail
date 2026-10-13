@@ -1,5 +1,5 @@
-//! The daemon's sync: one engine per configured Gmail account, the writer they share and the
-//! status board, kept in step with `config.toml`.
+//! The daemon's sync: one engine per configured account, the writer they share and the status
+//! board, kept in step with `config.toml`.
 //!
 //! Reconciles run one at a time. Each holds the engines lock only to decide what to start and
 //! to insert what it built: the slow part (the store rows and the provider, which may wait on
@@ -18,7 +18,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-pub use self::outbox::ActionTarget;
+pub use self::outbox::{ActionTarget, Wants};
 use self::parts::{
     ConfigStamp, Engines, PlannedAccount, Prepared, Running, failed_status, finish_writer,
     initial_status, key, named, needs_login, not_running, not_syncing, read_config, retry_observer,
@@ -63,6 +63,8 @@ pub struct ProviderRequest {
     pub ids: ItemIdCache,
     pub token_url: Option<String>,
     pub gmail_url: Option<String>,
+    /// The Graph API root used instead of Microsoft's (a debug-build test hook).
+    pub graph_url: Option<String>,
     pub observer: RetryObserver,
 }
 
@@ -73,6 +75,8 @@ pub type ProviderFactory =
 /// An account the search operation asks.
 pub struct SearchTarget {
     pub name: String,
+    /// The account's kind: its provider's name in a failure.
+    pub kind: AccountKind,
     pub account_id: i64,
     pub provider: Arc<dyn Provider>,
 }
@@ -273,7 +277,7 @@ impl SyncManager {
             if engines.running.contains_key(&address) {
                 continue;
             }
-            if account.kind == AccountKind::Gmail {
+            if super::providers::syncs(account.kind) {
                 let key = key(config, account);
                 let asked = now.is_some_and(|who| {
                     account.name.eq_ignore_ascii_case(who)
@@ -426,10 +430,31 @@ impl SyncManager {
             ids: ctx.op_ids.clone(),
             token_url: ctx.token_url().map(str::to_string),
             gmail_url: ctx.gmail_url().map(str::to_string),
+            graph_url: ctx.graph_url().map(str::to_string),
             observer: retry_observer(self.board.clone(), account.address.to_ascii_lowercase()),
         };
         let factory = self.factory.clone();
         ctx.blocking(move || factory(request)).await
+    }
+
+    fn new_engine(
+        &self,
+        planned: &PlannedAccount,
+        (account_id, provider): (i64, Arc<dyn Provider>),
+        reader: Store,
+        writer: &WriterHandle,
+    ) -> Engine {
+        Engine::new(EngineParts {
+            account: planned.account.clone(),
+            account_id,
+            settings: planned.settings,
+            provider,
+            writer: writer.clone(),
+            reader,
+            board: self.board.clone(),
+            wake: Arc::new(tokio::sync::Notify::new()),
+            clock: Arc::new(unix_now),
+        })
     }
 
     fn spawn_engine(
@@ -441,17 +466,12 @@ impl SyncManager {
     ) -> Running {
         let account = &planned.account;
         self.board.insert(initial_status(account, &prepared.state));
-        let engine = Engine::new(EngineParts {
-            account: account.clone(),
-            account_id: prepared.account_id,
-            settings: planned.settings,
-            provider: prepared.provider.clone(),
-            writer: writer.clone(),
-            reader: prepared.reader,
-            board: self.board.clone(),
-            wake: Arc::new(tokio::sync::Notify::new()),
-            clock: Arc::new(unix_now),
-        });
+        let engine = self.new_engine(
+            planned,
+            (prepared.account_id, prepared.provider.clone()),
+            prepared.reader,
+            &writer,
+        );
         let wake = engine.wake_handle();
         let outbox_signal = Arc::new(tokio::sync::Notify::new());
         let worker = Worker::new(WorkerParts {
@@ -467,6 +487,7 @@ impl SyncManager {
             from_name: account.from_name.clone(),
             sync_wake: wake.clone(),
             draft_files_dir,
+            kind: account.kind,
         });
         let (stop, stopped) = watch::channel(false);
         let outbox_task = tokio::spawn(worker.run(stopped.clone()));
@@ -600,7 +621,7 @@ impl SyncManager {
         })
     }
 
-    /// Why `who` has no engine: Microsoft 365, an engine that failed (its error), a writer
+    /// Why `who` has no engine: a kind Rail does not sync, an engine that failed (its error), a writer
     /// that is gone, or no such account.
     fn why_not(&self, engines: &Engines, who: &str) -> OpError {
         let all = self.board.all();
@@ -658,11 +679,13 @@ impl SyncManager {
             match engines.running.get(&status.address) {
                 Some(r) => targets.push(SearchTarget {
                     name: r.name.clone(),
+                    kind: status.kind,
                     account_id: r.account_id,
                     provider: r.provider.clone(),
                 }),
                 None => skipped.push(SearchFailure {
                     account: status.name.clone(),
+                    kind: status.kind,
                     error: self.reason(&engines, status),
                 }),
             }
@@ -671,7 +694,7 @@ impl SyncManager {
     }
 
     /// The account `who` names (name or address), for `body.fetch`. An account no one
-    /// configured is an error; one paused for a login, Microsoft 365, or one without a running
+    /// configured is an error; one paused for a login, of a kind Rail does not sync, or one without a running
     /// engine is `Unavailable` with the reason.
     pub async fn body_target(&self, who: &str) -> Result<Reach, OpError> {
         self.settled().await;
@@ -686,6 +709,7 @@ impl SyncManager {
         Ok(match engines.running.get(&status.address) {
             Some(running) => Reach::Ready(SearchTarget {
                 name: running.name.clone(),
+                kind: status.kind,
                 account_id: running.account_id,
                 provider: running.provider.clone(),
             }),
@@ -720,3 +744,5 @@ impl SyncManager {
 mod outbox_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod window_tests;

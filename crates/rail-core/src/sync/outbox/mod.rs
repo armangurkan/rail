@@ -39,11 +39,12 @@ use super::engine::{Clock, stopped};
 use super::manager::{retry_delay, unobserved};
 use super::status::StatusBoard;
 use super::writer::WriterHandle;
+use crate::config::AccountKind;
 use crate::error::ErrorClass;
 use crate::ops::{
     Action, ActionFailed, DraftId, ErrorCode, OpError, OutboxDepth, OutboxId, SyncPhase,
 };
-use crate::provider::{DraftIds, Provider, ProviderError};
+use crate::provider::{DraftIds, Provider, ProviderError, ThreadTarget};
 use crate::store::outbox::{Failure, OutboxOutcome, OutboxRow, OutboxWrite};
 use crate::store::{Store, StoreError};
 
@@ -68,6 +69,8 @@ pub struct WorkerParts {
     pub sync_wake: Arc<Notify>,
     /// `Paths::draft_files_dir()`: where a sent draft's imported attachments are removed from.
     pub draft_files_dir: PathBuf,
+    /// The account's kind: its provider's name in a failure.
+    pub kind: AccountKind,
 }
 
 pub struct Worker {
@@ -85,6 +88,7 @@ pub struct Worker {
     from_name: Option<String>,
     sync_wake: Arc<Notify>,
     draft_files_dir: PathBuf,
+    kind: AccountKind,
     /// Rows found in flight at start, until they settle (`sending`).
     recovered: Mutex<HashSet<OutboxId>>,
     /// True while a claimed `Send` or `PushDraft` row is being carried out: a stop lets it
@@ -139,6 +143,7 @@ impl Worker {
             from_name: parts.from_name,
             sync_wake: parts.sync_wake,
             draft_files_dir: parts.draft_files_dir,
+            kind: parts.kind,
             recovered: Mutex::new(HashSet::new()),
             sending: AtomicBool::new(false),
         }
@@ -277,7 +282,11 @@ impl Worker {
 
     /// One provider call per thread, stopping at the first error: a failure part-way fails the
     /// whole row (threads Gmail already changed come back through the next sync).
-    async fn call_each(&self, threads: &[String], change: &Remote) -> Result<(), ProviderError> {
+    async fn call_each(
+        &self,
+        threads: &[ThreadTarget],
+        change: &Remote,
+    ) -> Result<(), ProviderError> {
         for thread in threads {
             let one = std::slice::from_ref(thread);
             match change {
@@ -389,7 +398,7 @@ impl Worker {
             None => OpError::new(
                 ErrorCode::Provider,
                 ErrorClass::Permanent,
-                "Gmail refused the change",
+                format!("{} refused the change", self.kind.provider_name()),
             ),
         };
         if let Some(last) = row

@@ -13,6 +13,7 @@ use super::drafts::{DraftSaved, DraftWrite};
 use super::outbox_drafts::{draft_remote, draft_write, enqueue_draft, insert_delete_draft};
 use super::{Store, StoreError, rollup};
 use crate::ops::{Action, DraftId, OutboxId, RowToken};
+use crate::provider::ThreadTarget;
 
 /// Attempts after which a transiently failing row gives up.
 pub const MAX_ATTEMPTS: u32 = 20;
@@ -698,6 +699,36 @@ impl Store {
         )?;
         let rows = stmt.query_map(params![account_id, json(&threads)], |r| r.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The threads of `threads` the store still holds for the account, each with the provider
+    /// ids of its stored messages: what an action is sent for. Threads and messages come in
+    /// store order.
+    pub fn thread_targets(
+        &self,
+        account_id: i64,
+        threads: &[i64],
+    ) -> Result<Vec<ThreadTarget>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.remote_id, m.remote_id FROM threads t
+             LEFT JOIN messages m ON m.thread_id = t.id
+             WHERE t.account_id = ?1 AND t.id IN (SELECT value FROM json_each(?2))
+             ORDER BY t.id, m.id",
+        )?;
+        let rows = stmt.query_map(params![account_id, json(&threads)], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        })?;
+        let mut targets: Vec<ThreadTarget> = Vec::new();
+        for row in rows {
+            let (thread, message) = row?;
+            if targets.last().is_none_or(|t| t.thread_id != thread) {
+                targets.push(ThreadTarget::from(thread));
+            }
+            if let (Some(message), Some(target)) = (message, targets.last_mut()) {
+                target.message_ids.push(message);
+            }
+        }
+        Ok(targets)
     }
 
     /// True when every id of `labels` is one of the account's labels (kind `label` or `user`).

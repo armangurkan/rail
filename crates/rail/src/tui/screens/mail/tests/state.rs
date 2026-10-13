@@ -30,17 +30,20 @@ fn draw(f: &Fixture) -> Vec<String> {
 fn labels(user: &[(&str, &str)]) -> Batch {
     let mut folders = vec![
         RemoteFolder {
+            parent: None,
             remote_id: "INBOX".into(),
             name: "Inbox".into(),
             kind: FolderKind::Inbox,
         },
         RemoteFolder {
+            parent: None,
             remote_id: "SENT".into(),
             name: "Sent".into(),
             kind: FolderKind::Sent,
         },
     ];
     folders.extend(user.iter().map(|(id, name)| RemoteFolder {
+        parent: None,
         remote_id: (*id).into(),
         name: (*name).into(),
         kind: FolderKind::User,

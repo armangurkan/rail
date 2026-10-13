@@ -23,6 +23,7 @@ use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
 use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
+use crate::sync::Wants;
 
 pub(super) fn unexpected() -> OpError {
     OpError::internal("the store answered a draft write unexpectedly")
@@ -366,7 +367,7 @@ pub(super) async fn save(
     let target = call
         .ctx
         .sync
-        .action_target(&call.ctx, &request.account)
+        .action_target(&call.ctx, &request.account, Wants::Compose)
         .await?;
     let paths: Vec<String> = request
         .attachments
@@ -468,6 +469,18 @@ pub(super) fn row_of_draft(db: &Path, row: i64, id: DraftId) -> Result<(), OpErr
     Ok(())
 }
 
+/// The queued send of draft `id`, held for the undo grace.
+fn send_action(account_id: i64, id: DraftId, client_token: String) -> NewAction {
+    let grace = i64::try_from(UNDO_GRACE.as_secs()).unwrap_or(10);
+    NewAction {
+        account_id,
+        action: Action::Send { draft: id },
+        threads: Vec::new(),
+        not_before: unix_now() + grace,
+        client_token,
+    }
+}
+
 pub(super) async fn send(
     call: Call,
     request: DraftSendRequest,
@@ -480,20 +493,17 @@ pub(super) async fn send(
         .ctx
         .blocking(move || draft_and_address(&reader, id))
         .await?;
-    let target = call.ctx.sync.action_target(&call.ctx, &address).await?;
+    let target = call
+        .ctx
+        .sync
+        .action_target(&call.ctx, &address, Wants::Compose)
+        .await?;
     if target.account_id != draft.account_id {
         return Err(no_such_draft());
     }
     let account_id = draft.account_id;
     call.ctx.blocking(move || check_sendable(&draft)).await?;
-    let grace = i64::try_from(UNDO_GRACE.as_secs()).unwrap_or(10);
-    let new = NewAction {
-        account_id,
-        action: Action::Send { draft: id },
-        threads: Vec::new(),
-        not_before: unix_now() + grace,
-        client_token: request.client_token,
-    };
+    let new = send_action(account_id, id, request.client_token);
     let outcome = call
         .ctx
         .sync

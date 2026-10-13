@@ -13,7 +13,7 @@ use std::time::Duration;
 use super::http::{RetryPolicy, retry_policy_override};
 use super::{
     Body, ChangeSet, DraftIds, Envelope, EnvelopePage, IdPage, PageToken, Profile, Provider,
-    ProviderError, Relabel, RemoteFolder, RemoteId, SentReceipt, SyncCursor, Window,
+    ProviderError, Relabel, RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 use crate::provider::FolderKind;
 
@@ -105,6 +105,8 @@ pub(crate) struct Mailbox {
     pub policies: Vec<(Call, Option<RetryPolicy>)>,
     /// Every `modify_threads` call: (thread ids, add, remove), in order.
     pub modifies: Vec<(Vec<RemoteId>, Vec<RemoteId>, Vec<RemoteId>)>,
+    /// Every `modify_threads` call's targets (with their message ids), in order.
+    pub modify_targets: Vec<Vec<ThreadTarget>>,
     /// Every thread id `trash_threads` was given, in order.
     pub trashed: Vec<RemoteId>,
     /// How long each modify or trash call takes.
@@ -128,6 +130,7 @@ impl Default for Mailbox {
     fn default() -> Self {
         Self {
             folders: vec![RemoteFolder {
+                parent: None,
                 remote_id: "INBOX".into(),
                 name: "Inbox".into(),
                 kind: FolderKind::Inbox,
@@ -158,6 +161,7 @@ impl Default for Mailbox {
             metadata_gets: Vec::new(),
             policies: Vec::new(),
             modifies: Vec::new(),
+            modify_targets: Vec::new(),
             trashed: Vec::new(),
             action_delay: Duration::ZERO,
             sent: Vec::new(),
@@ -397,7 +401,7 @@ impl Provider for MockProvider {
         let m = self.lock();
         Ok(Profile {
             cursor: SyncCursor(m.history_id.to_string()),
-            messages_total: m.messages.len() as u64,
+            messages_total: Some(m.messages.len() as u64),
         })
     }
 
@@ -534,7 +538,7 @@ impl Provider for MockProvider {
 
     async fn modify_threads(
         &self,
-        ids: &[RemoteId],
+        threads: &[ThreadTarget],
         add: &[RemoteId],
         remove: &[RemoteId],
     ) -> Result<(), ProviderError> {
@@ -542,19 +546,27 @@ impl Provider for MockProvider {
         let delay = self.lock().action_delay;
         tokio::time::sleep(delay).await;
         let mut m = self.lock();
+        let ids = ThreadTarget::thread_ids(threads);
         m.modifies
-            .push((ids.to_vec(), add.to_vec(), remove.to_vec()));
-        relabel_threads(&mut m, ids, add, remove);
+            .push((ids.clone(), add.to_vec(), remove.to_vec()));
+        m.modify_targets.push(threads.to_vec());
+        relabel_threads(&mut m, &ids, add, remove);
         Ok(())
     }
 
-    async fn trash_threads(&self, ids: &[RemoteId]) -> Result<(), ProviderError> {
+    async fn trash_threads(&self, threads: &[ThreadTarget]) -> Result<(), ProviderError> {
         self.enter(Call::Trash, None)?;
         let delay = self.lock().action_delay;
         tokio::time::sleep(delay).await;
         let mut m = self.lock();
+        let ids = ThreadTarget::thread_ids(threads);
         m.trashed.extend(ids.iter().cloned());
-        relabel_threads(&mut m, ids, &["TRASH".into()], &[super::INBOX_LABEL.into()]);
+        relabel_threads(
+            &mut m,
+            &ids,
+            &["TRASH".into()],
+            &[super::INBOX_LABEL.into()],
+        );
         Ok(())
     }
 

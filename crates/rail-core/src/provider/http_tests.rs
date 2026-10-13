@@ -552,3 +552,133 @@ async fn a_post_is_retried_and_refreshes_like_a_get() {
         "origin pinned"
     );
 }
+
+fn graph(server: &MockServer, permits: u32) -> ApiClient {
+    let base = Url::parse(&format!("{}/v1.0/", server.uri())).unwrap();
+    ApiClient::new(api_http_client().unwrap(), base, FixedTokens::new(["t"]))
+        .with_policy(RetryPolicy::quick())
+        .with_quota(Quota::unlimited())
+        .with_dialect(Dialect::Graph)
+        .with_concurrency(permits)
+}
+
+#[tokio::test]
+async fn a_graph_request_asks_for_immutable_ids_before_its_own_preferences() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1.0/me/plain"))
+        .and(wiremock::matchers::headers("Prefer", vec![IMMUTABLE_IDS]))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1.0/me/paged"))
+        .and(wiremock::matchers::headers(
+            "Prefer",
+            vec![IMMUTABLE_IDS, "odata.maxpagesize=100"],
+        ))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let api = graph(&server, 4);
+    assert!(api.get_json::<Answer>("me/plain", &[], 1).await.unwrap().ok);
+    let paged = api
+        .get_json_with::<Answer>("me/paged", &[], 1, &["odata.maxpagesize=100"])
+        .await
+        .unwrap();
+    assert!(paged.ok);
+}
+
+#[tokio::test]
+async fn a_google_request_carries_no_prefer_header() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ok())
+        .mount(&server)
+        .await;
+    let (api, _) = client(&server, FixedTokens::new(["t"]));
+    get(&api).await.unwrap();
+    let requests = server.received_requests().await.unwrap();
+    assert!(requests.iter().all(|r| !r.headers.contains_key("prefer")));
+}
+
+#[tokio::test]
+async fn the_limiter_holds_a_fifth_request_until_one_of_four_is_done() {
+    let server = MockServer::start().await;
+    let api = graph(&server, 4);
+    let held: Vec<_> = futures_util::future::join_all((0..4).map(|_| api.permit(1)))
+        .await
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    let fifth = tokio::time::timeout(Duration::from_millis(50), api.permit(1)).await;
+    assert!(fifth.is_err(), "a fifth permit waits");
+    drop(held);
+    let freed = tokio::time::timeout(Duration::from_secs(1), api.permit(1)).await;
+    assert!(freed.is_ok(), "a permit is free again");
+}
+
+#[tokio::test]
+async fn a_batch_takes_every_permit_and_nothing_runs_beside_it() {
+    let server = MockServer::start().await;
+    let api = graph(&server, 4);
+    let one = api.permit(1).await.unwrap();
+    let waiting = tokio::time::timeout(Duration::from_millis(50), api.permit(u32::MAX)).await;
+    assert!(waiting.is_err(), "a batch waits for every permit");
+    drop(one);
+    let all = tokio::time::timeout(Duration::from_secs(1), api.permit(u32::MAX))
+        .await
+        .expect("every permit came free")
+        .unwrap();
+    let beside = tokio::time::timeout(Duration::from_millis(50), api.permit(1)).await;
+    assert!(beside.is_err(), "nothing runs beside a batch");
+    drop(all);
+}
+
+#[tokio::test]
+async fn eight_slow_requests_take_two_rounds_of_four() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1.0/me/slow"))
+        .respond_with(ok().set_delay(Duration::from_millis(150)))
+        .expect(8)
+        .mount(&server)
+        .await;
+    let api = graph(&server, 4);
+    let started = Instant::now();
+    let answers =
+        futures_util::future::join_all((0..8).map(|_| api.get_json::<Answer>("me/slow", &[], 1)))
+            .await;
+    assert!(answers.iter().all(|a| a.as_ref().is_ok_and(|a| a.ok)));
+    assert!(
+        started.elapsed() >= Duration::from_millis(300),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn a_batch_posts_its_body_to_dollar_batch() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1.0/$batch"))
+        .and(wiremock::matchers::body_json(
+            serde_json::json!({"requests": []}),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"responses": []})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let api = graph(&server, 4);
+    let answer = api
+        .post_batch(&serde_json::json!({"requests": []}), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&answer).unwrap();
+    assert_eq!(parsed, serde_json::json!({"responses": []}));
+}

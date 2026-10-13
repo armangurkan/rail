@@ -24,6 +24,12 @@ pub fn gmail_url() -> Option<String> {
     var("RAIL_TEST_GMAIL_URL")
 }
 
+/// The Microsoft Graph root, so a binary test can serve it with wiremock (or make it
+/// unreachable).
+pub fn graph_url() -> Option<String> {
+    var("RAIL_TEST_GRAPH_URL")
+}
+
 /// How long `rail sync` watches with no change before it leaves the sync to the daemon,
 /// instead of ten minutes.
 pub fn sync_stall() -> Option<std::time::Duration> {

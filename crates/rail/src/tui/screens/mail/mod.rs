@@ -11,6 +11,7 @@ mod drafts_flow;
 mod drafts_pane;
 mod layout;
 mod list;
+mod m365;
 #[cfg(test)]
 mod modal_tests;
 mod palette;

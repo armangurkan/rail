@@ -16,6 +16,7 @@ type MakeAction = Box<dyn Fn(&Store) -> Action>;
 
 pub(super) fn folders() -> Vec<RemoteFolder> {
     let folder = |id: &str, name: &str, kind| RemoteFolder {
+        parent: None,
         remote_id: id.into(),
         name: name.into(),
         kind,

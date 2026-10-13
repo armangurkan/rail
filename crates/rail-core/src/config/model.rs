@@ -371,6 +371,14 @@ pub enum AccountKind {
 }
 
 impl AccountKind {
+    /// The provider's name in Rail's messages.
+    pub fn provider_name(self) -> &'static str {
+        match self {
+            Self::Gmail => "Gmail",
+            Self::M365 => "Microsoft 365",
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Gmail => "gmail",

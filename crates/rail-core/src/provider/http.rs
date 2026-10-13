@@ -1,9 +1,11 @@
-//! The HTTP layer providers share: GET and JSON POST requests with bearer tokens, a quota pacer, retries on 429, 5xx and
-//! rate-limit 403s with capped exponential backoff and jitter (honouring `Retry-After` in
-//! seconds or as an HTTP-date), one token refresh per request on 401 (shared by every request
-//! refused with the same token), a shorter retry policy for interactive work, and capped
-//! response reads. Requests are logged with method, path, status and duration at debug: never
-//! the query string, a body or a token.
+//! The HTTP layer providers share: GET and JSON requests with bearer tokens, a quota pacer,
+//! retries on 429, 5xx and rate-limit 403s with capped exponential backoff and jitter
+//! (honouring `Retry-After` in seconds or as an HTTP-date), one token refresh per request on
+//! 401 (shared by every request refused with the same token), a shorter retry policy for
+//! interactive work, capped response reads, and two dialects: Google's, and Microsoft Graph's
+//! (immutable ids on every request, Graph's error envelope, an optional limiter of requests in
+//! flight, `$batch`). Requests are logged with method, path, status and duration at debug:
+//! never the query string, a body or a token.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -15,6 +17,7 @@ use serde::de::DeserializeOwned;
 use url::Url;
 
 use super::ProviderError;
+use super::graph::errors::{Refusal, refusal};
 use super::tokens::{AccessTokens, RefreshFlight};
 
 /// The largest answer Rail reads; a `format=full` message of Gmail's 25 MB limit in base64
@@ -31,6 +34,41 @@ const MAX_ERROR_BODY: usize = 64 * 1024;
 
 /// Told how long the layer waits before each retry (the status shows "retrying in Ns").
 pub type RetryObserver = Arc<dyn Fn(Duration) + Send + Sync>;
+
+/// Which API family a client speaks: its name in Rail's messages, how its refusals read, and
+/// the preferences every request carries.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Dialect {
+    /// Google's REST APIs: `{"error":{"message","errors":[{"reason"}]}}`.
+    #[default]
+    Google,
+    /// Microsoft Graph: `{"error":{"code","message"}}`, and immutable ids on every request.
+    Graph,
+}
+
+/// Graph's preference for ids that survive a move between folders. It applies only to the
+/// request that carries it, so every Graph request carries it.
+pub const IMMUTABLE_IDS: &str = "IdType=\"ImmutableId\"";
+
+impl Dialect {
+    /// The provider's name in Rail's own messages.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Google => "Gmail",
+            Self::Graph => "Microsoft 365",
+        }
+    }
+
+    /// The `Prefer` header of a request asking for `extra`, if it has one.
+    fn prefer(self, extra: &[&str]) -> Option<String> {
+        let mut all: Vec<&str> = Vec::new();
+        if self == Self::Graph {
+            all.push(IMMUTABLE_IDS);
+        }
+        all.extend_from_slice(extra);
+        (!all.is_empty()).then(|| all.join(", "))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetryPolicy {
@@ -175,13 +213,20 @@ pub struct ApiClient {
     quota: Quota,
     observer: Option<RetryObserver>,
     max_response: usize,
+    dialect: Dialect,
+    /// Requests in flight at once, when limited (`with_concurrency`).
+    limiter: Option<Arc<tokio::sync::Semaphore>>,
+    permits: u32,
 }
 
-/// One request the loop sends: GET with a query, or POST with an optional JSON body.
+/// One request the loop sends: GET with a query, or another method with an optional JSON body;
+/// the preferences it adds to its dialect's, and the permits it takes (`u32::MAX`: all).
 struct Outgoing<'a> {
     method: reqwest::Method,
     query: &'a [(&'a str, String)],
     body: Option<Vec<u8>>,
+    prefer: &'a [&'a str],
+    weight: u32,
 }
 
 /// A JSON answer, or why one that arrived could not be read.
@@ -223,6 +268,9 @@ impl ApiClient {
             quota: Quota::new(QUOTA_PER_MINUTE, QUOTA_BURST),
             observer: None,
             max_response: MAX_RESPONSE_BYTES,
+            dialect: Dialect::Google,
+            limiter: None,
+            permits: 0,
         }
     }
 
@@ -246,15 +294,40 @@ impl ApiClient {
         self
     }
 
-    /// GET `path` (relative to the base) with `query`, spending `cost` quota units per try,
-    /// and parse the JSON answer.
+    pub fn with_dialect(mut self, dialect: Dialect) -> Self {
+        self.dialect = dialect;
+        self
+    }
+
+    /// At most `permits` requests in flight at once: each try takes one until its answer is
+    /// read, and a `$batch` takes them all.
+    pub fn with_concurrency(mut self, permits: u32) -> Self {
+        let permits = permits.max(1);
+        self.limiter = Some(Arc::new(tokio::sync::Semaphore::new(permits as usize)));
+        self.permits = permits;
+        self
+    }
+
+    /// GET `path` (relative to the base, or an absolute link under it) with `query`, spending
+    /// `cost` quota units per try, and parse the JSON answer.
     pub async fn get_json<T: DeserializeOwned>(
         &self,
         path: &str,
         query: &[(&str, String)],
         cost: u32,
     ) -> Result<T, ProviderError> {
-        match self.get_readable(path, query, cost).await? {
+        self.get_json_with(path, query, cost, &[]).await
+    }
+
+    /// `get_json` with `prefer` added to the dialect's `Prefer` header.
+    pub async fn get_json_with<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        cost: u32,
+        prefer: &[&str],
+    ) -> Result<T, ProviderError> {
+        match self.get_readable_with(path, query, cost, prefer).await? {
             Readable::Parsed(value) => Ok(value),
             Readable::Unreadable(error) => Err(error),
         }
@@ -269,21 +342,34 @@ impl ApiClient {
         query: &[(&str, String)],
         cost: u32,
     ) -> Result<Readable<T>, ProviderError> {
+        self.get_readable_with(path, query, cost, &[]).await
+    }
+
+    async fn get_readable_with<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        cost: u32,
+        prefer: &[&str],
+    ) -> Result<Readable<T>, ProviderError> {
         let url = self.resolve(path)?;
         let outgoing = Outgoing {
             method: reqwest::Method::GET,
             query,
             body: None,
+            prefer,
+            weight: 1,
         };
+        let name = self.dialect.name();
         let Some(bytes) = self.send(&url, &outgoing, cost).await? else {
             return Ok(Readable::Unreadable(ProviderError::permanent(&format!(
-                "Gmail's answer was larger than {} KiB",
+                "{name}'s answer was larger than {} KiB",
                 self.max_response / 1024
             ))));
         };
         Ok(match serde_json::from_slice(&bytes) {
             Ok(value) => Readable::Parsed(value),
-            Err(e) => Readable::Unreadable(malformed(&e)),
+            Err(e) => Readable::Unreadable(malformed(name, &e)),
         })
     }
 
@@ -305,6 +391,8 @@ impl ApiClient {
             method: reqwest::Method::POST,
             query: &[],
             body: Some(body.unwrap_or_default()),
+            prefer: &[],
+            weight: 1,
         };
         self.send(&url, &outgoing, cost).await.map(|_| ())
     }
@@ -353,6 +441,8 @@ impl ApiClient {
             method,
             query: &[],
             body,
+            prefer: &[],
+            weight: 1,
         };
         if retries {
             return self.send(&url, &outgoing, cost).await;
@@ -362,6 +452,25 @@ impl ApiClient {
             ..retry_policy_override().unwrap_or(self.policy)
         };
         with_retry_policy(policy, self.send(&url, &outgoing, cost)).await
+    }
+
+    /// POST Graph's `$batch` with `body`, spending `cost` per try, and holding every permit:
+    /// Graph runs up to four of the batch's requests at once against the mailbox, the whole of
+    /// Outlook's concurrency limit. The answer is returned unparsed (`None` over the cap).
+    pub async fn post_batch(
+        &self,
+        body: &serde_json::Value,
+        cost: u32,
+    ) -> Result<Option<Vec<u8>>, ProviderError> {
+        let url = self.resolve("$batch")?;
+        let outgoing = Outgoing {
+            method: reqwest::Method::POST,
+            query: &[],
+            body: encode(Some(body))?,
+            prefer: &[],
+            weight: u32::MAX,
+        };
+        self.send(&url, &outgoing, cost).await
     }
 
     /// Quota units taken so far, retries included.
@@ -434,20 +543,16 @@ impl ApiClient {
     }
 
     async fn attempt(&self, url: &Url, outgoing: &Outgoing<'_>, token: &str) -> Attempt {
+        // Held until the answer is read: the limiter counts requests in flight.
+        let _permit = match self.permit(outgoing.weight).await {
+            Ok(permit) => permit,
+            Err(error) => return Attempt::Failed(error),
+        };
+        let name = self.dialect.name();
         let started = Instant::now();
-        let mut request = self
-            .http
-            .request(outgoing.method.clone(), url.clone())
-            .query(outgoing.query)
-            .bearer_auth(token);
-        if let Some(body) = &outgoing.body {
-            request = request
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(body.clone());
-        }
-        let response = match request.send().await {
+        let response = match self.request(url, outgoing, token).send().await {
             Ok(response) => response,
-            Err(e) => return Attempt::Failed(transport(e)),
+            Err(e) => return Attempt::Failed(transport(name, e)),
         };
         let status = response.status();
         tracing::debug!(
@@ -463,19 +568,53 @@ impl ApiClient {
         } else {
             MAX_ERROR_BODY
         };
-        match read_capped(response, cap).await {
-            Ok(Some(body)) => classify(status, retry_after, body),
+        match read_capped(response, cap, name).await {
+            Ok(Some(body)) => classify(self.dialect, status, retry_after, body),
             Ok(None) if status.is_success() => Attempt::TooLarge,
             // An error answer too long to read is judged by its status alone.
-            Ok(None) => classify(status, retry_after, Vec::new()),
+            Ok(None) => classify(self.dialect, status, retry_after, Vec::new()),
             Err(error) => Attempt::Failed(error),
         }
+    }
+
+    fn request(&self, url: &Url, outgoing: &Outgoing<'_>, token: &str) -> reqwest::RequestBuilder {
+        let mut request = self
+            .http
+            .request(outgoing.method.clone(), url.clone())
+            .query(outgoing.query)
+            .bearer_auth(token);
+        if let Some(prefer) = self.dialect.prefer(outgoing.prefer) {
+            request = request.header("Prefer", prefer);
+        }
+        if let Some(body) = &outgoing.body {
+            request = request
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.clone());
+        }
+        request
+    }
+
+    /// `weight` permits of the limiter (all of them at most), or none when unlimited.
+    async fn permit(
+        &self,
+        weight: u32,
+    ) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, ProviderError> {
+        let Some(limiter) = &self.limiter else {
+            return Ok(None);
+        };
+        limiter
+            .clone()
+            .acquire_many_owned(weight.clamp(1, self.permits))
+            .await
+            .map(Some)
+            .map_err(|_| ProviderError::transient("the request limiter closed"))
     }
 }
 
 /// Transport text without the URL, whose query may be the user's search words.
-fn transport(error: reqwest::Error) -> ProviderError {
-    ProviderError::transient("could not reach Gmail").with_detail(error.without_url().to_string())
+fn transport(name: &str, error: reqwest::Error) -> ProviderError {
+    ProviderError::transient(&format!("could not reach {name}"))
+        .with_detail(error.without_url().to_string())
 }
 
 fn retry_after(response: &reqwest::Response) -> Option<Duration> {
@@ -504,9 +643,10 @@ pub(crate) fn parse_retry_after(value: &str, now: SystemTime) -> Option<Duration
 async fn read_capped(
     mut response: reqwest::Response,
     cap: usize,
+    name: &str,
 ) -> Result<Option<Vec<u8>>, ProviderError> {
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(transport)? {
+    while let Some(chunk) = response.chunk().await.map_err(|e| transport(name, e))? {
         if bytes.len() + chunk.len() > cap {
             return Ok(None);
         }
@@ -516,13 +656,14 @@ async fn read_capped(
 }
 
 /// serde's text can quote the answer (mail); keep only its kind and position.
-fn malformed(error: &serde_json::Error) -> ProviderError {
-    ProviderError::permanent("Gmail's answer did not have the expected shape").with_detail(format!(
-        "{:?} at line {} column {}",
-        error.classify(),
-        error.line(),
-        error.column()
-    ))
+fn malformed(name: &str, error: &serde_json::Error) -> ProviderError {
+    ProviderError::permanent(&format!("{name}'s answer did not have the expected shape"))
+        .with_detail(format!(
+            "{:?} at line {} column {}",
+            error.classify(),
+            error.line(),
+            error.column()
+        ))
 }
 
 #[derive(Deserialize, Default)]
@@ -561,11 +702,26 @@ fn google_error(body: &[u8]) -> (Option<String>, bool) {
     (message, limited)
 }
 
-fn classify(status: StatusCode, retry_after: Option<Duration>, body: Vec<u8>) -> Attempt {
+fn classify(
+    dialect: Dialect,
+    status: StatusCode,
+    retry_after: Option<Duration>,
+    body: Vec<u8>,
+) -> Attempt {
     if status.is_success() {
         return Attempt::Done(body);
     }
-    let (message, rate_limited) = google_error(&body);
+    match dialect {
+        Dialect::Google => google_refusal(status, retry_after, &body),
+        Dialect::Graph => match refusal(status.as_u16(), retry_after, &body) {
+            Refusal::Unauthorized(detail) => Attempt::Unauthorized(detail),
+            Refusal::Failed(error) => Attempt::Failed(error),
+        },
+    }
+}
+
+fn google_refusal(status: StatusCode, retry_after: Option<Duration>, body: &[u8]) -> Attempt {
+    let (message, rate_limited) = google_error(body);
     let code = status.as_u16();
     let error = match code {
         401 => return Attempt::Unauthorized(message),

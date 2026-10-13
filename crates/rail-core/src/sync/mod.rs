@@ -15,12 +15,14 @@ pub mod writer;
 
 #[cfg(test)]
 mod engine_tests;
+#[cfg(test)]
+mod graph_engine_tests;
 
 pub use batch::{Batch, BatchOutcome, Origin, Prune, ResumeToken, StateUpdate, Sweep};
 pub use engine::{Clock, Engine, EngineParts, SyncError};
 pub use manager::{
     ActionTarget, CONFIG_CHECK, ENGINE_STOP, MAX_WRITER_RESTARTS, ProviderFactory, ProviderRequest,
-    Reach, SETTLE_WAIT, SearchTarget, SyncManager, WRITER_HEALTHY,
+    Reach, SETTLE_WAIT, SearchTarget, SyncManager, WRITER_HEALTHY, Wants,
 };
 pub use status::{FailureSubscriber, StatusBoard, Subscriber};
 pub use writer::{WRITER_QUEUE, WriterHandle, WriterTask, spawn_writer};

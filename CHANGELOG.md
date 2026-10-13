@@ -8,6 +8,15 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- Microsoft 365 sync and reading over Microsoft Graph: every mail folder (nested ones as
+  `Parent/Child`, the well-known ones in their usual places, search and non-mail folders left
+  out), threads by conversation, read and flag state, one combined delta cursor per account, new
+  mail within one poll interval, `$search` server search, bodies through the shared HTML
+  renderer, attachment lists, and marking read on open reaching Outlook. Every other action and
+  every compose start on a Microsoft 365 account answers `Not supported for Microsoft 365
+  accounts yet.` at once.
+- The HTTP layer speaks Microsoft Graph: immutable ids on every request, Graph's error envelope,
+  at most four requests in flight per mailbox, and `$batch` with throttled items sent again.
 - Writing mail: `c` new message, `r` reply, `R` reply-all, `f` forward, written in your editor
   (`general.editor`, `$VISUAL`, `$EDITOR`, `vi`) and reviewed in Rail; `To:` completion from the
   addresses your mail has taught the store; attachments by path and forwarded attachments; send
@@ -143,6 +152,12 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Changed
 
+- `Provider::modify_threads` and `trash_threads` take `ThreadTarget`s (a thread and its stored
+  message ids); `Profile.messages_total` is optional; `RemoteFolder` has a `parent`, stored in
+  `folders.parent_id`; `SearchFailure` names the account's kind.
+- The HTML-to-text renderer moved from `provider/gmail/html.rs` to `provider/html.rs`.
+- A provider whose first sync is its delta defers the full backfill's sweep until the delta has
+  caught up, and a larger `history_days` resyncs it.
 - `rail doctor` and the token-refresh error now point at `rail account login <name>` instead of
   removing the account from `config.toml` and adding it again.
 - `rail account add` flags are optional: with none (or only `gmail`/`m365`) the wizard opens. The

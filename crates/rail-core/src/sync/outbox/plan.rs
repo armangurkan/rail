@@ -3,7 +3,7 @@
 //! their remote ids); or, for a draft row, which path takes it.
 
 use crate::ops::{Action, DraftId};
-use crate::provider::{INBOX_LABEL, RemoteId, STARRED_LABEL, UNREAD_LABEL};
+use crate::provider::{INBOX_LABEL, RemoteId, STARRED_LABEL, ThreadTarget, UNREAD_LABEL};
 use crate::store::outbox::OutboxRow;
 use crate::store::{Store, StoreError};
 
@@ -21,7 +21,7 @@ pub(super) enum Plan {
     /// No thread of the row is left: nothing to send.
     Nothing,
     Send {
-        threads: Vec<RemoteId>,
+        threads: Vec<ThreadTarget>,
         change: Remote,
     },
     /// A label the action names is no longer in the store (deleted in Gmail).
@@ -55,7 +55,7 @@ pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
         } => return Ok(Plan::DeleteDraft(remote_draft_id.clone())),
         _ => {}
     }
-    let threads = store.thread_remotes(row.account_id, &row.thread_ids)?;
+    let threads = store.thread_targets(row.account_id, &row.thread_ids)?;
     if threads.is_empty() {
         return Ok(Plan::Nothing);
     }

@@ -3,7 +3,7 @@
 use futures_util::{StreamExt, stream};
 
 use super::backfill::needs_backfill;
-use super::batch::{Batch, Prune, StateUpdate};
+use super::batch::{Batch, Prune, StateUpdate, Sweep};
 use super::engine::{Engine, SyncError};
 use super::{
     BODIES_PER_PASS, BODY_BATCH, BODY_BATCH_BYTES, BODY_CONCURRENCY, SEARCH_KEEP_DAYS,
@@ -37,11 +37,17 @@ impl Engine {
     /// delta runs first and the backfill lists at most `BACKFILL_PAGES_PER_PASS` pages with
     /// progress, so new
     /// mail arrives within one poll interval however long the backfill takes. Without one (the
-    /// first full backfill), the delta can only follow it.
+    /// first full backfill), the delta can only follow it. A delta-first provider's grown
+    /// window resyncs instead.
     async fn envelopes(&self, window: Option<i64>) -> Result<(), SyncError> {
         let state = self.state().await?;
         let backfill = needs_backfill(&state, window);
         if let Some(cursor) = state.cursor.clone() {
+            // A delta-first provider's links keep the window they began with: a grown window
+            // starts every folder over.
+            if backfill && self.provider.backfills_by_delta() {
+                return self.resync(window, "the window grew").await;
+            }
             let resynced = self.catch_up(cursor, window).await?;
             if backfill && !resynced {
                 self.backfill(&state, window).await?;
@@ -59,9 +65,9 @@ impl Engine {
 
     /// The delta from `cursor`; an expired one resyncs in full. True when it resynced.
     async fn catch_up(&self, cursor: String, window: Option<i64>) -> Result<bool, SyncError> {
-        match self.delta(cursor).await {
+        match self.delta(cursor, window).await {
             Err(SyncError::Provider(ProviderError::CursorExpired)) => {
-                self.resync(window).await?;
+                self.resync(window, "the sync cursor expired").await?;
                 Ok(true)
             }
             other => other.map(|()| false),
@@ -91,18 +97,24 @@ impl Engine {
         Ok(())
     }
 
-    /// Catch up from `cursor`, one batch per answer, while Gmail says more waits; at most
-    /// `MAX_DELTA_ROUNDS` answers a pass (the saved cursor lets the next pass go on).
-    async fn delta(&self, mut cursor: String) -> Result<(), SyncError> {
-        self.phase(SyncPhase::Delta);
+    /// Catch up from `cursor`, one batch per answer, while the provider says more waits; at
+    /// most `MAX_DELTA_ROUNDS` answers a pass (the saved cursor lets the next pass go on).
+    /// During a delta-first provider's first load the phase is `Backfill` and its count grows
+    /// with what each answer adds; the answer that catches up carries the sweep the backfill
+    /// left to it.
+    async fn delta(&self, mut cursor: String, window: Option<i64>) -> Result<(), SyncError> {
+        let load = self.first_load().await?;
+        let phase = match load {
+            Some(_) => SyncPhase::Backfill,
+            None => SyncPhase::Delta,
+        };
+        self.phase(phase);
         for _ in 0..MAX_DELTA_ROUNDS {
             let asked = SyncCursor(cursor.clone());
-            let set = self
-                .call(SyncPhase::Delta, self.provider.changes(&asked))
-                .await?;
+            let set = self.call(phase, self.provider.changes(&asked)).await?;
             log_skipped(&self.account.name, &set.skipped);
-            let (more, next) = (set.more, set.cursor.0.clone());
-            let batch = Batch {
+            let (more, next, fetched) = (set.more, set.cursor.0.clone(), set.added.len() as u64);
+            let mut batch = Batch {
                 upserts: set.added,
                 deletes: set.deleted,
                 relabels: set.relabeled,
@@ -112,12 +124,22 @@ impl Engine {
                 },
                 ..Batch::new(self.account_id)
             };
+            if let (Some(started_at), false) = (load, more) {
+                batch.sweep = Some(Sweep {
+                    started_at,
+                    window_start_ms: window,
+                });
+                batch.state.backfill_started_at = Some(None);
+            }
             self.write(batch).await?;
+            if load.is_some() {
+                self.status(|s| s.backfill_fetched += fetched);
+            }
             if !more {
                 return Ok(());
             }
             if next == cursor {
-                tracing::warn!(account = %self.account.name, "Gmail said more changes wait but the cursor did not move; the next pass goes on");
+                tracing::warn!(account = %self.account.name, "the provider said more changes wait but the cursor did not move; the next pass goes on");
                 return Ok(());
             }
             cursor = next;
@@ -126,9 +148,18 @@ impl Engine {
         Ok(())
     }
 
-    /// `CursorExpired`: forget the cursor, backfill in full, then catch up once more.
-    async fn resync(&self, window: Option<i64>) -> Result<(), SyncError> {
-        tracing::info!(account = %self.account.name, "the sync cursor expired; resyncing in full");
+    /// While a delta-first provider's first load runs: when it began, which its sweep keeps.
+    async fn first_load(&self) -> Result<Option<i64>, SyncError> {
+        if !self.provider.backfills_by_delta() {
+            return Ok(None);
+        }
+        Ok(self.state().await?.backfill_started_at)
+    }
+
+    /// A cursor that cannot go on (`why` says so): forget it, backfill in full, then catch up
+    /// once more.
+    async fn resync(&self, window: Option<i64>, why: &str) -> Result<(), SyncError> {
+        tracing::info!(account = %self.account.name, "{why}; resyncing in full");
         let clear = StateUpdate {
             cursor: Some(None),
             backfill_before: Some(None),
@@ -145,7 +176,7 @@ impl Engine {
         let state = self.state().await?;
         self.backfill(&state, window).await?;
         match self.state().await?.cursor {
-            Some(cursor) => self.delta(cursor).await,
+            Some(cursor) => self.delta(cursor, window).await,
             None => Ok(()),
         }
     }

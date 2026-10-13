@@ -16,17 +16,6 @@ fn projects(f: &Fixture) -> i64 {
         .unwrap()
 }
 
-fn applies(f: &Fixture) -> Vec<FakeCall> {
-    f.fake
-        .calls
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|c| matches!(c, FakeCall::Apply { .. }))
-        .cloned()
-        .collect()
-}
-
 #[tokio::test]
 async fn l_lists_the_accounts_labels_and_enter_adds_the_ticked_one() {
     let mut f = fixture(3).await;

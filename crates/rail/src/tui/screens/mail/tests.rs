@@ -28,6 +28,7 @@ mod compose;
 mod compose_edges;
 mod compose_gmail;
 mod drafts_folder;
+mod m365;
 mod pickers;
 mod replaced;
 mod state;
@@ -99,6 +100,18 @@ async fn press_n(f: &mut Fixture, code: KeyCode, times: usize) {
     for _ in 0..times {
         press(f, code).await;
     }
+}
+
+/// The `Apply` calls the fake daemon has taken.
+fn applies(f: &Fixture) -> Vec<FakeCall> {
+    f.fake
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| matches!(c, FakeCall::Apply { .. }))
+        .cloned()
+        .collect()
 }
 
 fn selected(f: &Fixture) -> Option<String> {

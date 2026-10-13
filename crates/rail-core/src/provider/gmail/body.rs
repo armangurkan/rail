@@ -10,11 +10,11 @@ use base64::Engine as _;
 use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 
-use super::html::html_render;
 use super::metadata::{cut, one_line_capped};
 use super::wire::{AttachmentBody, Message, Part};
 use super::{COST_ATTACHMENT, COST_GET, GmailProvider, checked_id, safe_id};
 use crate::config::model::is_format_char;
+use crate::provider::html::html_render;
 use crate::provider::links::{Rendered, plain_links};
 use crate::provider::{AttachmentMeta, Body, ProviderError};
 

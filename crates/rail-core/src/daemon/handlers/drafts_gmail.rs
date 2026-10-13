@@ -23,6 +23,7 @@ use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftState, DraftWrite};
 use crate::store::drafts_folder::ImportSource;
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
+use crate::sync::Wants;
 use crate::sync::manager::Reach;
 
 fn no_such_message() -> OpError {
@@ -56,7 +57,11 @@ async fn push_account(call: &Call, id: DraftId) -> Result<(i64, String), OpError
         .ctx
         .blocking(move || draft_and_address(&db, id))
         .await?;
-    let target = call.ctx.sync.action_target(&call.ctx, &address).await?;
+    let target = call
+        .ctx
+        .sync
+        .action_target(&call.ctx, &address, Wants::Compose)
+        .await?;
     if target.account_id != draft.account_id {
         return Err(no_such_draft());
     }
@@ -364,7 +369,10 @@ pub(super) async fn import(
         return Err(no_such_message());
     }
     let (ctx, token) = (&call.ctx, request.client_token);
-    let target = ctx.sync.action_target(ctx, &request.account).await?;
+    let target = ctx
+        .sync
+        .action_target(ctx, &request.account, Wants::Compose)
+        .await?;
     let source = import_source(ctx, request.message, target.account_id).await?;
     let _imports = IMPORTS.lock().await;
     let (db, remote, held) = (ctx.paths.db_file(), source.remote_id.clone(), token.clone());

@@ -57,6 +57,7 @@ pub async fn run(ctx: &DaemonContext, request: SearchRequest) -> Result<SearchRe
             Ok(hits) => found.extend(hits),
             Err(error) => failures.push(SearchFailure {
                 account: target.name.clone(),
+                kind: target.kind,
                 error,
             }),
         }

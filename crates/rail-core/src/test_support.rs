@@ -157,6 +157,7 @@ fn offline_context(
         .expect("http client")
         .with_token_url(Some("http://127.0.0.1:9/token".into()))
         .with_gmail_url(Some("http://127.0.0.1:9/gmail/v1/users/me/".into()))
+        .with_graph_url(Some("http://127.0.0.1:9/v1.0/".into()))
         .with_provider_factory(offline_factory())
 }
 

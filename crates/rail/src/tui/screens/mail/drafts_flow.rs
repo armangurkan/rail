@@ -126,6 +126,9 @@ impl MailScreen {
     /// Enter on a row of the pane or of `:drafts`: resume a local draft; import a Gmail one,
     /// then resume it.
     pub(super) fn open_draft_row(&mut self, row: DraftsRow) -> Vec<Effect> {
+        if self.refuse_m365(self.is_m365(row.account_id)) {
+            return Vec::new();
+        }
         if self.composing_busy() {
             return Vec::new();
         }
@@ -159,11 +162,14 @@ impl MailScreen {
     }
 
     /// `d` on the pane: ask first.
-    fn confirm_discard_row(&mut self) -> Vec<Effect> {
+    pub(super) fn confirm_discard_row(&mut self) -> Vec<Effect> {
         let Some(row) = self.drafts.pane.selected().cloned() else {
             self.status.notify("No draft to discard.", self.tick);
             return Vec::new();
         };
+        if self.refuse_m365(self.is_m365(row.account_id)) {
+            return Vec::new();
+        }
         let detail = match row.kind {
             DraftsRowKind::Local {
                 on_gmail: false, ..

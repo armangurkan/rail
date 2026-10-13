@@ -760,3 +760,22 @@ fn a_deleted_draft_takes_its_outbox_rows_with_it() {
         .unwrap();
     assert_eq!(depth(&store, account_id), (0, 0, 0));
 }
+
+#[test]
+fn thread_targets_carry_each_threads_stored_messages() {
+    let store = seeded();
+    let (t1, t2) = (thread(&store, "t1"), thread(&store, "t2"));
+    let targets = store.thread_targets(1, &[t2, t1, 999]).unwrap();
+    let shown: Vec<(&str, Vec<&str>)> = targets
+        .iter()
+        .map(|t| {
+            let ids = t.message_ids.iter().map(String::as_str).collect();
+            (t.thread_id.as_str(), ids)
+        })
+        .collect();
+    assert_eq!(shown, [("t1", vec!["m1", "m2"]), ("t2", vec!["m3"])]);
+    assert!(
+        store.thread_targets(2, &[t1]).unwrap().is_empty(),
+        "another account's threads are not this one's"
+    );
+}

@@ -11,11 +11,13 @@ const NOW: i64 = 1_760_100_000;
 /// The inbox and `count` user labels named `{prefix} 0000`, `{prefix} 0001`, ...
 fn labels(prefix: &str, count: usize) -> Vec<RemoteFolder> {
     let inbox = RemoteFolder {
+        parent: None,
         remote_id: "INBOX".into(),
         name: "Inbox".into(),
         kind: FolderKind::Inbox,
     };
     let user = (0..count).map(|n| RemoteFolder {
+        parent: None,
         remote_id: format!("Label_{n}"),
         name: format!("{prefix} {n:04}"),
         kind: FolderKind::User,

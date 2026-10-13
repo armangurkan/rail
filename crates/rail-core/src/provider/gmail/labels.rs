@@ -29,6 +29,7 @@ pub(super) fn folder(label: Label) -> Option<RemoteFolder> {
         ),
     };
     Some(RemoteFolder {
+        parent: None,
         remote_id: label.id,
         name,
         kind,
