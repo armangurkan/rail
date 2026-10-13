@@ -592,6 +592,25 @@ async fn a_graph_request_asks_for_immutable_ids_before_its_own_preferences() {
 }
 
 #[tokio::test]
+async fn a_post_without_a_body_says_its_length_is_zero() {
+    // Graph answers 411 Length Required to a bodiless POST (`/send`) without the header.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1.0/me/messages/d1/send"))
+        .respond_with(ResponseTemplate::new(202))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let api = graph(&server, 4);
+    api.post_json_bytes("me/messages/d1/send", None, 1, false)
+        .await
+        .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let length = requests[0].headers.get("content-length");
+    assert_eq!(length.map(|v| v.to_str().unwrap()), Some("0"));
+}
+
+#[tokio::test]
 async fn a_google_request_carries_no_prefer_header() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

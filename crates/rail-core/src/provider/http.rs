@@ -591,6 +591,10 @@ impl ApiClient {
             request = request
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .body(body.clone());
+            // hyper sends no length for an empty body, and Graph answers 411 to a bodiless POST.
+            if body.is_empty() {
+                request = request.header(reqwest::header::CONTENT_LENGTH, "0");
+            }
         }
         request
     }
