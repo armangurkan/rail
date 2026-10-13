@@ -11,13 +11,13 @@ All notable changes to Rail are recorded here. The format follows
 - Writing Microsoft 365 mail over Microsoft Graph: `c`, `r`, `R` and `f` write from a Microsoft
   365 account and `y` sends with the ten second `z` undo; `s` saves to Outlook's Drafts
   (`saved to Microsoft 365 · z undoes`) and later saves update the same draft, or make it again
-  in Drafts when it was deleted in Outlook; Outlook drafts open
-  in Rail with their attachments and `d` deletes them in Outlook. Replies and forwards are made on
+  in Drafts when it was deleted in Outlook; Outlook drafts open in Rail with their attachments
+  and `d` deletes them in Outlook. Replies and forwards are made on
   the original message, so they join the Outlook conversation; one whose original was deleted in
   Outlook goes out as a new message. Attachments up to 25 MiB in all, through upload sessions
   from 3 MiB; a forward keeps the original's attachments without downloading them, and inline
-  pictures, attached messages and OneDrive or SharePoint links stay as Outlook has them. A message is
-  never sent twice: a retry or a restart asks Outlook for its `Message-ID`, and about the draft
+  pictures, attached messages and OneDrive or SharePoint links stay as Outlook has them. A
+  message is never sent twice: a retry or a restart asks Outlook for its `Message-ID`, and about the draft
   Rail saved, first.
 - Store schema v8: a draft keeps the provider id of the message a reply or forward answers, and
   an attachment says whether it is a plain file (Microsoft 365 attachments are listed again).

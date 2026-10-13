@@ -105,7 +105,10 @@ fn checked(mail: &OutgoingMail) -> Result<(), ProviderError> {
 }
 
 /// The id of a draft Graph made; an answer Rail cannot read is a permanent error that says the
-/// draft may exist (the next save finds it by its `Message-ID`).
+/// draft may exist. A `POST me/messages` draft carries Rail's `Message-ID`, so the next save
+/// finds it; a `createReply`, `createReplyAll` or `createForward` draft does not have it yet (the
+/// `PATCH` that sets it never ran), so it stays in Outlook's Drafts as a stray, like a create
+/// whose answer was lost.
 fn created_id(answer: Option<&[u8]>) -> Result<RemoteId, ProviderError> {
     let unreadable =
         || ProviderError::permanent("Microsoft 365 saved the draft but its answer was unreadable");

@@ -34,9 +34,12 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
   src/accounts/          The add, login and remove pipeline the daemon runs
   src/guide/             Google and Microsoft setup steps as versioned data
   src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries, the Graph dialect and limiter), the HTML-to-text scanner (`provider/html.rs`), and the Gmail and Graph providers
-    provider/graph/      Microsoft 365 over Graph: folders, the combined delta cursor, $batch, search, bodies, mark read
+    provider/graph/      Microsoft 365 over Graph: folders, the combined delta cursor, $batch, search, bodies, mark read, and writing through Outlook drafts
     provider/graph/drafts.rs, upload.rs, send.rs  Outlook drafts, attachment upload sessions, and sending a draft once
-    provider/gmail/mime.rs, send.rs  Building Gmail's MIME from an `OutgoingMail` and sending it
+    provider/graph/reconcile.rs  Matching an Outlook draft's file attachments to Rail's: keep, delete, upload
+    provider/http_upload.rs  One upload-session chunk: a `PUT` with no `Authorization`, its address never logged
+    provider/gmail/write.rs  Gmail's writing entry point: an `OutgoingMail` built with the MIME builder, then sent or saved
+    provider/gmail/mime.rs, send.rs  The MIME builder (RFC 5322 bytes), and Gmail's raw send and "sent already" lookup
     provider/gmail/drafts.rs  Gmail's drafts: create, update, delete, find
     provider/mock/       The in-memory provider the tests use (a module: `mod.rs`, `drafts.rs`, `tests.rs`)
   src/sync/              Per-account sync engines, backfill and delta passes (a delta-first provider's deferred sweep), the single store writer, search

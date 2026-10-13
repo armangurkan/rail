@@ -780,10 +780,11 @@ Microsoft Graph.
   saves update the same Outlook draft, and one deleted in Outlook is made again in Drafts (the
   deleted copy stays in Deleted Items). Sending a saved draft sends that very draft, so none is
   left in Drafts. A draft written in Outlook opens in Rail with its attached files; `d` on it
-  deletes it in Outlook (it goes to Deleted Items). When Outlook
-  made a reply, reply to everyone or forward draft but its answer was lost on the way back (a
-  timeout, say), Rail does not know that draft exists and makes another on the retry, so an extra
-  copy can stay in Outlook's Drafts: delete it there.
+  deletes it in Outlook (it goes to Deleted Items). An extra copy can stay in Outlook's Drafts:
+  when Outlook made a reply, reply to everyone or forward draft but its answer was lost on the
+  way back (a timeout, say) or could not be read, Rail makes another on the retry; and when a
+  save made the Outlook draft but then failed for good (a permanent attachment error, say),
+  discarding the draft in Rail leaves that copy. Delete the extra one in Outlook's Drafts.
 - **Attachments.** At most 50 files and 25 MiB in all, as on Gmail (`the message is … MiB, larger
   than Microsoft 365's 25 MiB limit`). A file of 3 MiB or more goes up in 3.75 MiB pieces, and a
   failed upload is tried again later. A forward keeps the original's attachments in Outlook
