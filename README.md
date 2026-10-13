@@ -73,7 +73,7 @@ up without ever seeing your secrets.
 **Coming**
 
 - Next: acting on and writing Microsoft 365 mail (archive, trash, flag, move, mark unread, send,
-  drafts).
+  drafts, and reply threading headers).
 - After that: agent tools for drafts and sends, the last piece of mail work, governed by the per-account `ai_send` policy.
 - Later: search operators, layout options, inline images, display-quality HTML in the
   terminal.
@@ -341,8 +341,8 @@ line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond th
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, and `!` for `needs login` or `sync failed`). After the state
-come `sending…` while a message is on its way to Gmail, `saving to Gmail…` (or
-`saving to Microsoft 365…`) while a draft is saved, `2 queued` for actions on their way to the
+come `sending…` while a message is on its way to Gmail, `saving to Gmail…` while a draft is saved,
+`2 queued` for actions on their way to the
 account's server and `1 failed` for actions it refused; see
 [Doing things to mail](#doing-things-to-mail).
 With threads selected, `3 selected` leads the bar. Next to the accounts it shows whether the
@@ -538,7 +538,7 @@ later, closes the review and says `saved to Gmail · z undoes`. `z` inside that 
 (`kept on this computer`). The review closes after `s`, so pressing `s` again means opening the
 draft again from the Drafts folder or `:drafts`; done inside the ten seconds, it makes one save with
 the newest text, and `z` after it cancels that save. `s` is refused when the message holds nothing at all.
-The status bar shows `saving to Gmail…` (`saving to Microsoft 365…` for that provider) while a
+The status bar shows `saving to Gmail…` while a
 save is on its way. A save Gmail refuses on the spot keeps the review open (`Could not save to Gmail: …`); one that fails later is listed in
 `:errors` (`Could not save the draft to Gmail: …`), where `Enter` retries it. The first save
 creates the draft in Gmail and the next ones update it, so the draft keeps one place in Gmail's
@@ -731,7 +731,8 @@ and writing it come next.
 - **The first sync** shows `⟳` and a running count with no total, because Microsoft gives no cheap
   one. It reads folder by folder, the inbox first. New mail then arrives within one
   `poll_interval`.
-- **History.** With `history_days` set, Microsoft returns at most 5,000 messages per folder.
+- **History.** With `history_days` set, Microsoft returns at most 5,000 messages per folder;
+  mail in a folder beyond that is not synced.
   Raising `history_days` reads every folder again. When Microsoft forgets a folder's place (after
   a long time offline), or a folder is deleted, the account reads every folder again and removes
   what is gone.

@@ -469,6 +469,18 @@ pub(super) fn row_of_draft(db: &Path, row: i64, id: DraftId) -> Result<(), OpErr
     Ok(())
 }
 
+/// The queued send of draft `id`, held for the undo grace.
+fn send_action(account_id: i64, id: DraftId, client_token: String) -> NewAction {
+    let grace = i64::try_from(UNDO_GRACE.as_secs()).unwrap_or(10);
+    NewAction {
+        account_id,
+        action: Action::Send { draft: id },
+        threads: Vec::new(),
+        not_before: unix_now() + grace,
+        client_token,
+    }
+}
+
 pub(super) async fn send(
     call: Call,
     request: DraftSendRequest,
@@ -491,14 +503,7 @@ pub(super) async fn send(
     }
     let account_id = draft.account_id;
     call.ctx.blocking(move || check_sendable(&draft)).await?;
-    let grace = i64::try_from(UNDO_GRACE.as_secs()).unwrap_or(10);
-    let new = NewAction {
-        account_id,
-        action: Action::Send { draft: id },
-        threads: Vec::new(),
-        not_before: unix_now() + grace,
-        client_token: request.client_token,
-    };
+    let new = send_action(account_id, id, request.client_token);
     let outcome = call
         .ctx
         .sync

@@ -437,6 +437,26 @@ impl SyncManager {
         ctx.blocking(move || factory(request)).await
     }
 
+    fn new_engine(
+        &self,
+        planned: &PlannedAccount,
+        (account_id, provider): (i64, Arc<dyn Provider>),
+        reader: Store,
+        writer: &WriterHandle,
+    ) -> Engine {
+        Engine::new(EngineParts {
+            account: planned.account.clone(),
+            account_id,
+            settings: planned.settings,
+            provider,
+            writer: writer.clone(),
+            reader,
+            board: self.board.clone(),
+            wake: Arc::new(tokio::sync::Notify::new()),
+            clock: Arc::new(unix_now),
+        })
+    }
+
     fn spawn_engine(
         &self,
         planned: &PlannedAccount,
@@ -446,17 +466,12 @@ impl SyncManager {
     ) -> Running {
         let account = &planned.account;
         self.board.insert(initial_status(account, &prepared.state));
-        let engine = Engine::new(EngineParts {
-            account: account.clone(),
-            account_id: prepared.account_id,
-            settings: planned.settings,
-            provider: prepared.provider.clone(),
-            writer: writer.clone(),
-            reader: prepared.reader,
-            board: self.board.clone(),
-            wake: Arc::new(tokio::sync::Notify::new()),
-            clock: Arc::new(unix_now),
-        });
+        let engine = self.new_engine(
+            planned,
+            (prepared.account_id, prepared.provider.clone()),
+            prepared.reader,
+            &writer,
+        );
         let wake = engine.wake_handle();
         let outbox_signal = Arc::new(tokio::sync::Notify::new());
         let worker = Worker::new(WorkerParts {
