@@ -19,10 +19,10 @@ pub(crate) mod mock;
 
 pub use error::ProviderError;
 pub use types::{
-    AttachmentMeta, Body, ChangeSet, DraftIds, Envelope, EnvelopePage, FolderKind, INBOX_LABEL,
-    IdPage, MAX_PAGE_TOKEN_BYTES, Mailbox, Outgoing, OutgoingAttachment, PageToken, Profile,
-    Relabel, RemoteFolder, RemoteId, STARRED_LABEL, SentReceipt, SyncCursor, ThreadTarget,
-    UNREAD_LABEL, Window,
+    AttachmentMeta, Body, Change, ChangeSet, DraftIds, Envelope, EnvelopePage, FolderKind,
+    INBOX_LABEL, IdPage, MAX_PAGE_TOKEN_BYTES, Mailbox, Outgoing, OutgoingAttachment, PageToken,
+    Profile, Relabel, RemoteFolder, RemoteId, STARRED_LABEL, SentReceipt, SyncCursor,
+    TargetMessage, ThreadTarget, UNREAD_LABEL, Window,
 };
 
 /// One account's mailbox, read through its provider's API. Every method speaks Rail types;

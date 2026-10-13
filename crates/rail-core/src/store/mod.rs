@@ -28,6 +28,9 @@ pub mod sync_read;
 mod sync_write;
 #[cfg(test)]
 mod sync_write_tests;
+mod targets;
+#[cfg(test)]
+mod targets_tests;
 pub mod view;
 mod view_labels;
 #[cfg(test)]

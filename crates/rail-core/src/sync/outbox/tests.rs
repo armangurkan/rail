@@ -11,7 +11,7 @@ use super::{Worker, WorkerParts};
 use crate::config::AccountKind;
 use crate::ops::{AccountSyncStatus, Action, ActionFailed, RowToken};
 use crate::provider::mock::{Call, MockProvider, envelope};
-use crate::provider::{FolderKind, ProviderError, RemoteFolder, ThreadTarget};
+use crate::provider::{FolderKind, ProviderError, RemoteFolder, TargetMessage, ThreadTarget};
 use crate::store::Store;
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
 use crate::sync::batch::Batch;
@@ -540,7 +540,7 @@ async fn a_row_that_gave_up_is_reported_as_final() {
 }
 
 #[tokio::test]
-async fn a_read_row_carries_each_threads_stored_message_ids() {
+async fn a_read_row_carries_each_threads_stored_messages_with_their_facts() {
     let mut rig = rig().await;
     let t1 = t(&rig.store(), "t1");
     rig.enqueue(Action::Read { on: true }, vec![t1], "a").await;
@@ -549,7 +549,14 @@ async fn a_read_row_carries_each_threads_stored_message_ids() {
     let targets = rig.mock.with(|m| m.modify_targets.clone());
     let expected = ThreadTarget {
         thread_id: "t1".into(),
-        message_ids: vec!["m1".into()],
+        messages: vec![TargetMessage {
+            id: "m1".into(),
+            folder: Some(FolderKind::Inbox),
+            folder_remote: Some("INBOX".into()),
+            unread: false,
+            starred: false,
+            date: 1,
+        }],
     };
     assert_eq!(targets, [vec![expected]]);
 }

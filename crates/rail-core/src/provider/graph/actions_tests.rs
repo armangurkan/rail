@@ -9,12 +9,21 @@ use wiremock::{Mock, ResponseTemplate};
 use super::errors::CONSENT_MESSAGE;
 use super::fixtures::{Graph, ROOT};
 use crate::ops::M365_NOT_YET;
-use crate::provider::{Provider, ProviderError, STARRED_LABEL, ThreadTarget, UNREAD_LABEL};
+use crate::provider::{
+    Provider, ProviderError, STARRED_LABEL, TargetMessage, ThreadTarget, UNREAD_LABEL,
+};
 
 fn target(thread: &str, messages: &[&str]) -> ThreadTarget {
     ThreadTarget {
         thread_id: thread.into(),
-        message_ids: messages.iter().map(|m| (*m).to_string()).collect(),
+        messages: messages
+            .iter()
+            .map(|m| TargetMessage {
+                id: (*m).to_string(),
+                unread: true,
+                ..TargetMessage::default()
+            })
+            .collect(),
     }
 }
 

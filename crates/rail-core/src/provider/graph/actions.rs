@@ -24,7 +24,10 @@ impl GraphProvider {
         if !marks_read(add, remove) {
             return Err(not_yet());
         }
-        let ids: Vec<&RemoteId> = threads.iter().flat_map(|t| &t.message_ids).collect();
+        let ids: Vec<&RemoteId> = threads
+            .iter()
+            .flat_map(|t| t.messages.iter().map(|m| &m.id))
+            .collect();
         if !ids.iter().all(|id| graph_id(id)) {
             return Err(ProviderError::permanent(
                 "a message id is not one Rail sends to Microsoft 365",
