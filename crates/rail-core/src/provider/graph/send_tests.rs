@@ -1,8 +1,8 @@
 //! Sending and the draft lookups against fake Graph: a send saves the draft then posts `send`
 //! to it once and answers its id; a draft found by its Message-ID is the one sent, none created;
 //! a source gone sends a new message; a refused send is not repeated; `sent_already` reads
-//! `isDraft` by Message-ID and by the kept draft id; `draft_delete` and `draft_find`; Graph
-//! sends its draft itself and carries forward originals.
+//! `isDraft` by Message-ID and by the kept draft id, a trashed draft copy counting as unsent;
+//! `draft_delete` and `draft_find`; Graph sends its draft itself and carries forward originals.
 
 use serde_json::json;
 use wiremock::matchers::{body_json, header, method, path, query_param};
@@ -272,4 +272,37 @@ fn graph_sends_its_draft_itself_and_carries_forward_originals() {
     let provider = super::GraphProvider::new(super::fixtures::api_at("http://127.0.0.1:9/v1.0/"));
     assert!(provider.send_consumes_draft());
     assert!(provider.forward_carries_originals());
+}
+
+#[tokio::test]
+async fn a_trashed_draft_copy_is_not_sent_and_the_send_goes_from_a_new_draft_once() {
+    let g = Graph::start().await;
+    g.mount_well_known(&[("drafts", "f-drafts")]).await;
+    let trashed = json!({"id": "g-trash", "isDraft": true, "parentFolderId": "f-deleted"});
+    found(&g, json!([trashed])).await;
+    let provider = g.provider();
+    let fresh = mail(DraftKind::New, None, None);
+    assert!(
+        !provider.sent_already(&fresh).await.unwrap(),
+        "a draft in Deleted Items was not sent"
+    );
+    no_attachments(&g, "g-new").await;
+    new_draft_made(&g, "g-new", 1).await;
+    send_to(&g, "g-new", 202, 1).await;
+    send_to(&g, "g-trash", 202, 0).await;
+    Mock::given(method("PATCH"))
+        .and(path(format!("{ROOT}/me/messages/g-trash")))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&g.server)
+        .await;
+    assert_eq!(provider.send(&fresh).await.unwrap(), receipt("g-new"));
+    g.server.verify().await;
+    g.reset().await;
+    let sent = json!({"id": "g-new", "isDraft": false, "parentFolderId": "f-sent"});
+    found(&g, json!([trashed, sent])).await;
+    assert!(
+        provider.sent_already(&fresh).await.unwrap(),
+        "the sent copy counts, the trashed draft beside it does not hide it"
+    );
 }

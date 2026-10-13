@@ -2,30 +2,44 @@
 //! reply, reply-all or forward is `createReply`, `createReplyAll` or `createForward` on its
 //! source, then a `PATCH` of Rail's fields (subject, the text body, recipients, and Rail's
 //! `Message-ID` as `internetMessageId`). An update is one `PATCH`; a draft deleted in Outlook
-//! (404) is created again, and a source Outlook no longer has makes a new message. A save with
-//! no held id looks for a draft carrying Rail's `Message-ID` first, so a draft made before a
-//! crash is updated rather than made twice. Creates are tried once. Logs carry ids only.
+//! is created again, and a source Outlook no longer has makes a new message. Deleted means gone
+//! (404) or outside the Drafts folder (Outlook moves a deleted draft to Deleted Items, where it
+//! keeps its id and `isDraft`); the copy there is left alone. A save with no held id looks for a
+//! draft in Drafts carrying Rail's `Message-ID` first, so a draft made before a crash is updated
+//! rather than made twice. Creates are tried once. Logs carry ids only.
 
 use reqwest::Method;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::wire::Page;
+use super::wire::{IdOnly, Page};
 use super::{COST_REQUEST, GraphProvider, graph_id};
 use crate::ops::MAX_ATTACHMENTS;
 use crate::provider::gmail::mime::{
     MAX_MESSAGE_BYTES, estimated_raw_size, too_large_text, validate,
 };
-use crate::provider::{DraftIds, Mailbox, OutgoingMail, ProviderError, RemoteId};
+use crate::provider::{DraftIds, FolderKind, Mailbox, OutgoingMail, ProviderError, RemoteId};
 use crate::store::drafts::DraftKind;
 
-/// A message as a lookup by id or by `internetMessageId` reads it. A missing `isDraft` reads
-/// as sent: the safe side for "was it sent already".
+/// A message as a lookup by id or by `internetMessageId` (or a `PATCH`'s answer) reads it. A
+/// missing `isDraft` reads as sent: the safe side for "was it sent already". `parentFolderId`
+/// is there only where it was asked for.
 #[derive(Deserialize)]
 pub(super) struct DraftHit {
     pub id: String,
     #[serde(rename = "isDraft", default)]
     pub is_draft: bool,
+    #[serde(rename = "parentFolderId", default)]
+    pub parent_folder_id: Option<String>,
+}
+
+/// Whether `hit` is in the Drafts folder `drafts`; when either folder is unknown it counts as
+/// in, as before Rail read folders here.
+fn in_drafts(hit: &DraftHit, drafts: Option<&str>) -> bool {
+    match (hit.parent_folder_id.as_deref(), drafts) {
+        (Some(folder), Some(drafts)) => folder == drafts,
+        _ => true,
+    }
 }
 
 pub(super) fn refused_id() -> ProviderError {
@@ -135,22 +149,38 @@ impl GraphProvider {
         })
     }
 
+    /// `PATCH` the draft `id`; made again when it is gone or, by the `PATCH`'s answer, no
+    /// longer in Drafts (the copy in Deleted Items stays there).
     async fn update_or_create(
         &self,
         id: &str,
         mail: &OutgoingMail,
     ) -> Result<RemoteId, ProviderError> {
-        match self.patch_draft(id, mail).await {
-            Ok(()) => Ok(id.to_string()),
+        let answer = match self.patch_draft(id, mail).await {
+            Ok(answer) => answer,
             Err(ProviderError::NotFound) => {
                 tracing::info!(draft = id, "the Outlook draft is gone; saving it again");
-                self.create(mail).await
+                return self.create(mail).await;
             }
-            Err(error) => Err(error),
+            Err(error) => return Err(error),
+        };
+        let hit = answer.and_then(|bytes| serde_json::from_slice::<DraftHit>(&bytes).ok());
+        let Some(hit) = hit.filter(|h| h.parent_folder_id.is_some()) else {
+            return Ok(id.to_string());
+        };
+        if in_drafts(&hit, self.drafts_folder().await?.as_deref()) {
+            return Ok(id.to_string());
         }
+        tracing::info!(draft = id, "the Outlook draft left Drafts; saving it again");
+        self.create(mail).await
     }
 
-    async fn patch_draft(&self, id: &str, mail: &OutgoingMail) -> Result<(), ProviderError> {
+    /// `PATCH` Rail's fields onto the draft `id`; Graph's answer (the message), unparsed.
+    async fn patch_draft(
+        &self,
+        id: &str,
+        mail: &OutgoingMail,
+    ) -> Result<Option<Vec<u8>>, ProviderError> {
         if !graph_id(id) {
             return Err(refused_id());
         }
@@ -164,7 +194,24 @@ impl GraphProvider {
                 true,
             )
             .await
-            .map(|_| ())
+    }
+
+    /// The Drafts folder's id: from the last folder listing, else `GET me/mailFolders/drafts`;
+    /// `None` when the mailbox has none.
+    async fn drafts_folder(&self) -> Result<Option<RemoteId>, ProviderError> {
+        if let Some(id) = self.known_folder(FolderKind::Drafts) {
+            return Ok(Some(id));
+        }
+        let query = [("$select", "id".to_string())];
+        match self
+            .api
+            .get_json::<IdOnly>("me/mailFolders/drafts", &query, COST_REQUEST)
+            .await
+        {
+            Ok(found) if graph_id(&found.id) => Ok(Some(found.id)),
+            Ok(_) | Err(ProviderError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// A new draft: on its source for a reply or forward (then patched with Rail's fields), or
@@ -176,7 +223,7 @@ impl GraphProvider {
         };
         match self.create_from(source, action).await {
             Ok(id) => match self.patch_draft(&id, mail).await {
-                Ok(()) => Ok(id),
+                Ok(_) => Ok(id),
                 Err(error) => {
                     self.discard_orphan(&id).await;
                     Err(error)
@@ -228,24 +275,38 @@ impl GraphProvider {
         created_id(answer.as_deref())
     }
 
-    /// The Outlook draft carrying `message_id`, if one exists.
+    /// The Outlook draft in Drafts carrying `message_id`, if one exists. A draft moved to
+    /// Deleted Items shares Rail's `Message-ID` with one made again since, and is skipped.
     async fn draft_by_message_id(
         &self,
         message_id: &str,
     ) -> Result<Option<RemoteId>, ProviderError> {
-        let hits = self.messages_with_id(message_id).await?;
-        Ok(hits.into_iter().find(|hit| hit.is_draft).map(|hit| hit.id))
+        let drafts: Vec<DraftHit> = self
+            .messages_with_id(message_id)
+            .await?
+            .into_iter()
+            .filter(|hit| hit.is_draft)
+            .collect();
+        let folder = if drafts.iter().any(|hit| hit.parent_folder_id.is_some()) {
+            self.drafts_folder().await?
+        } else {
+            None
+        };
+        Ok(drafts
+            .into_iter()
+            .find(|hit| in_drafts(hit, folder.as_deref()))
+            .map(|hit| hit.id))
     }
 
-    /// Every message whose `internetMessageId` is `message_id`, across folders. An id Rail
-    /// would not put in a path is an error, never "not there".
+    /// Every message whose `internetMessageId` is `message_id`, across folders, with its
+    /// folder. An id Rail would not put in a path is an error, never "not there".
     pub(super) async fn messages_with_id(
         &self,
         message_id: &str,
     ) -> Result<Vec<DraftHit>, ProviderError> {
         let query = [
             ("$filter", message_id_filter(message_id)),
-            ("$select", "id,isDraft".to_string()),
+            ("$select", "id,isDraft,parentFolderId".to_string()),
         ];
         let page: Page<DraftHit> = self
             .api

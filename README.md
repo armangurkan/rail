@@ -777,9 +777,10 @@ Microsoft Graph.
   or forward whose original was deleted in Outlook goes out as a new message, outside the
   conversation.
 - **Drafts.** `s` saves the draft to Outlook's Drafts (`saved to Microsoft 365 · z undoes`); later
-  saves update the same Outlook draft, and one deleted in Outlook is made again. Sending a saved
-  draft sends that very draft, so none is left in Drafts. A draft written in Outlook opens in Rail
-  with its attached files; `d` on it deletes it in Outlook (it goes to Deleted Items). When Outlook
+  saves update the same Outlook draft, and one deleted in Outlook is made again in Drafts (the
+  deleted copy stays in Deleted Items). Sending a saved draft sends that very draft, so none is
+  left in Drafts. A draft written in Outlook opens in Rail with its attached files; `d` on it
+  deletes it in Outlook (it goes to Deleted Items). When Outlook
   made a reply, reply to everyone or forward draft but its answer was lost on the way back (a
   timeout, say), Rail does not know that draft exists and makes another on the retry, so an extra
   copy can stay in Outlook's Drafts: delete it there.

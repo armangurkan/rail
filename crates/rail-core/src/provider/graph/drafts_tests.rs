@@ -1,8 +1,9 @@
 //! Outlook drafts through Graph's message model against fake Graph: a new message is posted
 //! with Rail's fields; a reply, reply-all and forward are made on their source and patched; an
 //! update patches the held draft and a 404 creates it again; a source Outlook lost becomes a
-//! new message; a draft lost after its create is found by its Message-ID; ids Rail would not
-//! put in a path and messages Rail would not send are refused before any request; every
+//! new message; a draft lost after its create is found by its Message-ID; a draft outside the
+//! Drafts folder (moved to Deleted Items) is gone, so a save makes a new one; ids Rail would
+//! not put in a path and messages Rail would not send are refused before any request; every
 //! request asks for immutable ids.
 
 use serde_json::{Value, json};
@@ -77,7 +78,7 @@ pub(super) async fn found(g: &Graph, hits: Value) {
             "$filter",
             format!("internetMessageId eq '{MESSAGE_ID}'"),
         ))
-        .and(query_param("$select", "id,isDraft"))
+        .and(query_param("$select", "id,isDraft,parentFolderId"))
         .and(header("Prefer", IMMUTABLE_IDS))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"value": hits})))
         .mount(&g.server)
@@ -341,4 +342,110 @@ async fn a_reply_whose_patch_fails_is_deleted_and_the_patch_error_returned() {
         "{error:?}"
     );
     g.server.verify().await;
+}
+
+/// The draft `id`, as a `PATCH` answers it, sits in `folder`.
+async fn patched_in(g: &Graph, id: &str, folder: &str) {
+    Mock::given(method("PATCH"))
+        .and(path(format!("{ROOT}/me/messages/{id}")))
+        .and(body_json(fields()))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"id": id, "isDraft": true, "parentFolderId": folder})),
+        )
+        .expect(1)
+        .mount(&g.server)
+        .await;
+}
+
+/// Requests that would move or delete `id`: none may touch the copy the user put in the trash.
+async fn moved_or_deleted(g: &Graph, id: &str) -> usize {
+    let at = format!("{ROOT}/me/messages/{id}");
+    g.server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            let p = r.url.path();
+            (r.method.as_str() == "DELETE" && p == at) || p == format!("{at}/move")
+        })
+        .count()
+}
+
+#[tokio::test]
+async fn a_saved_draft_moved_to_deleted_items_is_made_again_in_drafts() {
+    let g = Graph::start().await;
+    g.mount_well_known(&[("drafts", "f-drafts")]).await;
+    none_found(&g).await;
+    no_attachments(&g, "g-d1").await;
+    posted_new(&g, "g-d1", 1).await;
+    let provider = g.provider();
+    let first = provider.draft_save(&mail(DraftKind::New, None, None)).await;
+    assert_eq!(first.unwrap(), ids("g-d1"));
+    g.reset().await;
+    g.mount_well_known(&[("drafts", "f-drafts")]).await;
+    patched_in(&g, "g-d1", "f-deleted").await;
+    no_attachments(&g, "g-d2").await;
+    posted_new(&g, "g-d2", 1).await;
+    let again = provider
+        .draft_save(&mail(DraftKind::New, None, Some("g-d1")))
+        .await;
+    assert_eq!(again.unwrap(), ids("g-d2"), "a new draft, in Drafts");
+    g.server.verify().await;
+    assert_eq!(
+        moved_or_deleted(&g, "g-d1").await,
+        0,
+        "the trashed copy stays"
+    );
+    g.reset().await;
+    g.mount_well_known(&[("drafts", "f-drafts")]).await;
+    patched_in(&g, "g-d2", "f-drafts").await;
+    no_attachments(&g, "g-d2").await;
+    posted_new(&g, "never", 0).await;
+    let kept = provider
+        .draft_save(&mail(DraftKind::New, None, Some("g-d2")))
+        .await;
+    assert_eq!(kept.unwrap(), ids("g-d2"), "one in Drafts is updated");
+}
+
+#[tokio::test]
+async fn the_message_id_lookup_takes_only_a_draft_in_drafts() {
+    let g = Graph::start().await;
+    g.mount_well_known(&[("drafts", "f-drafts")]).await;
+    found(
+        &g,
+        json!([
+            {"id": "g-trash", "isDraft": true, "parentFolderId": "f-deleted"},
+            {"id": "g-live", "isDraft": true, "parentFolderId": "f-drafts"}
+        ]),
+    )
+    .await;
+    no_attachments(&g, "g-live").await;
+    patched_in(&g, "g-live", "f-drafts").await;
+    posted_new(&g, "never", 0).await;
+    let provider = g.provider();
+    let saved = provider.draft_save(&mail(DraftKind::New, None, None)).await;
+    assert_eq!(
+        saved.unwrap(),
+        ids("g-live"),
+        "the one in Drafts, not the trashed copy"
+    );
+    g.server.verify().await;
+    g.reset().await;
+    g.mount_well_known(&[("drafts", "f-drafts")]).await;
+    found(
+        &g,
+        json!([{"id": "g-trash", "isDraft": true, "parentFolderId": "f-deleted"}]),
+    )
+    .await;
+    no_attachments(&g, "g-new").await;
+    posted_new(&g, "g-new", 1).await;
+    let saved = provider.draft_save(&mail(DraftKind::New, None, None)).await;
+    assert_eq!(
+        saved.unwrap(),
+        ids("g-new"),
+        "only a trashed copy: made again"
+    );
+    assert_eq!(moved_or_deleted(&g, "g-trash").await, 0);
 }

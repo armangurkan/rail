@@ -54,8 +54,8 @@ use std::time::Duration;
 
 use super::http::ApiClient;
 use super::{
-    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, OutgoingMail, PageToken, Profile,
-    ProviderError, RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
+    Body, Change, ChangeSet, DraftIds, EnvelopePage, FolderKind, IdPage, OutgoingMail, PageToken,
+    Profile, ProviderError, RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 use crate::config::SyncSettings;
 
@@ -124,6 +124,15 @@ impl GraphProvider {
         } else {
             Ok(cached)
         }
+    }
+
+    /// The id of the folder of `kind` the last listing found; `None` before any listing.
+    pub(crate) fn known_folder(&self, kind: FolderKind) -> Option<RemoteId> {
+        let folders = self.folders.lock().unwrap_or_else(PoisonError::into_inner);
+        folders
+            .iter()
+            .find(|f| f.kind == kind)
+            .map(|f| f.remote_id.clone())
     }
 
     /// Whether the last listing found `folder` (true before any listing).
