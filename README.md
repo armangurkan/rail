@@ -271,14 +271,23 @@ are in, with `*` after the ones set in `config.toml`.
 `rail` with an account configured opens the mail screen. It needs an interactive terminal; in a
 pipe it prints a hint and exits 2. It reads the local store at once, and connects to the background
 daemon (starting it if needed) for sync progress. If the store is not set up yet, the list says so
-and points to `rail sync`; if the daemon cannot be reached, the status bar says so and `Ctrl-r`
-retries.
+and points to `rail sync`; if the daemon cannot be reached, the header says so
+(`daemon unreachable (Ctrl-r retries)`) and `Ctrl-r` retries.
 
 The thread list shows the unified inbox: the account's colour dot, the date, the people, the
 message count, `★` for starred and `📎` for attachments, and the subject; unread threads are bold.
 `1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
 and wider; `b` toggles it, `Tab` moves into it) lists every account and its labels (up to 500
 per account) with their unread counts; `Enter` opens one.
+
+The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread`, a search slot
+(`/ Search`; the filter shows there once set), and on the right one line for every account's
+sync: `● Synced 14:47` when all are caught up (the earliest account's time), else the worst
+state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
+`! work needs login`, `! work sync failed`, or the daemon's state). At 140 columns and wider the
+sidebar, the list and the reader are boxed, the focused pane in the accent colour. The last row
+names the keys of the pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`,
+with the keys your `config.toml` sets) and shows each account's state on the right.
 
 `Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
 beside the list; narrower, it covers the screen. `q` or `Esc` closes it. Messages are oldest
@@ -328,7 +337,8 @@ and recipients (To, Cc and Bcc) and stored bodies; `from:`, `to:` (also Cc and B
 `has:attachment`, `is:unread`, `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates,
 by when the mail arrived) and `account:<name>` narrow it; quote values with spaces
 (`from:"Dana Reyes"`). A thread matches when one of its messages matches all of them. Anything else
-is searched as words, and the status bar shows how Rail read your filter, so a typo such as
+is searched as words, and the filter line (and the header's search slot once you keep the
+filter) shows how Rail read your filter, so a typo such as
 `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
 local store only (`rail search` also asks each account's server).
 
@@ -340,16 +350,16 @@ marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.h
 `Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more`
 line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond the box.
 
-The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
+The last row shows, on the right, each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, and `!` for `needs login` or `sync failed`). After the state
 come `sending…` while a message is on its way, `saving to Gmail…` (`saving to Microsoft 365…`)
 while a draft is saved, `2 queued` for actions on their way to the account's server and
 `1 failed` for actions it refused; see
 [Doing things to mail](#doing-things-to-mail).
-With threads selected, `3 selected` leads the bar. Next to the accounts it shows whether the
-daemon can be reached (`connecting to the daemon…`, `daemon unreachable`, or
-`daemon reachable again` once a message fetch gets through after the connection was lost), and
-notices. When the daemon cannot be reached the list still reads from the store; `Ctrl-r`
+With threads selected, the header ends with `3 selected`. Whether the daemon can be reached shows
+in the header (`connecting to the daemon…`, `daemon unreachable (Ctrl-r retries)`, or
+`daemon reachable again (Ctrl-r resumes live updates)` once a message fetch gets through after the
+connection was lost); notices show on the last row, in place of the key hints. When the daemon cannot be reached the list still reads from the store; `Ctrl-r`
 reconnects (and starts a sync) and resumes live updates. A store read that fails says so where it
 was shown (the list, the top of the sidebar, or the reader's title) and in the status bar;
 `:errors` keeps it.
@@ -362,7 +372,7 @@ Rail paints itself from a colour scheme of its own, on any terminal that shows 2
 `Rail default` first; letters filter, `↓`/`↑` and `Ctrl-n`/`Ctrl-p` move, and the screen takes
 each scheme as the highlight reaches it. `Enter` keeps it and writes `theme = "Name"` under
 `[general]` in `config.toml` (choosing `Rail default` removes the key); `Esc` puts the previous
-look back. `:accent` does the same for the accent (box borders, titles and headings, what you
+look back. `:accent` does the same for the accent (the focused pane's border, box borders, titles and headings, what you
 type in the palette and the filter, the sync spinner): `scheme default` or one of the scheme's
 sixteen palette slots, saved as `accent = N`. The status bar confirms `theme: Dracula` or
 `accent: 5 magenta`; a save that fails says `Could not save the theme: …` (`:errors` keeps it)
@@ -394,13 +404,13 @@ the list, and Rail does not create labels. A selection that spans two accounts c
 or moved at once; Rail says `Labels belong to one account: select threads from one account.`
 
 `Space` selects the thread under the cursor (a `▸` replaces its dot, `>` with `icons = "ascii"`)
-and moves down; the status bar counts the selection (`3 selected`). With a selection, an action
+and moves down; the header counts the selection (`3 selected`). With a selection, an action
 applies to every selected thread, then the selection clears; `Esc` clears it. The selection stays
 while you change the filter or the mailbox. In the reader, the keys act on the open thread, not on
 the selection, which stays as it was (`Space` still pages down, and selecting is for the list);
 archive, trash and move close the reader.
 
-After an action the status bar says what happened, for example `archived 3 · z undoes`. For ten
+After an action the last row says what happened, in place of the key hints, for example `archived 3 · z undoes`. For ten
 seconds `z` takes it back; afterwards it says `Too late to undo.`, and with nothing done,
 `Nothing to undo.` If the daemon has not answered yet, `z` says `undoing…` and finishes when it
 does. Only the most recent action can be undone, and marking a thread read by opening it has no

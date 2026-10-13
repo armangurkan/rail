@@ -2,7 +2,7 @@
 source: crates/rail/src/tui/screens/mail/view_tests.rs
 expression: "draw(&screen, width, height)"
 ---
-|All inboxes  2 accounts · 5 unread                                                 ? help
+|Rail │ All inboxes · 2 accounts · 5 unread  / Search                 ~ Backfill 1200/5000
 *      11:54  Dana Reyes, Tom         (3) +   Q4 roadmap review — can we move to Thursday?
 *      09:53  GitLab                       @  Pipeline failed: rail!42
 *  Yesterday  Sender                          subject h1
@@ -25,4 +25,4 @@ expression: "draw(&screen, width, height)"
 
 
 
-work ok  ·  home ~ 1200/5000
+Enter open  j/k move  r reply  c compose  ? help            * work ok · * home ~ 1200/5000

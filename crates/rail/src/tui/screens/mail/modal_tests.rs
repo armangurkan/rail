@@ -126,7 +126,7 @@ async fn the_status_line_shows_the_parsed_filter_and_esc_clears_it() {
     settle(&mut screen, effects).await;
     assert!(screen.filter.is_empty());
     assert_eq!(screen.list.rows().len(), 10);
-    assert!(!screen.status_line().starts_with("filter:"));
+    assert_eq!(screen.slot_text(), "/ Search", "the slot is idle again");
 }
 
 #[tokio::test]

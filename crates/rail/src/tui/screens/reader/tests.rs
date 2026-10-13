@@ -563,14 +563,21 @@ async fn the_reader_is_a_pane_when_wide_and_a_full_screen_view_when_narrow() {
         wide.contains("Q4 plan") && wide.contains("All inboxes"),
         "list and reader together: {wide}"
     );
+    // Narrow, the reader takes the body: its title is the first row under the header.
     let narrow = draw(&f, 90, 24);
+    let body = narrow.lines().nth(1).unwrap_or_default();
     assert!(
-        !narrow.contains("All inboxes"),
+        body.starts_with("Q4 plan  (3 messages)"),
         "the reader covers the list: {narrow}"
     );
     press(&mut f, KeyCode::Char('q')).await;
     assert_eq!(f.screen.focus, Focus::List);
-    assert!(draw(&f, 90, 24).contains("All inboxes"));
+    let list = draw(&f, 90, 24);
+    let body = list.lines().nth(1).unwrap_or_default();
+    assert!(
+        body.contains("Q4 plan") && !body.contains("(3 messages)"),
+        "the list is back: {list}"
+    );
 }
 
 #[tokio::test]

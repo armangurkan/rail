@@ -73,10 +73,6 @@ pub(super) struct HeaderCells {
     pub right: Option<String>,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
     let joined = header.joined();
     let left_w = width(&joined);
@@ -103,10 +99,6 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
 }
 
 /// Draw `header` in `area` (one row); the slot's rect when it is drawn, for the filter line.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 pub(super) fn render_header(
     frame: &mut Frame,
     area: Rect,
@@ -158,10 +150,6 @@ pub(super) fn render_header(
 
 impl MailScreen {
     /// The header's three parts from the screen's state.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
     pub(super) fn header(&self) -> Header {
         Header {
             left: self.scope_left(),
@@ -177,10 +165,7 @@ impl MailScreen {
     }
 
     /// `▍Rail │ All inboxes · 2 accounts · 22,853 unread · 3 selected`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
+    #[cfg(test)]
     pub(crate) fn header_left(&self) -> String {
         Header {
             left: self.scope_left(),
@@ -195,10 +180,6 @@ impl MailScreen {
     }
 
     /// The scope, its account count and its unread count.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
     fn scope_left(&self) -> String {
         let glyphs = Glyphs::of(self.ctx.icons);
         let mut left = format!("{}Rail │ {}", glyphs.bar, self.scope_title());
@@ -213,29 +194,19 @@ impl MailScreen {
     }
 
     /// How many threads are selected, when any.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
     fn selected_count(&self) -> Option<u64> {
         let n = self.actions.selection.len();
         (n > 0).then(|| u64::try_from(n).unwrap_or(u64::MAX))
     }
 
     /// The summary's text, for tests.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
+    #[cfg(test)]
     pub(crate) fn header_summary(&self) -> String {
         self.header().right.text
     }
 
     /// The slot's text, for tests (empty in the Drafts pane).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
+    #[cfg(test)]
     pub(crate) fn slot_text(&self) -> String {
         match self.slot() {
             Slot::None => String::new(),
@@ -243,10 +214,6 @@ impl MailScreen {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
     fn slot(&self) -> Slot {
         if self.in_drafts() {
             return Slot::None;

@@ -17,10 +17,6 @@ const LIST_SHARE: u16 = 45;
 pub struct Areas {
     pub header: Rect,
     /// Everything between the header and the hint row.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
     pub body: Rect,
     pub sidebar: Option<Rect>,
     pub list: Rect,
@@ -34,10 +30,6 @@ pub fn is_split(width: u16, threshold: u16) -> bool {
 }
 
 /// Panes are boxed in split mode only.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 pub fn bordered(width: u16, threshold: u16) -> bool {
     is_split(width, threshold)
 }
@@ -47,19 +39,11 @@ pub fn sidebar_by_default(width: u16) -> bool {
 }
 
 /// A border needs a cell on each side and one row of content inside.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 pub fn fits_border(area: Rect) -> bool {
     area.width >= 4 && area.height >= 3
 }
 
 /// A pane's box: the focused pane's in `border_focus`, the others' in `border`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 pub fn pane_block(theme: &Theme, focused: bool) -> Block<'static> {
     let style = if focused {
         theme.border_focus

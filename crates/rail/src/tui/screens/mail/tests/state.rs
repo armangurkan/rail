@@ -198,10 +198,10 @@ async fn a_failed_reread_of_the_open_thread_shows_in_the_reader_not_the_list() {
     assert_eq!(f.screen.store_state, StoreState::Ready, "the list stays");
     assert_eq!(f.screen.list.rows().len(), 5);
     assert!(f.screen.reader.is_some(), "the reader stays open");
-    // Row 1 holds the list's first row and the reader pane's title row.
+    // Row 2 holds the list's first row and the reader pane's title row, inside their boxes.
     let rows = draw(&f);
     assert!(
-        rows[1].contains("The thread could not be read: disk I/O error"),
+        rows[2].contains("The thread could not be read: disk I/O error"),
         "{rows:#?}"
     );
     assert!(

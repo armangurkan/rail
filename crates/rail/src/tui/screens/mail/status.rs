@@ -219,10 +219,6 @@ impl StatusBar {
     /// state (the first such account on a tie), failed outbox rows before a stopped account,
     /// `stopped` alone when every account is, and `Synced` at the earliest success time when
     /// nothing is wrong.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
     pub fn summary(
         &self,
         accounts: &[AccountEntry],
@@ -269,7 +265,7 @@ impl StatusBar {
     }
 
     /// The daemon's state when it is not plainly connected.
-    pub(super) fn daemon_text(&self, keymap: &Keymap) -> Option<String> {
+    fn daemon_text(&self, keymap: &Keymap) -> Option<String> {
         let refresh = keymap.label(Action::ListRefresh);
         match self.daemon {
             DaemonState::Connected => None,
@@ -282,6 +278,7 @@ impl StatusBar {
     }
 
     /// The bar's text (every part escaped): the notice, then each account.
+    #[cfg(test)]
     pub fn line(&self, accounts: &[AccountEntry], glyphs: &Glyphs) -> String {
         let mut parts: Vec<String> = self.notice().map(str::to_string).into_iter().collect();
         for account in accounts {
@@ -298,10 +295,6 @@ impl StatusBar {
 const NO_SYNC_YET: &str = "– no sync yet";
 
 /// The first account at the worst rank gives the phrase.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 fn worst_summary(ranked: &[(u8, String)], worst: u8) -> Summary {
     let text = ranked
         .iter()
@@ -314,10 +307,6 @@ fn worst_summary(ranked: &[(u8, String)], worst: u8) -> Summary {
 }
 
 /// An account's rank and the summary phrase it would give.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 fn rank(name: &str, s: Option<&AccountSyncStatus>, glyphs: &Glyphs) -> (u8, String) {
     let Some(s) = s else {
         return (RANK_BUSY, NO_SYNC_YET.to_string());

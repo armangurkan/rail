@@ -8,6 +8,12 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- The mail screen's frame: a header row with the scope, its counts, a search slot and one sync
+  summary (`● Synced 14:47`, or the worst account's state); the sidebar, the list and the reader
+  boxed at 140 columns and wider, the focused pane in the accent colour; and a last row of key
+  hints for the pane you are in, built from your keymap, with each account's state on the right.
+  Notices (`archived 3 · z undoes`) show in place of the hints. `3 selected` and the daemon's
+  state moved from the status bar to the header.
 - Writing Microsoft 365 mail over Microsoft Graph: `c`, `r`, `R` and `f` write from a Microsoft
   365 account and `y` sends with the ten second `z` undo; `s` saves to Outlook's Drafts
   (`saved to Microsoft 365 · z undoes`) and later saves update the same draft, or make it again

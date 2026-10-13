@@ -15,10 +15,6 @@ use crate::tui::text::{escape, fit, width};
 use crate::tui::theme::Theme;
 
 /// Which hint set the bar shows.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Pane {
     List,
@@ -28,10 +24,6 @@ pub(super) enum Pane {
     Compose,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Hint {
     pub key: String,
@@ -43,10 +35,6 @@ const SEP: &str = "  ";
 /// Between two accounts on the right.
 const ACCOUNT_SEP: &str = " · ";
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 fn hint(key: String, word: &str) -> Hint {
     Hint {
         key,
@@ -55,19 +43,11 @@ fn hint(key: String, word: &str) -> Hint {
 }
 
 /// `j/k`: the two actions' first keys.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 fn pair(keymap: &Keymap, a: Action, b: Action) -> String {
     format!("{}/{}", keymap.label(a), keymap.label(b))
 }
 
 /// The hints of `pane`, `? help` last; `provider` is where the composer's `s` saves.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 pub(super) fn hints(pane: Pane, keymap: &Keymap, sidebar_shown: bool, provider: &str) -> Vec<Hint> {
     let l = |a: Action| keymap.label(a);
     let mut out = match pane {
@@ -119,29 +99,18 @@ pub(super) fn hints(pane: Pane, keymap: &Keymap, sidebar_shown: bool, provider: 
     out
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 fn one_width(h: &Hint) -> usize {
     width(&h.key) + 1 + width(&h.word)
 }
 
 /// The cells `hints` take, separators included.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
+#[cfg(test)]
 pub(super) fn hint_width(hints: &[Hint]) -> usize {
     let text: usize = hints.iter().map(one_width).sum();
     text + width(SEP) * hints.len().saturating_sub(1)
 }
 
 /// The hints that fit in `room`: whole hints from the left, the last one (`? help`) always.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 pub(super) fn fit_hints(hints: &[Hint], room: usize) -> Vec<Hint> {
     let Some((help, rest)) = hints.split_last() else {
         return Vec::new();
@@ -161,10 +130,6 @@ pub(super) fn fit_hints(hints: &[Hint], room: usize) -> Vec<Hint> {
 }
 
 /// What the bar draws.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 pub(super) struct Bar<'a> {
     pub hints: Vec<Hint>,
     /// A notice in place of the hints, and whether it is an error.
@@ -188,10 +153,6 @@ impl Bar<'_> {
 }
 
 /// The right part: coloured per account when it fits whole, else cut as one muted string.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 fn right_spans(bar: &Bar<'_>, theme: &Theme, room: usize) -> Vec<Span<'static>> {
     let whole = bar.right_text();
     if width(&whole) > room {
@@ -212,10 +173,6 @@ fn right_spans(bar: &Bar<'_>, theme: &Theme, room: usize) -> Vec<Span<'static>> 
 }
 
 /// The left part: the notice, or the hints that fit in `room`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 fn left_spans(bar: &Bar<'_>, theme: &Theme, room: usize) -> Vec<Span<'static>> {
     if let Some((text, error)) = bar.notice {
         let style = if error { theme.error } else { theme.muted };
@@ -234,10 +191,6 @@ fn left_spans(bar: &Bar<'_>, theme: &Theme, room: usize) -> Vec<Span<'static>> {
 
 /// Draw the bar: the left part, then the accounts at the right edge. The accounts give way
 /// first, down to what leaves room for `? help`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn from the frame task on; remove then")
-)]
 pub(super) fn render_hints(frame: &mut Frame, area: Rect, theme: &Theme, bar: &Bar<'_>) {
     let cols = usize::from(area.width);
     let help_w = bar.hints.last().map_or(0, one_width);
@@ -253,10 +206,6 @@ pub(super) fn render_hints(frame: &mut Frame, area: Rect, theme: &Theme, bar: &B
 }
 
 impl MailScreen {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
     pub(super) fn pane(&self) -> Pane {
         match self.focus {
             Focus::Compose => Pane::Compose,
@@ -268,10 +217,6 @@ impl MailScreen {
     }
 
     /// The bar from the screen's state: the focused pane's hints, the notice, the accounts.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawn from the frame task on; remove then")
-    )]
     pub(super) fn bar(&self, theme: &Theme) -> Bar<'_> {
         let glyphs = Glyphs::of(self.ctx.icons);
         let provider = self.compose.as_ref().map_or("", |c| {
@@ -451,5 +396,58 @@ mod tests {
         let narrow = draw_bar(&sample_bar(None), 30);
         assert!(narrow.contains("? help"), "{narrow}");
         assert_eq!(width(&narrow), 30);
+    }
+
+    fn bar_buffer(bar: &Bar<'_>, cols: u16) -> ratatui::buffer::Buffer {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, 1)).unwrap();
+        terminal
+            .draw(|frame| render_hints(frame, frame.area(), &Theme::default(), bar))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn accounts_too_wide_for_the_room_are_cut_as_one_muted_string() {
+        let bar = sample_bar(None);
+        let row = draw_bar(&bar, 20);
+        assert!(row.starts_with("? help"), "help keeps its room: {row}");
+        assert!(row.contains("● work"), "{row}");
+        assert!(!row.contains("home"), "the right part is cut: {row}");
+        assert_eq!(width(&row), 20);
+        let buffer = bar_buffer(&bar, 20);
+        let dot = (0..20u16)
+            .find(|x| buffer[(*x, 0)].symbol() == "●")
+            .unwrap();
+        assert_eq!(
+            buffer[(dot, 0)].fg,
+            Theme::default().muted.fg.unwrap(),
+            "a cut part loses the account colours"
+        );
+    }
+
+    #[test]
+    fn an_error_notice_is_drawn_in_the_error_style() {
+        let theme = Theme::default();
+        let error = bar_buffer(&sample_bar(Some(("Could not archive", true))), 80);
+        assert_eq!(error[(0, 0)].fg, theme.error.fg.unwrap());
+        let plain = bar_buffer(&sample_bar(Some(("Archived", false))), 80);
+        assert_eq!(plain[(0, 0)].fg, theme.muted.fg.unwrap());
+    }
+
+    #[test]
+    fn account_names_in_the_bar_are_escaped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = crate::tui::test_util::mail_ctx(
+            &rail_core::paths::Paths::all_in(tmp.path()),
+            std::sync::Arc::new(crate::tui::data::FakeDaemon::default()),
+        );
+        let mut accounts = crate::tui::test_util::work_and_home();
+        accounts[0].name = "wo\u{1b}[2Jrk".into();
+        let screen = MailScreen::new(ctx, accounts);
+        let bar = screen.bar(&Theme::default());
+        let text = &bar.right[0].1;
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+        assert!(text.contains("wo\\u{1b}[2Jrk"), "{text:?}");
     }
 }

@@ -1,17 +1,19 @@
 //! Drawing the mail screen: the header, the sidebar, the list, the reader pane (a placeholder
-//! until a thread is open) and the status bar. Every outside string goes through `tui::text`.
+//! until a thread is open), each boxed in split mode, and the hint bar. Every outside string
+//! goes through `tui::text`.
 
 use rail_core::config::Icons;
 use rail_core::provider::Mailbox;
 use rail_core::store::view::ThreadRow;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::layout::{self, areas};
 use super::{Focus, MailScreen, StoreState};
+use super::{header, hints};
 use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
 use crate::tui::text::{escape, fit, outside, pad, pad_left, width};
@@ -112,59 +114,77 @@ impl MailScreen {
         let sidebar = self
             .sidebar_shown
             .unwrap_or_else(|| layout::sidebar_by_default(area.width));
-        let pane = layout::is_split(area.width, self.ctx.split_threshold);
-        let parts = areas(area, sidebar, pane);
-        self.size.set((parts.list.height, area.width));
+        let split = layout::is_split(area.width, self.ctx.split_threshold);
+        let boxed = layout::bordered(area.width, self.ctx.split_threshold);
+        let parts = areas(area, sidebar, split);
+        self.size.set((Self::list_rows(&parts, boxed), area.width));
         // An OSC 8 cell claims the cells after it, so the diff skips them; a modal drawn over
         // them could lose its border. While a modal is open the markers are plain `[n]`.
         let hyperlinks = self.ctx.hyperlinks && self.modal.is_none();
+        let slot = header::render_header(frame, parts.header, theme, &self.header());
+        self.slot_rect.set(slot);
         if let Some(composer) = &self.compose {
-            let [body, _] =
-                Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
-            composer.render(frame, body, theme, &glyphs);
-            self.render_status(frame, parts.hints, theme);
-            if let Some(modal) = &self.modal {
-                modal.render(frame, area, theme);
-            }
-            return;
-        }
-        match (self.reader.as_ref(), parts.reader) {
-            (Some(reader), Some(pane)) => {
-                self.render_browse(frame, &parts, theme, &glyphs);
-                let focused = self.focus == Focus::Reader;
-                reader.render(frame, pane, theme, hyperlinks, focused);
-            }
-            (Some(reader), None) => {
-                let [body, _] =
-                    Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
-                reader.render(frame, body, theme, hyperlinks, true);
-            }
-            (None, pane) => {
-                self.render_browse(frame, &parts, theme, &glyphs);
-                if let Some(pane) = pane {
-                    self.render_pane(frame, pane, theme);
+            composer.render(frame, parts.body, theme, &glyphs);
+        } else {
+            match (self.reader.as_ref(), parts.reader) {
+                (Some(reader), Some(pane)) => {
+                    self.render_browse(frame, &parts, boxed, theme, &glyphs);
+                    let focused = self.focus == Focus::Reader;
+                    let inner = Self::boxed(frame, pane, boxed, focused, theme);
+                    reader.render(frame, inner, theme, hyperlinks, focused);
+                }
+                (Some(reader), None) => reader.render(frame, parts.body, theme, hyperlinks, true),
+                (None, pane) => {
+                    self.render_browse(frame, &parts, boxed, theme, &glyphs);
+                    if let Some(pane) = pane {
+                        let inner = Self::boxed(frame, pane, boxed, false, theme);
+                        self.render_pane(frame, inner, theme);
+                    }
                 }
             }
         }
-        self.render_status(frame, parts.hints, theme);
+        hints::render_hints(frame, parts.hints, theme, &self.bar(theme));
         if let Some(modal) = &self.modal {
             modal.render(frame, area, theme);
         }
     }
 
-    /// The header, the sidebar and the list.
+    /// The rows the list has: inside its box in split mode.
+    fn list_rows(parts: &layout::Areas, boxed: bool) -> u16 {
+        if boxed && layout::fits_border(parts.list) {
+            parts.list.height - 2
+        } else {
+            parts.list.height
+        }
+    }
+
+    /// Box `area` in split mode (when it is big enough) and give back the inside.
+    fn boxed(frame: &mut Frame, area: Rect, boxed: bool, focused: bool, theme: &Theme) -> Rect {
+        if !boxed || !layout::fits_border(area) {
+            return area;
+        }
+        let block = layout::pane_block(theme, focused);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        inner
+    }
+
+    /// The sidebar and the list, each boxed in split mode.
     fn render_browse(
         &self,
         frame: &mut Frame,
         parts: &layout::Areas,
+        boxed: bool,
         theme: &Theme,
         glyphs: &Glyphs,
     ) {
-        self.render_header(frame, parts.header, theme, glyphs);
         if let Some(side) = parts.sidebar {
-            self.render_sidebar(frame, side, theme, glyphs);
+            let focused = self.focus == Focus::Sidebar;
+            let inner = Self::boxed(frame, side, boxed, focused, theme);
+            self.render_sidebar(frame, inner, boxed, theme, glyphs);
         }
-        self.render_list(frame, parts.list, theme, glyphs);
+        let inner = Self::boxed(frame, parts.list, boxed, self.focus == Focus::List, theme);
+        self.render_list(frame, inner, theme, glyphs);
     }
 
     pub(super) fn scope_title(&self) -> String {
@@ -186,30 +206,25 @@ impl MailScreen {
         }
     }
 
-    fn render_header(&self, frame: &mut Frame, area: Rect, theme: &Theme, glyphs: &Glyphs) {
-        let unread = self.sidebar.unread(&self.scope);
-        let mut left = format!("{}{}", glyphs.bar, self.scope_title());
-        if self.scope == ScopeChoice::Unified {
-            let n = self.accounts.len();
-            left.push_str(&format!("  {n} account{}", if n == 1 { "" } else { "s" }));
-        }
-        left.push_str(&format!(" · {unread} unread"));
-        let right = format!("{} help", self.ctx.keymap.label(Action::GlobalHelp));
-        let room = usize::from(area.width).saturating_sub(width(&right) + 1);
-        let line = Line::from(vec![
-            Span::styled(pad(&left, room), theme.accent),
-            Span::raw(" "),
-            Span::styled(right, theme.muted),
-        ]);
-        frame.render_widget(Paragraph::new(line), area);
-    }
-
-    fn render_sidebar(&self, frame: &mut Frame, area: Rect, theme: &Theme, glyphs: &Glyphs) {
-        let block = Block::new()
-            .borders(Borders::RIGHT)
-            .border_style(theme.muted);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
+    /// Boxed, the box is the border; stacked, a line on the right in the border style.
+    fn render_sidebar(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        boxed: bool,
+        theme: &Theme,
+        glyphs: &Glyphs,
+    ) {
+        let inner = if boxed {
+            area
+        } else {
+            let block = Block::new()
+                .borders(Borders::RIGHT)
+                .border_style(theme.border);
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+            inner
+        };
         let cols = usize::from(inner.width);
         let items: Vec<Line> = self
             .sidebar
@@ -373,33 +388,12 @@ impl MailScreen {
 
     /// The split layout's pane before a thread is open.
     fn render_pane(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let block = Block::new()
-            .borders(Borders::LEFT)
-            .border_style(theme.muted);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
         let key = self.ctx.keymap.label(Action::ListOpen);
         let hint = if self.in_drafts() {
             format!("Open a draft with {key}; its review takes the screen.")
         } else {
             format!("Open a thread with {key}; it shows here.")
         };
-        frame.render_widget(Paragraph::new(Line::styled(hint, theme.muted)), inner);
-    }
-
-    fn render_status(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let style = if self.status.notice_is_error() {
-            theme.error
-        } else {
-            theme.muted
-        };
-        // Until the frame task draws the header's summary and the hint bar, the daemon's state
-        // stays in this row.
-        let mut text = self.status_line();
-        if let Some(daemon) = self.status.daemon_text(&self.ctx.keymap) {
-            text = format!("{text}  ·  {daemon}");
-        }
-        let text = fit(&text, usize::from(area.width));
-        frame.render_widget(Paragraph::new(Line::styled(text, style)), area);
+        frame.render_widget(Paragraph::new(Line::styled(hint, theme.muted)), area);
     }
 }

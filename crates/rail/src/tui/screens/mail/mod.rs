@@ -39,6 +39,7 @@ use rail_core::paths::Paths;
 use rail_core::store::filter::{Filter, parse};
 use rail_core::store::view::PageAt;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 #[cfg(test)]
@@ -163,6 +164,8 @@ pub struct MailScreen {
     store_state: StoreState,
     /// The list area's rows and the frame's width, from the last frame drawn.
     size: Cell<(u16, u16)>,
+    /// The header's search slot from the last frame drawn, when it was drawn.
+    slot_rect: Cell<Option<Rect>>,
     /// The newest list read that replaces the window (a scope change, `Home`, `End`) while it
     /// is in flight: a re-query reuses it instead of overriding it.
     navigating: Option<(PageAt, Place)>,
@@ -178,7 +181,7 @@ pub struct MailScreen {
     html_confirmed: bool,
     /// The message `o` is waiting on a body fetch for.
     pending_open: Option<i64>,
-    /// The message being written, drawn over everything but the status bar.
+    /// The message being written, drawn between the header and the hint bar.
     compose: Option<Composer>,
     composing: composing::ComposeState,
     /// The Drafts folder's pane and what its keys wait on.
@@ -228,6 +231,7 @@ impl MailScreen {
             sidebar_shown: None,
             store_state: StoreState::Loading,
             size: Cell::new((0, 0)),
+            slot_rect: Cell::new(None),
             navigating: None,
             reader: None,
             modal: None,
@@ -485,8 +489,9 @@ impl MailScreen {
         effects
     }
 
-    /// The bar's text without the hints: the notice, then each account; for tests and the
-    /// narrow view.
+    /// The notice, then each account, as text: what the hint bar shows without the hints;
+    /// for tests.
+    #[cfg(test)]
     pub(crate) fn status_line(&self) -> String {
         self.status
             .line(&self.accounts, &Glyphs::of(self.ctx.icons))

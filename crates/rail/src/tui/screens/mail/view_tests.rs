@@ -1,4 +1,4 @@
-//! The mail screen drawn: the list, the sidebar, the header and the status bar, at 90 columns
+//! The mail screen drawn: the header, the sidebar, the list and the hint bar, at 90 columns
 //! (no sidebar, stacked) and 150 (sidebar, split), with Unicode glyphs and with ASCII.
 
 use std::sync::Arc;
@@ -195,5 +195,133 @@ fn layout_pins_the_split_threshold_and_the_sidebar_rule() {
         layout::pane_block(&theme, true).inner(area),
         ratatui::layout::Rect::new(1, 1, 148, 38),
         "a boxed pane loses one cell on each side"
+    );
+}
+
+#[tokio::test]
+async fn the_frame_boxes_the_panes_in_split_mode_and_marks_the_focused_one() {
+    let (_tmp, mut screen) = screen(Icons::Unicode).await;
+    let theme = Theme::default();
+    let buffer_of = |screen: &MailScreen| {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(150, 40)).unwrap();
+        terminal.draw(|frame| screen.view(frame, &theme)).unwrap();
+        terminal.backend().buffer().clone()
+    };
+    // List focused: its top-left corner is at column 26 (after the 26-column sidebar).
+    let buffer = buffer_of(&screen);
+    assert_eq!(
+        buffer[(0, 1)].symbol(),
+        "┌",
+        "the sidebar's box starts under the header"
+    );
+    assert_eq!(buffer[(0, 1)].fg, theme.border.fg.unwrap());
+    assert_eq!(buffer[(26, 1)].symbol(), "┌");
+    assert_eq!(
+        buffer[(26, 1)].fg,
+        theme.border_focus.fg.unwrap(),
+        "the list has focus"
+    );
+    assert_ne!(buffer[(0, 39)].symbol(), "└", "the hint row is not boxed");
+    assert_eq!(
+        buffer[(0, 38)].symbol(),
+        "└",
+        "the sidebar's box ends above the hint row"
+    );
+    // Sidebar focused.
+    let effects = screen.update(crate::tui::app::Msg::Key(crate::tui::test_util::key(
+        crossterm::event::KeyCode::Tab,
+    )));
+    settle(&mut screen, effects).await;
+    let buffer = buffer_of(&screen);
+    assert_eq!(buffer[(0, 1)].fg, theme.border_focus.fg.unwrap());
+    assert_eq!(buffer[(26, 1)].fg, theme.border.fg.unwrap());
+}
+
+#[tokio::test]
+async fn the_header_and_the_hint_bar_are_on_every_screen() {
+    let (_tmp, mut screen) = screen(Icons::Unicode).await;
+    let rows = |screen: &MailScreen, w, h| {
+        crate::tui::test_util::render_lines(w, h, |frame| screen.view(frame, &Theme::default()))
+    };
+    let top = rows(&screen, 90, 24)[0].clone();
+    assert!(
+        top.starts_with("▍Rail │ All inboxes · 2 accounts · "),
+        "{top}"
+    );
+    assert!(top.contains("/ Search"), "{top}");
+    assert!(top.trim_end().ends_with("⟳ Backfill 1200/5000"), "{top}");
+    let bottom = rows(&screen, 90, 24)[23].clone();
+    assert!(bottom.starts_with("Enter open  j/k move"), "{bottom}");
+    assert!(
+        !bottom.contains("Tab sidebar"),
+        "no sidebar at 90 columns: {bottom}"
+    );
+    assert!(bottom.contains("? help"), "{bottom}");
+    assert!(
+        bottom.trim_end().ends_with("● work ✓ · ● home ⟳ 1200/5000"),
+        "{bottom}"
+    );
+    // Stacked reader: header above, hints below.
+    let effects = screen.update(crate::tui::app::Msg::Key(crate::tui::test_util::key(
+        crossterm::event::KeyCode::Enter,
+    )));
+    settle(&mut screen, effects).await;
+    let lines = rows(&screen, 90, 24);
+    assert!(lines[0].starts_with("▍Rail │"), "{}", lines[0]);
+    assert!(
+        lines[1].contains("(3 messages)"),
+        "the reader's title is the first body row"
+    );
+    assert!(
+        lines[23].starts_with("n/p message  Tab fold"),
+        "{}",
+        lines[23]
+    );
+}
+
+#[tokio::test]
+async fn a_notice_replaces_the_hints_and_the_hints_return() {
+    let (_tmp, mut screen) = screen(Icons::Unicode).await;
+    screen.status.notify("draft kept", screen.tick);
+    let rows = |screen: &MailScreen| {
+        crate::tui::test_util::render_lines(90, 24, |frame| screen.view(frame, &Theme::default()))
+    };
+    let bottom = rows(&screen)[23].clone();
+    assert!(bottom.starts_with("draft kept"), "{bottom}");
+    assert!(!bottom.contains("? help"), "{bottom}");
+    for _ in 0..=status::NOTICE_TICKS {
+        let effects = screen.update(crate::tui::app::Msg::Tick);
+        settle(&mut screen, effects).await;
+    }
+    let bottom = rows(&screen)[23].clone();
+    assert!(bottom.starts_with("Enter open"), "{bottom}");
+    // A notice wider than the room is cut; the account states stay whole on the right.
+    screen.status.notify("x".repeat(200), screen.tick);
+    let bottom = rows(&screen)[23].clone();
+    assert!(bottom.starts_with("xxxx"), "{bottom}");
+    assert!(
+        bottom.trim_end().ends_with("● work ✓ · ● home ⟳ 1200/5000"),
+        "{bottom}"
+    );
+}
+
+#[test]
+fn a_pane_too_small_for_a_border_is_drawn_without_one() {
+    // Covered through the layout rule; the view skips the box when `fits_border` is false.
+    let tiny = ratatui::layout::Rect::new(0, 0, 150, 2);
+    assert!(!layout::fits_border(tiny));
+}
+
+#[tokio::test]
+async fn a_two_row_body_in_split_mode_has_no_borders() {
+    let (_tmp, screen) = screen(Icons::Unicode).await;
+    let lines =
+        crate::tui::test_util::render_lines(150, 4, |frame| screen.view(frame, &Theme::default()));
+    assert!(!lines[1].contains('┌'), "{}", lines[1]);
+    assert!(
+        lines[1].contains("All inboxes") || lines[1].contains("Q4 roadmap"),
+        "{}",
+        lines[1]
     );
 }
