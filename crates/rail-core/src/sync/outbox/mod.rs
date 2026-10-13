@@ -13,6 +13,8 @@
 mod compose;
 #[cfg(test)]
 mod compose_tests;
+#[cfg(test)]
+mod graph_send_tests;
 mod plan;
 mod pushing;
 #[cfg(test)]
@@ -300,7 +302,10 @@ impl Worker {
         result: &Result<Landed, ProviderError>,
     ) -> OutboxWrite {
         match result {
-            Ok(Landed::Done) => OutboxWrite::Complete { id: row.id },
+            Ok(Landed::Done) => OutboxWrite::Complete {
+                id: row.id,
+                draft_consumed: self.provider.send_consumes_draft(),
+            },
             Ok(Landed::Pushed { draft, ids }) => OutboxWrite::CompletePush {
                 id: row.id,
                 draft: *draft,

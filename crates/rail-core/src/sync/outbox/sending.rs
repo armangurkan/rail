@@ -14,7 +14,7 @@ use super::Worker;
 use super::compose::{self, Assembly};
 use crate::ops::{DraftId, OutboxId};
 use crate::paths::{import_dir_in, remove_dir_if_present};
-use crate::provider::ProviderError;
+use crate::provider::{DraftIds, ProviderError};
 use crate::store::outbox::{OutboxOutcome, OutboxRow, OutboxWrite};
 
 /// What a send or a push reads from the store in one go.
@@ -63,16 +63,19 @@ impl Worker {
         loaded.send_attempted || row.attempts > 0 || self.recovered_ids().contains(&row.id)
     }
 
-    /// Stamp the draft before its send call; no send without the stamp.
-    async fn stamp(&self, draft: DraftId) -> Result<(), ProviderError> {
+    /// Stamp the draft before its send call, with the provider's draft that call sends
+    /// (Graph); no send without the stamp.
+    async fn stamp(&self, draft: DraftId, remote: Option<DraftIds>) -> Result<(), ProviderError> {
         self.writer
-            .outbox(OutboxWrite::DraftSendAttempted { draft })
+            .outbox(OutboxWrite::DraftSendAttempted { draft, remote })
             .await
             .map(|_| ())
             .map_err(|e| ProviderError::transient(&e.message))
     }
 
-    /// Send the draft of a `Send` row, unless the provider already holds it as sent.
+    /// Send the draft of a `Send` row, unless the provider already holds it as sent. A
+    /// provider that sends its own draft (Graph) gets it saved first, and its id is kept
+    /// before the send: a send cut off from there finds that draft instead of making another.
     pub(super) async fn send_draft(
         &self,
         row: &OutboxRow,
@@ -90,8 +93,16 @@ impl Worker {
                 "the draft's attachments could not be read",
             ));
         }
-        let mail = compose::attach(loaded.assembly, self.provider.as_ref()).await?;
-        self.stamp(draft).await?;
+        let mut mail = compose::attach(loaded.assembly, self.provider.as_ref()).await?;
+        let saved = if self.provider.send_consumes_draft() {
+            Some(self.provider.draft_save(&mail).await?)
+        } else {
+            None
+        };
+        if let Some(ids) = &saved {
+            mail.remote = Some(ids.clone());
+        }
+        self.stamp(draft, saved).await?;
         self.provider.send(&mail).await.map(|_| ())
     }
 

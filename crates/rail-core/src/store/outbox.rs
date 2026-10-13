@@ -13,6 +13,7 @@ use super::drafts::{DraftSaved, DraftWrite};
 use super::outbox_drafts::{draft_remote, draft_write, enqueue_draft, insert_delete_draft};
 use super::{Store, StoreError, rollup};
 use crate::ops::{Action, DraftId, OutboxId, RowToken};
+use crate::provider::DraftIds;
 
 /// Attempts after which a transiently failing row gives up.
 pub const MAX_ATTEMPTS: u32 = 20;
@@ -82,6 +83,8 @@ pub enum OutboxWrite {
     },
     Complete {
         id: OutboxId,
+        /// The provider's send consumed its draft (Graph): a sent draft leaves no delete of it.
+        draft_consumed: bool,
     },
     Fail {
         id: OutboxId,
@@ -104,10 +107,12 @@ pub enum OutboxWrite {
     Recover {
         account_id: i64,
     },
-    /// The draft is about to be handed to Gmail's send: stamp `send_attempted_at` (kept once
-    /// set) so every later send of it looks the message up first.
+    /// The draft is about to be handed to the provider's send: stamp `send_attempted_at` (kept
+    /// once set) so every later send of it looks the message up first. `remote` is the
+    /// provider's draft that send sends (Graph), kept as the draft's remote ids.
     DraftSendAttempted {
         draft: DraftId,
+        remote: Option<DraftIds>,
     },
     /// `draft.save`'s write: every store write goes through the one writer.
     DraftSave {
@@ -387,8 +392,14 @@ pub(crate) fn claim_next(
 
 /// The row is done: it leaves the outbox, and a sent draft leaves the store with every other
 /// row of it (a failed earlier send among them), so none can act on the draft again. A sent
-/// draft Gmail holds leaves a Gmail delete of its copy there, due `now`, in this transaction.
-pub(crate) fn complete(tx: &Transaction, id: OutboxId, now: i64) -> Result<(), StoreError> {
+/// draft the provider holds leaves a delete of that copy, due `now`, in this transaction,
+/// unless the send consumed it (`draft_consumed`: Graph sends the draft itself).
+pub(crate) fn complete(
+    tx: &Transaction,
+    id: OutboxId,
+    draft_consumed: bool,
+    now: i64,
+) -> Result<(), StoreError> {
     let sent: Option<DraftId> = tx
         .query_row(
             "SELECT draft_id FROM outbox WHERE id = ?1 AND kind = 'send'",
@@ -398,7 +409,7 @@ pub(crate) fn complete(tx: &Transaction, id: OutboxId, now: i64) -> Result<(), S
         .optional()?
         .flatten();
     if let Some(draft) = sent {
-        if let Some((account_id, Some(remote))) = draft_remote(tx, draft)? {
+        if !draft_consumed && let Some((account_id, Some(remote))) = draft_remote(tx, draft)? {
             let token = format!("after-send-{id}");
             insert_delete_draft(tx, account_id, draft, &remote, &token, now)?;
         }
@@ -571,8 +582,8 @@ impl Store {
             OutboxWrite::Claim { account_id } => {
                 OutboxOutcome::Claimed(claim_next(&tx, *account_id, now)?)
             }
-            OutboxWrite::Complete { id } => {
-                complete(&tx, *id, now)?;
+            OutboxWrite::Complete { id, draft_consumed } => {
+                complete(&tx, *id, *draft_consumed, now)?;
                 OutboxOutcome::Done
             }
             OutboxWrite::Fail { id, failure } => {

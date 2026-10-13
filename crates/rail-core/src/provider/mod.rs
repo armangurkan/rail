@@ -78,6 +78,7 @@ pub trait Provider: Send + Sync {
     async fn sent_already(&self, mail: &OutgoingMail) -> Result<bool, ProviderError>;
     /// True when a send consumes the provider's draft of the message (Graph: the sent message
     /// keeps the draft's id), so nothing may delete "the draft" afterwards.
+    /// The worker saves such a draft and keeps its id before every send.
     fn send_consumes_draft(&self) -> bool;
     /// True when the provider's forward already carries the original's attachments (Graph's
     /// `createForward`): the caller passes them as `Carried` instead of reading them.

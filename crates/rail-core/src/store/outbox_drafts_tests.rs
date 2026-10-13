@@ -10,6 +10,7 @@ use super::outbox::{
     DraftDeleteOutcome, NewAction, OutboxCounts, OutboxOutcome, OutboxState, OutboxWrite,
 };
 use crate::ops::{Action, DraftId, OutboxId};
+use crate::provider::DraftIds;
 use crate::test_support::store_with_account;
 
 fn write(account_id: i64, n: i64) -> DraftWrite {
@@ -351,7 +352,13 @@ fn a_completed_send_of_a_pushed_draft_queues_its_gmail_delete() {
     let send = enqueue(&mut store, account, Action::Send { draft: d }, "s1", 100)[0];
     claim(&mut store, account, 110);
     store
-        .outbox_write(&OutboxWrite::Complete { id: send }, 500)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: send,
+                draft_consumed: false,
+            },
+            500,
+        )
         .unwrap();
     assert!(store.draft(d).unwrap().is_none());
     let left = rows(&store);
@@ -373,7 +380,13 @@ fn a_completed_send_of_a_pushed_draft_queues_its_gmail_delete() {
     )[0];
     claim(&mut store, account, 610);
     store
-        .outbox_write(&OutboxWrite::Complete { id: send }, 620)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: send,
+                draft_consumed: false,
+            },
+            620,
+        )
         .unwrap();
     assert!(store.draft(never).unwrap().is_none());
     assert!(
@@ -544,5 +557,70 @@ fn an_import_of_a_gmail_draft_another_draft_holds_answers_that_draft() {
     assert_eq!(
         store.draft_client_token(mine).unwrap().as_deref(),
         Some("i1")
+    );
+}
+
+#[test]
+fn a_send_whose_provider_consumed_the_draft_leaves_no_delete() {
+    let (mut store, account) = store_with_account();
+    let d = draft_in(&mut store, account, 1);
+    store.draft_set_remote(d, "g1", "g1").unwrap();
+    let send = enqueue(&mut store, account, Action::Send { draft: d }, "s1", 100)[0];
+    claim(&mut store, account, 110);
+    let write = OutboxWrite::Complete {
+        id: send,
+        draft_consumed: true,
+    };
+    store.outbox_write(&write, 500).unwrap();
+    assert!(store.draft(d).unwrap().is_none(), "the local draft is gone");
+    assert!(
+        rows(&store).is_empty(),
+        "no delete: Outlook's draft is the sent message now"
+    );
+}
+
+#[test]
+fn a_send_attempt_keeps_its_first_stamp_and_takes_the_drafts_newest_ids() {
+    let (mut store, account) = store_with_account();
+    let d = draft_in(&mut store, account, 1);
+    let before = store.draft(d).unwrap().unwrap();
+    assert_eq!(
+        (
+            before.send_attempted_at,
+            before.remote_draft_id,
+            before.remote_message_id
+        ),
+        (None, None, None)
+    );
+    let stamp = |remote: Option<(&str, &str)>| OutboxWrite::DraftSendAttempted {
+        draft: d,
+        remote: remote.map(|(draft_id, message_id)| DraftIds {
+            draft_id: draft_id.into(),
+            message_id: message_id.into(),
+        }),
+    };
+    store.outbox_write(&stamp(Some(("g1", "g1"))), 100).unwrap();
+    let after = store.draft(d).unwrap().unwrap();
+    assert_eq!(
+        (
+            after.send_attempted_at,
+            after.remote_draft_id.as_deref(),
+            after.remote_message_id.as_deref()
+        ),
+        (Some(100), Some("g1"), Some("g1"))
+    );
+    store.outbox_write(&stamp(Some(("g2", "g2"))), 200).unwrap();
+    let again = store.draft(d).unwrap().unwrap();
+    assert_eq!(
+        (again.send_attempted_at, again.remote_draft_id.as_deref()),
+        (Some(100), Some("g2")),
+        "the first stamp stays; the draft the provider holds now is kept"
+    );
+    store.outbox_write(&stamp(None), 300).unwrap();
+    let gmail = store.draft(d).unwrap().unwrap();
+    assert_eq!(
+        (gmail.send_attempted_at, gmail.remote_draft_id.as_deref()),
+        (Some(100), Some("g2")),
+        "no ids leaves them as they are"
     );
 }

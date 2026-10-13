@@ -389,7 +389,13 @@ fn a_row_left_with_no_thread_is_deleted_and_a_two_thread_row_keeps_the_other() {
         .outbox_write(&OutboxWrite::Claim { account_id: 1 }, NOW + 20)
         .unwrap();
     store
-        .outbox_write(&OutboxWrite::Complete { id: pending }, NOW + 20)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: pending,
+                draft_consumed: false,
+            },
+            NOW + 20,
+        )
         .unwrap();
     let enqueued_pending = enqueue(&mut store, Action::Star { on: false }, vec![t2], "d");
     store

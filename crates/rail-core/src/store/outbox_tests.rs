@@ -47,7 +47,13 @@ fn claim_takes_the_oldest_due_row_and_honours_not_before() {
         "b waits for a, which shares its thread"
     );
     store
-        .outbox_write(&OutboxWrite::Complete { id: a }, NOW + 10)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: a,
+                draft_consumed: false,
+            },
+            NOW + 10,
+        )
         .unwrap();
     assert_eq!(claim(&mut store, NOW + 10).unwrap().id, b);
     assert!(claim(&mut store, NOW + 10).is_none());
@@ -75,7 +81,13 @@ fn a_backed_off_row_holds_back_a_later_due_row_on_its_thread() {
     assert_eq!(claim(&mut store, NOW + 70).unwrap().id, a);
     assert!(claim(&mut store, NOW + 70).is_none(), "a is inflight");
     store
-        .outbox_write(&OutboxWrite::Complete { id: a }, NOW + 71)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: a,
+                draft_consumed: false,
+            },
+            NOW + 71,
+        )
         .unwrap();
     assert_eq!(claim(&mut store, NOW + 71).unwrap().id, b);
 }
@@ -506,7 +518,13 @@ fn a_send_row_queues_the_draft_and_undo_or_a_permanent_failure_returns_it_to_edi
         .outbox_write(&OutboxWrite::Claim { account_id }, 400)
         .unwrap();
     store
-        .outbox_write(&OutboxWrite::Complete { id: row }, 401)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: row,
+                draft_consumed: false,
+            },
+            401,
+        )
         .unwrap();
     assert!(store.draft(draft).unwrap().is_none());
     assert_eq!(depth(&store, account_id), (0, 0, 0));
@@ -690,7 +708,13 @@ fn a_failed_send_row_cannot_be_retried_after_its_draft_was_resent_and_deleted() 
         .outbox_write(&OutboxWrite::Claim { account_id }, 400)
         .unwrap();
     store
-        .outbox_write(&OutboxWrite::Complete { id: again }, 401)
+        .outbox_write(
+            &OutboxWrite::Complete {
+                id: again,
+                draft_consumed: false,
+            },
+            401,
+        )
         .unwrap();
     assert!(store.draft(draft).unwrap().is_none());
     assert!(

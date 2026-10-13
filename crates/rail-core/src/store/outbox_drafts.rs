@@ -215,12 +215,18 @@ pub(super) fn draft_write(
     now: i64,
 ) -> Result<OutboxOutcome, StoreError> {
     Ok(match write {
-        OutboxWrite::DraftSendAttempted { draft } => {
+        OutboxWrite::DraftSendAttempted { draft, remote } => {
             tx.execute(
                 "UPDATE drafts SET send_attempted_at = ?2
                  WHERE id = ?1 AND send_attempted_at IS NULL",
                 params![draft, now],
             )?;
+            if let Some(ids) = remote {
+                tx.execute(
+                    "UPDATE drafts SET remote_draft_id = ?2, remote_message_id = ?3 WHERE id = ?1",
+                    params![draft, ids.draft_id, ids.message_id],
+                )?;
+            }
             OutboxOutcome::Done
         }
         OutboxWrite::DraftSave {
