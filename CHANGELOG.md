@@ -12,8 +12,9 @@ All notable changes to Rail are recorded here. The format follows
   summary (`● Synced 14:47`, or the worst account's state; kept whole, the scope is cut when both
   do not fit); the sidebar, the list and the reader
   boxed at `split_threshold` (140 columns by default) and wider, the focused pane in the accent
-  colour (`+`, `-` and `|` with `icons = "ascii"`); and a last row of key hints for the pane you
-  are in, built from your keymap, with each account's state on the right.
+  colour (`+`, `-` and `|` with `icons = "ascii"`); and a status bar of key hints for the pane
+  you are in, built from your keymap, with each account's state on the right, each key in its
+  own drawn box at `split_threshold` and wider.
   Notices (`archived 3 · z undoes`) show in place of the hints. `3 selected` and the daemon's
   state moved from the status bar to the header.
 - Writing Microsoft 365 mail over Microsoft Graph: `c`, `r`, `R` and `f` write from a Microsoft

@@ -288,9 +288,18 @@ state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopp
 columns by default) and wider the sidebar, the list and the reader are boxed, the focused pane in
 the accent colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and the
 header reads `|Rail | All inboxes …`. When the scope and the summary do not both fit, the
-summary stays whole and the scope is cut. The last row, the status bar, names the keys of the
+summary stays whole and the scope is cut. The status bar at the bottom names the keys of the
 pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your
-`config.toml` sets) and shows each account's state on the right.
+`config.toml` sets) and shows each account's state on the right. Narrower than `split_threshold`
+it is one row; at `split_threshold` and wider (and at least 12 rows high) it takes three rows and
+each key is drawn in its own box, with no frame around the bar (`+`, `-` and `|` with
+`icons = "ascii"`):
+
+```
+┌───────┐      ┌─────┐      ┌─────┐         ┌───┐
+│ Enter │ open │ j/k │ move │ Tab │ sidebar │ ? │ help        ● work ✓ · ● home ✓
+└───────┘      └─────┘      └─────┘         └───┘
+```
 
 `Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
 beside the list; narrower, it covers the screen. `q` or `Esc` closes it. Messages are oldest
@@ -337,7 +346,7 @@ and the text appears when it lands. If the fetch fails the message says why.
 
 `/` opens the filter line in the header's search slot and filters the list as you type. The
 slot is not drawn when the terminal is narrower than 60 columns, or when fewer than 8 cells are
-left for it after the counts and the summary; the line then opens on the last row. Plain words
+left for it after the counts and the summary; the line then opens in the status bar. Plain words
 search subjects, the names and addresses of senders and recipients (To, Cc and Bcc) and stored
 bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`, `is:unread`,
 `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
@@ -420,7 +429,7 @@ while you change the filter or the mailbox. In the reader, the keys act on the o
 the selection, which stays as it was (`Space` still pages down, and selecting is for the list);
 archive, trash and move close the reader.
 
-After an action the last row says what happened, in place of the key hints, for example `archived 3 · z undoes`. For ten
+After an action the status bar says what happened, in place of the key hints, for example `archived 3 · z undoes`. For ten
 seconds `z` takes it back; afterwards it says `Too late to undo.`, and with nothing done,
 `Nothing to undo.` If the daemon has not answered yet, `z` says `undoing…` and finishes when it
 does. Only the most recent action can be undone, and marking a thread read by opening it has no
@@ -518,12 +527,12 @@ after seven days.
 and `Bcc` (when used), `Subject`, then the attachments with their count and total size, then the
 body, with long runs of quoted lines folded to `[n quoted lines]`. A recipient with an
 international domain is followed by the domain's ASCII form, as `xn--` addresses are what
-the mail system sees. The last row names the keys:
+the mail system sees. The status bar names the keys:
 
 | Key | What it does |
 |---|---|
 | `y` | Send. |
-| `s` | Save the draft to the account's Drafts (`s save to Gmail` or `s save to Microsoft 365` on the last row). |
+| `s` | Save the draft to the account's Drafts (`s save to Gmail` or `s save to Microsoft 365` in the status bar). |
 | `e` | Edit again in your editor. |
 | `t` | Change `To`, `Cc`, `Bcc` and `Subject`, one prompt after another. |
 | `a` | Attach a file: type its path (`~` works, `Tab` completes names from the folder, relative paths are made absolute) and press `Enter`. |
@@ -533,7 +542,7 @@ the mail system sees. The last row names the keys:
 | `j` `k` `↑` `↓` `PageUp` `PageDown` `Space` | Move through the message. |
 
 These are the `compose.*` actions in the key table and can be changed. While a `t` or `a` prompt
-is open the last row shows the prompt's keys instead: `Enter accept  Tab complete  Esc cancel`.
+is open the status bar shows the prompt's keys instead: `Enter accept  Tab complete  Esc cancel`.
 `y` is refused with a reason when there is no recipient (`Add a recipient first`), while a save
 is pending, or after a save failed. If a save failed, `q` asks `Discard the unsaved changes?` and
 then says `unsaved changes discarded`; a message closed before anything was saved says

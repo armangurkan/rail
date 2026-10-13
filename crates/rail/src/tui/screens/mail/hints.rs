@@ -1,12 +1,16 @@
-//! The bottom row: key hints for the focused pane, built from the keymap, a notice in their
-//! place while one shows, and each account's state on the right.
+//! The hint bar: key hints for the focused pane, built from the keymap, a notice in their
+//! place while one shows, and each account's state on the right. One row when stacked; in split
+//! mode three, each key in its own box with the words and the accounts on the middle row.
 
+use rail_core::config::Icons;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use super::layout::{HINT_ROWS_BOXED, border_set};
 use super::status::account_part;
 use super::view::Glyphs;
 use super::{Focus, MailScreen};
@@ -36,6 +40,8 @@ pub(super) struct Hint {
 
 /// Between two hints.
 const SEP: &str = "  ";
+/// Between a word and the next key's box: the box's line already sets them apart.
+const BOXED_SEP: &str = " ";
 /// Between two accounts on the right.
 const ACCOUNT_SEP: &str = " · ";
 
@@ -120,26 +126,37 @@ pub(super) fn hints(pane: Pane, keymap: &Keymap, sidebar_shown: bool, provider: 
     out
 }
 
-fn one_width(h: &Hint) -> usize {
-    width(&h.key) + 1 + width(&h.word)
+/// The cells around a key in its box: a line and a space of padding on each side.
+const KEY_BOX_EXTRA: usize = 4;
+
+/// One hint's cells: its key (boxed or not), a space, its word.
+fn one_width(h: &Hint, boxed: bool) -> usize {
+    let frame = if boxed { KEY_BOX_EXTRA } else { 0 };
+    width(&h.key) + frame + 1 + width(&h.word)
+}
+
+/// What goes between two hints.
+fn sep(boxed: bool) -> &'static str {
+    if boxed { BOXED_SEP } else { SEP }
 }
 
 /// The cells `hints` take, separators included.
 #[cfg(test)]
-pub(super) fn hint_width(hints: &[Hint]) -> usize {
-    let text: usize = hints.iter().map(one_width).sum();
-    text + width(SEP) * hints.len().saturating_sub(1)
+pub(super) fn hint_width(hints: &[Hint], boxed: bool) -> usize {
+    let text: usize = hints.iter().map(|h| one_width(h, boxed)).sum();
+    text + width(sep(boxed)) * hints.len().saturating_sub(1)
 }
 
 /// The hints that fit in `room`: whole hints from the left, the last one (`? help`) always.
-pub(super) fn fit_hints(hints: &[Hint], room: usize) -> Vec<Hint> {
+/// `boxed` counts each key's box.
+pub(super) fn fit_hints(hints: &[Hint], boxed: bool, room: usize) -> Vec<Hint> {
     let Some((help, rest)) = hints.split_last() else {
         return Vec::new();
     };
     let mut kept: Vec<Hint> = Vec::new();
-    let mut used = one_width(help);
+    let mut used = one_width(help, boxed);
     for h in rest {
-        let next = used + one_width(h) + width(SEP);
+        let next = used + one_width(h, boxed) + width(sep(boxed));
         if next > room {
             break;
         }
@@ -200,7 +217,7 @@ fn left_spans(bar: &Bar<'_>, theme: &Theme, room: usize) -> Vec<Span<'static>> {
         return vec![Span::styled(fit(text, room), style)];
     }
     let mut spans = Vec::new();
-    for (i, h) in fit_hints(&bar.hints, room).iter().enumerate() {
+    for (i, h) in fit_hints(&bar.hints, false, room).iter().enumerate() {
         if i > 0 {
             spans.push(Span::raw(SEP));
         }
@@ -212,18 +229,94 @@ fn left_spans(bar: &Bar<'_>, theme: &Theme, room: usize) -> Vec<Span<'static>> {
 
 /// Draw the bar: the left part, then the accounts at the right edge. The accounts give way
 /// first, down to what leaves room for `? help`.
-pub(super) fn render_hints(frame: &mut Frame, area: Rect, theme: &Theme, bar: &Bar<'_>) {
+/// With three rows or more, each key is drawn in its own box (`icons` picks the lines).
+pub(super) fn render_hints(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    bar: &Bar<'_>,
+    icons: Icons,
+) {
+    let boxed = area.height >= HINT_ROWS_BOXED;
     let cols = usize::from(area.width);
-    let help_w = bar.hints.last().map_or(0, one_width);
+    let help_w = bar.hints.last().map_or(0, |h| one_width(h, boxed));
     let right_room = cols.saturating_sub(help_w + width(SEP));
     let right = right_spans(bar, theme, width(&bar.right_text()).min(right_room));
-    let right_w: usize = right.iter().map(|s| width(&s.content)).sum();
+    let right_w = spans_width(&right);
     let gap = if right_w > 0 { width(SEP) } else { 0 };
-    let mut spans = left_spans(bar, theme, cols.saturating_sub(right_w + gap));
-    let used: usize = spans.iter().map(|s| width(&s.content)).sum();
-    spans.push(Span::raw(" ".repeat(cols.saturating_sub(used + right_w))));
-    spans.extend(right);
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    let room = cols.saturating_sub(right_w + gap);
+    let [top, mut mid, bottom] = if boxed {
+        boxed_left(bar, theme, room, &border_set(icons))
+    } else {
+        [Vec::new(), left_spans(bar, theme, room), Vec::new()]
+    };
+    let used = spans_width(&mid);
+    mid.push(Span::raw(" ".repeat(cols.saturating_sub(used + right_w))));
+    mid.extend(right);
+    let lines = if boxed {
+        vec![Line::from(top), Line::from(mid), Line::from(bottom)]
+    } else {
+        vec![Line::from(mid)]
+    };
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(|s| width(&s.content)).sum()
+}
+
+/// A key's box as its top, middle and bottom segments: lines in `border`, the key in `accent`.
+fn key_box(key: &str, set: &border::Set<'_>, theme: &Theme) -> [Vec<Span<'static>>; 3] {
+    let line = |h: &str| h.repeat(width(key) + 2);
+    let top = format!(
+        "{}{}{}",
+        set.top_left,
+        line(set.horizontal_top),
+        set.top_right
+    );
+    let bottom = format!(
+        "{}{}{}",
+        set.bottom_left,
+        line(set.horizontal_bottom),
+        set.bottom_right
+    );
+    [
+        vec![Span::styled(top, theme.border)],
+        vec![
+            Span::styled(set.vertical_left.to_string(), theme.border),
+            Span::styled(format!(" {key} "), theme.accent),
+            Span::styled(set.vertical_right.to_string(), theme.border),
+        ],
+        vec![Span::styled(bottom, theme.border)],
+    ]
+}
+
+/// The left part on three rows: the notice on the middle one, or the hints that fit in `room`,
+/// each key in its box and its word after it on the middle row, blanks above and below.
+fn boxed_left(
+    bar: &Bar<'_>,
+    theme: &Theme,
+    room: usize,
+    set: &border::Set<'_>,
+) -> [Vec<Span<'static>>; 3] {
+    if bar.notice.is_some() {
+        return [Vec::new(), left_spans(bar, theme, room), Vec::new()];
+    }
+    let mut rows: [Vec<Span<'static>>; 3] = Default::default();
+    for (i, h) in fit_hints(&bar.hints, true, room).iter().enumerate() {
+        let word = format!(" {}", h.word);
+        let blank = " ".repeat(width(&word));
+        for (row, segment) in rows.iter_mut().zip(key_box(&h.key, set, theme)) {
+            if i > 0 {
+                row.push(Span::raw(BOXED_SEP));
+            }
+            row.extend(segment);
+        }
+        rows[0].push(Span::raw(blank.clone()));
+        rows[1].push(Span::styled(word, theme.muted));
+        rows[2].push(Span::raw(blank));
+    }
+    rows
 }
 
 impl MailScreen {
@@ -287,7 +380,7 @@ impl MailScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::test_util::keymap;
+    use crate::tui::test_util::{keymap, render_lines};
 
     fn words(hints: &[Hint]) -> Vec<String> {
         hints
@@ -376,9 +469,9 @@ mod tests {
     fn trimming_keeps_whole_hints_and_help_last() {
         let km = keymap();
         let all = hints(Pane::List, &km, true, "Gmail");
-        let full = hint_width(&all);
-        assert_eq!(fit_hints(&all, full).len(), all.len());
-        let fewer = fit_hints(&all, full - 1);
+        let full = hint_width(&all, false);
+        assert_eq!(fit_hints(&all, false, full).len(), all.len());
+        let fewer = fit_hints(&all, false, full - 1);
         assert_eq!(
             fewer.len(),
             all.len() - 1,
@@ -390,9 +483,9 @@ mod tests {
             "trash",
             "the one before help drops"
         );
-        let tiny = fit_hints(&all, 20);
+        let tiny = fit_hints(&all, false, 20);
         assert_eq!(words(&tiny), ["Enter open", "? help"]);
-        let only_help = fit_hints(&all, 6);
+        let only_help = fit_hints(&all, false, 6);
         assert_eq!(words(&only_help), ["? help"]);
     }
 
@@ -401,7 +494,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, 1)).unwrap();
         terminal
-            .draw(|frame| render_hints(frame, frame.area(), &theme, bar))
+            .draw(|frame| render_hints(frame, frame.area(), &theme, bar, Icons::Unicode))
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..cols)
@@ -444,7 +537,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, 1)).unwrap();
         terminal
-            .draw(|frame| render_hints(frame, frame.area(), &Theme::default(), bar))
+            .draw(|frame| render_hints(frame, frame.area(), &Theme::default(), bar, Icons::Unicode))
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -491,5 +584,112 @@ mod tests {
         let text = &bar.right[0].1;
         assert!(!text.contains('\u{1b}'), "{text:?}");
         assert!(text.contains("wo\\u{1b}[2Jrk"), "{text:?}");
+    }
+
+    #[test]
+    fn boxed_trimming_counts_the_box_around_each_key() {
+        let all = hints(Pane::List, &keymap(), true, "Gmail");
+        let help = &all[all.len() - 1..];
+        assert_eq!(
+            hint_width(help, true),
+            10,
+            "`? help` boxed is 1 + 4 + 1 + 4 cells"
+        );
+        assert_eq!(hint_width(help, false), 6);
+        let full = hint_width(&all, true);
+        assert_eq!(fit_hints(&all, true, full).len(), all.len());
+        assert_eq!(fit_hints(&all, true, full - 1).len(), all.len() - 1);
+        // `Enter open` boxed is 9 + 1 + 4 = 14; with one space and `? help`: 14 + 1 + 10 = 25.
+        assert_eq!(words(&fit_hints(&all, true, 25)), ["Enter open", "? help"]);
+        assert_eq!(words(&fit_hints(&all, true, 24)), ["? help"]);
+        assert_eq!(
+            words(&fit_hints(&all, false, 28)),
+            ["Enter open", "j/k move", "? help"],
+            "the one-row bar counts no boxes: 10 + 2 + 8 + 2 + 6"
+        );
+        assert_eq!(words(&fit_hints(&all, true, 28)), ["Enter open", "? help"]);
+    }
+
+    fn two_hints() -> Bar<'static> {
+        Bar {
+            hints: vec![
+                hint("Tab".to_string(), "pane"),
+                hint("Enter".to_string(), "open"),
+            ],
+            notice: None,
+            dot: "●",
+            right: Vec::new(),
+        }
+    }
+
+    fn boxed_rows(bar: &Bar<'_>, cols: u16, icons: Icons) -> Vec<String> {
+        render_lines(cols, 3, |frame| {
+            render_hints(frame, frame.area(), &Theme::default(), bar, icons);
+        })
+        .iter()
+        .map(|row| row.trim_end().to_string())
+        .collect()
+    }
+
+    #[test]
+    fn three_rows_draw_each_key_in_its_own_box() {
+        assert_eq!(
+            boxed_rows(&two_hints(), 40, Icons::Unicode),
+            [
+                "┌─────┐      ┌───────┐",
+                "│ Tab │ pane │ Enter │ open",
+                "└─────┘      └───────┘",
+            ]
+        );
+        assert_eq!(
+            boxed_rows(&two_hints(), 40, Icons::Ascii),
+            [
+                "+-----+      +-------+",
+                "| Tab | pane | Enter | open",
+                "+-----+      +-------+",
+            ]
+        );
+    }
+
+    #[test]
+    fn boxed_keys_take_the_accent_and_their_lines_the_border_style() {
+        let theme = Theme::default();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 3)).unwrap();
+        terminal
+            .draw(|frame| render_hints(frame, frame.area(), &theme, &two_hints(), Icons::Unicode))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(0, 0)].fg, theme.border.fg.unwrap());
+        assert_eq!(buffer[(0, 1)].fg, theme.border.fg.unwrap());
+        assert_eq!(buffer[(2, 1)].symbol(), "T");
+        assert_eq!(buffer[(2, 1)].fg, theme.accent.fg.unwrap());
+        assert!(
+            buffer[(2, 1)]
+                .modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+        assert_eq!(buffer[(8, 1)].symbol(), "p");
+        assert_eq!(buffer[(8, 1)].fg, theme.muted.fg.unwrap());
+    }
+
+    #[test]
+    fn boxed_bar_keeps_the_accounts_and_a_notice_on_the_middle_row() {
+        let rows = boxed_rows(&sample_bar(None), 120, Icons::Unicode);
+        assert!(rows[0].starts_with("┌───────┐      ┌─────┐"), "{}", rows[0]);
+        assert!(
+            rows[1].starts_with("│ Enter │ open │ j/k │ move"),
+            "{}",
+            rows[1]
+        );
+        assert!(rows[1].ends_with("● work ✓ · ● home ⟳"), "{}", rows[1]);
+        assert_eq!(width(&rows[1]), 120, "the accounts sit at the right edge");
+        assert!(rows[1].contains("│ ? │ help"), "{}", rows[1]);
+        assert!(!rows[0].contains('●') && !rows[2].contains('●'));
+        let notice = boxed_rows(&sample_bar(Some(("Archived", false))), 80, Icons::Unicode);
+        assert_eq!(notice[0], "", "no boxes above a notice");
+        assert!(notice[1].starts_with("Archived"), "{}", notice[1]);
+        assert!(notice[1].ends_with("● work ✓ · ● home ⟳"), "{}", notice[1]);
+        assert_eq!(notice[2], "");
     }
 }

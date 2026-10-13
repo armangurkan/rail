@@ -179,14 +179,33 @@ fn layout_pins_the_split_threshold_and_the_sidebar_rule() {
     let area = ratatui::layout::Rect::new(0, 0, 150, 40);
     let areas = layout::areas(area, true, true);
     assert_eq!(areas.header.height, 1);
-    assert_eq!(areas.hints.height, 1);
-    assert_eq!(areas.body.height, 38);
+    assert_eq!(areas.hints.height, layout::HINT_ROWS_BOXED);
+    assert_eq!(
+        areas.hints.height, 3,
+        "split mode boxes each key on three rows"
+    );
+    assert_eq!(areas.body.height, 36);
     assert_eq!(areas.body.y, 1);
     assert_eq!(areas.sidebar.unwrap().width, layout::SIDEBAR_WIDTH);
     assert!(areas.reader.unwrap().width > areas.list.width);
     let narrow = layout::areas(ratatui::layout::Rect::new(0, 0, 90, 24), false, false);
     assert!(narrow.sidebar.is_none() && narrow.reader.is_none());
     assert_eq!(narrow.list.width, 90);
+    assert_eq!(narrow.hints.height, 1, "stacked mode keeps the one-row bar");
+    let short = layout::areas(ratatui::layout::Rect::new(0, 0, 150, 10), true, true);
+    assert_eq!(short.hints.height, 1, "too short for key boxes");
+    let under = layout::areas(
+        ratatui::layout::Rect::new(0, 0, 150, layout::MIN_ROWS_FOR_KEY_BOXES - 1),
+        true,
+        true,
+    );
+    assert_eq!(under.hints.height, 1);
+    let just = layout::areas(
+        ratatui::layout::Rect::new(0, 0, 150, layout::MIN_ROWS_FOR_KEY_BOXES),
+        true,
+        true,
+    );
+    assert_eq!(just.hints.height, 3);
     assert!(layout::fits_border(ratatui::layout::Rect::new(0, 0, 4, 3)));
     assert!(!layout::fits_border(ratatui::layout::Rect::new(0, 0, 3, 3)));
     assert!(!layout::fits_border(ratatui::layout::Rect::new(0, 0, 4, 2)));
@@ -229,11 +248,26 @@ async fn the_frame_boxes_the_panes_in_split_mode_and_marks_the_focused_one() {
         theme.border_focus.fg.unwrap(),
         "the list has focus"
     );
-    assert_ne!(buffer[(0, 39)].symbol(), "└", "the hint row is not boxed");
     assert_eq!(
-        buffer[(0, 38)].symbol(),
+        buffer[(0, 36)].symbol(),
         "└",
-        "the sidebar's box ends above the hint row"
+        "the sidebar's box ends above the hint rows"
+    );
+    let lines = crate::tui::test_util::render_lines(150, 40, |frame| screen.view(frame, &theme));
+    assert!(lines[37].starts_with('┌'), "{}", lines[37]);
+    assert!(lines[38].starts_with("│ Enter │ open"), "{}", lines[38]);
+    assert!(lines[39].starts_with('└'), "{}", lines[39]);
+    assert!(
+        lines[38]
+            .trim_end()
+            .ends_with("● work ✓ · ● home ⟳ 1200/5000"),
+        "{}",
+        lines[38]
+    );
+    assert!(
+        !lines[36].contains("Enter"),
+        "no frame around the bar: {}",
+        lines[36]
     );
     // Sidebar focused.
     let effects = screen.update(crate::tui::app::Msg::Key(crate::tui::test_util::key(

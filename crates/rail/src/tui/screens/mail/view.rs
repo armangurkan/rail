@@ -149,7 +149,7 @@ impl MailScreen {
                 }
             }
         }
-        hints::render_hints(frame, parts.hints, theme, &self.bar(theme));
+        hints::render_hints(frame, parts.hints, theme, &self.bar(theme), self.ctx.icons);
         match &self.modal {
             Some(Modal::Filter(line)) => {
                 let row = self.slot_rect.get().unwrap_or(parts.hints);
