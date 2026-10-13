@@ -20,8 +20,7 @@ up without ever seeing your secrets.
 > **Rail is pre-1.0.** Account setup, background sync, search, reading mail, acting on threads
 > (archive, trash, star, read) and writing mail (new messages, replies and forwards, with undo
 > send, and drafts saved to Gmail) work today for Gmail. Microsoft 365 accounts sync, search and
-> read today (opening a thread marks it read); acting on their threads and writing from them
-> come next.
+> read today, and act on threads through the daemon; writing from them comes next.
 
 ## Contents
 
@@ -52,8 +51,9 @@ up without ever seeing your secrets.
   bodies of recent threads, kept current by a background daemon that can start at login
   (`rail daemon install`).
 - Microsoft 365 sync and reading over Microsoft Graph: every mail folder, threads by conversation,
-  read and flag (star) state, new mail within one poll interval, server search, and marking read
-  on open. Archive, trash, star, move, labels, `u`, sending and drafts answer
+  read and flag (star) state, new mail within one poll interval, server search, marking read on
+  open, and archive, trash, star, mark unread and move through the daemon. Labels answer
+  `Outlook uses folders, not labels: press m to move.`; sending and drafts answer
   `Not supported for Microsoft 365 accounts yet.` See [Microsoft 365 mail](#microsoft-365-mail).
 - `rail search` over the local store and, through each account's server (Gmail's search,
   Microsoft Graph's `$search`), the mailbox itself.
@@ -72,8 +72,7 @@ up without ever seeing your secrets.
 
 **Coming**
 
-- Next: acting on and writing Microsoft 365 mail (archive, trash, flag, move, mark unread, send,
-  drafts, and reply threading headers).
+- Next: writing Microsoft 365 mail (send, drafts, and reply threading headers).
 - After that: agent tools for drafts and sends, the last piece of mail work, governed by the per-account `ai_send` policy.
 - Later: search operators, layout options, inline images, display-quality HTML in the
   terminal.
@@ -421,9 +420,11 @@ list, shows "Could not archive: …" on the thread's row, and keeps the error in
 connects to the daemon, so one that happened while Rail was closed or disconnected is not lost.
 A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed`.
 On a Microsoft 365 account, opening an unread thread marks every message in it read in Outlook
-(the status bar shows `1 queued` meanwhile). `e`, `d`, `s`, `u`, `l` and `m` answer
-`Not supported for Microsoft 365 accounts yet.` at once and queue nothing, also for a selection
-that holds one of its threads.
+(the status bar shows `1 queued` meanwhile). The daemon carries out `e`, `d`, `s`, `u` and `m` on
+a Microsoft 365 thread through Graph; a move target is one of its Inbox, Archive, Junk Email or
+own folders. `l` answers `Outlook uses folders, not labels: press m to move.`, and `e` on a
+mailbox with no Archive folder answers `This mailbox has no Archive folder; press m to move.`,
+both at once with nothing queued, also for a selection that holds one of its threads.
 
 ## Writing mail
 
@@ -719,8 +720,8 @@ MFA) can still intervene after consent; see [Microsoft sign-in errors](#microsof
 
 ### Microsoft 365 mail
 
-What a Microsoft 365 account does today. It syncs and reads over Microsoft Graph; acting on mail
-and writing it come next.
+What a Microsoft 365 account does today. It syncs and reads over Microsoft Graph and acts on
+threads; writing mail comes next.
 
 - **Folders.** Every mail folder is synced, nested ones as `Parent/Child`. Inbox, Sent Items,
   Drafts, Archive, Deleted Items and Junk Email take the Inbox, Sent, Drafts, Archive, Trash and
@@ -742,8 +743,11 @@ and writing it come next.
   its bytes it says `This attachment is a link (OneDrive or SharePoint); open the message in
   Outlook on the web to reach it.` A message whose attachments are all inline lists none.
 - **Marking read.** Opening an unread thread marks its messages read in Outlook.
-- **Not yet.** `e`, `d`, `s`, `u`, `l` and `m`, and `c`, `r`, `R` and `f`, and the rows of the
-  Drafts folder answer `Not supported for Microsoft 365 accounts yet.` at once and send nothing.
+- **Acting.** Archive, trash, star, mark unread and move reach Outlook. Labels answer
+  `Outlook uses folders, not labels: press m to move.`, and archiving in a mailbox with no Archive
+  folder answers `This mailbox has no Archive folder; press m to move.`
+- **Not yet.** `c`, `r`, `R` and `f`, and the rows of the Drafts folder (including discarding a
+  draft) answer `Not supported for Microsoft 365 accounts yet.` at once and send nothing.
 
 ### Presets for your organisation
 

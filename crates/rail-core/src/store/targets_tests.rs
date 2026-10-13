@@ -3,6 +3,7 @@
 //! not this one's.
 
 use super::apply_local_tests::{folder, seeded, thread};
+use crate::config::FolderModel;
 use crate::provider::{FolderKind, TargetMessage, ThreadTarget};
 
 fn fact(
@@ -61,4 +62,40 @@ fn thread_targets_carry_each_messages_folder_flags_and_date() {
         store.thread_targets(2, &[t1]).unwrap().is_empty(),
         "another account's threads are not this one's"
     );
+}
+
+#[test]
+fn move_targets_follow_the_folder_model() {
+    let store = seeded();
+    let (inbox, trash, label) = (
+        folder(&store, "INBOX"),
+        folder(&store, "TRASH"),
+        folder(&store, "Label_1"),
+    );
+    assert!(store.move_target(1, label, FolderModel::Labels).unwrap());
+    assert!(!store.move_target(1, inbox, FolderModel::Labels).unwrap());
+    assert!(
+        store
+            .move_target(1, inbox, FolderModel::SingleFolder)
+            .unwrap()
+    );
+    assert!(
+        store
+            .move_target(1, label, FolderModel::SingleFolder)
+            .unwrap()
+    );
+    assert!(
+        !store
+            .move_target(1, trash, FolderModel::SingleFolder)
+            .unwrap()
+    );
+    assert!(
+        !store.move_target(2, label, FolderModel::Labels).unwrap(),
+        "another account's folder"
+    );
+    assert_eq!(
+        store.folder_of_kind(1, FolderKind::Trash).unwrap(),
+        Some(trash)
+    );
+    assert_eq!(store.folder_of_kind(1, FolderKind::Archive).unwrap(), None);
 }

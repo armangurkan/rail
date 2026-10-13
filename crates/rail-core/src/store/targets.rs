@@ -3,6 +3,7 @@
 //! row's provider call sees those facts as they were before the row's own optimistic change,
 //! which the store already shows.
 
+use crate::config::FolderModel;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::apply_local::Prior;
@@ -89,6 +90,12 @@ pub(crate) fn folders_of(conn: &Connection, message: i64) -> Result<Vec<i64>, St
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// `kinds` as the JSON array of their store names, for `json_each`.
+pub(crate) fn kinds_json(kinds: &[FolderKind]) -> String {
+    let names: Vec<&str> = kinds.iter().map(|k| k.as_str()).collect();
+    serde_json::to_string(&names).unwrap_or_else(|_| "[]".into())
+}
+
 /// The provider id of one of the account's folders.
 pub(crate) fn folder_remote_in(
     conn: &Connection,
@@ -147,6 +154,30 @@ fn before(conn: &Connection, facts: &mut TargetMessage, prior: &Prior) -> Result
 }
 
 impl Store {
+    /// True when `folder` is one of the account's folders of a kind `model` moves to.
+    pub fn move_target(
+        &self,
+        account_id: i64,
+        folder: i64,
+        model: FolderModel,
+    ) -> Result<bool, StoreError> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM folders WHERE account_id = ?1 AND id = ?2
+               AND kind IN (SELECT value FROM json_each(?3)))",
+            params![account_id, folder, kinds_json(model.move_kinds())],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// The account's folder of `kind`, if it has one.
+    pub fn folder_of_kind(
+        &self,
+        account_id: i64,
+        kind: FolderKind,
+    ) -> Result<Option<i64>, StoreError> {
+        super::apply_local::system_folder(&self.conn, account_id, kind.as_str())
+    }
+
     /// The threads of `threads` the store still holds for the account, each with the facts of
     /// its stored messages as the store holds them now. Threads and messages come in store
     /// order.

@@ -2,12 +2,18 @@
 //! reaches them. Ids are checked against the store before anything is written; errors never
 //! quote an id.
 
+use std::path::Path;
+
 use crate::auth::unix_now;
+use crate::config::FolderModel;
 use crate::daemon::registry::Call;
+use crate::error::ErrorClass;
 use crate::ops::{
     Action, ActionApplyRequest, ActionApplyResponse, ActionRetryRequest, ActionRetryResponse,
-    ActionUndoRequest, ActionUndoResponse, MAX_UNDO_ROWS, OpError, UNDO_GRACE, checked_token,
+    ActionUndoRequest, ActionUndoResponse, ErrorCode, M365_NO_ARCHIVE, MAX_UNDO_ROWS, OpError,
+    UNDO_GRACE, checked_token,
 };
+use crate::provider::FolderKind;
 use crate::store::Store;
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
 use crate::sync::Wants;
@@ -16,34 +22,80 @@ fn unexpected() -> OpError {
     OpError::internal("the store answered an outbox write unexpectedly")
 }
 
-/// Every thread is the account's and every label one of its labels.
+/// What the store says of an action on these threads.
+struct InStore {
+    held: usize,
+    labelled: bool,
+    movable: bool,
+    archivable: bool,
+}
+
+fn read_in_store(
+    db: &Path,
+    account_id: i64,
+    threads: &[i64],
+    action: &Action,
+) -> Result<InStore, OpError> {
+    let store = Store::open_reader(db)?;
+    let model = store.folder_model(account_id)?;
+    let labelled = match action {
+        Action::Labels { .. } => store.user_labels(account_id, &action.label_ids())?,
+        _ => true,
+    };
+    let movable = match action {
+        Action::Move { to } => store.move_target(account_id, *to, model)?,
+        _ => true,
+    };
+    let archivable = !matches!(action, Action::Archive {})
+        || model == FolderModel::Labels
+        || store
+            .folder_of_kind(account_id, FolderKind::Archive)?
+            .is_some();
+    Ok(InStore {
+        held: store.thread_remotes(account_id, threads)?.len(),
+        labelled,
+        movable,
+        archivable,
+    })
+}
+
+/// Every thread is the account's, every label one of its labels, a move's folder one of its
+/// move targets (`FolderModel::move_kinds`), and a one-folder mailbox that archives has an
+/// Archive folder.
 async fn check_in_store(
     call: &Call,
     account_id: i64,
     threads: Vec<i64>,
     action: &Action,
 ) -> Result<(), OpError> {
-    let (db, labels) = (call.ctx.paths.db_file(), action.label_ids());
-    let wanted = threads.len();
-    let (held, labelled) = call
+    let (db, wanted, action) = (call.ctx.paths.db_file(), threads.len(), action.clone());
+    let found = call
         .ctx
-        .blocking(move || {
-            let store = Store::open_reader(&db)?;
-            let held = store.thread_remotes(account_id, &threads)?.len();
-            let labelled = store.user_labels(account_id, &labels)?;
-            Ok((held, labelled))
-        })
+        .blocking(move || read_in_store(&db, account_id, &threads, &action))
         .await?;
-    if held != wanted {
+    if found.held != wanted {
         return Err(OpError::invalid_input(
             "a thread is not one of this account's threads in the store",
         ));
     }
-    if !labelled {
+    if !found.labelled {
         return Err(
             OpError::invalid_input("a label is not one of this account's labels")
                 .with_hint("the label may have been deleted in Gmail; open the picker again"),
         );
+    }
+    if !found.movable {
+        return Err(
+            OpError::invalid_input("a folder is not one of this account's move targets")
+                .with_hint("the folder may have been deleted; open the picker again"),
+        );
+    }
+    if !found.archivable {
+        return Err(OpError::new(
+            ErrorCode::Unsupported,
+            ErrorClass::Permanent,
+            M365_NO_ARCHIVE,
+        ));
     }
     Ok(())
 }
