@@ -56,6 +56,14 @@ signal-hook = { version = "0.3.18", default-features = false }
 rmcp = { version = "3.5.1", default-features = false, features = ["server", "macros", "transport-io", "elicitation", "schemars"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std", "process"] }
 
+# Debug info is most of a test binary's size: keep file and line numbers for backtraces in
+# Rail's own crates, and none for dependencies.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 # `cargo llvm-cov` builds with `--cfg coverage`; timing tests scale their limits for it.
