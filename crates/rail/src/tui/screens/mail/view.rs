@@ -12,6 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::layout::{self, areas};
+use super::sidebar::SidebarItem;
 use super::{Focus, MailScreen, StoreState};
 use super::{header, hints};
 use crate::tui::data::ScopeChoice;
@@ -249,33 +250,7 @@ impl MailScreen {
             .items()
             .iter()
             .enumerate()
-            .map(|(index, item)| {
-                let selected =
-                    index == self.sidebar.cursor() && self.focus == super::Focus::Sidebar;
-                let style = if selected { theme.selected } else { theme.text };
-                let count = if item.unread > 0 {
-                    item.unread.to_string()
-                } else {
-                    String::new()
-                };
-                let indent = if item.depth > 0 { "    " } else { "" };
-                let dot = match item.account {
-                    Some(_) if item.depth == 0 => format!("{} ", glyphs.account),
-                    _ if item.depth == 0 => "  ".to_string(),
-                    _ => String::new(),
-                };
-                let color = item
-                    .account
-                    .map_or(Color::Reset, |i| self.account_color(i, theme));
-                let label_cols = cols.saturating_sub(width(&dot) + indent.len() + count.len() + 1);
-                Line::from(vec![
-                    Span::styled(dot, style.fg(color)),
-                    Span::styled(
-                        format!("{indent}{} {count}", pad(&item.label, label_cols)),
-                        style,
-                    ),
-                ])
-            })
+            .map(|(index, item)| self.sidebar_line(index, item, cols, theme, glyphs))
             .collect();
         let note = self
             .sidebar
@@ -283,6 +258,41 @@ impl MailScreen {
             .then(|| Line::styled(fit("Could not read folders", cols), theme.error));
         let lines: Vec<Line> = note.into_iter().chain(items).collect();
         frame.render_widget(Paragraph::new(lines), inner);
+    }
+
+    /// One sidebar row: the account dot, the indented label, the unread count.
+    fn sidebar_line(
+        &self,
+        index: usize,
+        item: &SidebarItem,
+        cols: usize,
+        theme: &Theme,
+        glyphs: &Glyphs,
+    ) -> Line<'static> {
+        let selected = index == self.sidebar.cursor() && self.focus == super::Focus::Sidebar;
+        let style = if selected { theme.selected } else { theme.text };
+        let count = if item.unread > 0 {
+            item.unread.to_string()
+        } else {
+            String::new()
+        };
+        let indent = if item.depth > 0 { "    " } else { "" };
+        let dot = match item.account {
+            Some(_) if item.depth == 0 => format!("{} ", glyphs.account),
+            _ if item.depth == 0 => "  ".to_string(),
+            _ => String::new(),
+        };
+        let color = item
+            .account
+            .map_or(Color::Reset, |i| self.account_color(i, theme));
+        let label_cols = cols.saturating_sub(width(&dot) + indent.len() + count.len() + 1);
+        Line::from(vec![
+            Span::styled(dot, style.fg(color)),
+            Span::styled(
+                format!("{indent}{} {count}", pad(&item.label, label_cols)),
+                style,
+            ),
+        ])
     }
 
     fn render_list(&self, frame: &mut Frame, area: Rect, theme: &Theme, glyphs: &Glyphs) {
