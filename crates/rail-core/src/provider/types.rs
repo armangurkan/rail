@@ -81,6 +81,9 @@ pub struct RemoteFolder {
     pub remote_id: RemoteId,
     pub name: String,
     pub kind: FolderKind,
+    /// The parent folder's `remote_id` (Graph's nested folders); `None` at the top (Gmail:
+    /// always, its nesting lives in the `Parent/Child` name).
+    pub parent: Option<RemoteId>,
 }
 
 /// One address of a `From`, `To`, `Cc` or `Bcc` header, as stored in `*_json`.

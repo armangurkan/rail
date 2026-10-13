@@ -60,6 +60,7 @@ fn folders() -> Vec<RemoteFolder> {
     ]
     .into_iter()
     .map(|(remote_id, name, kind)| RemoteFolder {
+        parent: None,
         remote_id: remote_id.into(),
         name: name.into(),
         kind,

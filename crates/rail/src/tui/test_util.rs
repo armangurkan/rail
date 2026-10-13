@@ -411,16 +411,19 @@ pub fn seed_store(
     }
     let folders = vec![
         RemoteFolder {
+            parent: None,
             remote_id: "INBOX".into(),
             name: "Inbox".into(),
             kind: FolderKind::Inbox,
         },
         RemoteFolder {
+            parent: None,
             remote_id: "Label_1".into(),
             name: "Projects".into(),
             kind: FolderKind::User,
         },
         RemoteFolder {
+            parent: None,
             remote_id: "SENT".into(),
             name: "Sent".into(),
             kind: FolderKind::Sent,

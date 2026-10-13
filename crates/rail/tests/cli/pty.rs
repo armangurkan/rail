@@ -510,6 +510,7 @@ fn seed_html_thread(dir: &tempfile::TempDir) {
     };
     let batch = Batch {
         folders: Some(vec![RemoteFolder {
+            parent: None,
             remote_id: "INBOX".into(),
             name: "Inbox".into(),
             kind: FolderKind::Inbox,

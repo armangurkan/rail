@@ -36,16 +36,19 @@ pub(super) struct Rig {
 fn folders() -> Vec<RemoteFolder> {
     vec![
         RemoteFolder {
+            parent: None,
             remote_id: "INBOX".into(),
             name: "Inbox".into(),
             kind: FolderKind::Inbox,
         },
         RemoteFolder {
+            parent: None,
             remote_id: "TRASH".into(),
             name: "Trash".into(),
             kind: FolderKind::Trash,
         },
         RemoteFolder {
+            parent: None,
             remote_id: "Label_1".into(),
             name: "Projects".into(),
             kind: FolderKind::User,

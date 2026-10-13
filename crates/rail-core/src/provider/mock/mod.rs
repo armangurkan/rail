@@ -128,6 +128,7 @@ impl Default for Mailbox {
     fn default() -> Self {
         Self {
             folders: vec![RemoteFolder {
+                parent: None,
                 remote_id: "INBOX".into(),
                 name: "Inbox".into(),
                 kind: FolderKind::Inbox,

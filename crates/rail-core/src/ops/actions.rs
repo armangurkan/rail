@@ -135,6 +135,10 @@ impl Action {
     }
 }
 
+/// What Rail answers at once to an action or a compose start on a Microsoft 365 account in this
+/// version: only marking read on open reaches Microsoft 365.
+pub const M365_NOT_YET: &str = "Not supported for Microsoft 365 accounts yet.";
+
 /// Threads one `action.apply` takes at most.
 pub const MAX_ACTION_THREADS: usize = 200;
 /// Label ids one `labels` action adds, or removes, at most (Gmail's limit per change).

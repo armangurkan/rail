@@ -41,6 +41,7 @@ async fn daemon(config: &str) -> Daemon {
     mock.seed(envelope("m2", "t2", now - 2_000));
     mock.with(|m| {
         m.folders.push(RemoteFolder {
+            parent: None,
             remote_id: "Label_1".into(),
             name: "Projects".into(),
             kind: FolderKind::User,

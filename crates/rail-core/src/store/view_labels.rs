@@ -83,6 +83,7 @@ mod tests {
             )
             .unwrap();
         let f = |id: &str, name: &str, kind| RemoteFolder {
+            parent: None,
             remote_id: id.into(),
             name: name.into(),
             kind,

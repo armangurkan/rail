@@ -21,16 +21,19 @@ const NOW: i64 = 1_760_100_000;
 fn folders() -> Vec<RemoteFolder> {
     vec![
         RemoteFolder {
+            parent: None,
             remote_id: "INBOX".into(),
             name: "Inbox".into(),
             kind: FolderKind::Inbox,
         },
         RemoteFolder {
+            parent: None,
             remote_id: "Label_1".into(),
             name: "Projects".into(),
             kind: FolderKind::User,
         },
         RemoteFolder {
+            parent: None,
             remote_id: "SENT".into(),
             name: "Sent".into(),
             kind: FolderKind::Sent,
