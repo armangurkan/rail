@@ -567,7 +567,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!((version, migrations::LATEST_VERSION), (7, 7));
+        assert_eq!((version, migrations::LATEST_VERSION), (8, 8));
         let store = Store { conn };
         let state = store.sync_state(1).unwrap();
         assert_eq!(state.backfill_before, Some(1_700_000_000_000));
@@ -730,7 +730,7 @@ mod tests {
                 .unwrap();
         }
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 7);
+        assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
         let draft: Option<i64> = store
             .conn()
             .query_row("SELECT draft_id FROM outbox", [], |r| r.get(0))
@@ -746,5 +746,33 @@ mod tests {
             .query_row("SELECT count(*) FROM drafts", [], |r| r.get(0))
             .unwrap();
         assert_eq!(drafts, 0);
+    }
+
+    /// 0008 adds `drafts.source_remote_id` to a version-7 store and keeps its drafts, the new
+    /// column empty.
+    #[test]
+    fn version_8_adds_the_drafts_source_and_keeps_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rail.db");
+        {
+            let store = Store::open_at_version(&path, 7).unwrap();
+            store
+                .conn()
+                .execute_batch(
+                    "INSERT INTO accounts (name, kind, address) VALUES ('a', 'm365', 'a@example.com');
+                     INSERT INTO drafts (account_id, kind, message_id, created_at, updated_at)
+                       VALUES (1, 'reply', '<d1@example.com>', 0, 0);",
+                )
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 8);
+        let (kind, source): (String, Option<String>) = store
+            .conn()
+            .query_row("SELECT kind, source_remote_id FROM drafts", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((kind.as_str(), source), ("reply", None));
     }
 }

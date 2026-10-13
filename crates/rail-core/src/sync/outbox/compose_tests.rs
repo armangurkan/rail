@@ -32,6 +32,7 @@ fn draft(store: &mut Store, account: i64, attachments: Vec<Attachment>) -> Draft
                 body: "text\n".into(),
                 attachments,
                 message_id: "<d1@example.com>".into(),
+                source_remote_id: None,
             },
             1,
         )

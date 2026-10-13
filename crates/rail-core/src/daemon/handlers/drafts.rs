@@ -138,6 +138,8 @@ fn mime_of(name: &str) -> &'static str {
 struct Threading {
     thread_id: Option<i64>,
     remote_thread_id: Option<String>,
+    /// The provider id of the message answered.
+    source_remote_id: Option<String>,
     in_reply_to: Option<String>,
     references: Option<String>,
     parts: Vec<Attachment>,
@@ -193,6 +195,7 @@ fn threading_for(
     Ok(Threading {
         thread_id: Some(source.thread_id),
         remote_thread_id: Some(source.remote_thread_id),
+        source_remote_id: Some(source.remote_id),
         in_reply_to,
         references: (!references.is_empty()).then(|| references.join(" ")),
         parts,
@@ -204,6 +207,7 @@ fn kept_threading(d: &Draft) -> Threading {
     Threading {
         thread_id: d.thread_id,
         remote_thread_id: d.remote_thread_id.clone(),
+        source_remote_id: d.source_remote_id.clone(),
         in_reply_to: d.in_reply_to.clone(),
         references: d.references.clone(),
         parts: Vec::new(),
@@ -320,6 +324,7 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
         body: request.body,
         attachments,
         message_id: existing.map_or_else(|| new_message_id(&address), |d| d.message_id),
+        source_remote_id: threading.source_remote_id,
     })
 }
 

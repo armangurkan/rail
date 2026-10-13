@@ -228,6 +228,7 @@ fn import_write(source: ImportSource, files: Vec<Attachment>, address: &str) -> 
         body: source.body_text.unwrap_or_default(),
         attachments: files,
         message_id,
+        source_remote_id: None,
     }
 }
 

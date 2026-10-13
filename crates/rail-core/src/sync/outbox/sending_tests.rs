@@ -183,6 +183,7 @@ pub(super) fn new_draft(h: &Harness, n: i64, attachments: Vec<Attachment>) -> Dr
                 body: "hi\n".into(),
                 attachments,
                 message_id: format!("<d{n}@example.com>"),
+                source_remote_id: None,
             },
             1,
         )

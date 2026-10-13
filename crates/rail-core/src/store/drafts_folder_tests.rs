@@ -38,6 +38,7 @@ fn local(store: &mut Store, account_id: i64, n: i64, at: i64) -> DraftId {
         body: String::new(),
         attachments: vec![],
         message_id: format!("<a{account_id}-d{n}@example.com>"),
+        source_remote_id: None,
     };
     store.draft_upsert(&write, at).unwrap().unwrap()
 }

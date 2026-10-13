@@ -31,6 +31,7 @@ fn write(account_id: i64, n: i64) -> DraftWrite {
         body: String::new(),
         attachments: vec![],
         message_id: format!("<od{n}@example.com>"),
+        source_remote_id: None,
     }
 }
 

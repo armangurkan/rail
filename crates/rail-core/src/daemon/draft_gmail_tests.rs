@@ -269,6 +269,7 @@ async fn a_push_is_refused_for_a_draft_being_sent_an_empty_draft_and_another_acc
             body: "b".into(),
             attachments: vec![],
             message_id: "<o1@example.com>".into(),
+            source_remote_id: None,
         };
         store.draft_upsert(&write, h.now()).unwrap().unwrap()
     };
