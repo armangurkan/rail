@@ -24,6 +24,14 @@ pub(crate) struct BatchRequest {
 }
 
 impl BatchRequest {
+    pub(crate) fn patch(url: String, body: Value) -> Self {
+        Self {
+            method: reqwest::Method::PATCH,
+            url,
+            body: Some(body),
+        }
+    }
+
     pub(crate) fn get(url: String) -> Self {
         Self {
             method: reqwest::Method::GET,

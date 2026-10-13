@@ -43,7 +43,7 @@ use crate::error::ErrorClass;
 use crate::ops::{
     Action, ActionFailed, DraftId, ErrorCode, OpError, OutboxDepth, OutboxId, SyncPhase,
 };
-use crate::provider::{DraftIds, Provider, ProviderError};
+use crate::provider::{DraftIds, Provider, ProviderError, ThreadTarget};
 use crate::store::outbox::{Failure, OutboxOutcome, OutboxRow, OutboxWrite};
 use crate::store::{Store, StoreError};
 
@@ -277,7 +277,11 @@ impl Worker {
 
     /// One provider call per thread, stopping at the first error: a failure part-way fails the
     /// whole row (threads Gmail already changed come back through the next sync).
-    async fn call_each(&self, threads: &[String], change: &Remote) -> Result<(), ProviderError> {
+    async fn call_each(
+        &self,
+        threads: &[ThreadTarget],
+        change: &Remote,
+    ) -> Result<(), ProviderError> {
         for thread in threads {
             let one = std::slice::from_ref(thread);
             match change {

@@ -279,3 +279,35 @@ pub struct SentReceipt {
     pub message_id: Option<RemoteId>,
     pub thread_id: Option<RemoteId>,
 }
+
+/// One thread an action names: its provider id, and the provider ids of the messages the store
+/// holds in it. A provider without thread endpoints (Graph) acts on those messages; Gmail acts
+/// on the thread and ignores them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThreadTarget {
+    pub thread_id: RemoteId,
+    pub message_ids: Vec<RemoteId>,
+}
+
+impl ThreadTarget {
+    /// The thread ids of `targets`, in order.
+    pub fn thread_ids(targets: &[Self]) -> Vec<RemoteId> {
+        targets.iter().map(|t| t.thread_id.clone()).collect()
+    }
+}
+
+/// A thread with no message ids (Gmail's tests, and providers that act on threads).
+impl From<&str> for ThreadTarget {
+    fn from(thread_id: &str) -> Self {
+        Self::from(thread_id.to_string())
+    }
+}
+
+impl From<String> for ThreadTarget {
+    fn from(thread_id: String) -> Self {
+        Self {
+            thread_id,
+            message_ids: Vec::new(),
+        }
+    }
+}

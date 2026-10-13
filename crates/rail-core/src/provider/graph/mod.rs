@@ -4,6 +4,7 @@
 //! bodies and attachments.
 //! Graph's own JSON never leaves this module; every string it returns is outside text.
 
+mod actions;
 mod attachment;
 mod batch;
 mod body;
@@ -16,6 +17,8 @@ mod message;
 mod search;
 mod wire;
 
+#[cfg(test)]
+mod actions_tests;
 #[cfg(test)]
 mod body_tests;
 #[cfg(test)]
@@ -37,7 +40,7 @@ use std::time::Duration;
 use super::http::ApiClient;
 use super::{
     Body, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
-    RemoteFolder, RemoteId, SentReceipt, SyncCursor, Window,
+    RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 use crate::config::SyncSettings;
 use crate::ops::M365_NOT_YET;
@@ -175,14 +178,14 @@ impl super::Provider for GraphProvider {
 
     async fn modify_threads(
         &self,
-        _: &[RemoteId],
-        _: &[RemoteId],
-        _: &[RemoteId],
+        threads: &[ThreadTarget],
+        add: &[RemoteId],
+        remove: &[RemoteId],
     ) -> Result<(), ProviderError> {
-        Err(not_yet())
+        self.modify(threads, add, remove).await
     }
 
-    async fn trash_threads(&self, _: &[RemoteId]) -> Result<(), ProviderError> {
+    async fn trash_threads(&self, _: &[ThreadTarget]) -> Result<(), ProviderError> {
         Err(not_yet())
     }
 

@@ -21,7 +21,8 @@ pub use error::ProviderError;
 pub use types::{
     AttachmentMeta, Body, ChangeSet, DraftIds, Envelope, EnvelopePage, FolderKind, INBOX_LABEL,
     IdPage, MAX_PAGE_TOKEN_BYTES, Mailbox, Outgoing, OutgoingAttachment, PageToken, Profile,
-    Relabel, RemoteFolder, RemoteId, STARRED_LABEL, SentReceipt, SyncCursor, UNREAD_LABEL, Window,
+    Relabel, RemoteFolder, RemoteId, STARRED_LABEL, SentReceipt, SyncCursor, ThreadTarget,
+    UNREAD_LABEL, Window,
 };
 
 /// One account's mailbox, read through its provider's API. Every method speaks Rail types;
@@ -51,15 +52,16 @@ pub trait Provider: Send + Sync {
     /// Envelopes for these ids; ids that no longer exist are left out.
     async fn envelopes(&self, ids: &[RemoteId]) -> Result<EnvelopePage, ProviderError>;
     /// Add and remove labels (system ones too: `INBOX_LABEL`, `UNREAD_LABEL`, `STARRED_LABEL`)
-    /// on every message of each thread, one thread at a time. Idempotent.
+    /// on every message of each thread, one thread at a time. Idempotent. Each target carries
+    /// the ids of the thread's stored messages, for a provider that acts on messages.
     async fn modify_threads(
         &self,
-        ids: &[RemoteId],
+        threads: &[ThreadTarget],
         add: &[RemoteId],
         remove: &[RemoteId],
     ) -> Result<(), ProviderError>;
     /// Move each thread to the provider's trash (restorable there). Idempotent.
-    async fn trash_threads(&self, ids: &[RemoteId]) -> Result<(), ProviderError>;
+    async fn trash_threads(&self, threads: &[ThreadTarget]) -> Result<(), ProviderError>;
     /// Send the RFC 5322 message `raw`, in `thread_id` when given. NEVER retried blindly: a
     /// request that may have reached the provider is not repeated, so a transient error here
     /// means "unknown"; the caller looks the message up (`message_by_header_id`) before it
