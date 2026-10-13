@@ -110,7 +110,8 @@ async fn the_status_line_shows_the_parsed_filter_and_esc_clears_it() {
     let (_tmp, mut screen) = screen().await;
     press(&mut screen, KeyCode::Char('/'));
     type_in(&mut screen, "is:unread form:dana");
-    let text = snapshot(90, 24, |frame| screen.view(frame, &Theme::default()));
+    // Wide enough for the slot to hold the typed text and the parsed operators.
+    let text = snapshot(150, 24, |frame| screen.view(frame, &Theme::default()));
     assert!(text.contains("/is:unread form:dana"), "{text}");
     assert!(
         text.contains("is:unread · words: form:dana"),

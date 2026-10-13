@@ -342,3 +342,53 @@ async fn ascii_icons_draw_the_stacked_sidebar_rule_with_a_bar() {
     assert_eq!(rule(&lines[1]), Some('|'), "{}", lines[1]);
     assert!(lines[0].starts_with("|Rail | All inboxes"), "{}", lines[0]);
 }
+
+#[tokio::test]
+async fn the_filter_is_typed_in_the_header_slot_and_falls_back_to_the_hint_row_when_narrow() {
+    let (_tmp, mut screen) = screen(Icons::Unicode).await;
+    let press = |screen: &mut MailScreen, code| {
+        screen.update(crate::tui::app::Msg::Key(crate::tui::test_util::key(code)))
+    };
+    let _ = press(&mut screen, crossterm::event::KeyCode::Char('/'));
+    for c in "is:unread".chars() {
+        let _ = press(&mut screen, crossterm::event::KeyCode::Char(c));
+    }
+    let rows = |screen: &MailScreen, w, h| {
+        crate::tui::test_util::render_lines(w, h, |frame| screen.view(frame, &Theme::default()))
+    };
+    let top = rows(&screen, 90, 24)[0].clone();
+    assert!(top.contains("/is:unread"), "typed in the slot: {top}");
+    let bottom = rows(&screen, 90, 24)[23].clone();
+    assert!(
+        bottom.starts_with("Enter open"),
+        "the hints stay while typing: {bottom}"
+    );
+    let narrow = rows(&screen, 50, 24);
+    assert!(
+        !narrow[0].contains("/is:unread"),
+        "no slot under 60 columns: {}",
+        narrow[0]
+    );
+    assert!(
+        narrow[23].starts_with("/is:unread"),
+        "so the line takes the hint row: {}",
+        narrow[23]
+    );
+    // The filter runs when its debounce timer fires.
+    let event = crate::tui::data::MailEvent::Timer {
+        token: screen.filter_token,
+        kind: crate::tui::data::Timer::Filter,
+    };
+    let effects = screen.update(crate::tui::app::Msg::Task(
+        crate::tui::app::TaskResult::Mail(event),
+    ));
+    settle(&mut screen, effects).await;
+    let effects = press(&mut screen, crossterm::event::KeyCode::Enter);
+    settle(&mut screen, effects).await;
+    assert_eq!(screen.slot_text(), "/ is:unread");
+    let top = rows(&screen, 90, 24)[0].clone();
+    assert!(
+        top.contains("/ is:unread"),
+        "active filter in the slot: {top}"
+    );
+}

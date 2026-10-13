@@ -11,6 +11,8 @@ use super::status::account_part;
 use super::view::Glyphs;
 use super::{Focus, MailScreen};
 use crate::tui::keys::{Action, Keymap};
+use crate::tui::screens::compose::Composer;
+use crate::tui::screens::compose::review::DISCARD_QUESTION;
 use crate::tui::text::{escape, fit, width};
 use crate::tui::theme::Theme;
 
@@ -238,12 +240,20 @@ impl MailScreen {
                 (self.account_color(i, theme), text)
             })
             .collect();
+        let discarding = self
+            .compose
+            .as_ref()
+            .is_some_and(Composer::confirming_discard);
+        let notice = if discarding {
+            Some((DISCARD_QUESTION, true))
+        } else {
+            self.status
+                .notice()
+                .map(|t| (t, self.status.notice_is_error()))
+        };
         Bar {
             hints,
-            notice: self
-                .status
-                .notice()
-                .map(|t| (t, self.status.notice_is_error())),
+            notice,
             dot: glyphs.account,
             right,
         }

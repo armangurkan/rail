@@ -334,13 +334,14 @@ Bodies of recent mail (`body_cache_days`) are already in the store. An older mes
 the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
 
-`/` filters the list as you type: plain words search subjects, the names and addresses of senders
-and recipients (To, Cc and Bcc) and stored bodies; `from:`, `to:` (also Cc and Bcc), `subject:`,
+`/` opens the filter line in the header's search slot (on the last row when the terminal is
+narrower than 60 columns) and filters the list as you type: plain words search subjects, the
+names and addresses of senders and recipients (To, Cc and Bcc) and stored bodies; `from:`, `to:` (also Cc and Bcc), `subject:`,
 `has:attachment`, `is:unread`, `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates,
 by when the mail arrived) and `account:<name>` narrow it; quote values with spaces
 (`from:"Dana Reyes"`). A thread matches when one of its messages matches all of them. Anything else
-is searched as words, and the filter line (and the header's search slot once you keep the
-filter) shows how Rail read your filter, so a typo such as
+is searched as words, and the header's search slot shows how Rail read your filter
+(`/ is:unread · words: form:dana`), so a typo such as
 `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
 local store only (`rail search` also asks each account's server).
 
@@ -510,12 +511,12 @@ after seven days.
 and `Bcc` (when used), `Subject`, then the attachments with their count and total size, then the
 body, with long runs of quoted lines folded to `[n quoted lines]`. A recipient with an
 international domain is followed by the domain's ASCII form, as `xn--` addresses are what
-the mail system sees. The bottom row names the keys:
+the mail system sees. The last row names the keys:
 
 | Key | What it does |
 |---|---|
 | `y` | Send. |
-| `s` | Save the draft to the account's Drafts (`s save to Gmail` or `s save to Microsoft 365` on the bottom row). |
+| `s` | Save the draft to the account's Drafts (`s save to Gmail` or `s save to Microsoft 365` on the last row). |
 | `e` | Edit again in your editor. |
 | `t` | Change `To`, `Cc`, `Bcc` and `Subject`, one prompt after another. |
 | `a` | Attach a file: type its path (`~` works, `Tab` completes names from the folder, relative paths are made absolute) and press `Enter`. |
@@ -597,7 +598,7 @@ draft that was deleted elsewhere before you opened or discarded it says
 `Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
 select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`, `space`, `r`, `R`, `f`, `/`) say
 `Not available on drafts`; `Esc` does nothing there and `c` writes a new message as everywhere.
-The filter line is hidden in this folder. The pane is read again whenever sync or the outbox
+The search slot is empty in this folder: the pane is not filtered. The pane is read again whenever sync or the outbox
 changes something. `:drafts` (`Open a draft` in the palette) lists the same rows for the account
 in view; in the unified inbox it merges every account's, and `Enter` opens one the same way.
 A Microsoft 365 account's rows are its Outlook drafts and behave the same way: `Enter` imports

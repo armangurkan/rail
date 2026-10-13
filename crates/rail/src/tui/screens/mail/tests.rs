@@ -96,6 +96,14 @@ async fn press(f: &mut Fixture, code: KeyCode) {
     settle_capturing(&mut f.screen, effects, &f.last_theme, &f.editor).await;
 }
 
+/// Tick until the notice has expired, so the hint bar shows the hints again.
+async fn expire_notice(f: &mut Fixture) {
+    for _ in 0..=status::NOTICE_TICKS {
+        let effects = f.screen.update(Msg::Tick);
+        settle(&mut f.screen, effects).await;
+    }
+}
+
 async fn press_n(f: &mut Fixture, code: KeyCode, times: usize) {
     for _ in 0..times {
         press(f, code).await;

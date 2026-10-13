@@ -16,6 +16,7 @@ use super::{Focus, MailScreen, StoreState};
 use super::{header, hints};
 use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
+use crate::tui::modals::Modal;
 use crate::tui::text::{escape, fit, outside, pad, pad_left, width};
 use crate::tui::theme::Theme;
 
@@ -148,8 +149,13 @@ impl MailScreen {
             }
         }
         hints::render_hints(frame, parts.hints, theme, &self.bar(theme));
-        if let Some(modal) = &self.modal {
-            modal.render(frame, area, theme);
+        match &self.modal {
+            Some(Modal::Filter(line)) => {
+                let row = self.slot_rect.get().unwrap_or(parts.hints);
+                line.render(frame, row, theme);
+            }
+            Some(modal) => modal.render(frame, area, theme),
+            None => {}
         }
     }
 

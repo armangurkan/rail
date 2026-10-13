@@ -208,16 +208,27 @@ async fn the_review_names_the_push_key() {
         let rows = crate::tui::test_util::render_lines(120, 30, |frame| {
             f.screen.view(frame, &Theme::default());
         });
-        rows[28].clone()
+        rows[29].clone()
     };
     let hint = bottom(&f);
-    assert!(hint.contains("y send · s save to Gmail · e edit"), "{hint}");
+    assert!(hint.contains("y send  s save to Gmail  e edit"), "{hint}");
     press(&mut f, KeyCode::Char('q')).await;
     let text = "[keys]\n\"compose.push\" = \"S\"\n";
     let path = std::path::Path::new("/c/config.toml");
     let config = rail_core::config::parse(text, path).unwrap();
     f.screen.ctx.keymap = Arc::new(Keymap::from_config(&config.keys, text, path).unwrap());
     press(&mut f, KeyCode::Char('r')).await;
+    expire_notice(&mut f).await;
     let hint = bottom(&f);
-    assert!(hint.contains("y send · S save to Gmail · e edit"), "{hint}");
+    assert!(hint.contains("y send  S save to Gmail  e edit"), "{hint}");
+}
+
+#[tokio::test]
+async fn the_review_draws_inside_the_frame_with_its_keys_in_the_hint_bar() {
+    let mut f = compose_fixture().await;
+    review(&mut f).await;
+    let shot = crate::tui::test_util::snapshot(150, 40, |frame| {
+        f.screen.view(frame, &Theme::default());
+    });
+    insta::assert_snapshot!("compose_frame_150", shot);
 }

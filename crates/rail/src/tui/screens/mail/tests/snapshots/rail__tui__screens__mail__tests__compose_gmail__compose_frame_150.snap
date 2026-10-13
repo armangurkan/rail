@@ -1,0 +1,44 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/compose_gmail.rs
+expression: shot
+---
+▍Rail │ All inboxes · 2 accounts · 5 unread  / Search                                                                                   ● Synced 12:39
+Reply · w@example.com
+
+From: w@example.com
+To: Sender <sender@example.com>
+Subject: Re: subject wm2
+
+
+
+On Thu, 9 Oct 2025 08:55:20 +0000, Sender wrote:
+> Hi there
+> second line
+
+--
+work sig
+x
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+y send  s save to Gmail  e edit  t headers  a attach  x remove  q keep  d discard  ? help                                          ● work ✓ · ● home ✓

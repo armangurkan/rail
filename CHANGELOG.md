@@ -179,6 +179,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Changed
 
+- The filter is typed in the header's search slot, and the compose review's key row is the last
+  row's hints, so the review has one more row for its content.
 - What writing says names the account's provider: `saved to Microsoft 365 · z undoes`,
   `Its copy in Outlook's Drafts is deleted too.`, `Microsoft 365 no longer has this draft`,
   `draft: saving to Microsoft 365, try again in a moment`, `s save to Microsoft 365` on the review

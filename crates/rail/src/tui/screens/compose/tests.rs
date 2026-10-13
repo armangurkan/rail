@@ -532,12 +532,12 @@ fn the_review_renders_at_both_sizes_with_folded_quotes_and_the_total() {
         "{text}"
     );
     assert!(text.contains("[5 quoted lines]"), "{text}");
+    let last = text.lines().last().unwrap_or_default();
     assert!(
-        text.contains(
-            "y send · s save to Gmail · e edit · t headers · a attach · x remove · q keep · d discard"
-        ),
-        "{text}"
+        last.trim().is_empty(),
+        "no key row: the hint bar names the keys: {last}"
     );
+    assert!(!text.contains("y send"), "{text}");
     let mut with_error = Composer::new(composing());
     with_error.set_error("to: an address is malformed".into());
     let text = shown(&with_error, 90, 24);
@@ -571,7 +571,11 @@ fn the_review_renders_at_both_sizes_with_folded_quotes_and_the_total() {
     assert!(text.contains("Subject: evil\\u{1b}[2J\\u{202e}"), "{text}");
     let mut c = Composer::new(composing());
     press(&mut c, Action::ComposeDiscard);
-    assert!(shown(&c, 90, 24).contains("Discard this draft? (y/n)"));
+    assert!(c.confirming_discard());
+    assert!(
+        !shown(&c, 90, 24).contains("Discard this draft?"),
+        "the hint bar asks, not the review"
+    );
 }
 
 #[test]
