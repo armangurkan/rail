@@ -1,7 +1,11 @@
-//! Where things go: a header row, the sidebar (when shown), the list, the reader pane (when
-//! split), and the status row.
+//! Where things go: a header row, the body (the sidebar when shown, the list, the reader pane
+//! when split) and the hint row. In split mode every pane is boxed; the focused one's border
+//! takes the theme's focus style.
 
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::widgets::{Block, Borders};
+
+use crate::tui::theme::Theme;
 
 /// Under this many columns the sidebar starts hidden.
 pub const SIDEBAR_MIN_COLUMNS: u16 = 100;
@@ -12,10 +16,16 @@ const LIST_SHARE: u16 = 45;
 
 pub struct Areas {
     pub header: Rect,
+    /// Everything between the header and the hint row.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "drawn from the frame task on; remove then")
+    )]
+    pub body: Rect,
     pub sidebar: Option<Rect>,
     pub list: Rect,
     pub reader: Option<Rect>,
-    pub status: Rect,
+    pub hints: Rect,
 }
 
 /// The reader goes beside the list at `threshold` columns and wider.
@@ -23,12 +33,44 @@ pub fn is_split(width: u16, threshold: u16) -> bool {
     width >= threshold
 }
 
+/// Panes are boxed in split mode only.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "drawn from the frame task on; remove then")
+)]
+pub fn bordered(width: u16, threshold: u16) -> bool {
+    is_split(width, threshold)
+}
+
 pub fn sidebar_by_default(width: u16) -> bool {
     width >= SIDEBAR_MIN_COLUMNS
 }
 
+/// A border needs a cell on each side and one row of content inside.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "drawn from the frame task on; remove then")
+)]
+pub fn fits_border(area: Rect) -> bool {
+    area.width >= 4 && area.height >= 3
+}
+
+/// A pane's box: the focused pane's in `border_focus`, the others' in `border`.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "drawn from the frame task on; remove then")
+)]
+pub fn pane_block(theme: &Theme, focused: bool) -> Block<'static> {
+    let style = if focused {
+        theme.border_focus
+    } else {
+        theme.border
+    };
+    Block::new().borders(Borders::ALL).border_style(style)
+}
+
 pub fn areas(area: Rect, sidebar: bool, pane: bool) -> Areas {
-    let [header, body, status] = Layout::vertical([
+    let [header, body, hints] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
         Constraint::Length(1),
@@ -53,9 +95,10 @@ pub fn areas(area: Rect, sidebar: bool, pane: bool) -> Areas {
     };
     Areas {
         header,
+        body,
         sidebar: side,
         list,
         reader,
-        status,
+        hints,
     }
 }

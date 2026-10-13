@@ -174,13 +174,26 @@ fn layout_pins_the_split_threshold_and_the_sidebar_rule() {
     assert!(layout::is_split(140, 140));
     assert!(!layout::sidebar_by_default(99));
     assert!(layout::sidebar_by_default(100));
+    assert_eq!(layout::bordered(140, 140), layout::is_split(140, 140));
+    assert!(!layout::bordered(139, 140), "borders only in split mode");
     let area = ratatui::layout::Rect::new(0, 0, 150, 40);
     let areas = layout::areas(area, true, true);
     assert_eq!(areas.header.height, 1);
-    assert_eq!(areas.status.height, 1);
+    assert_eq!(areas.hints.height, 1);
+    assert_eq!(areas.body.height, 38);
+    assert_eq!(areas.body.y, 1);
     assert_eq!(areas.sidebar.unwrap().width, layout::SIDEBAR_WIDTH);
     assert!(areas.reader.unwrap().width > areas.list.width);
     let narrow = layout::areas(ratatui::layout::Rect::new(0, 0, 90, 24), false, false);
     assert!(narrow.sidebar.is_none() && narrow.reader.is_none());
     assert_eq!(narrow.list.width, 90);
+    assert!(layout::fits_border(ratatui::layout::Rect::new(0, 0, 4, 3)));
+    assert!(!layout::fits_border(ratatui::layout::Rect::new(0, 0, 3, 3)));
+    assert!(!layout::fits_border(ratatui::layout::Rect::new(0, 0, 4, 2)));
+    let theme = Theme::default();
+    assert_eq!(
+        layout::pane_block(&theme, true).inner(area),
+        ratatui::layout::Rect::new(1, 1, 148, 38),
+        "a boxed pane loses one cell on each side"
+    );
 }

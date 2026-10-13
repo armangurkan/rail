@@ -122,7 +122,7 @@ impl MailScreen {
             let [body, _] =
                 Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
             composer.render(frame, body, theme, &glyphs);
-            self.render_status(frame, parts.status, theme);
+            self.render_status(frame, parts.hints, theme);
             if let Some(modal) = &self.modal {
                 modal.render(frame, area, theme);
             }
@@ -146,7 +146,7 @@ impl MailScreen {
                 }
             }
         }
-        self.render_status(frame, parts.status, theme);
+        self.render_status(frame, parts.hints, theme);
         if let Some(modal) = &self.modal {
             modal.render(frame, area, theme);
         }
