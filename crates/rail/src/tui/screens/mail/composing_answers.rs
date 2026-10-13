@@ -238,8 +238,8 @@ impl MailScreen {
         }
     }
 
-    /// The open review's own draft is being sent or saved to the account's Drafts: the editor and attachment
-    /// changes wait for the answer, which may close the review. Says so.
+    /// The open review's own draft is being sent or saved to the account's Drafts: the editor
+    /// and attachment changes wait for the answer, which may close the review. Says so.
     pub(super) fn own_draft_queuing(&mut self) -> bool {
         let own = self
             .compose

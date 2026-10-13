@@ -342,9 +342,9 @@ line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond th
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, and `!` for `needs login` or `sync failed`). After the state
-come `sending…` while a message is on its way, `saving to Gmail…` (`saving to Microsoft 365…`) while a draft is saved,
-`2 queued` for actions on their way to the
-account's server and `1 failed` for actions it refused; see
+come `sending…` while a message is on its way, `saving to Gmail…` (`saving to Microsoft 365…`)
+while a draft is saved, `2 queued` for actions on their way to the account's server and
+`1 failed` for actions it refused; see
 [Doing things to mail](#doing-things-to-mail).
 With threads selected, `3 selected` leads the bar. Next to the accounts it shows whether the
 daemon can be reached (`connecting to the daemon…`, `daemon unreachable`, or
@@ -525,12 +525,15 @@ review with `q` before the daemon has the message does not stop the send: its `s
 (or `Could not send`) still comes, even if another message is open by then. `z` then cancels the
 send but cannot reopen its review; the draft stays in Drafts, to open from there. Until
 the last message is queued, `y` and `s` on any message are refused (`Wait for the last message
-to be queued.`), and so are `e`, `a` and `x` on the review being sent or saved to Gmail. A draft
-whose send or save to Gmail (`s`) is on its way does not open from the Drafts folder or `:drafts`
-(`This draft is being sent; wait for it to be queued.`, or `This draft is being saved to Gmail;
-wait a moment.`); other drafts do. If the connection to the daemon is lost first, Rail cannot tell
-whether the message was queued and says `Could not confirm the send: … · check Sent and Drafts`
-(`Could not confirm the save to Gmail: … · check Drafts` for `s`). If it is in Sent, it went; if
+to be queued.`), and so are `e`, `a` and `x` on the review being sent or saved to the account's
+Drafts. A draft whose send or save (`s`) is on its way does not open from the Drafts folder or
+`:drafts` (`This draft is being sent; wait for it to be queued.`, or
+`This draft is being saved to Gmail; wait a moment.`, or
+`This draft is being saved to Microsoft 365; wait a moment.` on a Microsoft 365 account); other
+drafts do. If the connection to the daemon is lost first, Rail cannot tell whether the message
+was queued and says `Could not confirm the send: … · check Sent and Drafts`
+(`Could not confirm the save to Gmail: … · check Drafts` for `s`, or
+`Could not confirm the save to Microsoft 365: … · check Drafts`). If it is in Sent, it went; if
 it is still in Drafts, open it and press `y` again: that is safe, since the daemon refuses a draft
 it already has queued (`this draft is already being sent`) and a sent draft is gone. A message is
 never sent twice: before any later attempt (a retry, or a start after the daemon stopped
@@ -544,13 +547,16 @@ error (`Could not send: Gmail refused the request (HTTP 400)`) and the failure i
 local store, so a crash or a closed terminal loses nothing. A reply whose original message has
 since left the store keeps its threading. A draft stays on this computer until you press `s` on
 its review: Rail saves any text not stored yet, saves the draft to Gmail's Drafts ten seconds
-later (Outlook's Drafts for a Microsoft 365 account), closes the review and says `saved to Gmail · z undoes` (`saved to Microsoft 365 · z undoes`). `z` inside that window cancels it
-(`kept on this computer`). The review closes after `s`, so pressing `s` again means opening the
-draft again from the Drafts folder or `:drafts`; done inside the ten seconds, it makes one save with
-the newest text, and `z` after it cancels that save. `s` is refused when the message holds nothing at all.
-The status bar shows `saving to Gmail…` while a
-save is on its way. A save Gmail refuses on the spot keeps the review open (`Could not save to Gmail: …`); one that fails later is listed in
-`:errors` (`Could not save the draft to Gmail: …`), where `Enter` retries it. The first save
+later (Outlook's Drafts for a Microsoft 365 account), closes the review and says
+`saved to Gmail · z undoes` (`saved to Microsoft 365 · z undoes`). `z` inside that window cancels
+it (`kept on this computer`). The review closes after `s`, so pressing `s` again means opening the
+draft again from the Drafts folder or `:drafts`; done inside the ten seconds, it makes one save
+with the newest text, and `z` after it cancels that save. `s` is refused when the message holds
+nothing at all. The status bar shows `saving to Gmail…` (`saving to Microsoft 365…`) while a save
+is on its way. A save the provider refuses on the spot keeps the review open
+(`Could not save to Gmail: …`, or `Could not save to Microsoft 365: …`); one that fails later is
+listed in `:errors` (`Could not save the draft to Gmail: …`, or
+`Could not save the draft to Microsoft 365: …`), where `Enter` retries it. The first save
 creates the draft in Gmail and the next ones update it, so the draft keeps one place in Gmail's
 Drafts and opens on your phone. Rail's version wins: if the same draft was also edited in Gmail,
 the next `s` overwrites that edit. Sending a draft that was saved to Gmail deletes its Gmail copy
@@ -569,12 +575,14 @@ ASCII icons) before its subject, and a draft saved to Gmail is listed once. `Ent
 at its review. A Gmail draft is fetched first (`fetching the draft…`), together with its
 attachments, and from then on is a draft of this computer too, its Gmail copy updated by `s`.
 A Gmail draft Rail already holds that was edited elsewhere since is listed again as a Gmail row;
-opening it opens Rail's copy, as Rail's version wins. `d`
-asks `Discard this draft? (y/n)`; yes deletes it, and its copy in the account's Drafts with it (Outlook moves it to Deleted Items). While a save to Gmail
-is still on its way the discard is refused (`draft: saving to Gmail, try again in a moment`, or `draft: saving to Microsoft 365, try again in a moment`): try
-again once it has landed. A Gmail draft that was deleted elsewhere before you opened or discarded
-it says `Gmail no longer has this draft`; one that cannot be fetched says `Could not open the
-draft: …` or `Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
+opening it opens Rail's copy, as Rail's version wins. `d` asks `Discard this draft? (y/n)`; yes
+deletes it, and its copy in the account's Drafts with it (Outlook moves it to Deleted Items).
+While a save to Gmail is still on its way the discard is refused
+(`draft: saving to Gmail, try again in a moment`, or
+`draft: saving to Microsoft 365, try again in a moment`): try again once it has landed. A Gmail
+draft that was deleted elsewhere before you opened or discarded it says
+`Gmail no longer has this draft`; one that cannot be fetched says `Could not open the draft: …` or
+`Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
 select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`, `space`, `r`, `R`, `f`, `/`) say
 `Not available on drafts`; `Esc` does nothing there and `c` writes a new message as everywhere.
 The filter line is hidden in this folder. The pane is read again whenever sync or the outbox
@@ -898,7 +906,8 @@ syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. M
 finds on its server outside the window is kept for 14 days after it was last searched for. Rail
 changes mail on the server only when you act on it (archive, trash, star, read, labels, move),
 send, or save or discard a draft. It never deletes mail permanently, except a Gmail draft you
-discard or send (a Microsoft 365 draft you discard goes to Deleted Items), and the daemon is the only process that talks to Gmail or Microsoft 365.
+discard or send (a Microsoft 365 draft you discard goes to Deleted Items), and the daemon is the
+only process that talks to Gmail or Microsoft 365.
 
 Remote content in mail is loaded only by your browser, never by Rail, and only when you ask for
 it: `o` opens a message's HTML there, after you confirm once per session, and `g x` opens a link
