@@ -24,6 +24,8 @@ pub(super) enum Pane {
     Sidebar,
     Reader,
     Compose,
+    /// A compose prompt (headers or the attach path) is open and takes every key.
+    Prompt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +51,32 @@ fn pair(keymap: &Keymap, a: Action, b: Action) -> String {
     format!("{}/{}", keymap.label(a), keymap.label(b))
 }
 
-/// The hints of `pane`, `? help` last; `provider` is where the composer's `s` saves.
+/// A compose prompt's own keys: they are not keymap actions.
+fn prompt_hints() -> Vec<Hint> {
+    vec![
+        hint("Enter".to_string(), "accept"),
+        hint("Tab".to_string(), "complete"),
+        hint("Esc".to_string(), "cancel"),
+    ]
+}
+
+/// The compose review's keys; `provider` is where `s` saves.
+fn compose_hints(keymap: &Keymap, provider: &str) -> Vec<Hint> {
+    let l = |a: Action| keymap.label(a);
+    vec![
+        hint(l(Action::ComposeSend), "send"),
+        hint(l(Action::ComposePush), &format!("save to {provider}")),
+        hint(l(Action::ComposeEdit), "edit"),
+        hint(l(Action::ComposeHeaders), "headers"),
+        hint(l(Action::ComposeAttach), "attach"),
+        hint(l(Action::ComposeRemove), "remove"),
+        hint(l(Action::ComposeClose), "keep"),
+        hint(l(Action::ComposeDiscard), "discard"),
+    ]
+}
+
+/// The hints of `pane`, `? help` last; `provider` is where the composer's `s` saves. A prompt's
+/// keys are its own, not keymap actions, and `?` would type into it, so it has no `? help`.
 pub(super) fn hints(pane: Pane, keymap: &Keymap, sidebar_shown: bool, provider: &str) -> Vec<Hint> {
     let l = |a: Action| keymap.label(a);
     let mut out = match pane {
@@ -83,16 +110,8 @@ pub(super) fn hints(pane: Pane, keymap: &Keymap, sidebar_shown: bool, provider: 
             hint(l(Action::ListArchive), "archive"),
             hint(l(Action::ReaderBack), "back"),
         ],
-        Pane::Compose => vec![
-            hint(l(Action::ComposeSend), "send"),
-            hint(l(Action::ComposePush), &format!("save to {provider}")),
-            hint(l(Action::ComposeEdit), "edit"),
-            hint(l(Action::ComposeHeaders), "headers"),
-            hint(l(Action::ComposeAttach), "attach"),
-            hint(l(Action::ComposeRemove), "remove"),
-            hint(l(Action::ComposeClose), "keep"),
-            hint(l(Action::ComposeDiscard), "discard"),
-        ],
+        Pane::Prompt => return prompt_hints(),
+        Pane::Compose => compose_hints(keymap, provider),
     };
     if !sidebar_shown && matches!(pane, Pane::List | Pane::Drafts) {
         out.retain(|h| h.word != "sidebar");
@@ -209,7 +228,12 @@ pub(super) fn render_hints(frame: &mut Frame, area: Rect, theme: &Theme, bar: &B
 
 impl MailScreen {
     pub(super) fn pane(&self) -> Pane {
+        let prompting = self
+            .compose
+            .as_ref()
+            .is_some_and(|c| c.captures_text() && !c.confirming_discard());
         match self.focus {
+            Focus::Compose if prompting => Pane::Prompt,
             Focus::Compose => Pane::Compose,
             Focus::Sidebar => Pane::Sidebar,
             Focus::Reader => Pane::Reader,
@@ -321,6 +345,14 @@ mod tests {
                 "d discard",
                 "? help"
             ]
+        );
+    }
+
+    #[test]
+    fn a_prompt_shows_its_own_keys_and_no_help() {
+        assert_eq!(
+            words(&hints(Pane::Prompt, &keymap(), true, "Gmail")),
+            ["Enter accept", "Tab complete", "Esc cancel"]
         );
     }
 

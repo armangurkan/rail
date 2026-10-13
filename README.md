@@ -525,9 +525,10 @@ the mail system sees. The last row names the keys:
 | `d` | Discard the draft after `Discard this draft? (y/n)`: `draft discarded`. |
 | `j` `k` `↑` `↓` `PageUp` `PageDown` `Space` | Move through the message. |
 
-These are the `compose.*` actions in the key table and can be changed. `y` is refused with a
-reason when there is no recipient (`Add a recipient first`), while a save is pending, or after a
-save failed. If a save failed, `q` asks `Discard the unsaved changes?` and then says `unsaved
+These are the `compose.*` actions in the key table and can be changed. While a `t` or `a` prompt
+is open the last row shows the prompt's keys instead: `Enter accept  Tab complete  Esc cancel`.
+`y` is refused with a reason when there is no recipient (`Add a recipient first`), while a save
+is pending, or after a save failed. If a save failed, `q` asks `Discard the unsaved changes?` and then says `unsaved
 changes discarded`; a message closed before anything was saved says `The message was not saved.`
 
 **Sending.** `y` hands the message to the daemon, which sends it ten seconds later. The status
