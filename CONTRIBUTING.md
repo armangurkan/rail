@@ -70,7 +70,14 @@ scripts/                 update-schemes.sh: regenerates the vendored colour-sche
     cargo fmt --all
     cargo deny check
 
-`cargo test -p rail compose::` runs the composer's tests and renders its review snapshots.
+Always run tests as `cargo test --workspace`, with any filter after `--`: for example
+`cargo test --workspace -- compose::` runs the composer's tests and renders its review
+snapshots. `-p` builds `rail-core` with a different feature set (`rail` turns on its
+`test-gates` feature), so mixing `-p` and `--workspace` keeps two builds of every crate in
+`target/`. Debug builds carry line tables for Rail's crates and no debug info for dependencies
+(`[profile.dev]` in `Cargo.toml`); to step through code with gdb or lldb, set `debug = true`
+there locally. `cargo clean` (or `cargo sweep --time 2` from `cargo-sweep`) clears old build
+output, which Cargo never removes on its own.
 
 Run tests in the default (debug) profile. Under `cargo test --release` the test URL overrides
 (`with_graph_url`, `with_gmail_url`, `with_token_url`) are compiled out, so tests that rely on them
@@ -93,7 +100,7 @@ systemd or launchd unit, or the network.
 Screens are checked with [insta](https://insta.rs) snapshots of a `TestBackend` frame: the
 `.snap` files live in a `snapshots/` directory next to the test module and are committed.
 
-- A new snapshot: `INSTA_UPDATE=unseen cargo test -p rail <test>` writes it; read it before
+- A new snapshot: `INSTA_UPDATE=unseen cargo test --workspace -- <test>` writes it; read it before
   committing.
 - A change you meant: `cargo test` fails and writes `<name>.snap.new` beside the old file. Review
   with `cargo insta review` (from `cargo install cargo-insta`), or compare the two files and
@@ -117,16 +124,16 @@ pseudo-terminal tests use util-linux `script` and are skipped where it is missin
 
 `crates/rail-core/src/guide/tests.rs` checks that the README's setup sections carry the current
 guide marker (`<!-- guide:google v… -->`, `<!-- guide:microsoft v… -->`) and every guide command
-verbatim. Change the guide and the README together (`cargo test -p rail-core guide::`).
+verbatim. Change the guide and the README together (`cargo test --workspace -- guide::`).
 
 ### Live tests
 
 The tests that talk to the real keyring, a real 1Password vault and the real Gmail API are
 `#[ignore]`d and run by hand:
 
-    cargo test -p rail-core -- --ignored keyring_live
-    RAIL_OP_LIVE_VAULT=<vault> cargo test -p rail-core -- --ignored onepassword_live
-    RAIL_GMAIL_LIVE_ACCOUNT=<account name> cargo test -p rail-core -- --ignored gmail_live
+    cargo test --workspace -- --ignored keyring_live
+    RAIL_OP_LIVE_VAULT=<vault> cargo test --workspace -- --ignored onepassword_live
+    RAIL_GMAIL_LIVE_ACCOUNT=<account name> cargo test --workspace -- --ignored gmail_live
 
 The Gmail test uses your real config and token store, sends only GET requests to the Gmail API (a
 token refresh may POST to Google's token endpoint), prints counts and never mail, and confirms the
