@@ -10,7 +10,7 @@ use url::Url;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::errors::{CONSENT_MESSAGE, MAILBOX_MESSAGE, Refusal, refusal};
+use super::errors::{CONSENT_MESSAGE, MAILBOX_MESSAGE, Refusal, on_delta, refusal};
 use crate::provider::ProviderError;
 use crate::provider::http::{ApiClient, Dialect, Quota, RetryPolicy, api_http_client};
 use crate::provider::tokens::FixedTokens;
@@ -54,16 +54,20 @@ fn each_status_and_code_reads_as_the_spec_says() {
         MAILBOX_MESSAGE
     );
     assert_eq!(failed(404, "ErrorItemNotFound"), ProviderError::NotFound);
-    assert_eq!(failed(410, "Gone"), ProviderError::CursorExpired);
     assert_eq!(
-        failed(400, "syncStateNotFound"),
-        ProviderError::CursorExpired
+        failed(410, "Gone"),
+        ProviderError::Permanent {
+            message: "Microsoft 365 refused the request (HTTP 410)".into(),
+            detail: Some("Gone: said Graph".into()),
+        },
+        "a 410 outside a delta is a refusal (#31)"
     );
-    assert_eq!(failed(409, "ResyncRequired"), ProviderError::CursorExpired);
-    assert_eq!(
-        failed(404, "syncStateNotFound"),
-        ProviderError::CursorExpired
-    );
+    for (status, code) in [(400, "syncStateNotFound"), (409, "ResyncRequired")] {
+        assert!(
+            matches!(failed(status, code), ProviderError::Permanent { .. }),
+            "{status} {code}: a refusal outside a delta"
+        );
+    }
     for status in [429, 500, 502, 503, 504] {
         assert!(
             matches!(failed(status, "x"), ProviderError::Transient { .. }),
@@ -198,4 +202,22 @@ async fn transport_trouble_and_a_wrong_shape_name_microsoft_365() {
         error.to_string(),
         "Microsoft 365's answer did not have the expected shape"
     );
+}
+
+#[test]
+fn only_a_delta_reads_a_410_as_an_expired_cursor() {
+    assert_eq!(on_delta(failed(410, "Gone")), ProviderError::CursorExpired);
+    for (status, code) in [
+        (400, "syncStateNotFound"),
+        (409, "ResyncRequired"),
+        (404, "syncStateNotFound"),
+    ] {
+        assert_eq!(on_delta(failed(status, code)), ProviderError::CursorExpired);
+    }
+    assert_eq!(
+        on_delta(failed(404, "ErrorItemNotFound")),
+        ProviderError::NotFound
+    );
+    let refused = failed(400, "ErrorInvalidRequest");
+    assert_eq!(on_delta(refused.clone()), refused);
 }

@@ -1,7 +1,7 @@
 //! Fake Microsoft Graph: JSON in the shapes of the Graph v1.0 reference, with fake data, served
 //! by wiremock under `/v1.0/`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +25,25 @@ pub(crate) const ROOT: &str = "/v1.0";
 pub(crate) fn api_at(base: &str) -> ApiClient {
     ApiClient::new(
         api_http_client().unwrap(),
+        Url::parse(base).unwrap(),
+        FixedTokens::new(["test-access"]),
+    )
+    .with_policy(RetryPolicy::quick())
+    .with_quota(Quota::unlimited())
+    .with_dialect(Dialect::Graph)
+    .with_concurrency(GRAPH_CONCURRENCY)
+}
+
+/// `api_at` over a client with no timeouts and no connection pool: under a paused clock,
+/// reqwest's own timers would fire while a request waits on the fake server.
+pub(crate) fn api_untimed(base: &str) -> ApiClient {
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap();
+    ApiClient::new(
+        http,
         Url::parse(base).unwrap(),
         FixedTokens::new(["test-access"]),
     )
@@ -188,7 +207,8 @@ pub(crate) fn removed(id: &str) -> Value {
 #[derive(Clone, Default)]
 pub(crate) struct FakeBatch {
     answers: Arc<Mutex<HashMap<String, (u16, Value)>>>,
-    throttled: Arc<Mutex<HashSet<String>>>,
+    /// Requests the next batch throttles, with the `Retry-After` their item carries.
+    throttled: Arc<Mutex<HashMap<String, Option<String>>>>,
     seen: Arc<Mutex<Vec<Value>>>,
     posts: Arc<AtomicUsize>,
 }
@@ -199,12 +219,18 @@ impl FakeBatch {
         self.answers.lock().unwrap().insert(key, (status, body));
     }
 
-    /// The next batch answers this request with a 429 (a throttled item).
+    /// The next batch answers this request with a 429 (a throttled item) asking for a second.
     pub(crate) fn throttle_once(&self, method: &str, path: &str) {
+        self.throttle_with(method, path, Some("1"));
+    }
+
+    /// The next batch answers this request with a 429 whose item carries `retry_after` (no
+    /// header with `None`).
+    pub(crate) fn throttle_with(&self, method: &str, path: &str, retry_after: Option<&str>) {
         self.throttled
             .lock()
             .unwrap()
-            .insert(format!("{method} {path}"));
+            .insert(format!("{method} {path}"), retry_after.map(str::to_string));
     }
 
     /// Every sub-request posted so far, in order.
@@ -221,25 +247,34 @@ impl FakeBatch {
         let url = sub["url"].as_str().unwrap_or_default();
         let bare = url.split('?').next().unwrap_or_default();
         let key = format!("{} {bare}", sub["method"].as_str().unwrap_or_default());
-        let (status, body) = if self.throttled.lock().unwrap().remove(&key) {
-            (
+        let throttled = self.throttled.lock().unwrap().remove(&key);
+        let (status, body, retry_after) = match throttled {
+            Some(after) => (
                 429,
                 json!({"error": {"code": "TooManyRequests", "message": "slow down"}}),
-            )
-        } else {
-            self.answers
-                .lock()
-                .unwrap()
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(|| {
-                    (
-                        404,
-                        json!({"error": {"code": "ErrorItemNotFound", "message": "not found"}}),
-                    )
-                })
+                after,
+            ),
+            None => {
+                let (status, body) = self
+                    .answers
+                    .lock()
+                    .unwrap()
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        (
+                            404,
+                            json!({"error": {"code": "ErrorItemNotFound", "message": "not found"}}),
+                        )
+                    });
+                (status, body, Some("1".to_string()))
+            }
         };
-        json!({"id": sub["id"], "status": status, "headers": {"Retry-After": "1"}, "body": body})
+        let headers = match retry_after {
+            Some(after) => json!({"Retry-After": after}),
+            None => json!({}),
+        };
+        json!({"id": sub["id"], "status": status, "headers": headers, "body": body})
     }
 }
 

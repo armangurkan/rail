@@ -355,3 +355,20 @@ fn a_refused_message_is_logged_by_id_and_status_without_graphs_text() {
     assert!(log.contains("m2") && log.contains("400"), "{log}");
     assert!(!log.contains("subject secret"), "{log}");
 }
+
+#[tokio::test]
+async fn a_410_on_a_move_is_a_refusal_not_an_expired_cursor() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    let gone = json!({"error": {"code": "Gone", "message": "gone"}});
+    g.batch.answer("POST", "/me/messages/m-in/move", 410, gone);
+    let error = g
+        .provider()
+        .apply(&[spread()], &Change::Archive)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, ProviderError::Permanent { message, .. } if message == "Microsoft 365 refused the request (HTTP 410)"),
+        "{error:?}"
+    );
+}

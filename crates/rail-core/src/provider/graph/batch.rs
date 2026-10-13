@@ -1,20 +1,37 @@
 //! JSON batching: up to `MAX_BATCH` requests in one POST to `$batch`, each asking for
 //! immutable ids. Answers are matched to requests by id (Graph may answer out of order). A
-//! throttled item (a 429 inside the batch's 200) is sent again on its own, through the
-//! client's retries and `Retry-After`; the other items stand.
+//! throttled item (a 429 inside the batch's 200) waits for its own `Retry-After` (at most
+//! `MAX_ITEM_RETRY_AFTER`; a second without one) and is sent again on its own, through the
+//! client's retries; the other items stand.
 
 use std::collections::HashMap;
+use std::time::{Duration, SystemTime};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::errors::{Refusal, refusal};
 use super::wire::{BatchAnswers, BatchItem};
 use super::{COST_REQUEST, GraphProvider};
 use crate::provider::ProviderError;
-use crate::provider::http::IMMUTABLE_IDS;
+use crate::provider::http::{IMMUTABLE_IDS, parse_retry_after};
 
 /// Graph's limit of requests in one batch.
 pub const MAX_BATCH: usize = 20;
+/// The longest a throttled batch item waits before it is sent again alone.
+pub const MAX_ITEM_RETRY_AFTER: Duration = Duration::from_secs(30);
+/// How long a throttled item that names no wait waits.
+pub(crate) const ITEM_RETRY_DEFAULT: Duration = Duration::from_secs(1);
+
+/// How long a throttled item asks Rail to wait: its `Retry-After` (any case), capped at
+/// `MAX_ITEM_RETRY_AFTER`; `ITEM_RETRY_DEFAULT` when it names none Rail can read.
+pub(crate) fn item_wait(headers: &Map<String, Value>) -> Duration {
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))
+        .and_then(|(_, value)| value.as_str())
+        .and_then(|value| parse_retry_after(value, SystemTime::now()))
+        .map_or(ITEM_RETRY_DEFAULT, |wait| wait.min(MAX_ITEM_RETRY_AFTER))
+}
 
 /// One request of a batch; `url` is relative to the API root and starts with `/`.
 pub(crate) struct BatchRequest {
@@ -51,8 +68,11 @@ impl BatchRequest {
 
 /// One request's answer.
 pub(crate) struct BatchAnswer {
+    /// The HTTP status; 0 for a resend refused for good, whose reading is in `refused`.
     pub status: u16,
     pub body: Option<Value>,
+    /// A resend alone that Graph refused for good, already read as Rail's error.
+    pub refused: Option<ProviderError>,
 }
 
 /// The body is message JSON: only the status is shown.
@@ -68,6 +88,9 @@ impl BatchAnswer {
     /// The body when the request succeeded, `None` when what it asked for is gone (404), else
     /// the refusal as Rail reads it (a 401 inside a batch means a new login).
     pub(crate) fn into_body(self) -> Result<Option<Value>, ProviderError> {
+        if let Some(error) = self.refused {
+            return Err(error);
+        }
         match self.status {
             200..=299 => Ok(Some(self.body.unwrap_or(Value::Null))),
             404 => Ok(None),
@@ -137,10 +160,14 @@ impl GraphProvider {
         let mut answers = Vec::with_capacity(chunk.len());
         for (index, request) in chunk.iter().enumerate() {
             let answer = match by_id.remove(&index.to_string()) {
-                Some(item) if item.status == 429 => self.alone(request).await?,
+                Some(item) if item.status == 429 => {
+                    tokio::time::sleep(item_wait(&item.headers)).await;
+                    self.alone(request).await?
+                }
                 Some(item) => BatchAnswer {
                     status: item.status,
                     body: item.body,
+                    refused: None,
                 },
                 None => return Err(unreadable()),
             };
@@ -149,7 +176,9 @@ impl GraphProvider {
         Ok(answers)
     }
 
-    /// `request` on its own, with the client's retries: a throttled batch item.
+    /// `request` on its own, with the client's retries: a throttled batch item. A permanent
+    /// refusal is that item's answer, for the caller to settle per message; a login or a
+    /// transient failure fails the call.
     async fn alone(&self, request: &BatchRequest) -> Result<BatchAnswer, ProviderError> {
         let path = request.url.trim_start_matches('/');
         let method = request.method.clone();
@@ -161,10 +190,17 @@ impl GraphProvider {
             Ok(bytes) => Ok(BatchAnswer {
                 status: 200,
                 body: bytes.and_then(|b| serde_json::from_slice(&b).ok()),
+                refused: None,
             }),
             Err(ProviderError::NotFound) => Ok(BatchAnswer {
                 status: 404,
                 body: None,
+                refused: None,
+            }),
+            Err(error @ ProviderError::Permanent { .. }) => Ok(BatchAnswer {
+                status: 0,
+                body: None,
+                refused: Some(error),
             }),
             Err(error) => Err(error),
         }

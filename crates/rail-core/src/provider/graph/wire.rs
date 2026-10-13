@@ -99,9 +99,13 @@ pub(crate) struct BatchAnswers {
 pub(crate) struct BatchItem {
     pub id: String,
     pub status: u16,
+    /// The item's own headers (a throttled one's `Retry-After`); values are strings.
+    #[serde(default)]
+    pub headers: serde_json::Map<String, Value>,
     #[serde(default)]
     pub body: Option<Value>,
 }
+
 /// A message's body, as `$select=id,body,hasAttachments` answers it.
 #[derive(Deserialize)]
 pub(crate) struct BodyWire {

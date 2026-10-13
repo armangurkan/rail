@@ -91,8 +91,11 @@ pub(crate) fn refusal(status: u16, retry_after: Option<Duration>, body: &[u8]) -
             message: CONSENT_MESSAGE.to_string(),
             detail,
         },
-        410 => ProviderError::CursorExpired,
-        400..=499 if named(code, &EXPIRED_CODES) => ProviderError::CursorExpired,
+        // A sync-state code on a 404 is no gone message: it stays a refusal for `on_delta`.
+        404 if named(code, &EXPIRED_CODES) => ProviderError::Permanent {
+            message: refused_message(status),
+            detail,
+        },
         404 => ProviderError::NotFound,
         429 | 500..=599 => ProviderError::Transient {
             message: format!("Microsoft 365 is busy or unavailable (HTTP {status})"),
@@ -105,6 +108,20 @@ pub(crate) fn refusal(status: u16, retry_after: Option<Duration>, body: &[u8]) -
         },
     };
     Refusal::Failed(error)
+}
+
+/// An error of a delta request: there a 410, or one of Graph's sync-state codes, means Graph
+/// forgot the delta's place, so the account resyncs. Elsewhere those stay the refusals they
+/// are (#31): `refusal` keeps the code in the detail for this to read.
+pub(crate) fn on_delta(error: ProviderError) -> ProviderError {
+    let expired = is_refusal(&error, 410)
+        || matches!(&error, ProviderError::Permanent { detail: Some(detail), .. }
+            if named(detail.split(':').next(), &EXPIRED_CODES));
+    if expired {
+        ProviderError::CursorExpired
+    } else {
+        error
+    }
 }
 
 /// Whether `error` is Rail's refusal with HTTP `status` (a 405 to `$value`: a reference
