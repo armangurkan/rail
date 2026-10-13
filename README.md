@@ -1005,7 +1005,7 @@ ai_send = "confirm"
 - `client`: Rail relies on your MCP client's own per-call approval prompt. The weakest option.
 
 The policy will cover sending, replying, forwarding and deleting. The operations that save, send
-and discard a draft, save one to Gmail and import one from Gmail exist (`draft.save`,
+and discard a draft, save one to the account's Drafts and import one from there exist (`draft.save`,
 `draft.send`, `draft.discard`, `draft.push`, `draft.import`) and Rail's own terminal uses them, but they are not offered over MCP: no agent tool for mail exists yet, so today the key
 is only recorded and reported (`rail doctor`, `rail_status`, `rail_accounts_list`).
 
