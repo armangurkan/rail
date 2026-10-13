@@ -8,6 +8,16 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- Writing Microsoft 365 mail over Microsoft Graph: `c`, `r`, `R` and `f` write from a Microsoft
+  365 account and `y` sends with the ten second `z` undo; `s` saves to Outlook's Drafts
+  (`saved to Microsoft 365 · z undoes`) and later saves update the same draft; Outlook drafts open
+  in Rail with their attachments and `d` deletes them in Outlook. Replies and forwards are made on
+  the original message, so they join the Outlook conversation; one whose original was deleted in
+  Outlook goes out as a new message. Attachments up to 25 MiB in all, through upload sessions
+  from 3 MiB; a forward keeps the original's attachments without downloading them. A message is
+  never sent twice: a retry or a restart asks Outlook for its `Message-ID`, and about the draft
+  Rail saved, first.
+- Store schema v8: a draft keeps the provider id of the message a reply or forward answers.
 - Microsoft 365 thread actions over Microsoft Graph: `e` archives to Outlook's Archive folder,
   `d` moves to Deleted Items, `m` moves to Inbox, Archive, Junk Email or one of the account's
   folders, `s` flags the newest message or clears every flag, and `u` marks every unread message
@@ -19,8 +29,8 @@ All notable changes to Rail are recorded here. The format follows
   `Parent/Child`, the well-known ones in their usual places, search and non-mail folders left
   out), threads by conversation, read and flag state, one combined delta cursor per account, new
   mail within one poll interval, `$search` server search, bodies through the shared HTML
-  renderer, attachment lists, and marking read on open reaching Outlook. Labels (`l`) and writing
-  (compose, send, drafts) on a Microsoft 365 account are refused at once.
+  renderer, attachment lists, and marking read on open reaching Outlook. Labels (`l`)
+  on a Microsoft 365 account are refused at once.
 - The HTTP layer speaks Microsoft Graph: immutable ids on every request, Graph's error envelope,
   at most four requests in flight per mailbox, and `$batch` with throttled items sent again.
 - Writing mail: `c` new message, `r` reply, `R` reply-all, `f` forward, written in your editor
@@ -158,6 +168,12 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Changed
 
+- What writing says names the account's provider: `saved to Microsoft 365 · z undoes`,
+  `Its copy in Outlook's Drafts is deleted too.`, `Microsoft 365 no longer has this draft`,
+  `draft: saving to Microsoft 365, try again in a moment`, `s save to Microsoft 365` on the review
+  and the 25 MiB refusal; Gmail's wording is unchanged. The provider trait writes one
+  `OutgoingMail` (`send`, `draft_save`, `sent_already`), and Gmail's MIME is built inside its
+  adapter, with the same requests on the wire.
 - `Provider::apply(threads, change)` replaces `modify_threads` and `trash_threads`: a semantic
   `Change` (archive, trash, star, read, labels, move) that each adapter turns into its own calls;
   Gmail's wire calls are unchanged. `ThreadTarget`s carry each stored message's folder, flags and
@@ -229,9 +245,7 @@ All notable changes to Rail are recorded here. The format follows
   is skipped and logged by id, and the action fails only when every message is refused (#30).
 - A 410 from Microsoft Graph outside a delta request was read as an expired delta and resynced
   the account; it is now a refusal. A throttled item inside a `$batch` waits for its own
-  `Retry-After` (at most 30 seconds, one second when it names none) before it is sent again, and
-  `draft.discard` on a Microsoft 365 account answers `Not supported for Microsoft 365 accounts
-  yet.` (#31, in part).
+  `Retry-After` (at most 30 seconds, one second when it names none) before it is sent again (#31, in part).
 - A send or a save to Gmail whose review was closed, followed by a new message or reply before
   the daemon answered, lost its answer: no `sent · z undoes` record and no error when it failed.
   Its answer now makes its record (or shows its error) whatever is open. A thread action whose
