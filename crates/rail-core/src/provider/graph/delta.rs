@@ -40,13 +40,32 @@ impl Net {
             match item(value, folder) {
                 Item::Removed(id) => self.remove(id, folder),
                 Item::Full(envelope) => {
-                    self.removed.remove(&envelope.remote_id);
-                    self.added.insert(envelope.remote_id.clone(), *envelope);
+                    let id = envelope.remote_id.clone();
+                    self.removed.remove(&id);
+                    self.relabels.retain(|r| r.remote_id != id);
+                    self.added.insert(id, *envelope);
                 }
-                Item::Partial(relabel) if relabel.read.is_none() && relabel.starred.is_none() => {}
-                Item::Partial(relabel) => self.relabels.push(relabel),
+                Item::Partial(relabel) => self.relabel(relabel),
                 Item::Unreadable(id) => self.skipped.extend(id),
             }
+        }
+    }
+
+    /// A flags-only update: applied to the envelope an earlier page added (it is newer), else
+    /// kept as a relabel.
+    fn relabel(&mut self, relabel: Relabel) {
+        if relabel.read.is_none() && relabel.starred.is_none() {
+            return;
+        }
+        let Some(envelope) = self.added.get_mut(&relabel.remote_id) else {
+            self.relabels.push(relabel);
+            return;
+        };
+        if let Some(read) = relabel.read {
+            envelope.is_read = read;
+        }
+        if let Some(starred) = relabel.starred {
+            envelope.is_starred = starred;
         }
     }
 
@@ -123,13 +142,28 @@ impl GraphProvider {
             .await
     }
 
+    /// The unpaired removals as Graph has them now. One it refuses for good is skipped, so
+    /// kept and not deleted: one refused message must not stall the account every pass.
+    async fn removals_checked(&self, ids: &[RemoteId]) -> Result<EnvelopePage, ProviderError> {
+        let (mut page, refused) = self.envelopes_answered(ids).await?;
+        if !refused.is_empty() {
+            tracing::warn!(
+                count = refused.len(),
+                class = "permanent",
+                "Microsoft 365 refused checking removed messages; keeping them"
+            );
+            page.skipped.extend(refused.into_iter().map(|(id, _)| id));
+        }
+        Ok(page)
+    }
+
     /// Check the unpaired removals, and assemble the set.
     async fn finish(&self, net: Net, cursor: GraphCursor) -> Result<ChangeSet, ProviderError> {
         let removed: Vec<RemoteId> = net.removed.into_keys().collect();
         let checked = if removed.is_empty() {
             EnvelopePage::default()
         } else {
-            self.envelopes_of(&removed).await?
+            self.removals_checked(&removed).await?
         };
         let mut added: Vec<Envelope> = net.added.into_values().collect();
         let mut kept: HashSet<RemoteId> = checked.skipped.iter().cloned().collect();

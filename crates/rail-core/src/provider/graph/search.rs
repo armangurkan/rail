@@ -45,11 +45,25 @@ impl GraphProvider {
             .collect())
     }
 
-    /// The envelopes of `ids`: gone ones left out, unreadable ones skipped by id.
+    /// The envelopes of `ids`: gone ones left out, unreadable ones skipped by id. Any refusal
+    /// fails the call.
     pub(crate) async fn envelopes_of(
         &self,
         ids: &[RemoteId],
     ) -> Result<EnvelopePage, ProviderError> {
+        let (page, refused) = self.envelopes_answered(ids).await?;
+        match refused.into_iter().next() {
+            Some((_, error)) => Err(error),
+            None => Ok(page),
+        }
+    }
+
+    /// As `envelopes_of`, with the ids Graph refused permanently (and why) set apart; a
+    /// transient refusal, or one asking for a new login, still fails the call.
+    pub(crate) async fn envelopes_answered(
+        &self,
+        ids: &[RemoteId],
+    ) -> Result<(EnvelopePage, Vec<(RemoteId, ProviderError)>), ProviderError> {
         let (wanted, refused): (Vec<&RemoteId>, Vec<&RemoteId>) =
             ids.iter().partition(|id| graph_id(id));
         let requests: Vec<BatchRequest> = wanted
@@ -61,9 +75,16 @@ impl GraphProvider {
             skipped: refused.into_iter().cloned().collect(),
             ..EnvelopePage::default()
         };
+        let mut denied = Vec::new();
         for (id, answer) in wanted.into_iter().zip(answers) {
-            let Some(body) = answer.into_body()? else {
-                continue;
+            let body = match answer.into_body() {
+                Ok(Some(body)) => body,
+                Ok(None) => continue,
+                Err(error @ ProviderError::Permanent { .. }) => {
+                    denied.push((id.clone(), error));
+                    continue;
+                }
+                Err(error) => return Err(error),
             };
             let wire = serde_json::from_value::<MessageWire>(body).ok();
             match wire.and_then(|wire| self.located(wire)) {
@@ -71,7 +92,7 @@ impl GraphProvider {
                 _ => page.skipped.push(id.clone()),
             }
         }
-        Ok(page)
+        Ok((page, denied))
     }
 
     /// `wire`'s envelope, in the folder it names when Rail syncs that folder.

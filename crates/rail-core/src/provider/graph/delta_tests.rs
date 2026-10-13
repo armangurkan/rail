@@ -2,7 +2,8 @@
 //! flag changes, a partial update, removals checked before they are deleted, moves in one call
 //! and across calls, an expired link, folders added and gone, corrupt and oversized cursors,
 //! every folder polled past the page budget, the history cutoff, the profile, and envelopes in
-//! folders Rail does not sync.
+//! folders Rail does not sync; a partial update after a full one, a refused check, and a
+//! cursor resumed mid-folder.
 
 use serde_json::{Map, Value, json};
 use wiremock::matchers::{method, path, query_param};
@@ -462,4 +463,74 @@ async fn an_envelope_in_a_folder_rail_does_not_sync_gets_no_folder() {
         "no placeholder folder"
     );
     assert_eq!(page.envelopes[1].folders, ["f-inbox"]);
+}
+
+#[tokio::test]
+async fn a_partial_update_after_a_full_one_in_the_same_call_keeps_its_flag() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    let full = message("m1", "c1", "f-inbox", AT);
+    g.mount_link("d-f-inbox", g.page(vec![full], Some("i-2"), None))
+        .await;
+    let read = json!({"@odata.type": "#microsoft.graph.message", "id": "m1", "isRead": true});
+    g.mount_link("i-2", g.page(vec![read], None, Some("d-f-inbox")))
+        .await;
+    quiet(&g, &["f-arch", "f-proj"]).await;
+    let set = g.provider().changes(&caught_up(&g)).await.unwrap();
+    assert_eq!(added(&set), [("m1", "f-inbox")]);
+    let relabeled_read = set
+        .relabeled
+        .iter()
+        .find(|r| r.remote_id == "m1")
+        .and_then(|r| r.read);
+    assert!(
+        set.added[0].is_read || relabeled_read == Some(true),
+        "the later page's read state wins"
+    );
+}
+
+#[tokio::test]
+async fn a_removal_whose_check_is_refused_is_kept_and_the_cursor_advances() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    g.mount_link(
+        "d-f-inbox",
+        g.page(vec![removed("m1")], None, Some("d2-f-inbox")),
+    )
+    .await;
+    quiet(&g, &["f-arch", "f-proj"]).await;
+    let denied = json!({"error": {"code": "ErrorAccessDenied", "message": "no"}});
+    g.batch.answer("GET", "/me/messages/m1", 403, denied);
+    let set = g.provider().changes(&caught_up(&g)).await.unwrap();
+    assert!(set.deleted.is_empty(), "kept, not deleted");
+    assert!(set.added.is_empty() && !set.more);
+    let after = GraphCursor::decode(&set.cursor).unwrap();
+    assert_eq!(after.folders["f-inbox"].link, Some(g.link_to("d2-f-inbox")));
+    assert_eq!(after.folders["f-inbox"].state, State::CaughtUp);
+}
+
+#[tokio::test]
+async fn a_cursor_saved_mid_folder_follows_its_next_link_and_finishes_the_folder() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    let start = cursor(
+        &g,
+        &[
+            ("f-inbox", Some("i-5"), "running"),
+            ("f-arch", Some("d-f-arch"), "caught_up"),
+            ("f-proj", Some("d-f-proj"), "caught_up"),
+        ],
+    );
+    let rest = g.page(
+        vec![message("m5", "c5", "f-inbox", AT)],
+        None,
+        Some("d-f-inbox"),
+    );
+    g.mount_link("i-5", rest).await;
+    let set = g.provider().changes(&start).await.unwrap();
+    assert_eq!(added(&set), [("m5", "f-inbox")]);
+    assert!(!set.more);
+    let after = GraphCursor::decode(&set.cursor).unwrap();
+    assert_eq!(after.folders["f-inbox"].link, Some(g.link_to("d-f-inbox")));
+    assert_eq!(after.folders["f-inbox"].state, State::CaughtUp);
 }
