@@ -235,3 +235,78 @@ async fn a_grown_window_starts_every_folder_over_with_the_new_filter() {
         .unwrap();
     assert_eq!(stored(&h), ["m-old", "m1"]);
 }
+
+/// Page `n` of a twelve-page inbox walk of one message each (`m01` to `m12`): page 1 is the
+/// initial delta, the last gives the delta link `d2`.
+fn walk_page(g: &Graph, n: usize, at: &str) -> serde_json::Value {
+    let item = message(&format!("m{n:02}"), &format!("c{n}"), "f-inbox", at);
+    match n {
+        12 => g.page(vec![item], None, Some("d2")),
+        _ => g.page(vec![item], Some(&format!("p{}", n + 1)), None),
+    }
+}
+
+#[tokio::test]
+async fn a_first_load_over_two_passes_and_a_restart_sweeps_once_at_the_end_from_its_first_start() {
+    let g = Graph::start().await;
+    inbox(&g).await;
+    let at = recent(60);
+    let before = g.page(
+        vec![message("m-gone", "c0", "f-inbox", &at)],
+        None,
+        Some("d1"),
+    );
+    g.mount_initial("f-inbox", before).await;
+    let h = harness();
+    let now = crate::auth::unix_now();
+    engine(&h, g.provider(), 0, now).pass().await.unwrap();
+    assert_eq!(stored(&h), ["m-gone"]);
+    // Graph forgets the link; the reload walks twelve pages, ten to a call, and the pass
+    // that began it fails on page 11 (a stand-in for the daemon stopping).
+    g.reset().await;
+    inbox(&g).await;
+    Mock::given(method("GET"))
+        .and(path(format!("{ROOT}/links/d1")))
+        .respond_with(ResponseTemplate::new(410))
+        .mount(&g.server)
+        .await;
+    g.mount_initial("f-inbox", walk_page(&g, 1, &at)).await;
+    for n in 2..=10 {
+        g.mount_link(&format!("p{n}"), walk_page(&g, n, &at)).await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("{ROOT}/links/p11")))
+        .respond_with(ResponseTemplate::new(400))
+        .mount(&g.server)
+        .await;
+    let first_start = now + 60;
+    assert!(
+        engine(&h, g.provider(), 0, first_start)
+            .pass()
+            .await
+            .is_err()
+    );
+    let midway = stored(&h);
+    assert!(
+        midway.contains(&"m-gone".to_string()),
+        "no sweep yet: {midway:?}"
+    );
+    assert!(midway.contains(&"m10".to_string()), "{midway:?}");
+    let mid = state(&h);
+    assert_eq!(mid.backfill_started_at, Some(first_start));
+    assert!(mid.cursor.is_some());
+    // A fresh engine, later, finishes the load.
+    g.reset().await;
+    inbox(&g).await;
+    for n in 11..=12 {
+        g.mount_link(&format!("p{n}"), walk_page(&g, n, &at)).await;
+    }
+    engine(&h, g.provider(), 0, now + 120).pass().await.unwrap();
+    let expected: Vec<String> = (1..=12).map(|n| format!("m{n:02}")).collect();
+    assert_eq!(
+        stored(&h),
+        expected,
+        "m-gone swept; pages 1 to 10, seen only in the first pass, kept: the first start rules"
+    );
+    assert_eq!(state(&h).backfill_started_at, None);
+}

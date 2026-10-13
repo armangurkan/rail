@@ -478,14 +478,10 @@ async fn a_partial_update_after_a_full_one_in_the_same_call_keeps_its_flag() {
     quiet(&g, &["f-arch", "f-proj"]).await;
     let set = g.provider().changes(&caught_up(&g)).await.unwrap();
     assert_eq!(added(&set), [("m1", "f-inbox")]);
-    let relabeled_read = set
-        .relabeled
-        .iter()
-        .find(|r| r.remote_id == "m1")
-        .and_then(|r| r.read);
+    assert!(set.added[0].is_read, "the later page's read state wins");
     assert!(
-        set.added[0].is_read || relabeled_read == Some(true),
-        "the later page's read state wins"
+        set.relabeled.iter().all(|r| r.remote_id != "m1"),
+        "the partial folds into the added envelope, no relabel is left"
     );
 }
 

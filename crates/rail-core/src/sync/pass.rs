@@ -46,7 +46,7 @@ impl Engine {
             // A delta-first provider's links keep the window they began with: a grown window
             // starts every folder over.
             if backfill && self.provider.backfills_by_delta() {
-                return self.resync(window).await;
+                return self.resync(window, "the window grew").await;
             }
             let resynced = self.catch_up(cursor, window).await?;
             if backfill && !resynced {
@@ -67,7 +67,7 @@ impl Engine {
     async fn catch_up(&self, cursor: String, window: Option<i64>) -> Result<bool, SyncError> {
         match self.delta(cursor, window).await {
             Err(SyncError::Provider(ProviderError::CursorExpired)) => {
-                self.resync(window).await?;
+                self.resync(window, "the sync cursor expired").await?;
                 Ok(true)
             }
             other => other.map(|()| false),
@@ -156,9 +156,10 @@ impl Engine {
         Ok(self.state().await?.backfill_started_at)
     }
 
-    /// `CursorExpired`: forget the cursor, backfill in full, then catch up once more.
-    async fn resync(&self, window: Option<i64>) -> Result<(), SyncError> {
-        tracing::info!(account = %self.account.name, "the sync cursor expired; resyncing in full");
+    /// A cursor that cannot go on (`why` says so): forget it, backfill in full, then catch up
+    /// once more.
+    async fn resync(&self, window: Option<i64>, why: &str) -> Result<(), SyncError> {
+        tracing::info!(account = %self.account.name, "{why}; resyncing in full");
         let clear = StateUpdate {
             cursor: Some(None),
             backfill_before: Some(None),

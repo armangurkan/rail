@@ -96,17 +96,9 @@ async fn sync_status_lists_every_configured_account() {
     let work = until(&client, "work", |s| s.passes_completed >= 1).await;
     assert_eq!((work.messages, work.threads), (1, 1));
     assert!(work.last_success_at.is_some() && work.last_error.is_none());
-    let all = client
-        .call::<SyncStatus>(&SyncStatusRequest::default())
-        .await
-        .unwrap();
-    let corp = all.accounts.iter().find(|s| s.name == "corp").unwrap();
+    let corp = until(&client, "corp", |s| s.passes_completed >= 1).await;
     assert_eq!(corp.kind, AccountKind::M365);
-    assert_ne!(
-        corp.phase,
-        SyncPhase::Unsupported,
-        "Microsoft 365 syncs now"
-    );
+    assert_eq!(corp.phase, SyncPhase::Idle, "Microsoft 365 syncs now");
     let unknown = SyncStatusRequest {
         account: Some("nobody".into()),
     };
