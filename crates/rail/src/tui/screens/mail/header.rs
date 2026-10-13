@@ -102,6 +102,35 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
     }
 }
 
+/// The slot's spans after `used` columns, its rect for the filter line, and the column after
+/// it; `None` when the slot is not drawn.
+fn slot_spans(
+    area: Rect,
+    cells: &HeaderCells,
+    slot: &Slot,
+    theme: &Theme,
+    used: usize,
+) -> Option<(Vec<Span<'static>>, Rect, usize)> {
+    let (at, text) = cells.slot.as_ref()?;
+    let style = match slot {
+        Slot::Active(_) => theme.accent,
+        _ => theme.muted,
+    };
+    let spans = vec![
+        Span::raw(" ".repeat(at.saturating_sub(used))),
+        Span::styled(text.clone(), style),
+    ];
+    let right_w = cells.right.as_deref().map_or(0, width);
+    let slot_cols = usize::from(area.width).saturating_sub(at + right_w + GAP);
+    let rect = Rect::new(
+        area.x + u16::try_from(*at).unwrap_or(u16::MAX),
+        area.y,
+        u16::try_from(slot_cols).unwrap_or(u16::MAX),
+        1,
+    );
+    Some((spans, rect, at + width(text)))
+}
+
 /// Draw `header` in `area` (one row); the slot's rect when it is drawn, for the filter line.
 pub(super) fn render_header(
     frame: &mut Frame,
@@ -124,22 +153,10 @@ pub(super) fn render_header(
     }
     let mut used = width(&cells.left);
     let mut slot_rect = None;
-    if let Some((at, text)) = &cells.slot {
-        spans.push(Span::raw(" ".repeat(at.saturating_sub(used))));
-        let style = match header.slot {
-            Slot::Active(_) => theme.accent,
-            _ => theme.muted,
-        };
-        spans.push(Span::styled(text.clone(), style));
-        let right_w = cells.right.as_deref().map_or(0, width);
-        let slot_cols = cols.saturating_sub(at + right_w + GAP);
-        slot_rect = Some(Rect::new(
-            area.x + u16::try_from(*at).unwrap_or(u16::MAX),
-            area.y,
-            u16::try_from(slot_cols).unwrap_or(u16::MAX),
-            1,
-        ));
-        used = at + width(text);
+    if let Some((slot, rect, end)) = slot_spans(area, &cells, &header.slot, theme, used) {
+        spans.extend(slot);
+        slot_rect = Some(rect);
+        used = end;
     }
     if let Some(right) = &cells.right {
         spans.push(Span::raw(
