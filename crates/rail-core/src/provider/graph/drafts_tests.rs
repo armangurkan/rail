@@ -313,3 +313,32 @@ async fn a_message_rail_would_not_send_is_refused_before_any_request() {
     }
     assert!(g.server.received_requests().await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn a_reply_whose_patch_fails_is_deleted_and_the_patch_error_returned() {
+    let g = Graph::start().await;
+    none_found(&g).await;
+    Mock::given(method("POST"))
+        .and(path(format!("{ROOT}/me/messages/m-src/createReply")))
+        .respond_with(created("g-r1"))
+        .expect(1)
+        .mount(&g.server)
+        .await;
+    patched(&g, "g-r1", 400).await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("{ROOT}/me/messages/g-r1")))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&g.server)
+        .await;
+    let error = g
+        .provider()
+        .draft_save(&mail(DraftKind::Reply, Some("m-src"), None))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, ProviderError::Permanent { .. }),
+        "{error:?}"
+    );
+    g.server.verify().await;
+}

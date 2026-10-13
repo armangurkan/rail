@@ -171,15 +171,35 @@ impl GraphProvider {
             return self.create_new(mail).await;
         };
         match self.create_from(source, action).await {
-            Ok(id) => {
-                self.patch_draft(&id, mail).await?;
-                Ok(id)
-            }
+            Ok(id) => match self.patch_draft(&id, mail).await {
+                Ok(()) => Ok(id),
+                Err(error) => {
+                    self.discard_orphan(&id).await;
+                    Err(error)
+                }
+            },
             Err(ProviderError::NotFound) => {
                 tracing::info!("the message answered is gone from Outlook; writing a new one");
                 self.create_new(mail).await
             }
             Err(error) => Err(error),
+        }
+    }
+
+    /// Delete a draft just created whose `PATCH` failed: without Rail's `Message-ID` on it the
+    /// lookup could not find it, and the next save would make a second one. Best effort; the
+    /// outcome is logged by id and code only. (A create whose answer is lost stays a known gap.)
+    async fn discard_orphan(&self, id: &str) {
+        let path = format!("me/messages/{id}");
+        match self
+            .api
+            .request_bytes(Method::DELETE, &path, None, COST_REQUEST, true)
+            .await
+        {
+            Ok(_) => tracing::info!(draft = id, "removed a draft whose fields could not be set"),
+            Err(error) => {
+                tracing::warn!(draft = id, code = error.code(), "could not remove it")
+            }
         }
     }
 
