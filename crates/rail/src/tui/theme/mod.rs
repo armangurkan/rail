@@ -12,7 +12,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 use self::choice::{Accent, ColorDepth, ThemeChoice};
 
-/// The styles every screen draws with.
+/// The styles every screen draws with; `border` and `border_focus` box the mail screen's panes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     pub text: Style,
@@ -20,6 +20,10 @@ pub struct Theme {
     pub accent: Style,
     pub error: Style,
     pub selected: Style,
+    /// The panes' borders in split mode.
+    pub border: Style,
+    /// The focused pane's border.
+    pub border_focus: Style,
     /// Filled behind every screen; `None` leaves the terminal's own background.
     pub background: Option<Color>,
     /// Account dots for accounts without `color`, by position (cyan, magenta, green, yellow,
@@ -35,6 +39,8 @@ impl Default for Theme {
             accent: Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             error: Style::new().fg(Color::Red),
             selected: Style::new().fg(Color::Black).bg(Color::Cyan),
+            border: Style::new().fg(Color::DarkGray),
+            border_focus: Style::new().fg(Color::Cyan),
             background: None,
             account_colors: [
                 Color::Cyan,
@@ -71,6 +77,8 @@ impl Theme {
                     selected: Style::new()
                         .fg(scheme.selection_fg.color())
                         .bg(scheme.selection_bg.color()),
+                    border: on_bg(scheme.palette[8].color()),
+                    border_focus: on_bg(scheme.palette[6].color()),
                     background: Some(bg),
                     account_colors,
                 }
@@ -79,6 +87,7 @@ impl Theme {
         };
         if let Some(color) = accent_color(choice, depth) {
             theme.accent = theme.accent.fg(color);
+            theme.border_focus = theme.border_focus.fg(color);
         }
         theme
     }
@@ -115,5 +124,33 @@ mod tests {
         assert_ne!(theme.accent, theme.text);
         assert_ne!(theme.selected, theme.text);
         assert_ne!(theme.muted, theme.text);
+    }
+
+    #[test]
+    fn the_default_theme_has_a_muted_border_and_an_accent_focus_border() {
+        let theme = Theme::default();
+        assert_eq!(theme.border.fg, Some(Color::DarkGray));
+        assert_eq!(theme.border_focus.fg, Some(Color::Cyan));
+        assert!(
+            !theme.border_focus.add_modifier.contains(Modifier::BOLD),
+            "a border is a line, bold means nothing on it"
+        );
+        assert_ne!(theme.border, theme.border_focus);
+    }
+
+    #[test]
+    fn an_accent_override_colours_the_focus_border_too() {
+        let choice = ThemeChoice {
+            accent: Accent::Color(Color::Magenta),
+            ..ThemeChoice::default()
+        };
+        let theme = Theme::from_choice(choice, ColorDepth::Ansi);
+        assert_eq!(theme.accent.fg, Some(Color::Magenta));
+        assert_eq!(theme.border_focus.fg, Some(Color::Magenta));
+        assert_eq!(
+            theme.border.fg,
+            Some(Color::DarkGray),
+            "the plain border keeps muted"
+        );
     }
 }
