@@ -589,7 +589,7 @@ The filter line is hidden in this folder. The pane is read again whenever sync o
 changes something. `:drafts` (`Open a draft` in the palette) lists the same rows for the account
 in view; in the unified inbox it merges every account's, and `Enter` opens one the same way.
 A Microsoft 365 account's rows are its Outlook drafts and behave the same way: `Enter` imports
-one with its attachments, `d` says `It is deleted from Outlook's Drafts.` and deletes it there,
+one with its attached files, `d` says `It is deleted from Outlook's Drafts.` and deletes it there,
 and one deleted in Outlook first says `Microsoft 365 no longer has this draft`.
 
 **Files of an imported draft.** The attachments of a Gmail draft are fetched once, when you open
@@ -1175,7 +1175,7 @@ their own.
 | `Microsoft 365 no longer has this draft` | The draft was deleted in Outlook since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Outlook again. |
 | `draft: saving to Gmail, try again in a moment` | A save of this draft to Gmail is still on its way, so it cannot be discarded yet. Wait for `saving to Gmail…` to leave the status bar and press `d` again. |
 | `draft: saving to Microsoft 365, try again in a moment` | A save of this draft to Outlook's Drafts is still on its way, so it cannot be discarded yet. Wait for `saving to Microsoft 365…` to leave the status bar and press `d` again. |
-| A reply from Microsoft 365 is not in the Outlook conversation | The message it answered was deleted in Outlook before the send, so Rail sent the reply as a new message. |
+| A reply from Microsoft 365 is not in the Outlook conversation | The message it answered was gone from Outlook for good (Deleted Items emptied) before the send, so Rail sent the reply as a new message. |
 | Two copies of one draft in Gmail's Drafts | Creating a Gmail draft is tried once; a failure that hid a success can leave a second copy. Delete the extra one in Gmail. |
 | The login URL did not open in a browser | Select it on screen and open it while Rail is still running. |
 | The editor opens and Rail comes straight back with the message unchanged | A graphical editor that returns at once. Give it its wait flag in `general.editor`, e.g. `editor = "code --wait"`. |

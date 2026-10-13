@@ -11,7 +11,7 @@ All notable changes to Rail are recorded here. The format follows
 - Writing Microsoft 365 mail over Microsoft Graph: `c`, `r`, `R` and `f` write from a Microsoft
   365 account and `y` sends with the ten second `z` undo; `s` saves to Outlook's Drafts
   (`saved to Microsoft 365 · z undoes`) and later saves update the same draft, or make it again
-  in Drafts when it was deleted in Outlook; Outlook drafts open in Rail with their attachments
+  in Drafts when it was deleted in Outlook; Outlook drafts open in Rail with their attached files
   and `d` deletes them in Outlook. Replies and forwards are made on
   the original message, so they join the Outlook conversation; one whose original is gone from
   Outlook for good goes out as a new message. Attachments up to 25 MiB in all, through upload sessions
