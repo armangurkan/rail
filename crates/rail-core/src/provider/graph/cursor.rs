@@ -11,12 +11,19 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::folders::WELL_KNOWN;
-use super::graph_id;
+use super::folders::{MAX_FOLDERS, WELL_KNOWN};
+use super::{MAX_GRAPH_ID_BYTES, graph_id};
 use crate::provider::{FolderKind, ProviderError, RemoteFolder, RemoteId, SyncCursor};
 
-/// The largest cursor Rail reads.
-pub const MAX_CURSOR_BYTES: usize = 256 * 1024;
+/// The longest next or delta link Rail stores for one folder; a longer one starts that folder
+/// over.
+pub const MAX_LINK_BYTES: usize = 4096;
+/// What one folder's entry can add beyond its id and link: quotes, keys, the state, commas.
+const ENTRY_OVERHEAD_BYTES: usize = 64;
+/// The largest cursor Rail writes or reads: every folder Rail syncs at its largest entry, plus
+/// headroom for the version and the cutoff.
+pub const MAX_CURSOR_BYTES: usize =
+    MAX_FOLDERS * (MAX_GRAPH_ID_BYTES + MAX_LINK_BYTES + ENTRY_OVERHEAD_BYTES) + 4096;
 const VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,9 +99,16 @@ impl GraphCursor {
     }
 
     pub(crate) fn encode(&self) -> Result<SyncCursor, ProviderError> {
-        serde_json::to_string(self)
-            .map(SyncCursor)
-            .map_err(|_| ProviderError::permanent("Rail could not write the Microsoft 365 cursor"))
+        let text = serde_json::to_string(self).map_err(|_| {
+            ProviderError::permanent("Rail could not write the Microsoft 365 cursor")
+        })?;
+        if text.len() > MAX_CURSOR_BYTES {
+            return Err(ProviderError::permanent(&format!(
+                "the Microsoft 365 sync cursor for {} folders is too large to store",
+                self.folders.len()
+            )));
+        }
+        Ok(SyncCursor(text))
     }
 
     /// Follow the folder list: a new folder joins unstarted; a folder that is gone means a
@@ -142,6 +156,16 @@ impl GraphCursor {
             .folders
             .get_mut(id)
             .ok_or_else(|| ProviderError::permanent("a Microsoft 365 folder left the cursor"))?;
+        let too_long =
+            |link: &Option<String>| link.as_ref().is_some_and(|l| l.len() > MAX_LINK_BYTES);
+        if (next.is_some() && too_long(&next)) || (next.is_none() && too_long(&delta)) {
+            tracing::warn!(
+                bytes = next.as_ref().or(delta.as_ref()).map_or(0, String::len),
+                "a Microsoft 365 delta link is over its cap; the folder starts over"
+            );
+            *folder = Folder::unstarted();
+            return Ok(());
+        }
         *folder = match (next, delta) {
             (Some(next), _) => Folder {
                 link: Some(next),
@@ -238,5 +262,56 @@ mod tests {
     fn a_bad_folder_id_expires_the_cursor() {
         let bad = SyncCursor(r#"{"v":1,"folders":{"../x":{"state":"running"}}}"#.into());
         assert_eq!(GraphCursor::decode(&bad), Err(ProviderError::CursorExpired));
+    }
+
+    #[test]
+    fn a_cursor_of_every_folder_at_the_link_cap_encodes_and_decodes() {
+        let mut cursor = GraphCursor {
+            v: VERSION,
+            after: Some(i64::MAX),
+            folders: BTreeMap::new(),
+        };
+        for n in 0..MAX_FOLDERS {
+            cursor.folders.insert(
+                format!("{n:0>width$}", width = MAX_GRAPH_ID_BYTES),
+                Folder {
+                    link: Some("l".repeat(MAX_LINK_BYTES)),
+                    state: State::CaughtUp,
+                },
+            );
+        }
+        let encoded = cursor.encode().unwrap();
+        assert!(encoded.0.len() <= MAX_CURSOR_BYTES);
+        assert_eq!(GraphCursor::decode(&encoded).unwrap(), cursor);
+    }
+
+    #[test]
+    fn an_over_long_link_resets_its_folder_instead_of_being_stored() {
+        let mut cursor = GraphCursor::start(&[folder("f-1", "One", FolderKind::User)], None);
+        let long = "l".repeat(MAX_LINK_BYTES + 1);
+        cursor.advance("f-1", Some(long.clone()), None).unwrap();
+        assert_eq!(cursor.folders["f-1"], Folder::unstarted());
+        cursor.advance("f-1", None, Some(long)).unwrap();
+        assert_eq!(cursor.folders["f-1"], Folder::unstarted());
+        cursor
+            .advance("f-1", None, Some("l".repeat(MAX_LINK_BYTES)))
+            .unwrap();
+        assert_eq!(cursor.folders["f-1"].state, State::CaughtUp);
+    }
+
+    #[test]
+    fn a_cursor_beyond_the_cap_fails_to_encode_naming_the_folder_count() {
+        let mut cursor = GraphCursor::start(&[], None);
+        for n in 0..=MAX_FOLDERS {
+            cursor.folders.insert(
+                format!("{n:0>width$}", width = MAX_GRAPH_ID_BYTES),
+                Folder {
+                    link: Some("l".repeat(MAX_LINK_BYTES * 2)),
+                    state: State::CaughtUp,
+                },
+            );
+        }
+        let err = cursor.encode().unwrap_err();
+        assert!(format!("{err}").contains(&format!("{} folders", MAX_FOLDERS + 1)));
     }
 }
