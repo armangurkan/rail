@@ -278,3 +278,45 @@ fn a_rows_targets_show_each_message_as_it_was_before_the_row() {
         .collect();
     assert_eq!(unread, ["m1", "m3"], "the read row sees what was unread");
 }
+
+/// A pending archive of c1, then a delta that shows another client moved m1 to Projects.
+fn archived_then_moved_elsewhere() -> (Store, i64) {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let id = enqueue(&mut store, Action::Archive {}, vec![c1], "a");
+    let moved = Batch {
+        upserts: vec![message("m1", "c1", 1_000, "f-proj", false)],
+        ..Batch::new(1)
+    };
+    store.apply(&moved, NOW + 1).unwrap();
+    assert_eq!(places(&store)[0], ["f-proj"], "the server's folder stands");
+    (store, id)
+}
+
+#[test]
+fn undo_after_a_delta_moved_the_message_elsewhere_leaves_it_where_the_server_put_it() {
+    let (mut store, id) = archived_then_moved_elsewhere();
+    undo(&mut store, vec![id]);
+    assert_eq!(places(&store)[0], ["f-proj"], "in exactly one folder");
+}
+
+#[test]
+fn a_permanent_failure_after_a_delta_moved_the_message_elsewhere_keeps_the_server_folder() {
+    let (mut store, id) = archived_then_moved_elsewhere();
+    claim(&mut store);
+    let fail = OutboxWrite::Fail {
+        id,
+        failure: Failure::Permanent("Microsoft 365 refused the request (HTTP 400)".into()),
+    };
+    store.outbox_write(&fail, NOW + 20).unwrap();
+    assert_eq!(places(&store)[0], ["f-proj"], "in exactly one folder");
+}
+
+#[test]
+fn undo_with_no_delta_still_puts_the_message_back_in_the_inbox() {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let id = enqueue(&mut store, Action::Archive {}, vec![c1], "a");
+    undo(&mut store, vec![id]);
+    assert_eq!(places(&store)[0], ["f-inbox"]);
+}

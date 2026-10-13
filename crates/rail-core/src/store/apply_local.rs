@@ -233,14 +233,33 @@ fn apply_labels(
     Ok(priors)
 }
 
-/// Put back what `priors` record.
-pub(crate) fn revert(tx: &Transaction, priors: &[Prior]) -> Result<(), StoreError> {
+/// True when `p` moved the message into a folder it has since left: on a one-folder mailbox
+/// the server's folder then stands and `p`'s folder part is stale.
+fn left_its_folder(tx: &Transaction, p: &Prior) -> Result<bool, StoreError> {
+    if p.added.is_empty() {
+        return Ok(false);
+    }
+    for &folder in &p.added {
+        if in_folder(tx, p.message, folder)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Put back what `priors` record of `account`. On a one-folder mailbox the folder part goes
+/// back only while the message is still in the folder the action put it in.
+pub(crate) fn revert(tx: &Transaction, account: i64, priors: &[Prior]) -> Result<(), StoreError> {
+    let single = folder_model_in(tx, account)? == FolderModel::SingleFolder;
     for p in priors {
         if let Some(read) = p.read {
             set_flag(tx, "is_read", p.message, p.thread, read)?;
         }
         if let Some(starred) = p.starred {
             set_flag(tx, "is_starred", p.message, p.thread, starred)?;
+        }
+        if single && left_its_folder(tx, p)? {
+            continue;
         }
         for &folder in &p.added {
             remove_membership(tx, p.message, p.thread, folder)?;
@@ -302,7 +321,7 @@ pub(crate) fn restack(
             .filter(|p| threads.contains(&p.thread))
             .cloned()
             .collect();
-        revert(tx, &mine)?;
+        revert(tx, row.account_id, &mine)?;
     }
     for row in &rows {
         let mut kept: Vec<Prior> = row
@@ -324,6 +343,32 @@ pub(crate) fn restack(
     rollup::refresh(tx, threads)
 }
 
+/// On a one-folder mailbox, `old` without the folder part of a prior whose message the fresh
+/// reapply left untouched and the server has since moved out of the folder it was put in (the
+/// server's folder stands); a prior left with nothing to put back goes. Gmail's labels: as is.
+fn drop_stale_folder_parts(
+    tx: &Transaction,
+    account: i64,
+    old: Vec<Prior>,
+    fresh: &[Prior],
+) -> Result<Vec<Prior>, StoreError> {
+    if folder_model_in(tx, account)? != FolderModel::SingleFolder {
+        return Ok(old);
+    }
+    let mut kept = Vec::with_capacity(old.len());
+    for mut p in old {
+        let untouched = !fresh.iter().any(|f| f.message == p.message);
+        if untouched && left_its_folder(tx, &p)? {
+            p.added.clear();
+            p.removed.clear();
+        }
+        if p.changed() {
+            kept.push(p);
+        }
+    }
+    Ok(kept)
+}
+
 /// The conflict rule: after a sync batch wrote server state for `touched`, apply every live
 /// row of `account` on those threads again, oldest first, merging the reversals. Rollups are
 /// the caller's (the batch's own rollup runs next).
@@ -337,7 +382,8 @@ pub(crate) fn reapply_live(
             continue;
         }
         let fresh = apply(tx, account, &row.action, &within(&row.thread_ids, touched))?;
-        save_threads_and_reversal(tx, row.id, &row.thread_ids, &merge(row.reversal, fresh))?;
+        let old = drop_stale_folder_parts(tx, account, row.reversal, &fresh)?;
+        save_threads_and_reversal(tx, row.id, &row.thread_ids, &merge(old, fresh))?;
     }
     Ok(())
 }
