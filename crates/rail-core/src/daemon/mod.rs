@@ -30,6 +30,8 @@ mod draft_tests;
 #[cfg(test)]
 mod login_tests;
 #[cfg(test)]
+mod m365_tests;
+#[cfg(test)]
 mod manage_tests;
 #[cfg(test)]
 mod sync_tests;

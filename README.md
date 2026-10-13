@@ -19,7 +19,9 @@ up without ever seeing your secrets.
 
 > **Rail is pre-1.0.** Account setup, background sync, search, reading mail, acting on threads
 > (archive, trash, star, read) and writing mail (new messages, replies and forwards, with undo
-> send, and drafts saved to Gmail) work today for Gmail; Microsoft 365 sync comes next.
+> send, and drafts saved to Gmail) work today for Gmail. Microsoft 365 accounts sync, search and
+> read today (opening a thread marks it read); acting on their threads and writing from them
+> come next.
 
 ## Contents
 
@@ -46,9 +48,11 @@ up without ever seeing your secrets.
   organisation presets and Microsoft admin consent.
 - OAuth login for Gmail / Google Workspace and Microsoft 365; tokens kept in the OS keyring, a
   private file, or 1Password.
-- Gmail sync into the local store: labels, message envelopes, and bodies of recent threads, kept
-  current by a background daemon that can start at login (`rail daemon install`).
-- `rail search` over the local store and, through Gmail's own search, the whole mailbox.
+- Gmail and Microsoft 365 sync into the local store: labels or folders, message envelopes, and
+  bodies of recent threads, kept current by a background daemon that can start at login
+  (`rail daemon install`).
+- `rail search` over the local store and, through each provider's own search (Gmail's or
+  Microsoft Graph's), the mailbox on the server.
 - Reading mail in the terminal: a unified inbox and per-account and per-label lists over the local
   store, a sidebar with unread counts, a reader with folded quotes and numbered (clickable) links,
   filter as you type, a command palette, keys you can change in `config.toml`, and `o` to open a
@@ -64,8 +68,9 @@ up without ever seeing your secrets.
 
 **Coming**
 
-- Next: Microsoft 365 sync. Microsoft 365 accounts can be added and logged in today, but do not
-  sync, cannot write mail and are searched locally only.
+- Next: the rest of Microsoft 365. Microsoft 365 accounts sync, are searched on the server and
+  can be read today (opening a thread marks it read), but cannot yet archive, trash, star,
+  label or move threads, or write mail.
 - After that: agent tools for drafts and sends, the last piece of mail work, governed by the per-account `ai_send` policy.
 - Later: search operators, layout options, inline images, display-quality HTML in the
   terminal.
@@ -114,7 +119,8 @@ rail daemon install        # keep syncing after you log out and back in
    Gmail's quota). Set [`history_days`](#sync-settings) to sync only recent mail. Ctrl-C stops
    watching, not the sync.
 4. **`rail search <query>`** prints date, account, sender and subject for each matching thread,
-   newest first. Gmail's search syntax works for the Gmail part. When the provider is busy or
+   newest first. Gmail's search syntax works for Gmail accounts; Microsoft 365 accounts take
+   `from:`, `subject:`, `to:`, `body:` and words. When the provider is busy or
    refuses the connection (`not searched on Gmail` or `on Microsoft 365` says which), the server part is retried once after a short wait; the local
    results still print.
 5. **`rail doctor`** reports on the config, store, token backend, each account's tokens and sync,
@@ -317,7 +323,7 @@ by when the mail arrived) and `account:<name>` narrow it; quote values with spac
 (`from:"Dana Reyes"`). A thread matches when one of its messages matches all of them. Anything else
 is searched as words, and the status bar shows how Rail read your filter, so a typo such as
 `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
-local store only (`rail search` also asks Gmail).
+local store only (`rail search` also asks each account's server).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account
 or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
@@ -328,8 +334,7 @@ marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.h
 line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond the box.
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
-the first sync, `retrying`, `stopped`, `!` for `needs login` or `sync failed`, and `no sync yet`
-for Microsoft 365 accounts). After the state come `sending…` while a message is on its way to Gmail, `2 queued` for actions on their way to Gmail
+the first sync, `retrying`, `stopped`, and `!` for `needs login` or `sync failed`). After the state come `sending…` while a message is on its way to Gmail, `2 queued` for actions on their way to Gmail
 and `1 failed` for actions Gmail refused; see [Doing things to mail](#doing-things-to-mail).
 With threads selected, `3 selected` leads the bar. Next to the accounts it shows whether the
 daemon can be reached (`connecting to the daemon…`, `daemon unreachable`, or
@@ -1032,8 +1037,8 @@ pass in.
 | `rail account remove <account>` | Removes the account's config entry and tokens; its mail stays in the store. Asks `Remove? [y/N]`; refuses (exit 1) when stdin or stdout is not a terminal. |
 | `rail secrets set <keyring\|file\|1password> [--vault <vault>] [--account <account>] [--no-migrate]` | Changes where tokens are kept and moves them there (`--no-migrate`: setting only; each account then needs `rail account login`). Asks `Change? [y/N]`; interactive only. |
 | `rail sync [<account>] [--no-wait]` | Wakes the sync for one account or all and shows progress until caught up. Exits 0 when caught up, 1 if a sync failed, 2 if an account needs `rail account login`, 130 on Ctrl-C. If nothing changes for 10 minutes it stops watching (the sync goes on). If the daemon restarts, or restarts its sync, during the watch, it says which and waits for the new pass. `--no-wait` wakes it and exits 0. |
-| `rail search <query> [--account <account>] [--limit N]` | Searches the local store and, for Gmail, the whole mailbox. One line per thread: date (UTC), account, sender, subject; never a snippet or body. `--limit` is 1 to 100 (default 20). Results go to stdout, notes to stderr. Exits 1 for an unknown account, or when nothing was found and a Gmail search failed. |
-| `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit; notes a `general.layout` this version treats as `auto`, and prints a `theme` line when `general.theme` is set. Exits non-zero for config, store, token-backend and token-read errors, and for a Gmail account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
+| `rail search <query> [--account <account>] [--limit N]` | Searches the local store and each account's mailbox on its server (Gmail or Microsoft 365). One line per thread: date (UTC), account, sender, subject; never a snippet or body. `--limit` is 1 to 100 (default 20). Results go to stdout, notes to stderr. Exits 1 for an unknown account, or when nothing was found and a server search failed. |
+| `rail doctor` | Checks config, store, token backend, each account's tokens, `ai_send` and sync, the daemon and the login unit; notes a `general.layout` this version treats as `auto`, and prints a `theme` line when `general.theme` is set. Exits non-zero for config, store, token-backend and token-read errors, and for an account that needs a login or whose sync failed for good; warnings and the login-unit line do not change the status. |
 | `rail daemon status` | Shows whether the daemon runs, with pid, version and build, load and socket. Exits 1 when none runs; never starts one. |
 | `rail daemon stop` | Asks the daemon to exit once any save in flight is written; waits up to 35 seconds. |
 | `rail daemon run` | Runs the daemon in the foreground (Ctrl-C or SIGTERM stops it cleanly). Rarely needed. |

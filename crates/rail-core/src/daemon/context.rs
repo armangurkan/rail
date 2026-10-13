@@ -28,7 +28,10 @@ pub struct DaemonContext {
     /// The Gmail API root used instead of Google's: a debug-build test hook like `token_url`.
     #[cfg(debug_assertions)]
     gmail_url: Option<String>,
-    /// One sync engine per configured Gmail account, their writer and status board.
+    /// The Graph API root used instead of Microsoft's: a debug-build test hook like `token_url`.
+    #[cfg(debug_assertions)]
+    graph_url: Option<String>,
+    /// One sync engine per configured account, their writer and status board.
     pub(crate) sync: SyncManager,
     /// 1Password item ids, kept for the daemon's lifetime.
     pub(crate) op_ids: ItemIdCache,
@@ -111,7 +114,9 @@ impl DaemonContext {
             token_url: None,
             #[cfg(debug_assertions)]
             gmail_url: None,
-            sync: SyncManager::new(Arc::new(crate::sync::providers::gmail_for)),
+            #[cfg(debug_assertions)]
+            graph_url: None,
+            sync: SyncManager::new(Arc::new(crate::sync::providers::provider_for)),
             op_ids: ItemIdCache::default(),
             config_lock: Mutex::new(()),
             pending: PendingTable::default(),
@@ -159,6 +164,28 @@ impl DaemonContext {
         #[cfg(debug_assertions)]
         {
             self.gmail_url.as_deref()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            None
+        }
+    }
+
+    /// Replace the Graph API root. Honoured in debug builds only.
+    #[cfg_attr(not(debug_assertions), allow(unused_mut, unused_variables))]
+    pub fn with_graph_url(mut self, graph_url: Option<String>) -> Self {
+        #[cfg(debug_assertions)]
+        {
+            self.graph_url = graph_url;
+        }
+        self
+    }
+
+    /// The Graph API root override, if the hook is set and this is a debug build.
+    pub(crate) fn graph_url(&self) -> Option<&str> {
+        #[cfg(debug_assertions)]
+        {
+            self.graph_url.as_deref()
         }
         #[cfg(not(debug_assertions))]
         {

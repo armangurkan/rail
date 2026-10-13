@@ -198,23 +198,23 @@ fn finish(ended: Ended) -> ExitCode {
     }
 }
 
-/// No engine to wake: say why for each Gmail account (a sync that could not start shows its
-/// error), or that there is none.
+/// No engine to wake: say why for each account (a sync that could not start shows its error),
+/// or that there is none.
 async fn nothing_to_follow(client: &DaemonClient) -> color_eyre::Result<ExitCode> {
     let all = client
         .call::<SyncStatus>(&SyncStatusRequest::default())
         .await
         .map_err(report)?
         .accounts;
-    let gmail: Vec<AccountSyncStatus> = all
+    let syncing: Vec<AccountSyncStatus> = all
         .into_iter()
         .filter(|s| s.phase != SyncPhase::Unsupported)
         .collect();
-    if gmail.is_empty() {
-        println!("No Gmail account to sync; add one with `rail account add gmail`.");
+    if syncing.is_empty() {
+        println!("No account to sync; add one with `rail account add <gmail|m365>`.");
         return Ok(ExitCode::SUCCESS);
     }
-    Ok(print_finals(&gmail))
+    Ok(print_finals(&syncing))
 }
 
 fn print_finals(finals: &[AccountSyncStatus]) -> ExitCode {

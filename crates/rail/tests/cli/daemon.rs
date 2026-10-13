@@ -143,11 +143,12 @@ fn relative_directory_settings_work_through_the_daemon() {
             .env("RAIL_TEST_IDLE_SECS", "2")
             .env("RAIL_TEST_OPENER", write_opener(&dir))
             .env("RAIL_TEST_URL_FILE", opened_url_file(&dir))
-            // As in `rail_env`: the account this daemon syncs can never reach Google.
+            // As in `rail_env`: the account this daemon syncs can never reach Google or Microsoft.
             .env(
                 "RAIL_TEST_GMAIL_URL",
                 "http://127.0.0.1:9/gmail/v1/users/me/",
             )
+            .env("RAIL_TEST_GRAPH_URL", "http://127.0.0.1:9/v1.0/")
             .env("RAIL_TEST_TOKEN_URL", "http://127.0.0.1:9/token")
             .env("RAIL_TEST_IDLE_WITH_ACCOUNTS", "1")
             .args(args)

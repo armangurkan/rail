@@ -39,9 +39,9 @@ pub enum Command {
         #[arg(long)]
         no_wait: bool,
     },
-    /// Search the local store and Gmail's whole mailbox: one line per thread.
+    /// Search the local store and each account's mailbox on its server: one line per thread.
     Search {
-        /// What to look for (Gmail's search syntax works for the Gmail part).
+        /// What to look for (Gmail's search syntax for Gmail accounts; from:, subject:, to:, body: and words for Microsoft 365).
         #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
         query: Vec<String>,
         /// Only this account (name or address).

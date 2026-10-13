@@ -43,7 +43,8 @@ async fn serve(paths: &Paths) -> Result<(), OpError> {
     let opener: Opener = Arc::new(browser::launch);
     let ctx = DaemonContext::new(paths.clone(), opener)?
         .with_token_url(test_hooks::token_url())
-        .with_gmail_url(test_hooks::gmail_url());
+        .with_gmail_url(test_hooks::gmail_url())
+        .with_graph_url(test_hooks::graph_url());
     let config = ServeConfig {
         idle: test_hooks::idle().unwrap_or(IDLE_TIMEOUT),
         idle_with_accounts: test_hooks::idle_with_accounts(),

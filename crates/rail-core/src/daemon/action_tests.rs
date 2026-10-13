@@ -99,6 +99,20 @@ impl Daemon {
             .unwrap()
     }
 
+    /// The Microsoft 365 account's thread `remote`, once its engine has stored it.
+    fn corp_thread(&self, remote: &str) -> Option<i64> {
+        Store::open_reader(&self.paths.db_file())
+            .unwrap()
+            .conn()
+            .query_row(
+                "SELECT t.id FROM threads t JOIN accounts a ON a.id = t.account_id \
+                 WHERE a.address = 'me@corp.example' AND t.remote_id = ?1",
+                [remote],
+                |r| r.get(0),
+            )
+            .ok()
+    }
+
     fn label(&self, remote: &str) -> Option<i64> {
         Store::open_reader(&self.paths.db_file())
             .unwrap()
@@ -311,6 +325,35 @@ async fn microsoft_365_refuses_every_action_but_mark_read_and_every_draft() {
         .query_row("SELECT count(*) FROM outbox", [], |r| r.get(0))
         .unwrap();
     assert_eq!(rows, 0, "nothing queued");
+}
+
+/// The gate's other side: now that Microsoft 365 accounts have engines, marking a thread
+/// read passes it and is queued in the account's outbox like a Gmail action.
+#[tokio::test]
+async fn microsoft_365_mark_read_passes_the_gate_and_is_queued() {
+    let d = daemon(&format!("{WORK}{CORP}")).await;
+    d.until("corp synced", |d| d.corp_thread("t1").is_some())
+        .await;
+    let request = ActionApplyRequest {
+        account: "corp".into(),
+        threads: vec![d.corp_thread("t1").unwrap()],
+        action: Action::Read { on: true },
+        grace: true,
+        client_token: "read-corp".into(),
+    };
+    let answer = d.client.call::<ActionApply>(&request).await.unwrap();
+    assert_eq!((answer.rows.len(), answer.applied), (1, 1));
+    let queued: (String, String) = Store::open_reader(&d.paths.db_file())
+        .unwrap()
+        .conn()
+        .query_row(
+            "SELECT a.address, o.kind FROM outbox o JOIN accounts a ON a.id = o.account_id \
+             WHERE o.client_token = 'read-corp'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(queued, ("me@corp.example".into(), "set_flags".into()));
 }
 
 #[tokio::test]

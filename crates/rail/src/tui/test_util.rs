@@ -39,9 +39,11 @@ use super::screens::wizard::WizardScreen;
 use super::theme::Theme;
 use super::theme::choice::{ColorDepth, ThemeChoice};
 
-/// Where the in-process test daemons send token refreshes and Gmail calls: nothing listens.
+/// Where the in-process test daemons send token refreshes, Gmail and Graph calls: nothing
+/// listens.
 const UNREACHABLE_TOKEN_URL: &str = "http://127.0.0.1:9/token";
 const UNREACHABLE_GMAIL_URL: &str = "http://127.0.0.1:9/gmail/v1/users/me/";
+const UNREACHABLE_GRAPH_URL: &str = "http://127.0.0.1:9/v1.0/";
 
 /// The two sizes every rendering test checks: a classic terminal and a roomy one.
 pub const SIZES: [(u16, u16); 2] = [(80, 24), (120, 40)];
@@ -252,13 +254,14 @@ pub async fn gated_daemon_ctx(
         let _ = tx.send(url.clone());
         Ok(())
     });
-    // Never Google: an account the test configures syncs against unreachable addresses.
+    // Never Google or Microsoft: an account the test configures syncs against unreachable addresses.
     let ctx = DaemonContext::new(paths.clone(), daemon_opener)
         .expect("daemon context")
         .with_token_url(Some(
             token_url.unwrap_or_else(|| UNREACHABLE_TOKEN_URL.to_string()),
         ))
-        .with_gmail_url(Some(UNREACHABLE_GMAIL_URL.to_string()));
+        .with_gmail_url(Some(UNREACHABLE_GMAIL_URL.to_string()))
+        .with_graph_url(Some(UNREACHABLE_GRAPH_URL.to_string()));
     let gates = Gates {
         begin: ctx.begin_gate.clone(),
         save: ctx.save_gate.clone(),

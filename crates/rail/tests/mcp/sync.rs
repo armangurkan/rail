@@ -172,7 +172,7 @@ async fn gmails_error_text_reaches_the_agent_only_as_outside_text() {
 }
 
 #[tokio::test]
-async fn sync_now_with_only_a_microsoft_account_says_nothing_was_woken() {
+async fn sync_now_with_only_a_microsoft_account_wakes_it() {
     let dir = tempfile::tempdir().unwrap();
     let config = "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"corp\"\nkind = \"m365\"\naddress = \"me@corp.example\"\nclient_id = \"cid\"\ntenant = \"common\"\n";
     write_config(&dir, config);
@@ -180,8 +180,7 @@ async fn sync_now_with_only_a_microsoft_account_says_nothing_was_woken() {
     let woke = call(&client, "rail_sync_now", json!({})).await;
     assert_ne!(woke.is_error, Some(true), "{}", text(&woke));
     let said = text(&woke);
-    assert!(said.contains("nothing was woken"), "{said}");
-    assert!(said.contains("Microsoft 365"), "{said}");
-    assert!(said.contains("rail_sync_status"), "{said}");
+    assert!(said.contains("Woke the sync for"), "{said}");
+    assert!(said.contains("corp"), "{said}");
     client.close().await;
 }

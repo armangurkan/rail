@@ -64,6 +64,7 @@ fn live_provider() -> Option<Arc<dyn Provider>> {
         ids: ItemIdCache::default(),
         token_url: None,
         gmail_url: None,
+        graph_url: None,
         observer: Arc::new(|wait| eprintln!("retrying in {wait:?}")),
     })))
 }

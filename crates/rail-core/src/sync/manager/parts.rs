@@ -64,6 +64,14 @@ pub(super) fn key(config: &Config, account: &AccountConfig) -> EngineKey {
     }
 }
 
+#[cfg(test)]
+impl EngineKey {
+    /// The window the engine was started with.
+    pub(super) fn history_days(&self) -> u32 {
+        self.settings.history_days
+    }
+}
+
 pub(super) struct Running {
     pub(super) key: EngineKey,
     pub(super) name: String,

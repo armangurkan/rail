@@ -1,11 +1,11 @@
-//! `rail search <query> [--account <name>] [--limit N]`: the store and Gmail's whole
-//! mailbox, one line per thread (date, account, sender, subject), every mail field escaped.
+//! `rail search <query> [--account <name>] [--limit N]`: the store and each account's
+//! mailbox on its server (Gmail or Microsoft 365), one line per thread (date, account, sender, subject), every mail field escaped.
 //! Envelope fields only: no snippet or body is ever printed.
 
 use std::process::ExitCode;
 
 use rail_core::ops::op::Search;
-use rail_core::ops::{ErrorCode, SearchFailure, SearchHit, SearchRequest};
+use rail_core::ops::{SearchFailure, SearchHit, SearchRequest};
 use rail_core::paths::Paths;
 
 use crate::cmd::account::{escaped, outside, report};
@@ -14,13 +14,10 @@ use crate::daemon_link;
 
 const SENDER_CHARS: usize = 30;
 const SUBJECT_CHARS: usize = 120;
-/// Said once, whatever the number of Microsoft 365 accounts.
-const MICROSOFT_NOTE: &str =
-    "Microsoft 365 accounts are searched locally only until Microsoft support arrives";
 
 /// Prints the hits, newest first, on stdout (nothing else goes there), then on stderr each
-/// account Gmail could not be asked for, with one note for all Microsoft 365 accounts. Exits
-/// 1 when nothing was found and a Gmail search failed.
+/// account whose server could not be asked. Exits 1 when nothing was found and a server
+/// search failed.
 pub async fn run(
     paths: &Paths,
     query: String,
@@ -55,16 +52,10 @@ pub async fn run(
 }
 
 /// What the terminal says about the accounts the server search skipped or failed, and
-/// whether any of them failed (rather than being Microsoft 365, searched locally only).
+/// whether any did: every account syncs on its server, so each one skipped is a failure.
 fn failure_report(failures: &[SearchFailure]) -> (Vec<String>, bool) {
-    let (microsoft, failed): (Vec<&SearchFailure>, Vec<&SearchFailure>) = failures
-        .iter()
-        .partition(|f| f.error.code == ErrorCode::Unsupported);
-    let mut lines: Vec<String> = failed.iter().flat_map(|f| failure_lines(f)).collect();
-    if !microsoft.is_empty() {
-        lines.push(MICROSOFT_NOTE.to_string());
-    }
-    (lines, !failed.is_empty())
+    let lines = failures.iter().flat_map(failure_lines).collect();
+    (lines, !failures.is_empty())
 }
 
 /// One thread: `date  account  sender  subject`, the sender padded to a column.
@@ -103,7 +94,7 @@ mod tests {
     use super::*;
     use rail_core::config::AccountKind;
     use rail_core::error::ErrorClass;
-    use rail_core::ops::{HitSource, OpError, Untrusted};
+    use rail_core::ops::{ErrorCode, HitSource, OpError, Untrusted};
 
     #[test]
     fn a_hit_is_one_escaped_line() {
@@ -192,30 +183,21 @@ mod tests {
         }
     }
 
-    /// Microsoft 365 accounts give one note, not a failure each; other failures are
-    /// still listed per account and still count as failed.
+    /// Every skipped account is listed and counts as failed, an unsupported one too: no
+    /// account is "searched locally only" now that Microsoft 365 is searched on its server.
     #[test]
-    fn microsoft_accounts_give_one_note_and_other_failures_stay_listed() {
-        let corp = skipped(
-            "corp",
-            ErrorCode::Unsupported,
-            "Microsoft 365 sync arrives later",
-        );
-        let lab = skipped(
-            "lab",
-            ErrorCode::Unsupported,
-            "Microsoft 365 sync arrives later",
-        );
-        let (lines, failed) = failure_report(&[corp.clone(), lab.clone()]);
-        assert_eq!(lines, [MICROSOFT_NOTE]);
-        assert!(!failed, "searching locally only is not a failure");
+    fn every_skipped_account_is_listed_and_counts_as_failed() {
+        let corp = SearchFailure {
+            kind: AccountKind::M365,
+            ..skipped("corp", ErrorCode::Unsupported, "not in this version")
+        };
         let work = skipped("work", ErrorCode::Provider, "Gmail refused the request");
-        let (lines, failed) = failure_report(&[corp, work, lab]);
+        let (lines, failed) = failure_report(&[work, corp]);
         assert_eq!(
             lines,
             [
                 "work: not searched on Gmail: Gmail refused the request",
-                MICROSOFT_NOTE
+                "corp: not searched on Microsoft 365: not in this version",
             ]
         );
         assert!(failed);

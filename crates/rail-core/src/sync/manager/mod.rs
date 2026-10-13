@@ -1,5 +1,5 @@
-//! The daemon's sync: one engine per configured Gmail account, the writer they share and the
-//! status board, kept in step with `config.toml`.
+//! The daemon's sync: one engine per configured account, the writer they share and the status
+//! board, kept in step with `config.toml`.
 //!
 //! Reconciles run one at a time. Each holds the engines lock only to decide what to start and
 //! to insert what it built: the slow part (the store rows and the provider, which may wait on
@@ -63,6 +63,8 @@ pub struct ProviderRequest {
     pub ids: ItemIdCache,
     pub token_url: Option<String>,
     pub gmail_url: Option<String>,
+    /// The Graph API root used instead of Microsoft's (a debug-build test hook).
+    pub graph_url: Option<String>,
     pub observer: RetryObserver,
 }
 
@@ -275,7 +277,7 @@ impl SyncManager {
             if engines.running.contains_key(&address) {
                 continue;
             }
-            if account.kind == AccountKind::Gmail {
+            if super::providers::syncs(account.kind) {
                 let key = key(config, account);
                 let asked = now.is_some_and(|who| {
                     account.name.eq_ignore_ascii_case(who)
@@ -428,6 +430,7 @@ impl SyncManager {
             ids: ctx.op_ids.clone(),
             token_url: ctx.token_url().map(str::to_string),
             gmail_url: ctx.gmail_url().map(str::to_string),
+            graph_url: ctx.graph_url().map(str::to_string),
             observer: retry_observer(self.board.clone(), account.address.to_ascii_lowercase()),
         };
         let factory = self.factory.clone();
@@ -603,7 +606,7 @@ impl SyncManager {
         })
     }
 
-    /// Why `who` has no engine: Microsoft 365, an engine that failed (its error), a writer
+    /// Why `who` has no engine: a kind Rail does not sync, an engine that failed (its error), a writer
     /// that is gone, or no such account.
     fn why_not(&self, engines: &Engines, who: &str) -> OpError {
         let all = self.board.all();
@@ -676,7 +679,7 @@ impl SyncManager {
     }
 
     /// The account `who` names (name or address), for `body.fetch`. An account no one
-    /// configured is an error; one paused for a login, Microsoft 365, or one without a running
+    /// configured is an error; one paused for a login, of a kind Rail does not sync, or one without a running
     /// engine is `Unavailable` with the reason.
     pub async fn body_target(&self, who: &str) -> Result<Reach, OpError> {
         self.settled().await;
@@ -726,3 +729,5 @@ impl SyncManager {
 mod outbox_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod window_tests;

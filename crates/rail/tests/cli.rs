@@ -18,12 +18,13 @@ fn rail_env<'a>(cmd: &'a mut Command, dir: &tempfile::TempDir) -> &'a mut Comman
         // On macOS the launchd agent lives under HOME, so there HOME is the test's too.
         .envs(cfg!(target_os = "macos").then(|| ("HOME", dir.path().join("home"))))
         .env("RAIL_TEST_IDLE_SECS", "2")
-        // A configured account in a test must never reach Google, and its daemon must still
+        // A configured account in a test must never reach Google or Microsoft, and its daemon must still
         // idle out. Tests that serve a token endpoint set RAIL_TEST_TOKEN_URL again later.
         .env(
             "RAIL_TEST_GMAIL_URL",
             "http://127.0.0.1:9/gmail/v1/users/me/",
         )
+        .env("RAIL_TEST_GRAPH_URL", "http://127.0.0.1:9/v1.0/")
         .env("RAIL_TEST_TOKEN_URL", "http://127.0.0.1:9/token")
         .env("RAIL_TEST_IDLE_WITH_ACCOUNTS", "1")
 }

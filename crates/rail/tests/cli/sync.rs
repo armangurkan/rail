@@ -332,7 +332,7 @@ async fn a_watch_follows_the_daemon_through_a_restart() {
     assert!(printed.contains("work: up to date (1 message"), "{printed}");
 }
 
-/// With no Gmail account there is nothing to sync: a message and exit 0.
+/// With no account there is nothing to sync: a message and exit 0.
 #[test]
 fn rail_sync_without_accounts_says_so_and_exits_0() {
     let dir = tempfile::tempdir().unwrap();
@@ -342,7 +342,7 @@ fn rail_sync_without_accounts_says_so_and_exits_0() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(
         stdout_of(&out).trim(),
-        "No Gmail account to sync; add one with `rail account add gmail`."
+        "No account to sync; add one with `rail account add <gmail|m365>`."
     );
 }
 
@@ -378,22 +378,24 @@ async fn a_failed_gmail_search_keeps_local_hits_and_reports_on_stderr() {
     );
 }
 
-/// A Microsoft 365 account gives one note on stderr, and alone is no failure.
+/// A Microsoft 365 account is searched on its server too; without a login that is one
+/// failure, naming Microsoft 365, and the Gmail hits still print.
 #[tokio::test]
-async fn a_microsoft_account_gives_one_search_note() {
+async fn a_microsoft_account_is_searched_on_microsoft_365() {
     let dir = tempfile::tempdir().unwrap();
     let _daemon = StopsDaemon(&dir);
     let corp = "\n[[accounts]]\nname = \"corp\"\nkind = \"m365\"\naddress = \"c@x.io\"\nclient_id = \"c\"\n";
     write_config(&dir, &format!("{WORK_FILE_BACKEND}{corp}"));
     store_tokens(&dir);
     let server = gmail().await;
-    assert_eq!(sync_cmd(&dir, &server, &["sync"]).status.code(), Some(0));
+    let synced = sync_cmd(&dir, &server, &["sync", "work"]);
+    assert_eq!(synced.status.code(), Some(0), "{synced:?}");
     let out = sync_cmd(&dir, &server, &["search", "budget"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let stderr = stderr_of(&out);
-    assert_eq!(
-        stderr.trim(),
-        "Microsoft 365 accounts are searched locally only until Microsoft support arrives",
+    assert!(
+        stderr.contains("corp: not searched on Microsoft 365: "),
         "{out:?}"
     );
+    assert!(!stderr.contains("searched locally only"), "{out:?}");
 }

@@ -8,7 +8,7 @@ use tokio::net::UnixStream;
 
 use super::client::DaemonClient;
 use super::{Connector, ServeConfig, VERSION};
-use crate::config::DAY_SECS;
+use crate::config::{AccountKind, DAY_SECS};
 use crate::ops::op::{AccountLoginBegin, DaemonStop, PendingCancel, Search, SyncNow, SyncStatus};
 use crate::ops::{
     AccountSyncStatus, BrowserEnv, CancelRequest, DaemonStopRequest, ErrorCode, HitSource,
@@ -101,7 +101,12 @@ async fn sync_status_lists_every_configured_account() {
         .await
         .unwrap();
     let corp = all.accounts.iter().find(|s| s.name == "corp").unwrap();
-    assert_eq!(corp.phase, SyncPhase::Unsupported);
+    assert_eq!(corp.kind, AccountKind::M365);
+    assert_ne!(
+        corp.phase,
+        SyncPhase::Unsupported,
+        "Microsoft 365 syncs now"
+    );
     let unknown = SyncStatusRequest {
         account: Some("nobody".into()),
     };
@@ -156,17 +161,18 @@ async fn sync_now_reaches_its_target_pass_and_reports_progress() {
 }
 
 #[tokio::test]
-async fn sync_now_for_a_microsoft_account_says_it_is_not_supported_yet() {
+async fn sync_now_for_a_microsoft_account_wakes_its_engine() {
     let tmp = tempfile::tempdir().unwrap();
     let paths = paths_with(&tmp, &format!("{WORK}{CORP}"));
     let (client, _daemon) = daemon(&paths, &MockProvider::new(), ServeConfig::default()).await;
+    until(&client, "corp", |s| s.passes_completed >= 1).await;
     let request = SyncNowRequest {
         account: Some("corp".into()),
         watch: false,
     };
-    let err = client.call::<SyncNow>(&request).await.unwrap_err();
-    assert_eq!(err.code, ErrorCode::Unsupported);
-    assert!(err.message.contains("Microsoft 365"), "{err}");
+    let targets = client.call::<SyncNow>(&request).await.unwrap().targets;
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].name, "corp");
 }
 
 #[tokio::test]
@@ -413,22 +419,21 @@ async fn a_daemon_without_accounts_idles_out_at_the_default_timeout() {
         .unwrap();
 }
 
-/// Accounts the server search skipped are reported, so the CLI can say so.
+/// Every syncing account is asked on its server, Microsoft 365 too: none is reported skipped.
 #[tokio::test]
-async fn search_reports_the_accounts_it_could_not_ask() {
+async fn search_asks_every_syncing_account_microsoft_365_too() {
     let tmp = tempfile::tempdir().unwrap();
     let paths = paths_with(&tmp, &format!("{WORK}{CORP}"));
     let (client, _daemon) = daemon(&paths, &MockProvider::new(), ServeConfig::default()).await;
     until(&client, "work", |s| s.passes_completed >= 1).await;
+    until(&client, "corp", |s| s.passes_completed >= 1).await;
     let request = SearchRequest {
         query: "budget".into(),
         account: None,
         limit: 10,
     };
     let found = client.call::<Search>(&request).await.unwrap();
-    assert_eq!(found.failures.len(), 1, "{:?}", found.failures);
-    assert_eq!(found.failures[0].account, "corp");
-    assert_eq!(found.failures[0].error.code, ErrorCode::Unsupported);
+    assert!(found.failures.is_empty(), "{:?}", found.failures);
 }
 
 /// Review minor 8: a search of every account shows only the accounts configured now, never
