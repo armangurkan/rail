@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 /// A provider's identifier for a message, thread or folder.
 pub type RemoteId = String;
 
-/// The system labels `Provider::modify_threads` takes for archive (remove `INBOX`), read
-/// (remove `UNREAD`) and star (add `STARRED`): Gmail's ids. A provider without labels maps them.
+/// Gmail's system label ids: what its adapter sends for archive (remove `INBOX`), read (remove
+/// `UNREAD`) and star (add `STARRED`).
 pub const INBOX_LABEL: &str = "INBOX";
 pub const UNREAD_LABEL: &str = "UNREAD";
 pub const STARRED_LABEL: &str = "STARRED";
@@ -73,6 +73,21 @@ impl FolderKind {
             Self::Label => "label",
             Self::User => "user",
         }
+    }
+
+    /// The kind a `folders.kind` value names; `None` for anything else.
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text {
+            "inbox" => Self::Inbox,
+            "sent" => Self::Sent,
+            "drafts" => Self::Drafts,
+            "trash" => Self::Trash,
+            "spam" => Self::Spam,
+            "archive" => Self::Archive,
+            "label" => Self::Label,
+            "user" => Self::User,
+            _ => return None,
+        })
     }
 }
 
@@ -225,6 +240,16 @@ mod tests {
         assert!(PageToken::checked(&"a".repeat(MAX_PAGE_TOKEN_BYTES)).is_some());
         assert!(PageToken::checked(&"a".repeat(MAX_PAGE_TOKEN_BYTES + 1)).is_none());
     }
+
+    #[test]
+    fn a_folder_kind_reads_back_from_its_store_name() {
+        use FolderKind::*;
+        for kind in [Inbox, Sent, Drafts, Trash, Spam, Archive, Label, User] {
+            assert_eq!(FolderKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(FolderKind::parse("starred"), None);
+        assert_eq!(FolderKind::parse(""), None);
+    }
 }
 
 /// What the daemon sends: every string is user or mail content.
@@ -280,13 +305,49 @@ pub struct SentReceipt {
     pub thread_id: Option<RemoteId>,
 }
 
-/// One thread an action names: its provider id, and the provider ids of the messages the store
-/// holds in it. A provider without thread endpoints (Graph) acts on those messages; Gmail acts
+/// One change an action asks of a provider, for whole threads. Folder ids are the provider's
+/// (`folders.remote_id`); Gmail's labels are folders here too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    Archive,
+    Trash,
+    Star {
+        on: bool,
+    },
+    Read {
+        on: bool,
+    },
+    Labels {
+        add: Vec<RemoteId>,
+        remove: Vec<RemoteId>,
+    },
+    Move {
+        to: RemoteId,
+    },
+}
+
+/// One stored message of a thread an action names, with what the scope rule
+/// (`actions::scope`) reads. Ids and flags only: never mail content.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TargetMessage {
+    pub id: RemoteId,
+    /// The kind of its folder (Gmail: of its first label; `None` with none).
+    pub folder: Option<FolderKind>,
+    /// Its folder's provider id: what a move compares with its target.
+    pub folder_remote: Option<RemoteId>,
+    pub unread: bool,
+    pub starred: bool,
+    /// The `Date:` in Unix seconds: the newest message has the largest.
+    pub date: i64,
+}
+
+/// One thread an action names: its provider id, and the facts of the messages the store holds
+/// in it. A one-folder provider (Graph) acts on the messages the scope rule picks; Gmail acts
 /// on the thread and ignores them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ThreadTarget {
     pub thread_id: RemoteId,
-    pub message_ids: Vec<RemoteId>,
+    pub messages: Vec<TargetMessage>,
 }
 
 impl ThreadTarget {
@@ -296,7 +357,7 @@ impl ThreadTarget {
     }
 }
 
-/// A thread with no message ids (Gmail's tests, and providers that act on threads).
+/// A thread with no messages (Gmail's tests, and providers that act on threads).
 impl From<&str> for ThreadTarget {
     fn from(thread_id: &str) -> Self {
         Self::from(thread_id.to_string())
@@ -307,7 +368,7 @@ impl From<String> for ThreadTarget {
     fn from(thread_id: String) -> Self {
         Self {
             thread_id,
-            message_ids: Vec::new(),
+            messages: Vec::new(),
         }
     }
 }

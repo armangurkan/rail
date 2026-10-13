@@ -1,6 +1,7 @@
 //! A Microsoft 365 account through a real daemon over fake Graph: the first sync, a new
-//! message one pass later, read on open reaching Graph as a PATCH, and every other action and
-//! every draft refused with nothing queued.
+//! message one pass later, read on open reaching Graph as a PATCH and archive as a move to
+//! Archive; labels, a crafted move into Sent Items, and every draft operation refused with
+//! nothing queued.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,10 +10,10 @@ use serde_json::json;
 
 use super::client::DaemonClient;
 use super::{Connector, ServeConfig};
-use crate::ops::op::{ActionApply, DraftSave, SyncNow, SyncStatus};
+use crate::ops::op::{ActionApply, DraftDiscard, DraftSave, SyncNow, SyncStatus};
 use crate::ops::{
-    AccountSyncStatus, Action, ActionApplyRequest, DraftSaveRequest, ErrorCode, M365_NOT_YET,
-    SyncNowRequest, SyncStatusRequest,
+    AccountSyncStatus, Action, ActionApplyRequest, DraftDiscardRequest, DraftSaveRequest,
+    ErrorCode, M365_LABELS, M365_NOT_YET, SyncNowRequest, SyncStatusRequest,
 };
 use crate::paths::Paths;
 use crate::provider::Provider;
@@ -74,23 +75,77 @@ fn thread(paths: &Paths, remote: &str) -> i64 {
         .unwrap()
 }
 
-#[tokio::test]
-async fn a_microsoft_365_account_syncs_marks_read_on_open_and_refuses_the_rest() {
-    let g = Graph::start().await;
-    g.mount_root(json!([folder("f-inbox", "Inbox", 0)])).await;
-    g.mount_well_known(&[("inbox", "f-inbox")]).await;
+fn folder_id(paths: &Paths, remote: &str) -> i64 {
+    Store::open_reader(&paths.db_file())
+        .unwrap()
+        .conn()
+        .query_row(
+            "SELECT id FROM folders WHERE remote_id = ?1",
+            [remote],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+fn apply(thread: i64, action: Action, token: &str) -> ActionApplyRequest {
+    ActionApplyRequest {
+        account: "corp".into(),
+        threads: vec![thread],
+        action,
+        grace: false,
+        client_token: token.into(),
+    }
+}
+
+/// Wait until Graph was sent a batch item `sent` accepts.
+async fn until_sent(g: &Graph, sent: impl Fn(&serde_json::Value) -> bool) {
+    tokio::time::timeout(BOUND, async {
+        while !g.batch.requests().iter().any(&sent) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the request reached Graph");
+}
+
+/// Inbox, Sent Items, Archive and Deleted Items, all well-known: c1 in the Inbox, and c2
+/// one pass later.
+async fn mailbox(g: &Graph) {
+    g.mount_root(json!([
+        folder("f-inbox", "Inbox", 0),
+        folder("f-sent", "Sent Items", 0),
+        folder("f-arch", "Archive", 0),
+        folder("f-del", "Deleted Items", 0),
+    ]))
+    .await;
+    g.mount_well_known(&[
+        ("inbox", "f-inbox"),
+        ("sentitems", "f-sent"),
+        ("archive", "f-arch"),
+        ("deleteditems", "f-del"),
+    ])
+    .await;
     let at = recent(5);
     let first = g.page(vec![message("m1", "c1", "f-inbox", &at)], None, Some("d1"));
     g.mount_initial("f-inbox", first).await;
     let next = g.page(vec![message("m2", "c2", "f-inbox", &at)], None, Some("d2"));
     g.mount_link("d1", next).await;
     g.mount_link("d2", g.page(vec![], None, Some("d2"))).await;
-    g.batch.answer(
-        "PATCH",
-        "/me/messages/m1",
-        200,
-        json!({"id": "m1", "isRead": true}),
-    );
+    for id in ["f-sent", "f-arch", "f-del"] {
+        let link = format!("d-{id}");
+        g.mount_initial(id, g.page(vec![], None, Some(&link))).await;
+        g.mount_link(&link, g.page(vec![], None, Some(&link))).await;
+    }
+}
+
+#[tokio::test]
+async fn a_microsoft_365_account_acts_through_graph_and_refuses_labels_and_writing() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    let read = json!({"id": "m1", "isRead": true});
+    g.batch.answer("PATCH", "/me/messages/m1", 200, read);
+    g.batch
+        .answer("POST", "/me/messages/m1/move", 201, json!({"id": "m1"}));
     let tmp = tempfile::tempdir().unwrap();
     let paths = Paths::all_in(tmp.path());
     std::fs::create_dir_all(&paths.config_dir).unwrap();
@@ -106,7 +161,6 @@ async fn a_microsoft_365_account_syncs_marks_read_on_open_and_refuses_the_rest()
     let first = until(&client, |s| s.passes_completed >= 1).await;
     assert!(first.last_error.is_none(), "{:?}", first.last_error);
     assert_eq!(stored(&paths), ["m1"]);
-
     let wake = SyncNowRequest {
         account: Some("corp".into()),
         watch: false,
@@ -119,46 +173,50 @@ async fn a_microsoft_365_account_syncs_marks_read_on_open_and_refuses_the_rest()
         "the new message, one pass later"
     );
 
-    let read = ActionApplyRequest {
-        account: "corp".into(),
-        threads: vec![thread(&paths, "c1")],
-        action: Action::Read { on: true },
-        grace: false,
-        client_token: "read-1".into(),
-    };
+    let c1 = thread(&paths, "c1");
+    let read = apply(c1, Action::Read { on: true }, "read-1");
     client.call::<ActionApply>(&read).await.unwrap();
-    tokio::time::timeout(BOUND, async {
-        let patched = |r: &serde_json::Value| {
-            r["method"] == "PATCH"
-                && r["url"] == "/me/messages/m1"
-                && r["body"] == json!({"isRead": true})
-        };
-        while !g.batch.requests().iter().any(patched) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    until_sent(&g, |r| {
+        r["method"] == "PATCH"
+            && r["url"] == "/me/messages/m1"
+            && r["body"] == json!({"isRead": true})
     })
-    .await
-    .expect("the PATCH reached Graph");
+    .await;
+    let archive = apply(c1, Action::Archive {}, "archive-1");
+    client.call::<ActionApply>(&archive).await.unwrap();
+    until_sent(&g, |r| {
+        r["method"] == "POST"
+            && r["url"] == "/me/messages/m1/move"
+            && r["body"] == json!({"destinationId": "f-arch"})
+    })
+    .await;
 
-    let refused = [
-        Action::Archive {},
-        Action::Trash {},
-        Action::Star { on: true },
-    ];
-    for (n, action) in refused.into_iter().enumerate() {
-        let request = ActionApplyRequest {
-            account: "corp".into(),
-            threads: vec![thread(&paths, "c1")],
-            action,
-            grace: true,
-            client_token: format!("refused-{n}"),
-        };
-        let error = client.call::<ActionApply>(&request).await.unwrap_err();
-        assert_eq!(
-            (error.code, error.message.as_str()),
-            (ErrorCode::Unsupported, M365_NOT_YET)
-        );
-    }
+    let labels = Action::Labels {
+        add: vec![folder_id(&paths, "f-arch")],
+        remove: vec![],
+    };
+    let error = client
+        .call::<ActionApply>(&apply(c1, labels, "labels-1"))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (ErrorCode::Unsupported, M365_LABELS)
+    );
+    let into_sent = Action::Move {
+        to: folder_id(&paths, "f-sent"),
+    };
+    let error = client
+        .call::<ActionApply>(&apply(c1, into_sent, "sent-1"))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            ErrorCode::InvalidInput,
+            "a folder is not one of this account's move targets"
+        )
+    );
     let draft = DraftSaveRequest {
         account: "corp".into(),
         draft: None,
@@ -174,11 +232,32 @@ async fn a_microsoft_365_account_syncs_marks_read_on_open_and_refuses_the_rest()
     };
     let error = client.call::<DraftSave>(&draft).await.unwrap_err();
     assert_eq!(error.message, M365_NOT_YET);
-    let queued: i64 = Store::open_reader(&paths.db_file())
-        .unwrap()
+    let draft = {
+        let store = Store::open(&paths.db_file()).unwrap();
+        store
+            .conn()
+            .execute(
+                "INSERT INTO drafts (account_id, kind, message_id, created_at, updated_at)
+                 VALUES (1, 'new', '<d1@corp.example>', 0, 0)",
+                [],
+            )
+            .unwrap();
+        store.conn().last_insert_rowid()
+    };
+    let error = client
+        .call::<DraftDiscard>(&DraftDiscardRequest { draft })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (ErrorCode::Unsupported, M365_NOT_YET)
+    );
+    let reader = Store::open_reader(&paths.db_file()).unwrap();
+    assert!(reader.draft(draft).unwrap().is_some(), "not discarded");
+    let queued: i64 = reader
         .conn()
         .query_row(
-            "SELECT count(*) FROM outbox WHERE client_token != 'read-1'",
+            "SELECT count(*) FROM outbox WHERE client_token NOT IN ('read-1', 'archive-1')",
             [],
             |r| r.get(0),
         )

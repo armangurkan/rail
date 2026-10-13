@@ -118,11 +118,11 @@ actions! {
     ListTop => "list.top", [List], ["home", "g g"], "Newest thread";
     ListBottom => "list.bottom", [List], ["end", "G"], "Oldest thread";
     ListArchive => "list.archive", [List, Reader], ["e"], "Archive the thread or the selection";
-    ListTrash => "list.trash", [List, Reader], ["d"], "Move to Gmail's Trash (asks first)";
+    ListTrash => "list.trash", [List, Reader], ["d"], "Move to the trash (asks first)";
     ListStar => "list.star", [List, Reader], ["s"], "Star or unstar";
     ListRead => "list.read", [List, Reader], ["u"], "Mark read or unread";
-    ListLabels => "list.labels", [List, Reader], ["l"], "Add or remove labels";
-    ListMove => "list.move", [List, Reader], ["m"], "Move to a label (archives)";
+    ListLabels => "list.labels", [List, Reader], ["l"], "Add or remove labels (Gmail)";
+    ListMove => "list.move", [List, Reader], ["m"], "Move to a label (Gmail) or a folder (Microsoft 365)";
     ListCompose => "list.compose", [List, Reader], ["c"], "Write a new message";
     ListReply => "list.reply", [List, Reader], ["r"], "Reply to the latest message";
     ListReplyAll => "list.reply_all", [List, Reader], ["R"], "Reply to everyone";

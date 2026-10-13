@@ -65,14 +65,14 @@ async fn the_mock_records_thread_changes_and_plays_them_as_history() {
     let mock = MockProvider::new();
     mock.seed(envelope("m1", "t1", 1_000));
     let cursor = SyncCursor(mock.with(|m| m.history_id).to_string());
-    mock.modify_threads(
+    mock.modify(
         &["t1".into()],
         &["STARRED".into()],
         &["INBOX".into(), "UNREAD".into()],
     )
     .await
     .unwrap();
-    mock.trash_threads(&["t1".into()]).await.unwrap();
+    mock.trash(&["t1".into()]).await.unwrap();
     let calls: Vec<Call> = mock.with(|m| m.calls.iter().map(|(c, _)| *c).collect());
     assert_eq!(calls, [Call::Modify, Call::Trash]);
     let env = mock.with(|m| m.messages["m1"].clone());
@@ -82,7 +82,7 @@ async fn the_mock_records_thread_changes_and_plays_them_as_history() {
     assert_eq!(changes.relabeled.len(), 2);
     mock.fail_next(Call::Trash, ProviderError::NotFound);
     assert_eq!(
-        mock.trash_threads(&["t1".into()]).await,
+        mock.trash(&["t1".into()]).await,
         Err(ProviderError::NotFound)
     );
 }
@@ -268,4 +268,19 @@ async fn a_draft_create_in_a_thread_gone_at_gmail_is_not_found_and_saves_nothing
     assert!(mock.with(|m| m.drafts.is_empty()));
     let created = mock.draft_create(b"x", None).await.unwrap();
     assert_eq!(created.draft_id, "r1", "the refused create took no id");
+}
+
+#[tokio::test]
+async fn the_mock_applies_a_change_as_gmail_would_and_records_it() {
+    let mock = MockProvider::new();
+    mock.seed(envelope("m1", "t1", 1_000));
+    mock.apply(&["t1".into()], &crate::provider::Change::Archive)
+        .await
+        .unwrap();
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        mock.with(|m| m.modifies.clone()),
+        [(s(&["t1"]), s(&[]), s(&["INBOX"]))]
+    );
+    assert_eq!(mock.with(|m| m.applied.len()), 1);
 }

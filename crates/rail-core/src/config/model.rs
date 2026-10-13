@@ -5,6 +5,8 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::provider::FolderKind;
+
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -363,6 +365,29 @@ impl std::fmt::Debug for AccountConfig {
     }
 }
 
+/// How an account's mail sits in folders: Gmail's labels (a message carries several) or one
+/// folder per message (Microsoft 365). Code branches on this, never on the account kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderModel {
+    Labels,
+    SingleFolder,
+}
+
+impl FolderModel {
+    /// The folder kinds `m` offers and `action.apply` accepts as a move target.
+    pub fn move_kinds(self) -> &'static [FolderKind] {
+        match self {
+            Self::Labels => &[FolderKind::Label, FolderKind::User],
+            Self::SingleFolder => &[
+                FolderKind::Inbox,
+                FolderKind::Archive,
+                FolderKind::Spam,
+                FolderKind::User,
+            ],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AccountKind {
@@ -376,6 +401,22 @@ impl AccountKind {
         match self {
             Self::Gmail => "Gmail",
             Self::M365 => "Microsoft 365",
+        }
+    }
+
+    /// How this provider's mail sits in folders.
+    pub fn folder_model(self) -> FolderModel {
+        match self {
+            Self::Gmail => FolderModel::Labels,
+            Self::M365 => FolderModel::SingleFolder,
+        }
+    }
+
+    /// What the trash prompt says of this provider's trash.
+    pub fn trash_note(self) -> &'static str {
+        match self {
+            Self::Gmail => "Gmail keeps trashed mail in its Trash for 30 days.",
+            Self::M365 => "Moves to Deleted Items.",
         }
     }
 
@@ -404,6 +445,26 @@ mod tests {
             "[general]\n{general}\n[[accounts]]\nname = \"w\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"c\"\n{account}"
         );
         crate::config::parse(&text, std::path::Path::new("c.toml")).unwrap()
+    }
+
+    #[test]
+    fn each_kind_has_its_folder_model_and_its_move_kinds() {
+        use crate::provider::FolderKind;
+        assert_eq!(AccountKind::Gmail.folder_model(), FolderModel::Labels);
+        assert_eq!(AccountKind::M365.folder_model(), FolderModel::SingleFolder);
+        assert_eq!(
+            FolderModel::Labels.move_kinds(),
+            [FolderKind::Label, FolderKind::User]
+        );
+        assert_eq!(
+            FolderModel::SingleFolder.move_kinds(),
+            [
+                FolderKind::Inbox,
+                FolderKind::Archive,
+                FolderKind::Spam,
+                FolderKind::User
+            ]
+        );
     }
 
     #[test]
@@ -557,5 +618,14 @@ mod tests {
         let err = parse(text, Path::new("/x/config.toml")).unwrap_err();
         assert!(matches!(err, ConfigError::Parse { line: 6, .. }), "{err}");
         assert!(err.to_string().contains("always"), "{err}");
+    }
+
+    #[test]
+    fn the_trash_prompt_names_each_providers_trash() {
+        assert_eq!(
+            AccountKind::Gmail.trash_note(),
+            "Gmail keeps trashed mail in its Trash for 30 days."
+        );
+        assert_eq!(AccountKind::M365.trash_note(), "Moves to Deleted Items.");
     }
 }

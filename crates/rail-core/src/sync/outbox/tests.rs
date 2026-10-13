@@ -11,7 +11,9 @@ use super::{Worker, WorkerParts};
 use crate::config::AccountKind;
 use crate::ops::{AccountSyncStatus, Action, ActionFailed, RowToken};
 use crate::provider::mock::{Call, MockProvider, envelope};
-use crate::provider::{FolderKind, ProviderError, RemoteFolder, ThreadTarget};
+use crate::provider::{
+    Change, FolderKind, ProviderError, RemoteFolder, TargetMessage, ThreadTarget,
+};
 use crate::store::Store;
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
 use crate::sync::batch::Batch;
@@ -112,6 +114,22 @@ impl Rig {
         from_name: Option<String>,
         sync_wake: Arc<Notify>,
     ) -> Worker {
+        self.worker_full(provider, from_name, sync_wake, AccountKind::Gmail)
+    }
+
+    /// A worker over the mock for an account of `kind`.
+    pub(super) fn worker_kind(&self, kind: AccountKind) -> Worker {
+        let mock = Arc::new(self.mock.clone());
+        self.worker_full(mock, None, Arc::new(Notify::new()), kind)
+    }
+
+    fn worker_full(
+        &self,
+        provider: Arc<dyn crate::provider::Provider>,
+        from_name: Option<String>,
+        sync_wake: Arc<Notify>,
+        kind: AccountKind,
+    ) -> Worker {
         Worker::new(WorkerParts {
             name: "work".into(),
             address: ADDRESS.into(),
@@ -125,7 +143,7 @@ impl Rig {
             from_name,
             sync_wake,
             draft_files_dir: self.draft_files_dir(),
-            kind: crate::config::AccountKind::Gmail,
+            kind,
         })
     }
 
@@ -186,6 +204,18 @@ fn t(store: &Store, remote: &str) -> i64 {
         .unwrap()
 }
 
+/// The store id of the folder whose remote id is `Label_1`.
+fn label_1(store: &Store) -> i64 {
+    store
+        .conn()
+        .query_row(
+            "SELECT id FROM folders WHERE remote_id = 'Label_1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
 #[tokio::test]
 async fn each_action_makes_the_gmail_call_the_spec_maps_it_to_in_order() {
     let mut rig = rig().await;
@@ -193,15 +223,7 @@ async fn each_action_makes_the_gmail_call_the_spec_maps_it_to_in_order() {
         let s = rig.store();
         (t(&s, "t1"), t(&s, "t2"))
     };
-    let label: i64 = rig
-        .store()
-        .conn()
-        .query_row(
-            "SELECT id FROM folders WHERE remote_id = 'Label_1'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let label = label_1(&rig.store());
     rig.enqueue(Action::Archive {}, vec![t1], "a").await;
     rig.enqueue(Action::Star { on: true }, vec![t2], "b").await;
     rig.enqueue(Action::Read { on: true }, vec![t1, t2], "c")
@@ -392,15 +414,7 @@ async fn a_row_whose_threads_are_gone_completes_without_a_call() {
 async fn a_label_gone_before_sending_fails_and_reverts() {
     let mut rig = rig().await;
     let t1 = t(&rig.store(), "t1");
-    let label: i64 = rig
-        .store()
-        .conn()
-        .query_row(
-            "SELECT id FROM folders WHERE remote_id = 'Label_1'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let label = label_1(&rig.store());
     rig.enqueue(
         Action::Labels {
             add: vec![label],
@@ -540,7 +554,7 @@ async fn a_row_that_gave_up_is_reported_as_final() {
 }
 
 #[tokio::test]
-async fn a_read_row_carries_each_threads_stored_message_ids() {
+async fn a_read_row_hands_the_provider_each_message_as_it_was_before_the_row() {
     let mut rig = rig().await;
     let t1 = t(&rig.store(), "t1");
     rig.enqueue(Action::Read { on: true }, vec![t1], "a").await;
@@ -549,7 +563,65 @@ async fn a_read_row_carries_each_threads_stored_message_ids() {
     let targets = rig.mock.with(|m| m.modify_targets.clone());
     let expected = ThreadTarget {
         thread_id: "t1".into(),
-        message_ids: vec!["m1".into()],
+        messages: vec![TargetMessage {
+            id: "m1".into(),
+            folder: Some(FolderKind::Inbox),
+            folder_remote: Some("INBOX".into()),
+            unread: true,
+            starred: false,
+            date: 1,
+        }],
     };
     assert_eq!(targets, [vec![expected]]);
+}
+
+#[tokio::test]
+async fn the_worker_hands_the_provider_the_change_with_the_folder_as_its_provider_id() {
+    let mut rig = rig().await;
+    let t2 = t(&rig.store(), "t2");
+    let label = label_1(&rig.store());
+    rig.enqueue(Action::Move { to: label }, vec![t2], "a").await;
+    rig.start();
+    rig.until("the row sent", |r| r.depth() == (0, 0, 0)).await;
+    let applied: Vec<(Vec<String>, Change)> = rig.mock.with(|m| {
+        m.applied
+            .iter()
+            .map(|(t, c)| (ThreadTarget::thread_ids(t), c.clone()))
+            .collect()
+    });
+    let to = Change::Move {
+        to: "Label_1".into(),
+    };
+    assert_eq!(applied, [(vec!["t2".to_string()], to)]);
+}
+
+#[tokio::test]
+async fn a_move_whose_folder_was_deleted_in_outlook_names_microsoft_365() {
+    let mut rig = rig().await;
+    let t1 = t(&rig.store(), "t1");
+    let label = label_1(&rig.store());
+    rig.enqueue(Action::Move { to: label }, vec![t1], "a").await;
+    // The folders step of a pass: the folder was deleted in Outlook.
+    let without: Vec<RemoteFolder> = folders()
+        .into_iter()
+        .filter(|f| f.remote_id != "Label_1")
+        .collect();
+    rig.writer
+        .write(Batch {
+            folders: Some(without),
+            ..Batch::new(1)
+        })
+        .await
+        .unwrap();
+    let worker = rig.worker_kind(AccountKind::M365);
+    rig.task = Some(tokio::spawn(worker.run(rig.stop.subscribe())));
+    rig.until("the notice", |r| !r.failures.lock().unwrap().is_empty())
+        .await;
+    let error = rig.failures.lock().unwrap()[0].error.message.clone();
+    assert_eq!(
+        error,
+        "the folder for this move no longer exists in Microsoft 365"
+    );
+    assert!(rig.mock.with(|m| m.applied.is_empty()), "nothing sent");
+    assert_eq!(rig.depth(), (0, 1, 0));
 }

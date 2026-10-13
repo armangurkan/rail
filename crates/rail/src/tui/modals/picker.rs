@@ -139,6 +139,12 @@ impl Picker {
         self.selected
     }
 
+    /// The items' names, in order (tests).
+    #[cfg(test)]
+    pub(crate) fn names(&self) -> Vec<&str> {
+        self.items.iter().map(|i| i.name.as_str()).collect()
+    }
+
     /// Moving the highlight shows nothing, and the hint says why (a theme on a terminal
     /// without truecolor).
     pub fn without_preview(mut self) -> Self {

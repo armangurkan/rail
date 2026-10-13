@@ -605,3 +605,45 @@ async fn a_pending_send_survives_a_restart_and_an_old_token_is_too_late() {
     assert_eq!(draft.state, DraftState::Editing);
     assert!(h.mock.with(|m| m.sent.is_empty()), "nothing was sent");
 }
+
+/// Discarding a Gmail draft needs no live account: with the account gone from the config (so
+/// it has no engine and `action_target` would refuse it), the draft still goes.
+#[tokio::test]
+async fn a_gmail_draft_is_discarded_while_its_account_is_not_live() {
+    let h = DaemonHarness::new().await;
+    let saved = h
+        .call::<DraftSave>(&save_request(None, "g1"))
+        .await
+        .unwrap();
+    h.client
+        .call::<DaemonStop>(&DaemonStopRequest {})
+        .await
+        .unwrap();
+    tokio::time::timeout(BOUND, h.task)
+        .await
+        .expect("the daemon stops")
+        .unwrap()
+        .unwrap();
+    std::fs::write(h.paths.config_file(), "[general]\nsecrets = \"file\"\n").unwrap();
+    let (ctx, _) = daemon_context(&h.paths);
+    start_daemon(
+        ctx.with_provider_factory(mock_factory(&h.mock)),
+        ServeConfig::default(),
+    )
+    .await;
+    let client = Connector::new(h.paths.clone(), Arc::new(|| Ok(())))
+        .connect()
+        .await
+        .unwrap();
+    let live = client
+        .call::<SyncStatus>(&SyncStatusRequest { account: None })
+        .await
+        .unwrap();
+    assert!(live.accounts.is_empty(), "no account is live");
+    client
+        .call::<DraftDiscard>(&DraftDiscardRequest { draft: saved.draft })
+        .await
+        .expect("a Gmail draft is discarded without a live account");
+    let reader = Store::open_reader(&h.paths.db_file()).unwrap();
+    assert!(reader.draft(saved.draft).unwrap().is_none());
+}

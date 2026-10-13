@@ -32,19 +32,19 @@ use std::time::Duration;
 
 use tokio::sync::{Notify, watch};
 
-use self::plan::{Plan, Remote};
+use self::plan::Plan;
 use self::sending::remove_import_dir;
 use super::batch::{Batch, StateUpdate};
 use super::engine::{Clock, stopped};
 use super::manager::{retry_delay, unobserved};
 use super::status::StatusBoard;
 use super::writer::WriterHandle;
-use crate::config::AccountKind;
+use crate::config::{AccountKind, FolderModel};
 use crate::error::ErrorClass;
 use crate::ops::{
     Action, ActionFailed, DraftId, ErrorCode, OpError, OutboxDepth, OutboxId, SyncPhase,
 };
-use crate::provider::{DraftIds, Provider, ProviderError, ThreadTarget};
+use crate::provider::{Change, DraftIds, Provider, ProviderError, ThreadTarget};
 use crate::store::outbox::{Failure, OutboxOutcome, OutboxRow, OutboxWrite};
 use crate::store::{Store, StoreError};
 
@@ -266,9 +266,7 @@ impl Worker {
         let done = |()| Landed::Done;
         match planned {
             Plan::Nothing => Ok(Landed::Done),
-            Plan::LabelGone => Err(ProviderError::permanent(
-                "a label of this action no longer exists in Gmail",
-            )),
+            Plan::LabelGone => Err(ProviderError::permanent(&gone_words(self.kind))),
             Plan::Send { threads, change } => unobserved(self.call_each(&threads, &change))
                 .await
                 .map(done),
@@ -281,20 +279,16 @@ impl Worker {
     }
 
     /// One provider call per thread, stopping at the first error: a failure part-way fails the
-    /// whole row (threads Gmail already changed come back through the next sync).
+    /// whole row (threads the provider already changed come back through the next sync).
     async fn call_each(
         &self,
         threads: &[ThreadTarget],
-        change: &Remote,
+        change: &Change,
     ) -> Result<(), ProviderError> {
         for thread in threads {
-            let one = std::slice::from_ref(thread);
-            match change {
-                Remote::Trash => self.provider.trash_threads(one).await?,
-                Remote::Modify { add, remove } => {
-                    self.provider.modify_threads(one, add, remove).await?;
-                }
-            }
+            self.provider
+                .apply(std::slice::from_ref(thread), change)
+                .await?;
         }
         Ok(())
     }
@@ -428,5 +422,17 @@ fn words(error: &ProviderError) -> String {
     match error.detail() {
         Some(detail) => format!("{error}: {detail}"),
         None => error.to_string(),
+    }
+}
+
+/// Rail's words when a folder a row names is gone from the store: a label for Gmail, the
+/// move's folder for a one-folder mailbox.
+fn gone_words(kind: AccountKind) -> String {
+    let provider = kind.provider_name();
+    match kind.folder_model() {
+        FolderModel::Labels => format!("a label of this action no longer exists in {provider}"),
+        FolderModel::SingleFolder => {
+            format!("the folder for this move no longer exists in {provider}")
+        }
     }
 }

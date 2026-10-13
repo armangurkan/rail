@@ -1,7 +1,7 @@
-use rusqlite::{params, types::Type};
+use rusqlite::{Connection, OptionalExtension, params, types::Type};
 
 use super::{Store, StoreError};
-use crate::config::{AccountConfig, AccountKind, Config};
+use crate::config::{AccountConfig, AccountKind, Config, FolderModel};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountRow {
@@ -14,7 +14,25 @@ pub struct AccountRow {
     pub last_sync_at: Option<i64>,
 }
 
+/// The folder model of account `id`; Gmail's labels for an account the store does not know.
+pub(crate) fn folder_model_in(conn: &Connection, id: i64) -> Result<FolderModel, StoreError> {
+    let kind: Option<String> = conn
+        .query_row("SELECT kind FROM accounts WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    Ok(kind
+        .as_deref()
+        .and_then(AccountKind::parse)
+        .map_or(FolderModel::Labels, AccountKind::folder_model))
+}
+
 impl Store {
+    /// How account `account_id`'s mail sits in folders.
+    pub fn folder_model(&self, account_id: i64) -> Result<FolderModel, StoreError> {
+        folder_model_in(&self.conn, account_id)
+    }
+
     /// Insert or update by address. Addresses are stored lowercase.
     pub fn upsert_account(&self, account: &AccountConfig) -> Result<i64, StoreError> {
         let address = account.address.to_ascii_lowercase();

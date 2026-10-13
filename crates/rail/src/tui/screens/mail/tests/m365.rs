@@ -1,10 +1,11 @@
-//! Microsoft 365 in Part A: the action keys and every compose start are refused at once with
-//! nothing sent, a selection holding one of its threads is refused whole, opening a thread
-//! still marks it read, its Drafts rows are refused, and the bar says `saving to Microsoft
-//! 365…`.
+//! Microsoft 365 in the mail screen: its thread actions go through like Gmail's; `l` says
+//! Outlook has folders; `m` lists the Inbox and the account's own folders; the trash prompt
+//! names Deleted Items; a selection across both kinds sends one call per account; every
+//! compose start is refused; opening a thread still marks it read; its Drafts rows are
+//! refused; and the bar says `saving to Microsoft 365…`.
 
 use rail_core::config::AccountKind;
-use rail_core::ops::{AccountSyncStatus, Action as MailAction, M365_NOT_YET};
+use rail_core::ops::{AccountSyncStatus, Action as MailAction, M365_LABELS, M365_NOT_YET};
 use rail_core::store::drafts_folder::{DraftsRow, DraftsRowKind};
 
 use super::*;
@@ -17,27 +18,145 @@ async fn m365_fixture() -> Fixture {
     f
 }
 
+/// `m365_fixture`, with the store saying so too: the move picker reads the kind there.
+async fn m365_store_fixture() -> Fixture {
+    let f = m365_fixture().await;
+    writer(&f)
+        .conn()
+        .execute("UPDATE accounts SET kind = 'm365' WHERE name = 'home'", [])
+        .unwrap();
+    f
+}
+
+/// `fixture(3)` with `home` a Microsoft 365 account: the two newest unified rows are one thread
+/// of each account.
+async fn mixed_fixture() -> Fixture {
+    let mut f = fixture(3).await;
+    f.screen.accounts[1].kind = AccountKind::M365;
+    f
+}
+
 #[tokio::test]
-async fn the_action_keys_on_a_microsoft_365_thread_are_refused_with_nothing_sent() {
+async fn the_thread_actions_on_a_microsoft_365_thread_go_through() {
     let mut f = m365_fixture().await;
-    for key in ['e', 'd', 's', 'u', 'l', 'm'] {
+    for key in ['s', 'u', 'e'] {
         press(&mut f, KeyCode::Char(key)).await;
-        let line = f.screen.status_line();
-        assert!(line.contains(M365_NOT_YET), "{key}: {line}");
-        assert!(f.screen.modal.is_none(), "{key}: no prompt and no picker");
     }
+    let sent: Vec<(String, MailAction)> = applies(&f)
+        .into_iter()
+        .filter_map(|c| match c {
+            FakeCall::Apply {
+                account, action, ..
+            } => Some((account, action)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        sent.iter().all(|(account, _)| account == "home"),
+        "{sent:?}"
+    );
+    let actions: Vec<&MailAction> = sent.iter().map(|(_, action)| action).collect();
+    assert!(
+        matches!(
+            actions[..],
+            [
+                MailAction::Star { .. },
+                MailAction::Read { .. },
+                MailAction::Archive {}
+            ]
+        ),
+        "{actions:?}"
+    );
+}
+
+#[tokio::test]
+async fn l_on_a_microsoft_365_thread_says_outlook_has_folders() {
+    let mut f = m365_fixture().await;
+    press(&mut f, KeyCode::Char('l')).await;
+    let line = f.screen.status_line();
+    assert!(line.contains(M365_LABELS), "{line}");
+    assert!(f.screen.modal.is_none(), "no picker");
     assert!(applies(&f).is_empty());
 }
 
 #[tokio::test]
-async fn a_selection_holding_a_microsoft_365_thread_is_refused_whole() {
+async fn m_lists_the_inbox_and_the_accounts_own_folders_on_microsoft_365() {
+    let mut f = m365_store_fixture().await;
+    press(&mut f, KeyCode::Char('m')).await;
+    let Some(Modal::Picker(picker)) = &f.screen.modal else {
+        panic!("no picker");
+    };
+    assert_eq!(picker.names(), ["Inbox", "Projects"]);
+}
+
+#[tokio::test]
+async fn m_lists_the_labels_on_gmail_as_before() {
     let mut f = fixture(1).await;
-    f.screen.accounts[1].kind = AccountKind::M365;
-    // The unified inbox: wm0, hm1, hm0 newest first; select work's and home's newest.
+    press(&mut f, KeyCode::Char('m')).await;
+    let Some(Modal::Picker(picker)) = &f.screen.modal else {
+        panic!("no picker");
+    };
+    assert_eq!(picker.names(), ["Projects"]);
+}
+
+#[tokio::test]
+async fn the_trash_prompt_names_each_providers_trash() {
+    let mut f = m365_fixture().await;
+    press(&mut f, KeyCode::Char('d')).await;
+    let Some(Modal::Confirm(confirm)) = &f.screen.modal else {
+        panic!("no prompt");
+    };
+    assert_eq!(confirm.lines()[1..], ["Moves to Deleted Items."]);
+    let mut f = mixed_fixture().await;
+    press(&mut f, KeyCode::Char(' ')).await;
+    press(&mut f, KeyCode::Char(' ')).await;
+    press(&mut f, KeyCode::Char('d')).await;
+    let Some(Modal::Confirm(confirm)) = &f.screen.modal else {
+        panic!("no prompt");
+    };
+    assert_eq!(
+        confirm.lines()[1..],
+        [
+            "Gmail keeps trashed mail in its Trash for 30 days.",
+            "Moves to Deleted Items."
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_selection_across_gmail_and_microsoft_365_sends_one_call_per_account() {
+    let mut f = mixed_fixture().await;
+    let ids = thread_ids(&f);
     press(&mut f, KeyCode::Char(' ')).await;
     press(&mut f, KeyCode::Char(' ')).await;
     press(&mut f, KeyCode::Char('e')).await;
-    assert!(f.screen.status_line().contains(M365_NOT_YET));
+    assert_eq!(
+        applies(&f),
+        [
+            FakeCall::Apply {
+                account: "work".into(),
+                threads: vec![ids[0]],
+                action: MailAction::Archive {},
+                grace: true
+            },
+            FakeCall::Apply {
+                account: "home".into(),
+                threads: vec![ids[1]],
+                action: MailAction::Archive {},
+                grace: true
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn l_on_a_selection_holding_a_microsoft_365_thread_is_refused_whole() {
+    let mut f = mixed_fixture().await;
+    press(&mut f, KeyCode::Char(' ')).await;
+    press(&mut f, KeyCode::Char(' ')).await;
+    press(&mut f, KeyCode::Char('l')).await;
+    assert!(f.screen.status_line().contains(M365_LABELS));
+    assert!(f.screen.modal.is_none());
     assert!(applies(&f).is_empty(), "not even the Gmail thread");
 }
 

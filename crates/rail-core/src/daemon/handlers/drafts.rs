@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use super::draft_files::{import_dir, remove_dirs};
 
 use crate::auth::unix_now;
+use crate::config::AccountKind;
 use crate::daemon::registry::Call;
 use crate::error::ErrorClass;
 use crate::ops::drafts::{AttachmentSummary, CheckedRecipients, DraftAttachment};
@@ -23,7 +24,7 @@ use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
 use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
-use crate::sync::Wants;
+use crate::sync::{Wants, m365_not_yet};
 
 pub(super) fn unexpected() -> OpError {
     OpError::internal("the store answered a draft write unexpectedly")
@@ -538,11 +539,30 @@ fn owned_files(db: &Path, paths: &Paths, id: DraftId) -> Result<Vec<PathBuf>, Op
         .collect())
 }
 
+/// The kind of account draft `id` belongs to; `None` when the draft is gone.
+fn draft_owner(db: &Path, id: DraftId) -> Result<Option<AccountKind>, OpError> {
+    let store = Store::open_reader(db)?;
+    let Some(draft) = store.draft(id)? else {
+        return Ok(None);
+    };
+    Ok(store
+        .list_accounts()?
+        .into_iter()
+        .find(|a| a.id == draft.account_id)
+        .map(|a| a.kind))
+}
+
 pub(super) async fn discard(
     call: Call,
     request: DraftDiscardRequest,
 ) -> Result<DraftDiscardResponse, OpError> {
     checked_id(request.draft)?;
+    // A Microsoft 365 draft is refused like any other write (#31), decided from the store so a
+    // Gmail draft still goes while its account is not live; a draft already gone is a no-op.
+    let (db, id) = (call.ctx.paths.db_file(), request.draft);
+    if call.ctx.blocking(move || draft_owner(&db, id)).await? == Some(AccountKind::M365) {
+        return Err(m365_not_yet());
+    }
     let (db, paths, id) = (
         call.ctx.paths.db_file(),
         call.ctx.paths.clone(),

@@ -1,7 +1,7 @@
 //! Microsoft 365 through Microsoft Graph v1.0, over the shared `ApiClient` in its Graph dialect
 //! (immutable ids on every request, Graph's error envelope, at most `GRAPH_CONCURRENCY`
 //! requests in flight): folders, the delta under one combined cursor, search, envelopes,
-//! bodies and attachments.
+//! bodies and attachments, and thread actions (moves and PATCHes per message through `$batch`).
 //! Graph's own JSON never leaves this module; every string it returns is outside text.
 
 mod actions;
@@ -19,6 +19,8 @@ mod wire;
 
 #[cfg(test)]
 mod actions_tests;
+#[cfg(test)]
+mod batch_tests;
 #[cfg(test)]
 mod body_tests;
 #[cfg(test)]
@@ -39,14 +41,15 @@ use std::time::Duration;
 
 use super::http::ApiClient;
 use super::{
-    Body, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
+    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
     RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 use crate::config::SyncSettings;
 use crate::ops::M365_NOT_YET;
 
+pub use actions::MOVE_TARGET_GONE;
 pub use attachment::REFERENCE_ATTACHMENT;
-pub use batch::MAX_BATCH;
+pub use batch::{MAX_BATCH, MAX_ITEM_RETRY_AFTER};
 pub use body::HTML_BODY;
 pub use cursor::MAX_CURSOR_BYTES;
 pub use delta::{GRAPH_PAGES_PER_CALL, PAGE_SIZE};
@@ -180,17 +183,8 @@ impl super::Provider for GraphProvider {
         self.envelopes_of(ids).await
     }
 
-    async fn modify_threads(
-        &self,
-        threads: &[ThreadTarget],
-        add: &[RemoteId],
-        remove: &[RemoteId],
-    ) -> Result<(), ProviderError> {
-        self.modify(threads, add, remove).await
-    }
-
-    async fn trash_threads(&self, _: &[ThreadTarget]) -> Result<(), ProviderError> {
-        Err(not_yet())
+    async fn apply(&self, threads: &[ThreadTarget], change: &Change) -> Result<(), ProviderError> {
+        self.apply_change(threads, change).await
     }
 
     async fn send(&self, _: &[u8], _: Option<&str>) -> Result<SentReceipt, ProviderError> {

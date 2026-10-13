@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use super::cursor::{GraphCursor, State};
 use super::dates::iso;
+use super::errors::on_delta;
 use super::message::{Item, item};
 use super::search::MESSAGE_FIELDS;
 use super::wire::Page;
@@ -111,7 +112,10 @@ impl GraphProvider {
                 }
                 pages += 1;
                 let link = folder.link.clone();
-                let page = self.delta_page(&id, link, cursor.after).await?;
+                let page = self
+                    .delta_page(&id, link, cursor.after)
+                    .await
+                    .map_err(on_delta)?;
                 net.page(&id, page.value);
                 cursor.advance(&id, page.next_link, page.delta_link)?;
             }

@@ -135,9 +135,15 @@ impl Action {
     }
 }
 
-/// What Rail answers at once to an action or a compose start on a Microsoft 365 account in this
-/// version: only marking read on open reaches Microsoft 365.
+/// What Rail answers at once to writing on a Microsoft 365 account in this version (compose,
+/// reply, forward, send, and every draft operation).
 pub const M365_NOT_YET: &str = "Not supported for Microsoft 365 accounts yet.";
+/// What Rail answers at once to a labels action (`l`) on a Microsoft 365 account: Outlook has
+/// folders, and `m` moves to one.
+pub const M365_LABELS: &str = "Outlook uses folders, not labels: press m to move.";
+/// What Rail answers at once to archive on a Microsoft 365 mailbox with no Archive folder.
+/// Rail never makes one: Outlook would not treat it as its own.
+pub const M365_NO_ARCHIVE: &str = "This mailbox has no Archive folder; press m to move.";
 
 /// Threads one `action.apply` takes at most.
 pub const MAX_ACTION_THREADS: usize = 200;

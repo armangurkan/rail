@@ -8,10 +8,12 @@ use std::time::Duration;
 
 use super::client::DaemonClient;
 use super::{Connector, ServeConfig};
+use crate::error::ErrorClass;
 use crate::ops::op::{ActionApply, ActionRetry, ActionUndo, DraftSave, SyncNow, SyncStatus};
 use crate::ops::{
     Action, ActionApplyRequest, ActionRetryRequest, ActionUndoRequest, DraftSaveRequest, ErrorCode,
-    M365_NOT_YET, OpError, RowToken, SyncNowRequest, SyncStatusRequest, names,
+    M365_LABELS, M365_NO_ARCHIVE, M365_NOT_YET, OpError, RowToken, SyncNowRequest,
+    SyncStatusRequest, names,
 };
 use crate::paths::Paths;
 use crate::provider::mock::{Call, MockProvider, envelope};
@@ -107,6 +109,20 @@ impl Daemon {
             .query_row(
                 "SELECT t.id FROM threads t JOIN accounts a ON a.id = t.account_id \
                  WHERE a.address = 'me@corp.example' AND t.remote_id = ?1",
+                [remote],
+                |r| r.get(0),
+            )
+            .ok()
+    }
+
+    /// The Microsoft 365 account's folder `remote`.
+    fn corp_folder(&self, remote: &str) -> Option<i64> {
+        Store::open_reader(&self.paths.db_file())
+            .unwrap()
+            .conn()
+            .query_row(
+                "SELECT f.id FROM folders f JOIN accounts a ON a.id = f.account_id \
+                 WHERE a.address = 'me@corp.example' AND f.remote_id = ?1",
                 [remote],
                 |r| r.get(0),
             )
@@ -278,32 +294,49 @@ async fn a_users_label_is_sent_to_gmail_by_its_remote_id() {
     .await;
 }
 
+/// Microsoft 365 takes every thread action but labels: labels answer the folder text, an
+/// archive with no Archive folder is refused at once, writing stays refused, nothing refused
+/// is queued, and a move to its Inbox is.
 #[tokio::test]
-async fn microsoft_365_refuses_every_action_but_mark_read_and_every_draft() {
+async fn microsoft_365_refuses_labels_archive_without_a_folder_and_writing() {
     let d = daemon(&format!("{WORK}{CORP}")).await;
-    let actions = [
-        Action::Archive {},
-        Action::Trash {},
-        Action::Star { on: true },
-        Action::Read { on: false },
-        Action::Labels {
-            add: vec![1],
-            remove: vec![],
-        },
-        Action::Move { to: 1 },
-    ];
-    for (n, action) in actions.into_iter().enumerate() {
-        let request = ActionApplyRequest {
-            account: "corp".into(),
-            threads: vec![1],
-            action,
-            grace: true,
-            client_token: format!("a{n}"),
-        };
-        let error = d.client.call::<ActionApply>(&request).await.unwrap_err();
-        assert_eq!(error.code, ErrorCode::Unsupported);
-        assert_eq!(error.message, M365_NOT_YET);
-    }
+    d.until("corp synced", |d| d.corp_thread("t1").is_some())
+        .await;
+    let thread = d.corp_thread("t1").unwrap();
+    let inbox = d.corp_folder("INBOX").unwrap();
+    let call = |action: Action, token: &str| ActionApplyRequest {
+        account: "corp".into(),
+        threads: vec![thread],
+        action,
+        grace: true,
+        client_token: token.into(),
+    };
+    let labels = Action::Labels {
+        add: vec![inbox],
+        remove: vec![],
+    };
+    let error = d
+        .client
+        .call::<ActionApply>(&call(labels, "l1"))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (ErrorCode::Unsupported, M365_LABELS)
+    );
+    let error = d
+        .client
+        .call::<ActionApply>(&call(Action::Archive {}, "e1"))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.class, error.message.as_str()),
+        (
+            ErrorCode::Unsupported,
+            ErrorClass::Permanent,
+            M365_NO_ARCHIVE
+        )
+    );
     let save = DraftSaveRequest {
         account: "corp".into(),
         draft: None,
@@ -324,7 +357,13 @@ async fn microsoft_365_refuses_every_action_but_mark_read_and_every_draft() {
         .conn()
         .query_row("SELECT count(*) FROM outbox", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(rows, 0, "nothing queued");
+    assert_eq!(rows, 0, "nothing refused was queued");
+    let moved = d
+        .client
+        .call::<ActionApply>(&call(Action::Move { to: inbox }, "m1"))
+        .await
+        .unwrap();
+    assert_eq!(moved.rows.len(), 1, "a move to the Inbox is queued");
 }
 
 /// The gate's other side: now that Microsoft 365 accounts have engines, marking a thread

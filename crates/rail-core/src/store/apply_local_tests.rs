@@ -129,7 +129,7 @@ pub(super) fn token_of(store: &Store, id: i64) -> String {
 }
 
 /// Undo `ids` with the tokens they were queued with.
-fn undo(store: &mut Store, ids: Vec<i64>) -> OutboxOutcome {
+pub(super) fn undo(store: &mut Store, ids: Vec<i64>) -> OutboxOutcome {
     let rows = ids
         .into_iter()
         .map(|row| RowToken {

@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use super::gmail::actions::GmailCall;
 use super::http::{RetryPolicy, retry_policy_override};
 use super::{
     Body, ChangeSet, DraftIds, Envelope, EnvelopePage, IdPage, PageToken, Profile, Provider,
@@ -103,12 +104,15 @@ pub(crate) struct Mailbox {
     pub metadata_gets: Vec<String>,
     /// The scoped retry policy each call ran under (`None`: the client's own), in order.
     pub policies: Vec<(Call, Option<RetryPolicy>)>,
-    /// Every `modify_threads` call: (thread ids, add, remove), in order.
+    /// Every Gmail-style modify the mock made (`apply` turns a change into one): (thread ids,
+    /// add, remove), in order.
     pub modifies: Vec<(Vec<RemoteId>, Vec<RemoteId>, Vec<RemoteId>)>,
-    /// Every `modify_threads` call's targets (with their message ids), in order.
+    /// Every modify's targets (with their messages' facts), in order.
     pub modify_targets: Vec<Vec<ThreadTarget>>,
-    /// Every thread id `trash_threads` was given, in order.
+    /// Every thread id a trash was made for, in order.
     pub trashed: Vec<RemoteId>,
+    /// Every `apply` call: its targets and its change, in order (failed ones too).
+    pub applied: Vec<(Vec<ThreadTarget>, super::Change)>,
     /// How long each modify or trash call takes.
     pub action_delay: Duration,
     /// Every `send` call, in order.
@@ -163,6 +167,7 @@ impl Default for Mailbox {
             modifies: Vec::new(),
             modify_targets: Vec::new(),
             trashed: Vec::new(),
+            applied: Vec::new(),
             action_delay: Duration::ZERO,
             sent: Vec::new(),
             known_header_ids: HashSet::new(),
@@ -205,6 +210,42 @@ impl MockProvider {
 
     fn lock(&self) -> MutexGuard<'_, Mailbox> {
         self.mailbox.lock().unwrap()
+    }
+
+    /// Gmail's `threads.modify`, played on the mailbox and recorded.
+    pub(crate) async fn modify(
+        &self,
+        threads: &[ThreadTarget],
+        add: &[RemoteId],
+        remove: &[RemoteId],
+    ) -> Result<(), ProviderError> {
+        self.enter(Call::Modify, None)?;
+        let delay = self.lock().action_delay;
+        tokio::time::sleep(delay).await;
+        let mut m = self.lock();
+        let ids = ThreadTarget::thread_ids(threads);
+        m.modifies
+            .push((ids.clone(), add.to_vec(), remove.to_vec()));
+        m.modify_targets.push(threads.to_vec());
+        relabel_threads(&mut m, &ids, add, remove);
+        Ok(())
+    }
+
+    /// Gmail's `threads.trash`, played on the mailbox and recorded.
+    pub(crate) async fn trash(&self, threads: &[ThreadTarget]) -> Result<(), ProviderError> {
+        self.enter(Call::Trash, None)?;
+        let delay = self.lock().action_delay;
+        tokio::time::sleep(delay).await;
+        let mut m = self.lock();
+        let ids = ThreadTarget::thread_ids(threads);
+        m.trashed.extend(ids.iter().cloned());
+        relabel_threads(
+            &mut m,
+            &ids,
+            &["TRASH".into()],
+            &[super::INBOX_LABEL.into()],
+        );
+        Ok(())
     }
 
     pub(crate) fn with<R>(&self, f: impl FnOnce(&mut Mailbox) -> R) -> R {
@@ -536,38 +577,16 @@ impl Provider for MockProvider {
         })
     }
 
-    async fn modify_threads(
+    async fn apply(
         &self,
         threads: &[ThreadTarget],
-        add: &[RemoteId],
-        remove: &[RemoteId],
+        change: &super::Change,
     ) -> Result<(), ProviderError> {
-        self.enter(Call::Modify, None)?;
-        let delay = self.lock().action_delay;
-        tokio::time::sleep(delay).await;
-        let mut m = self.lock();
-        let ids = ThreadTarget::thread_ids(threads);
-        m.modifies
-            .push((ids.clone(), add.to_vec(), remove.to_vec()));
-        m.modify_targets.push(threads.to_vec());
-        relabel_threads(&mut m, &ids, add, remove);
-        Ok(())
-    }
-
-    async fn trash_threads(&self, threads: &[ThreadTarget]) -> Result<(), ProviderError> {
-        self.enter(Call::Trash, None)?;
-        let delay = self.lock().action_delay;
-        tokio::time::sleep(delay).await;
-        let mut m = self.lock();
-        let ids = ThreadTarget::thread_ids(threads);
-        m.trashed.extend(ids.iter().cloned());
-        relabel_threads(
-            &mut m,
-            &ids,
-            &["TRASH".into()],
-            &[super::INBOX_LABEL.into()],
-        );
-        Ok(())
+        self.lock().applied.push((threads.to_vec(), change.clone()));
+        match super::gmail::actions::gmail_call(change) {
+            GmailCall::Trash => self.trash(threads).await,
+            GmailCall::Modify { add, remove } => self.modify(threads, &add, &remove).await,
+        }
     }
 
     async fn send(

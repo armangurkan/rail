@@ -204,10 +204,7 @@ impl MailScreen {
             self.status.notify("No thread to act on.", self.tick);
             return Vec::new();
         }
-        let m365 = targets
-            .iter()
-            .any(|(_, picked)| self.is_m365(picked.account_id));
-        if self.refuse_m365(m365) {
+        if matches!(action, Action::ListLabels) && self.refuse_m365_labels(&targets) {
             return Vec::new();
         }
         match action {
@@ -358,10 +355,8 @@ impl MailScreen {
             }
             (n, _) => format!("Trash {n} threads?"),
         };
-        let lines = vec![
-            line,
-            "Gmail keeps trashed mail in its Trash for 30 days.".to_string(),
-        ];
+        let mut lines = vec![line];
+        lines.extend(self.trash_notes(&targets));
         self.actions.trashing = targets;
         self.modal = Some(Modal::Confirm(Confirm::new(
             "Trash?",

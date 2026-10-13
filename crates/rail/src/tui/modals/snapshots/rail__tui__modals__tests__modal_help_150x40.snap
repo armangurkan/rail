@@ -26,11 +26,11 @@ expression: text
                                    │  Home, g g            Newest thread                                          │
                                    │  End, G               Oldest thread                                          │
                                    │  e                    Archive the thread or the selection                    │
-                                   │  d                    Move to Gmail's Trash (asks first)                     │
+                                   │  d                    Move to the trash (asks first)                         │
                                    │  s                    Star or unstar                                         │
                                    │  u                    Mark read or unread                                    │
-                                   │  l                    Add or remove labels                                   │
-                                   │  m                    Move to a label (archives)                             │
+                                   │  l                    Add or remove labels (Gmail)                           │
+                                   │  m                    Move to a label (Gmail) or a folder (Microsoft 365)    │
                                    │  c                    Write a new message                                    │
                                    │  r                    Reply to the latest message                            │
                                    │  R                    Reply to everyone                                      │
