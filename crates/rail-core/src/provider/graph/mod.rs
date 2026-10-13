@@ -15,6 +15,7 @@ mod drafts;
 pub mod errors;
 mod folders;
 mod message;
+mod reconcile;
 mod search;
 mod wire;
 
@@ -36,6 +37,8 @@ pub(crate) mod fixtures;
 mod folders_tests;
 #[cfg(test)]
 mod message_tests;
+#[cfg(test)]
+mod reconcile_tests;
 #[cfg(test)]
 mod search_tests;
 

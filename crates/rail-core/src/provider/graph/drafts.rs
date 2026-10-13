@@ -125,6 +125,7 @@ impl GraphProvider {
             Some(id) => self.update_or_create(&id, mail).await?,
             None => self.create(mail).await?,
         };
+        self.reconcile(&id, mail).await?;
         Ok(DraftIds {
             draft_id: id.clone(),
             message_id: id,
