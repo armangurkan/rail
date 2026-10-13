@@ -103,7 +103,7 @@ fn address<'a>(name: Option<&'a str>, mailbox: &'a str) -> Address<'a> {
 /// Refuse, before anything is built, every field the library writes onto the wire as given:
 /// addresses, message ids and MIME types. A line break in one would add a header. Messages
 /// name the field, never the value.
-fn validate(outgoing: &Outgoing) -> Result<(), ProviderError> {
+pub(crate) fn validate(outgoing: &Outgoing) -> Result<(), ProviderError> {
     let addresses = std::iter::once(outgoing.from.as_str())
         .chain(outgoing.to.iter().map(|m| m.address.as_str()))
         .chain(outgoing.cc.iter().map(|m| m.address.as_str()))

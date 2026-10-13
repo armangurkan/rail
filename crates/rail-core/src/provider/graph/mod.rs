@@ -11,6 +11,7 @@ mod body;
 mod cursor;
 mod dates;
 mod delta;
+mod drafts;
 pub mod errors;
 mod folders;
 mod message;
@@ -25,6 +26,8 @@ mod batch_tests;
 mod body_tests;
 #[cfg(test)]
 mod delta_tests;
+#[cfg(test)]
+mod drafts_tests;
 #[cfg(test)]
 mod errors_tests;
 #[cfg(test)]
@@ -191,8 +194,8 @@ impl super::Provider for GraphProvider {
         Err(not_yet())
     }
 
-    async fn draft_save(&self, _: &OutgoingMail) -> Result<DraftIds, ProviderError> {
-        Err(not_yet())
+    async fn draft_save(&self, mail: &OutgoingMail) -> Result<DraftIds, ProviderError> {
+        self.save_draft(mail).await
     }
 
     async fn sent_already(&self, _: &OutgoingMail) -> Result<bool, ProviderError> {
