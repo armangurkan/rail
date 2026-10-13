@@ -436,6 +436,48 @@ async fn search_asks_every_syncing_account_microsoft_365_too() {
     assert!(found.failures.is_empty(), "{:?}", found.failures);
 }
 
+/// An account whose engine could not start is not asked on its server: the search names it
+/// with its start error, and the other account is still searched.
+#[tokio::test]
+async fn a_search_names_the_account_whose_engine_could_not_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = paths_with(&tmp, &format!("{WORK}{CORP}"));
+    let mock = MockProvider::new();
+    let served = mock.clone();
+    let factory: crate::sync::ProviderFactory = Arc::new(move |request| {
+        if request.account.name == "corp" {
+            return Err(OpError::invalid_input("1Password is locked"));
+        }
+        Ok(Arc::new(served.clone()) as Arc<dyn crate::provider::Provider>)
+    });
+    let (ctx, _) = daemon_context(&paths);
+    let _daemon = start_daemon(ctx.with_provider_factory(factory), ServeConfig::default()).await;
+    let client = Connector::new(paths.clone(), Arc::new(|| Ok(())))
+        .connect()
+        .await
+        .unwrap();
+    until(&client, "work", |s| s.passes_completed >= 1).await;
+    until(&client, "corp", |s| s.last_error.is_some()).await;
+    let searches = || mock.calls().iter().filter(|c| **c == Call::Search).count();
+    let before = searches();
+    let request = SearchRequest {
+        query: "budget".into(),
+        account: None,
+        limit: 10,
+    };
+    let found = client.call::<Search>(&request).await.unwrap();
+    assert_eq!(found.failures.len(), 1, "{:?}", found.failures);
+    assert_eq!(found.failures[0].account, "corp");
+    assert_eq!(found.failures[0].kind, AccountKind::M365);
+    assert_eq!(found.failures[0].error.code, ErrorCode::InvalidInput);
+    assert_eq!(found.failures[0].error.message, "1Password is locked");
+    assert_eq!(
+        searches(),
+        before + 1,
+        "work was still searched on its server"
+    );
+}
+
 /// Review minor 8: a search of every account shows only the accounts configured now, never
 /// the mail a removed account left in the store.
 #[tokio::test]
