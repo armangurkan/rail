@@ -119,11 +119,7 @@ async fn the_status_line_shows_the_parsed_filter_and_esc_clears_it() {
     let effects = fire_filter(&mut screen);
     settle(&mut screen, effects).await;
     press(&mut screen, KeyCode::Enter);
-    assert!(
-        screen
-            .status_line()
-            .starts_with("filter: is:unread · words: form:dana")
-    );
+    assert_eq!(screen.slot_text(), "/ is:unread · words: form:dana");
     assert!(screen.list.rows().is_empty());
     press(&mut screen, KeyCode::Char('/'));
     let effects = press(&mut screen, KeyCode::Esc);

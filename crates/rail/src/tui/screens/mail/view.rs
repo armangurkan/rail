@@ -393,7 +393,13 @@ impl MailScreen {
         } else {
             theme.muted
         };
-        let text = fit(&self.status_line(), usize::from(area.width));
+        // Until the frame task draws the header's summary and the hint bar, the daemon's state
+        // stays in this row.
+        let mut text = self.status_line();
+        if let Some(daemon) = self.status.daemon_text(&self.ctx.keymap) {
+            text = format!("{text}  ·  {daemon}");
+        }
+        let text = fit(&text, usize::from(area.width));
         frame.render_widget(Paragraph::new(Line::styled(text, style)), area);
     }
 }

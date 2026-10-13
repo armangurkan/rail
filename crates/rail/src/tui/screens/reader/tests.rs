@@ -362,9 +362,9 @@ async fn a_fetch_lost_with_the_daemon_shows_an_error_not_fetching_forever() {
         "{text}"
     );
     assert!(
-        f.screen.status_line().contains("daemon unreachable"),
+        f.screen.header_summary().contains("daemon unreachable"),
         "{}",
-        f.screen.status_line()
+        f.screen.header_summary()
     );
     press(&mut f, KeyCode::Char('q')).await;
     let effects = f.screen.update(Msg::Key(ctrl('r')));
@@ -701,9 +701,9 @@ async fn a_lost_link_fails_pending_fetches_and_ctrl_r_reconnects_from_the_reader
         "re-subscribed with the reader still open"
     );
     assert!(
-        !f.screen.status_line().contains("daemon unreachable"),
+        !f.screen.header_summary().contains("daemon unreachable"),
         "{}",
-        f.screen.status_line()
+        f.screen.header_summary()
     );
     assert_eq!(f.screen.focus, Focus::Reader);
 }

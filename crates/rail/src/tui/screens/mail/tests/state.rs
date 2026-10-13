@@ -217,10 +217,10 @@ async fn a_fetch_that_gets_through_after_a_lost_watch_says_the_daemon_is_back() 
     let lost = MailEvent::Daemon(DaemonEvent::Lost(OpError::internal("gone")));
     let effects = f.screen.update(Msg::Task(TaskResult::Mail(lost)));
     settle(&mut f.screen, effects).await;
-    assert!(f.screen.status_line().contains("daemon unreachable"));
+    assert!(f.screen.header_summary().contains("daemon unreachable"));
     // Opening a thread fetches its body; the daemon answers this time.
     press(&mut f, KeyCode::Enter).await;
-    let line = f.screen.status_line();
+    let line = f.screen.header_summary();
     assert!(!line.contains("unreachable"), "{line}");
     assert!(
         line.contains("daemon reachable again (Ctrl-r resumes live updates)"),
@@ -234,9 +234,9 @@ async fn a_fetch_that_gets_through_after_a_lost_watch_says_the_daemon_is_back() 
         "Ctrl-r subscribes again"
     );
     assert!(
-        !f.screen.status_line().contains("daemon"),
+        !f.screen.header_summary().contains("daemon"),
         "{}",
-        f.screen.status_line()
+        f.screen.header_summary()
     );
 }
 
@@ -247,7 +247,7 @@ async fn a_fetch_that_finds_the_daemon_gone_again_after_reachable_says_unreachab
     let effects = f.screen.update(Msg::Task(TaskResult::Mail(lost)));
     settle(&mut f.screen, effects).await;
     press(&mut f, KeyCode::Enter).await;
-    assert!(f.screen.status_line().contains("daemon reachable again"));
+    assert!(f.screen.header_summary().contains("daemon reachable again"));
     // The next fetch fails the way a closed connection does.
     let closed = OpError::new(
         ErrorCode::Daemon,
@@ -260,7 +260,7 @@ async fn a_fetch_that_finds_the_daemon_gone_again_after_reachable_says_unreachab
     };
     let effects = f.screen.update(Msg::Task(TaskResult::Mail(failed)));
     settle(&mut f.screen, effects).await;
-    let line = f.screen.status_line();
+    let line = f.screen.header_summary();
     assert!(
         line.contains("daemon unreachable (Ctrl-r retries)"),
         "{line}"
@@ -349,4 +349,20 @@ async fn another_jobs_panic_leaves_the_refresh_in_flight() {
         f.screen.refreshing.is_none(),
         "the refresh's own end ends it"
     );
+}
+
+#[tokio::test]
+async fn the_bar_follows_the_focus_and_carries_the_notice_and_the_accounts() {
+    use crate::tui::screens::mail::hints::Pane;
+    let mut f = fixture(3).await;
+    let theme = Theme::default();
+    assert_eq!(f.screen.pane(), Pane::List);
+    let bar = f.screen.bar(&theme);
+    assert_eq!(bar.hints.last().map(|h| h.word.as_str()), Some("help"));
+    assert!(bar.notice.is_none());
+    assert_eq!(bar.right.len(), f.screen.accounts.len());
+    press(&mut f, KeyCode::Tab).await;
+    assert_eq!(f.screen.pane(), Pane::Sidebar);
+    f.screen.status.notify("Archived", 0);
+    assert_eq!(f.screen.bar(&theme).notice, Some(("Archived", false)));
 }

@@ -109,9 +109,9 @@ async fn a_selection_survives_a_requery_and_a_scope_change_and_an_action_clears_
     press(&mut f, KeyCode::Char(' ')).await;
     assert_eq!(f.screen.actions.selection.len(), 2);
     assert!(
-        f.screen.status_line().starts_with("2 selected"),
+        f.screen.header_left().ends_with("· 2 selected"),
         "{}",
-        f.screen.status_line()
+        f.screen.header_left()
     );
     store_changed(&mut f).await;
     press(&mut f, KeyCode::Char('1')).await;

@@ -538,7 +538,7 @@ async fn progress_reaches_the_status_bar_and_a_lost_daemon_says_so() {
     assert_eq!(f.screen.status.daemon, DaemonState::Unreachable);
     assert!(
         f.screen
-            .status_line()
+            .header_summary()
             .contains("daemon unreachable (Ctrl-r retries)")
     );
     assert_eq!(f.screen.status.errors().count(), 1, ":errors keeps it");

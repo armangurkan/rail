@@ -209,7 +209,7 @@ impl StatusBar {
         self.errors.iter()
     }
 
-    fn status_of(&self, account: &AccountEntry) -> Option<&AccountSyncStatus> {
+    pub(super) fn status_of(&self, account: &AccountEntry) -> Option<&AccountSyncStatus> {
         self.statuses
             .iter()
             .find(|s| s.address.eq_ignore_ascii_case(&account.address))
@@ -269,7 +269,7 @@ impl StatusBar {
     }
 
     /// The daemon's state when it is not plainly connected.
-    fn daemon_text(&self, keymap: &Keymap) -> Option<String> {
+    pub(super) fn daemon_text(&self, keymap: &Keymap) -> Option<String> {
         let refresh = keymap.label(Action::ListRefresh);
         match self.daemon {
             DaemonState::Connected => None,
@@ -281,8 +281,8 @@ impl StatusBar {
         }
     }
 
-    /// The bar's text (every part escaped): the notice, each account, the daemon.
-    pub fn line(&self, accounts: &[AccountEntry], glyphs: &Glyphs, keymap: &Keymap) -> String {
+    /// The bar's text (every part escaped): the notice, then each account.
+    pub fn line(&self, accounts: &[AccountEntry], glyphs: &Glyphs) -> String {
         let mut parts: Vec<String> = self.notice().map(str::to_string).into_iter().collect();
         for account in accounts {
             let status = self
@@ -291,7 +291,6 @@ impl StatusBar {
                 .find(|s| s.address.eq_ignore_ascii_case(&account.address));
             parts.push(account_part(&escape(&account.name), status, glyphs));
         }
-        parts.extend(self.daemon_text(keymap));
         parts.join("  ·  ")
     }
 }
@@ -354,7 +353,11 @@ fn rank(name: &str, s: Option<&AccountSyncStatus>, glyphs: &Glyphs) -> (u8, Stri
     }
 }
 
-fn account_part(name: &str, status: Option<&AccountSyncStatus>, glyphs: &Glyphs) -> String {
+pub(super) fn account_part(
+    name: &str,
+    status: Option<&AccountSyncStatus>,
+    glyphs: &Glyphs,
+) -> String {
     let Some(s) = status else {
         return format!("{name} …");
     };

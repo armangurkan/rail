@@ -11,6 +11,7 @@ mod drafts_flow;
 mod drafts_pane;
 mod events;
 mod header;
+mod hints;
 mod layout;
 mod list;
 mod m365;
@@ -484,23 +485,11 @@ impl MailScreen {
         effects
     }
 
-    /// The status bar's text, for tests and the view; led by the filter's operators while a
-    /// filter is set.
+    /// The bar's text without the hints: the notice, then each account; for tests and the
+    /// narrow view.
     pub(crate) fn status_line(&self) -> String {
-        let mut line = self.status.line(
-            &self.accounts,
-            &Glyphs::of(self.ctx.icons),
-            &self.ctx.keymap,
-        );
-        if !self.actions.selection.is_empty() {
-            line = format!("{} selected  ·  {line}", self.actions.selection.len());
-        }
-        // The Drafts folder's pane is not filtered.
-        if self.filter.is_empty() || self.in_drafts() {
-            return line;
-        }
-        let parsed = crate::tui::text::escape(&self.filter.describe().join(" · "));
-        format!("filter: {parsed}  ·  {line}")
+        self.status
+            .line(&self.accounts, &Glyphs::of(self.ctx.icons))
     }
 
     fn apply_filter(&mut self) -> Vec<Effect> {
