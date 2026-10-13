@@ -93,7 +93,12 @@ impl Worker {
                 "the draft's attachments could not be read",
             ));
         }
-        let mut mail = compose::attach(loaded.assembly, self.provider.as_ref()).await?;
+        let mut mail = compose::attach(
+            loaded.assembly,
+            self.provider.as_ref(),
+            self.kind.provider_name(),
+        )
+        .await?;
         let saved = if self.provider.send_consumes_draft() {
             Some(self.provider.draft_save(&mail).await?)
         } else {

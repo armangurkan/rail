@@ -3,9 +3,9 @@
 //! (files on disk, parts of stored messages) before the message can go.
 
 use crate::provider::{
-    DraftIds, Mailbox, Outgoing, OutgoingAttachment, OutgoingMail, Provider, ProviderError,
+    Carried, DraftIds, Mailbox, Outgoing, OutgoingAttachment, OutgoingMail, Provider, ProviderError,
 };
-use crate::store::drafts::{Attachment, Draft, Recipient};
+use crate::store::drafts::{Attachment, Draft, DraftKind, Recipient};
 use crate::store::{Store, StoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +21,7 @@ pub(super) struct PartRef {
     pub part: String,
     pub name: String,
     pub mime: String,
+    pub size: i64,
 }
 
 /// The message without its attachment bytes, plus where to get them.
@@ -67,13 +68,14 @@ fn listed(
                 part,
                 name,
                 mime,
-                ..
+                size,
             } => match store.message_remote_id(account_id, *message)? {
                 Some(remote) => parts.push(PartRef {
                     message_remote: remote,
                     part: part.clone(),
                     name: name.clone(),
                     mime: mime.clone(),
+                    size: *size,
                 }),
                 None => part_gone = true,
             },
@@ -161,18 +163,19 @@ async fn read_file(file: FileRef) -> Result<OutgoingAttachment, ProviderError> {
     })
 }
 
-/// One part of a stored message, fetched from the provider.
+/// One part of a stored message, fetched from the provider (`provider_name` in the error).
 async fn fetch_part(
     provider: &dyn Provider,
     part: PartRef,
+    provider_name: &str,
 ) -> Result<OutgoingAttachment, ProviderError> {
     let bytes = provider
         .attachment(&part.message_remote, &part.part)
         .await
         .map_err(|e| match e {
-            ProviderError::NotFound => {
-                ProviderError::permanent("an attachment of this message is no longer in Gmail")
-            }
+            ProviderError::NotFound => ProviderError::permanent(&format!(
+                "an attachment of this message is no longer in {provider_name}"
+            )),
             other => other,
         })?;
     Ok(OutgoingAttachment {
@@ -183,25 +186,46 @@ async fn fetch_part(
     })
 }
 
-/// Read the files and fetch the parts. A file or part that cannot be had is a permanent
-/// failure.
+/// A forwarded original the provider's own forward carries: its name and size only; the
+/// provider fetches its bytes only if its copy is missing.
+fn carried(part: PartRef) -> OutgoingAttachment {
+    OutgoingAttachment {
+        name: part.name,
+        mime: part.mime,
+        bytes: Vec::new(),
+        carried: Some(Carried {
+            message: part.message_remote,
+            part: part.part,
+            size: usize::try_from(part.size).unwrap_or(0),
+        }),
+    }
+}
+
+/// Read the files and fetch the parts; a forward's parts on a provider whose forward carries
+/// them (Graph) are passed as `Carried`, unread. A file or part that cannot be had is a
+/// permanent failure, its error naming `provider_name`, never the attachment.
 pub(super) async fn attach(
     assembly: Assembly,
     provider: &dyn Provider,
+    provider_name: &str,
 ) -> Result<OutgoingMail, ProviderError> {
     if assembly.part_gone {
         return Err(ProviderError::permanent(
             "the message an attachment was forwarded from is no longer in the store",
         ));
     }
+    let carry = provider.forward_carries_originals() && assembly.mail.kind == DraftKind::Forward;
     let mut mail = assembly.mail;
     for file in assembly.files {
         mail.outgoing.attachments.push(read_file(file).await?);
     }
     for part in assembly.parts {
-        mail.outgoing
-            .attachments
-            .push(fetch_part(provider, part).await?);
+        let attachment = if carry {
+            carried(part)
+        } else {
+            fetch_part(provider, part, provider_name).await?
+        };
+        mail.outgoing.attachments.push(attachment);
     }
     Ok(mail)
 }

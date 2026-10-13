@@ -110,7 +110,8 @@ fn files_and_parts_are_listed_with_the_parts_message_at_gmail() {
             message_remote: "m1".into(),
             part: "p1".into(),
             name: "a.pdf".into(),
-            mime: "application/pdf".into()
+            mime: "application/pdf".into(),
+            size: 10
         }]
     );
     assert_eq!(assembly.mail.outgoing.from_name, None);
@@ -169,7 +170,9 @@ async fn an_unreadable_file_is_a_permanent_error_without_its_name() {
         }],
     );
     let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
-    let error = attach(assembly, &MockProvider::new()).await.unwrap_err();
+    let error = attach(assembly, &MockProvider::new(), "Gmail")
+        .await
+        .unwrap_err();
     let (class, message) = message_of(&error);
     assert_eq!(class, "permanent");
     assert_eq!(message, "could not read an attachment of this message");
@@ -193,7 +196,9 @@ async fn a_forwarded_part_gone_from_gmail_is_permanent_without_its_name() {
         }],
     );
     let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
-    let error = attach(assembly, &MockProvider::new()).await.unwrap_err();
+    let error = attach(assembly, &MockProvider::new(), "Gmail")
+        .await
+        .unwrap_err();
     let (class, message) = message_of(&error);
     assert_eq!(class, "permanent");
     assert_eq!(
@@ -217,7 +222,9 @@ async fn a_forwarded_part_whose_message_left_the_store_is_permanent_without_its_
         }],
     );
     let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
-    let error = attach(assembly, &MockProvider::new()).await.unwrap_err();
+    let error = attach(assembly, &MockProvider::new(), "Gmail")
+        .await
+        .unwrap_err();
     let (class, message) = message_of(&error);
     assert_eq!(class, "permanent");
     assert_eq!(
@@ -253,5 +260,66 @@ fn the_mail_carries_the_drafts_kind_source_copy_and_thread() {
     assert_eq!(
         mail.remote, None,
         "not at the provider without its draft id"
+    );
+}
+
+#[tokio::test]
+async fn a_graph_forwards_parts_are_carried_without_being_fetched() {
+    let (mut store, account) = store_with_account();
+    let (message, _) = seed_two_messages(&mut store, account);
+    let mut d = draft(
+        &mut store,
+        account,
+        vec![Attachment::Part {
+            message,
+            part: "p1".into(),
+            name: "a.pdf".into(),
+            mime: "application/pdf".into(),
+            size: 10,
+        }],
+    );
+    d.kind = DraftKind::Forward;
+    let mock = MockProvider::new();
+    mock.with(|m| m.graph_model = true);
+    let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
+    let mail = attach(assembly, &mock, "Microsoft 365").await.unwrap();
+    let attachment = &mail.outgoing.attachments[0];
+    assert!(attachment.bytes.is_empty());
+    assert_eq!(
+        attachment.carried,
+        Some(crate::provider::Carried {
+            message: "m1".into(),
+            part: "p1".into(),
+            size: 10
+        })
+    );
+    assert!(mock.calls().is_empty(), "nothing fetched");
+}
+
+#[tokio::test]
+async fn a_forwarded_part_gone_names_the_accounts_provider() {
+    let (mut store, account) = store_with_account();
+    let (message, _) = seed_two_messages(&mut store, account);
+    let d = draft(
+        &mut store,
+        account,
+        vec![Attachment::Part {
+            message,
+            part: "p1".into(),
+            name: AWKWARD_NAME.into(),
+            mime: "text/plain".into(),
+            size: 1,
+        }],
+    );
+    let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
+    let error = attach(assembly, &MockProvider::new(), "Microsoft 365")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        message_of(&error),
+        (
+            "permanent",
+            "an attachment of this message is no longer in Microsoft 365"
+        )
     );
 }

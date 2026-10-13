@@ -6,8 +6,8 @@
 use super::sending_tests::{Harness, new_draft, queued_draft, sends};
 use crate::ops::{Action, DraftId, OutboxId};
 use crate::provider::mock::Call;
-use crate::provider::{DraftIds, ProviderError};
-use crate::store::drafts::DraftState;
+use crate::provider::{Carried, DraftIds, ProviderError};
+use crate::store::drafts::{Attachment, DraftState};
 use crate::store::outbox::NewAction;
 
 fn draft_calls(h: &Harness) -> Vec<Call> {
@@ -218,4 +218,43 @@ async fn a_gmail_send_saves_no_draft_first_and_records_no_ids() {
         "Gmail sends the message, not a draft"
     );
     assert_eq!(remote_of(&h, draft), (None, None, true), "stamped, no ids");
+}
+
+#[tokio::test]
+async fn a_graph_forward_carries_its_originals_without_reading_them() {
+    let h = Harness::graph().await;
+    let m1 = h.message_id("m1");
+    let part = Attachment::Part {
+        message: m1,
+        part: "p1".into(),
+        name: "orig.pdf".into(),
+        mime: "application/pdf".into(),
+        size: 3,
+    };
+    let (draft, _) = queued_draft(&h, 7, vec![part]).await;
+    h.with_store(|s| {
+        s.conn()
+            .execute(
+                "UPDATE drafts SET kind = 'forward', source_remote_id = 'm1' WHERE id = ?1",
+                [draft],
+            )
+            .unwrap();
+    });
+    h.step().await;
+    assert!(
+        !h.mock.calls().contains(&Call::Attachment),
+        "the original is not read"
+    );
+    let sent = h.mock.with(|m| m.sent_mail.clone());
+    let attachment = &sent[0].outgoing.attachments[0];
+    assert!(attachment.bytes.is_empty());
+    assert_eq!(
+        attachment.carried,
+        Some(Carried {
+            message: "m1".into(),
+            part: "p1".into(),
+            size: 3
+        })
+    );
+    assert_eq!(sent[0].source.as_deref(), Some("m1"));
 }

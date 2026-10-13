@@ -16,7 +16,12 @@ impl Worker {
                 "the draft's attachments could not be read",
             ));
         }
-        let mail = compose::attach(loaded.assembly, self.provider.as_ref()).await?;
+        let mail = compose::attach(
+            loaded.assembly,
+            self.provider.as_ref(),
+            self.kind.provider_name(),
+        )
+        .await?;
         self.provider.draft_save(&mail).await
     }
 
