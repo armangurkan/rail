@@ -39,7 +39,7 @@ use std::time::Duration;
 
 use super::http::ApiClient;
 use super::{
-    Body, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
+    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
     RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 use crate::config::SyncSettings;
@@ -180,17 +180,8 @@ impl super::Provider for GraphProvider {
         self.envelopes_of(ids).await
     }
 
-    async fn modify_threads(
-        &self,
-        threads: &[ThreadTarget],
-        add: &[RemoteId],
-        remove: &[RemoteId],
-    ) -> Result<(), ProviderError> {
-        self.modify(threads, add, remove).await
-    }
-
-    async fn trash_threads(&self, _: &[ThreadTarget]) -> Result<(), ProviderError> {
-        Err(not_yet())
+    async fn apply(&self, threads: &[ThreadTarget], change: &Change) -> Result<(), ProviderError> {
+        self.apply_change(threads, change).await
     }
 
     async fn send(&self, _: &[u8], _: Option<&str>) -> Result<SentReceipt, ProviderError> {

@@ -9,9 +9,7 @@ use wiremock::{Mock, ResponseTemplate};
 use super::errors::CONSENT_MESSAGE;
 use super::fixtures::{Graph, ROOT};
 use crate::ops::M365_NOT_YET;
-use crate::provider::{
-    Provider, ProviderError, STARRED_LABEL, TargetMessage, ThreadTarget, UNREAD_LABEL,
-};
+use crate::provider::{Change, Provider, ProviderError, TargetMessage, ThreadTarget};
 
 fn target(thread: &str, messages: &[&str]) -> ThreadTarget {
     ThreadTarget {
@@ -39,7 +37,7 @@ async fn mark_read_patches_every_stored_message_twenty_to_a_batch() {
     }
     let threads = [target("c1", &ids[..5]), target("c2", &ids[5..])];
     g.provider()
-        .modify_threads(&threads, &[], &[UNREAD_LABEL.into()])
+        .apply(&threads, &Change::Read { on: true })
         .await
         .unwrap();
     assert_eq!(g.batch.posts(), 2);
@@ -65,7 +63,7 @@ async fn a_gone_message_counts_as_done_and_a_throttled_one_is_sent_alone() {
         .await;
     // m1 has no answer: the fake batch answers 404, which is done.
     g.provider()
-        .modify_threads(&[target("c1", &["m1", "m2"])], &[], &[UNREAD_LABEL.into()])
+        .apply(&[target("c1", &["m1", "m2"])], &Change::Read { on: true })
         .await
         .unwrap();
     assert_eq!(g.batch.posts(), 1);
@@ -78,31 +76,33 @@ async fn a_refused_patch_fails_the_call() {
     g.batch.answer("PATCH", "/me/messages/m1", 403, refused);
     let error = g
         .provider()
-        .modify_threads(&[target("c1", &["m1"])], &[], &[UNREAD_LABEL.into()])
+        .apply(&[target("c1", &["m1"])], &Change::Read { on: true })
         .await
         .unwrap_err();
     assert_eq!(error.to_string(), CONSENT_MESSAGE);
 }
 
 #[tokio::test]
-async fn every_other_change_and_trash_are_not_supported_yet() {
+async fn every_other_change_is_not_supported_yet() {
     let g = Graph::start().await;
     let provider = g.provider();
     let thread = [target("c1", &["m1"])];
     let changes = [
-        (vec![], vec!["INBOX".to_string()]),
-        (vec![STARRED_LABEL.to_string()], vec![]),
-        (vec![UNREAD_LABEL.to_string()], vec![]),
-        (vec!["f-arch".to_string()], vec!["INBOX".to_string()]),
+        Change::Archive,
+        Change::Trash,
+        Change::Star { on: true },
+        Change::Read { on: false },
+        Change::Move {
+            to: "f-arch".into(),
+        },
+        Change::Labels {
+            add: vec!["f-arch".into()],
+            remove: vec![],
+        },
     ];
-    for (add, remove) in changes {
-        let error = provider
-            .modify_threads(&thread, &add, &remove)
-            .await
-            .unwrap_err();
-        assert_eq!(error, ProviderError::permanent(M365_NOT_YET));
+    for change in changes {
+        let error = provider.apply(&thread, &change).await.unwrap_err();
+        assert_eq!(error, ProviderError::permanent(M365_NOT_YET), "{change:?}");
     }
-    let trash = provider.trash_threads(&thread).await.unwrap_err();
-    assert_eq!(trash, ProviderError::permanent(M365_NOT_YET));
     assert_eq!(g.batch.posts(), 0);
 }

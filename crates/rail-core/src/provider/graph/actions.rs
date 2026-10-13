@@ -1,27 +1,21 @@
-//! Thread changes for Microsoft 365. Part A sends only "mark read": `remove [UNREAD_LABEL]`
+//! Thread changes for Microsoft 365. Part A sends only "mark read": `Change::Read { on: true }`
 //! becomes `PATCH me/messages/{id}` `{"isRead": true}` on each stored message of each thread,
 //! through `$batch` (a throttled item sent again alone); a 404 means the message is gone, which
-//! is done. Every other change, and trash, is not supported yet.
+//! is done. Every other change is not supported yet.
 
 use serde_json::json;
 
 use super::batch::BatchRequest;
 use super::{GraphProvider, graph_id, not_yet};
-use crate::provider::{ProviderError, RemoteId, ThreadTarget, UNREAD_LABEL};
-
-/// Whether `add` and `remove` mark read: the one change Part A sends.
-fn marks_read(add: &[RemoteId], remove: &[RemoteId]) -> bool {
-    add.is_empty() && remove.len() == 1 && remove[0] == UNREAD_LABEL
-}
+use crate::provider::{Change, ProviderError, RemoteId, ThreadTarget};
 
 impl GraphProvider {
-    pub(crate) async fn modify(
+    pub(crate) async fn apply_change(
         &self,
         threads: &[ThreadTarget],
-        add: &[RemoteId],
-        remove: &[RemoteId],
+        change: &Change,
     ) -> Result<(), ProviderError> {
-        if !marks_read(add, remove) {
+        if *change != (Change::Read { on: true }) {
             return Err(not_yet());
         }
         let ids: Vec<&RemoteId> = threads

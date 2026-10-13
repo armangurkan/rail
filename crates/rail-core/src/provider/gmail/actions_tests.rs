@@ -1,20 +1,87 @@
-//! `threads.modify` and `threads.trash` against fake Gmail: exact bodies, one call per thread,
-//! the error classes, refused ids, and logs without bodies or ids beyond the path.
+//! The Gmail adapter against fake Gmail: each `Change` as today's exact call (`threads.modify`
+//! with its labels, or `threads.trash` with an empty body), once per thread, the error classes,
+//! refused ids, and logs without bodies or ids beyond the path.
 
-use serde_json::json;
+use serde_json::{Value, json};
 use wiremock::matchers::{body_json, body_string, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 use super::fixtures::{API_PATH, Gmail};
-use crate::provider::{Provider, ProviderError};
+use crate::provider::{Change, Provider, ProviderError, ThreadTarget};
 
 fn thread_answer(id: &str) -> ResponseTemplate {
     ResponseTemplate::new(200)
         .set_body_json(json!({"id": id, "messages": [{"id": "m1", "labelIds": ["Label_1"]}]}))
 }
 
+fn threads(ids: &[&str]) -> Vec<ThreadTarget> {
+    ids.iter().map(|id| ThreadTarget::from(*id)).collect()
+}
+
 #[tokio::test]
-async fn modify_posts_the_label_ids_once_per_thread() {
+async fn each_change_makes_todays_gmail_call() {
+    let modify =
+        |add: &[&str], remove: &[&str]| Some(json!({"addLabelIds": add, "removeLabelIds": remove}));
+    let cases: Vec<(Change, &str, Option<Value>)> = vec![
+        (Change::Archive, "modify", modify(&[], &["INBOX"])),
+        (Change::Trash, "trash", None),
+        (
+            Change::Star { on: true },
+            "modify",
+            modify(&["STARRED"], &[]),
+        ),
+        (
+            Change::Star { on: false },
+            "modify",
+            modify(&[], &["STARRED"]),
+        ),
+        (
+            Change::Read { on: true },
+            "modify",
+            modify(&[], &["UNREAD"]),
+        ),
+        (
+            Change::Read { on: false },
+            "modify",
+            modify(&["UNREAD"], &[]),
+        ),
+        (
+            Change::Labels {
+                add: vec!["Label_1".into()],
+                remove: vec!["Label_2".into()],
+            },
+            "modify",
+            modify(&["Label_1"], &["Label_2"]),
+        ),
+        (
+            Change::Move {
+                to: "Label_1".into(),
+            },
+            "modify",
+            modify(&["Label_1"], &["INBOX"]),
+        ),
+    ];
+    for (change, call, body) in cases {
+        let gmail = Gmail::start().await;
+        let at = Mock::given(method("POST")).and(path(format!("{API_PATH}/threads/t1/{call}")));
+        let at = match body {
+            Some(body) => at.and(body_json(body)),
+            None => at.and(body_string("")),
+        };
+        at.respond_with(thread_answer("t1"))
+            .expect(1)
+            .mount(&gmail.server)
+            .await;
+        gmail
+            .provider()
+            .apply(&threads(&["t1"]), &change)
+            .await
+            .unwrap_or_else(|e| panic!("{change:?}: {e:?}"));
+    }
+}
+
+#[tokio::test]
+async fn a_move_posts_the_label_ids_once_per_thread() {
     let gmail = Gmail::start().await;
     for id in ["t1", "t2"] {
         Mock::given(method("POST"))
@@ -27,13 +94,12 @@ async fn modify_posts_the_label_ids_once_per_thread() {
             .mount(&gmail.server)
             .await;
     }
+    let to = Change::Move {
+        to: "Label_1".into(),
+    };
     gmail
         .provider()
-        .modify_threads(
-            &["t1".into(), "t2".into()],
-            &["Label_1".into()],
-            &["INBOX".into()],
-        )
+        .apply(&threads(&["t1", "t2"]), &to)
         .await
         .unwrap();
 }
@@ -50,7 +116,7 @@ async fn trash_posts_an_empty_body() {
         .await;
     gmail
         .provider()
-        .trash_threads(&["t1".into()])
+        .apply(&threads(&["t1"]), &Change::Trash)
         .await
         .unwrap();
 }
@@ -67,11 +133,12 @@ async fn a_404_is_not_found_and_a_429_is_transient() {
         .mount(&gmail.server)
         .await;
     let provider = gmail.provider();
-    let gone = provider
-        .modify_threads(&["gone".into()], &[], &["INBOX".into()])
-        .await;
+    let gone = provider.apply(&threads(&["gone"]), &Change::Archive).await;
     assert_eq!(gone, Err(ProviderError::NotFound));
-    let busy = provider.trash_threads(&["busy".into()]).await.unwrap_err();
+    let busy = provider
+        .apply(&threads(&["busy"]), &Change::Trash)
+        .await
+        .unwrap_err();
     assert!(matches!(busy, ProviderError::Transient { .. }), "{busy:?}");
 }
 
@@ -86,9 +153,13 @@ async fn a_400_for_a_label_is_permanent() {
         )
         .mount(&gmail.server)
         .await;
+    let change = Change::Labels {
+        add: vec!["Label_9".into()],
+        remove: vec![],
+    };
     let error = gmail
         .provider()
-        .modify_threads(&["t1".into()], &["Label_9".into()], &[])
+        .apply(&threads(&["t1"]), &change)
         .await
         .unwrap_err();
     assert!(
@@ -103,16 +174,17 @@ async fn ids_rail_would_not_put_in_a_path_or_too_many_labels_are_refused_before_
     let gmail = Gmail::start().await;
     let provider = gmail.provider();
     for bad in ["../labels", "t 1", ""] {
-        let error = provider.trash_threads(&[bad.into()]).await.unwrap_err();
+        let error = provider
+            .apply(&threads(&[bad]), &Change::Trash)
+            .await
+            .unwrap_err();
         assert!(matches!(error, ProviderError::Permanent { .. }), "{bad}");
     }
-    let many: Vec<String> = (0..101).map(|i| format!("Label_{i}")).collect();
-    assert!(
-        provider
-            .modify_threads(&["t1".into()], &many, &[])
-            .await
-            .is_err()
-    );
+    let many = Change::Labels {
+        add: (0..101).map(|i| format!("Label_{i}")).collect(),
+        remove: vec![],
+    };
+    assert!(provider.apply(&threads(&["t1"]), &many).await.is_err());
     assert!(gmail.server.received_requests().await.unwrap().is_empty());
 }
 
@@ -127,7 +199,7 @@ fn the_log_names_the_method_and_path_only() {
             .await;
         gmail
             .provider()
-            .modify_threads(&["t1".into()], &["STARRED".into()], &[])
+            .apply(&threads(&["t1"]), &Change::Star { on: true })
             .await
     });
     result.unwrap();

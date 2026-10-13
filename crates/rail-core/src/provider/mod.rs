@@ -57,17 +57,11 @@ pub trait Provider: Send + Sync {
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<RemoteId>, ProviderError>;
     /// Envelopes for these ids; ids that no longer exist are left out.
     async fn envelopes(&self, ids: &[RemoteId]) -> Result<EnvelopePage, ProviderError>;
-    /// Add and remove labels (system ones too: `INBOX_LABEL`, `UNREAD_LABEL`, `STARRED_LABEL`)
-    /// on every message of each thread, one thread at a time. Idempotent. Each target carries
-    /// the ids of the thread's stored messages, for a provider that acts on messages.
-    async fn modify_threads(
-        &self,
-        threads: &[ThreadTarget],
-        add: &[RemoteId],
-        remove: &[RemoteId],
-    ) -> Result<(), ProviderError>;
-    /// Move each thread to the provider's trash (restorable there). Idempotent.
-    async fn trash_threads(&self, threads: &[ThreadTarget]) -> Result<(), ProviderError>;
+    /// Make `change` on each thread of `threads` (the worker sends one at a time). Idempotent.
+    /// Gmail acts on the thread; a one-folder provider (Graph) acts on the stored messages the
+    /// scope rule (`actions::scope`) picks from each target's facts. Trash is restorable.
+    async fn apply(&self, threads: &[ThreadTarget], change: &Change) -> Result<(), ProviderError>;
+
     /// Send the RFC 5322 message `raw`, in `thread_id` when given. NEVER retried blindly: a
     /// request that may have reached the provider is not repeated, so a transient error here
     /// means "unknown"; the caller looks the message up (`message_by_header_id`) before it

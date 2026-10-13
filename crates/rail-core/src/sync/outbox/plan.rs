@@ -1,20 +1,10 @@
-//! What one row asks of the provider, in its ids: the threads the store still holds, and the
-//! labels to add and remove (system labels for archive, read and star; folders mapped to
-//! their remote ids); or, for a draft row, which path takes it.
+//! What one row asks of the provider: the threads the store still holds, and the `Change`
+//! with its folders mapped to their remote ids; or, for a draft row, which path takes it.
 
 use crate::ops::{Action, DraftId};
-use crate::provider::{INBOX_LABEL, RemoteId, STARRED_LABEL, ThreadTarget, UNREAD_LABEL};
+use crate::provider::{Change, RemoteId, ThreadTarget};
 use crate::store::outbox::OutboxRow;
 use crate::store::{Store, StoreError};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Remote {
-    Trash,
-    Modify {
-        add: Vec<RemoteId>,
-        remove: Vec<RemoteId>,
-    },
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Plan {
@@ -22,9 +12,9 @@ pub(super) enum Plan {
     Nothing,
     Send {
         threads: Vec<ThreadTarget>,
-        change: Remote,
+        change: Change,
     },
-    /// A label the action names is no longer in the store (deleted in Gmail).
+    /// A label or folder the action names is no longer in the store (deleted at the provider).
     LabelGone,
     /// A `Send` row: the worker's send path builds and sends the draft.
     SendDraft(DraftId),
@@ -45,6 +35,34 @@ fn labels(store: &Store, account: i64, ids: &[i64]) -> Result<Option<Vec<RemoteI
     Ok(Some(remotes))
 }
 
+/// The provider change of a thread action; `None` when a folder it names is gone. Draft
+/// actions were planned by their draft and never reach here.
+fn change_for(store: &Store, account: i64, action: &Action) -> Result<Option<Change>, StoreError> {
+    let change = match action {
+        Action::Archive {} => Change::Archive,
+        Action::Trash {} => Change::Trash,
+        Action::Star { on } => Change::Star { on: *on },
+        Action::Read { on } => Change::Read { on: *on },
+        Action::Labels { add, remove } => {
+            match (
+                labels(store, account, add)?,
+                labels(store, account, remove)?,
+            ) {
+                (Some(add), Some(remove)) => Change::Labels { add, remove },
+                _ => return Ok(None),
+            }
+        }
+        Action::Move { to } => match store.folder_remote(account, *to)? {
+            Some(to) => Change::Move { to },
+            None => return Ok(None),
+        },
+        Action::Send { .. } | Action::PushDraft { .. } | Action::DeleteDraft { .. } => {
+            return Ok(None);
+        }
+    };
+    Ok(Some(change))
+}
+
 pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
     // A draft row names no threads: it is planned by its draft.
     match &row.action {
@@ -59,39 +77,8 @@ pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
     if threads.is_empty() {
         return Ok(Plan::Nothing);
     }
-    let system = |s: &str| vec![s.to_string()];
-    let (add, remove) = match &row.action {
-        Action::Trash {} => {
-            return Ok(Plan::Send {
-                threads,
-                change: Remote::Trash,
-            });
-        }
-        Action::Archive {} => (Vec::new(), system(INBOX_LABEL)),
-        Action::Star { on: true } => (system(STARRED_LABEL), Vec::new()),
-        Action::Star { on: false } => (Vec::new(), system(STARRED_LABEL)),
-        Action::Read { on: true } => (Vec::new(), system(UNREAD_LABEL)),
-        Action::Read { on: false } => (system(UNREAD_LABEL), Vec::new()),
-        Action::Labels { add, remove } => {
-            let (Some(add), Some(remove)) = (
-                labels(store, row.account_id, add)?,
-                labels(store, row.account_id, remove)?,
-            ) else {
-                return Ok(Plan::LabelGone);
-            };
-            (add, remove)
-        }
-        Action::Move { to } => match labels(store, row.account_id, &[*to])? {
-            Some(add) => (add, system(INBOX_LABEL)),
-            None => return Ok(Plan::LabelGone),
-        },
-        // Draft rows were planned above, by their draft; none reaches here.
-        Action::Send { .. } | Action::PushDraft { .. } | Action::DeleteDraft { .. } => {
-            return Ok(Plan::Nothing);
-        }
-    };
-    Ok(Plan::Send {
-        threads,
-        change: Remote::Modify { add, remove },
+    Ok(match change_for(store, row.account_id, &row.action)? {
+        Some(change) => Plan::Send { threads, change },
+        None => Plan::LabelGone,
     })
 }

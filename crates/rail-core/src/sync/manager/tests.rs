@@ -387,17 +387,10 @@ impl crate::provider::Provider for Panics {
     ) -> Result<crate::provider::EnvelopePage, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
-    async fn modify_threads(
+    async fn apply(
         &self,
         _: &[crate::provider::ThreadTarget],
-        _: &[crate::provider::RemoteId],
-        _: &[crate::provider::RemoteId],
-    ) -> Result<(), crate::provider::ProviderError> {
-        panic!("test: the engine panics")
-    }
-    async fn trash_threads(
-        &self,
-        _: &[crate::provider::ThreadTarget],
+        _: &crate::provider::Change,
     ) -> Result<(), crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
@@ -733,16 +726,12 @@ impl crate::provider::Provider for RetryingSearch {
     ) -> Answer<crate::provider::EnvelopePage> {
         self.inner.envelopes(ids).await
     }
-    async fn modify_threads(
+    async fn apply(
         &self,
-        ids: &[crate::provider::ThreadTarget],
-        add: &[crate::provider::RemoteId],
-        remove: &[crate::provider::RemoteId],
+        threads: &[crate::provider::ThreadTarget],
+        change: &crate::provider::Change,
     ) -> Answer<()> {
-        self.inner.modify_threads(ids, add, remove).await
-    }
-    async fn trash_threads(&self, ids: &[crate::provider::ThreadTarget]) -> Answer<()> {
-        self.inner.trash_threads(ids).await
+        self.inner.apply(threads, change).await
     }
 }
 

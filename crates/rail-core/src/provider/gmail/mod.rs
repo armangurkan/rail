@@ -1,7 +1,7 @@
 //! The Gmail provider: labels, `messages.list` and `messages.get`, history and search, thread
 //! changes (`threads.modify`, `threads.trash`), over the shared `ApiClient`. Every string Gmail returns is outside text.
 
-mod actions;
+pub(crate) mod actions;
 mod attachment;
 pub(crate) mod body;
 mod drafts;
@@ -36,7 +36,7 @@ mod tests;
 
 use super::http::{ApiClient, is_bad_request};
 use super::{
-    Body, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
+    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
     RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 
@@ -194,18 +194,8 @@ impl super::Provider for GmailProvider {
         self.metadata(ids).await
     }
 
-    async fn modify_threads(
-        &self,
-        threads: &[ThreadTarget],
-        add: &[RemoteId],
-        remove: &[RemoteId],
-    ) -> Result<(), ProviderError> {
-        self.modify(&ThreadTarget::thread_ids(threads), add, remove)
-            .await
-    }
-
-    async fn trash_threads(&self, threads: &[ThreadTarget]) -> Result<(), ProviderError> {
-        self.trash(&ThreadTarget::thread_ids(threads)).await
+    async fn apply(&self, threads: &[ThreadTarget], change: &Change) -> Result<(), ProviderError> {
+        self.apply_change(threads, change).await
     }
 
     async fn send(
