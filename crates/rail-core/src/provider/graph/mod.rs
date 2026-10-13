@@ -1,7 +1,8 @@
 //! Microsoft 365 through Microsoft Graph v1.0, over the shared `ApiClient` in its Graph dialect
 //! (immutable ids on every request, Graph's error envelope, at most `GRAPH_CONCURRENCY`
 //! requests in flight): folders, the delta under one combined cursor, search, envelopes,
-//! bodies and attachments, and thread actions (moves and PATCHes per message through `$batch`).
+//! bodies and attachments, thread actions (moves and PATCHes per message through `$batch`), and
+//! writing through Outlook drafts (create, update, attachments, upload sessions, send).
 //! Graph's own JSON never leaves this module; every string it returns is outside text.
 
 mod actions;
@@ -17,6 +18,7 @@ mod folders;
 mod message;
 mod reconcile;
 mod search;
+mod send;
 mod upload;
 mod wire;
 
@@ -43,6 +45,8 @@ mod reconcile_tests;
 #[cfg(test)]
 mod search_tests;
 #[cfg(test)]
+mod send_tests;
+#[cfg(test)]
 mod upload_tests;
 
 use std::sync::{Mutex, PoisonError};
@@ -54,7 +58,6 @@ use super::{
     ProviderError, RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 use crate::config::SyncSettings;
-use crate::ops::M365_NOT_YET;
 
 pub use actions::MOVE_TARGET_GONE;
 pub use attachment::REFERENCE_ATTACHMENT;
@@ -140,11 +143,6 @@ impl GraphProvider {
     }
 }
 
-/// Part A's answer for everything Microsoft 365 cannot do yet.
-fn not_yet() -> ProviderError {
-    ProviderError::permanent(M365_NOT_YET)
-}
-
 /// Whether `text` is a Graph id Rail puts in a URL path: 1 to `MAX_GRAPH_ID_BYTES` bytes of
 /// ASCII letters, digits, `-`, `_` and `=` (Graph's URL-safe base64).
 pub(crate) fn graph_id(text: &str) -> bool {
@@ -198,16 +196,16 @@ impl super::Provider for GraphProvider {
         self.apply_change(threads, change).await
     }
 
-    async fn send(&self, _: &OutgoingMail) -> Result<SentReceipt, ProviderError> {
-        Err(not_yet())
+    async fn send(&self, mail: &OutgoingMail) -> Result<SentReceipt, ProviderError> {
+        self.send_mail(mail).await
     }
 
     async fn draft_save(&self, mail: &OutgoingMail) -> Result<DraftIds, ProviderError> {
         self.save_draft(mail).await
     }
 
-    async fn sent_already(&self, _: &OutgoingMail) -> Result<bool, ProviderError> {
-        Err(not_yet())
+    async fn sent_already(&self, mail: &OutgoingMail) -> Result<bool, ProviderError> {
+        self.was_sent(mail).await
     }
 
     /// Graph sends its draft itself: the sent message keeps the draft's (immutable) id.
@@ -224,11 +222,11 @@ impl super::Provider for GraphProvider {
         self.attachment_bytes(message, part).await
     }
 
-    async fn draft_delete(&self, _: &str) -> Result<(), ProviderError> {
-        Err(not_yet())
+    async fn draft_delete(&self, draft_id: &str) -> Result<(), ProviderError> {
+        self.delete_draft(draft_id).await
     }
 
-    async fn draft_find(&self, _: &str) -> Result<Option<RemoteId>, ProviderError> {
-        Err(not_yet())
+    async fn draft_find(&self, message_id: &str) -> Result<Option<RemoteId>, ProviderError> {
+        self.find_draft(message_id).await
     }
 }

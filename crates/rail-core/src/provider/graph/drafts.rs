@@ -253,4 +253,31 @@ impl GraphProvider {
         }
         Ok(page.value)
     }
+
+    /// Delete the draft (Outlook moves it to Deleted Items). Only a message that is still a
+    /// draft is deleted: one already sent (a row that kept the sent message's immutable id) or
+    /// gone is done, so a discard never moves sent mail away.
+    pub(crate) async fn delete_draft(&self, id: &str) -> Result<(), ProviderError> {
+        if !self.message_kind(id).await?.is_some_and(|hit| hit.is_draft) {
+            return Ok(());
+        }
+        let path = format!("me/messages/{id}");
+        match self
+            .api
+            .request_bytes(Method::DELETE, &path, None, COST_REQUEST, true)
+            .await
+        {
+            Ok(_) | Err(ProviderError::NotFound) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The draft that is message `id`: on Graph a Drafts-folder message's id is its draft's.
+    pub(crate) async fn find_draft(&self, id: &str) -> Result<Option<RemoteId>, ProviderError> {
+        Ok(self
+            .message_kind(id)
+            .await?
+            .filter(|hit| hit.is_draft && hit.id == id)
+            .map(|hit| hit.id))
+    }
 }
