@@ -3,12 +3,9 @@
 
 mod actions;
 mod attachment;
-mod body;
+pub(crate) mod body;
 mod drafts;
 mod history;
-mod html;
-#[cfg(test)]
-mod html_tests;
 mod labels;
 pub(crate) mod list;
 pub(crate) mod metadata;

@@ -3,8 +3,8 @@
 
 use std::time::{Duration, Instant};
 
-use super::SLOWDOWN;
 use super::html::{MAX_TAG_BYTES, html_render, html_text};
+use crate::provider::gmail::SLOWDOWN;
 
 const SMALL: usize = 256 * 1024;
 const LARGE: usize = 10 * 1024 * 1024;

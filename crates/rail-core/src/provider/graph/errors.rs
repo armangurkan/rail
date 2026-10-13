@@ -106,3 +106,9 @@ pub(crate) fn refusal(status: u16, retry_after: Option<Duration>, body: &[u8]) -
     };
     Refusal::Failed(error)
 }
+
+/// Whether `error` is Rail's refusal with HTTP `status` (a 405 to `$value`: a reference
+/// attachment).
+pub(crate) fn is_refusal(error: &ProviderError, status: u16) -> bool {
+    matches!(error, ProviderError::Permanent { message, .. } if *message == refused_message(status))
+}

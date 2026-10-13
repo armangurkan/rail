@@ -102,3 +102,28 @@ pub(crate) struct BatchItem {
     #[serde(default)]
     pub body: Option<Value>,
 }
+/// A message's body, as `$select=id,body,hasAttachments` answers it.
+#[derive(Deserialize)]
+pub(crate) struct BodyWire {
+    pub id: Option<String>,
+    pub body: Option<ItemBody>,
+    #[serde(rename = "hasAttachments")]
+    pub has_attachments: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct ItemBody {
+    #[serde(rename = "contentType")]
+    pub content_type: Option<String>,
+    pub content: Option<String>,
+}
+
+/// One attachment of the listing (file, item or reference).
+#[derive(Deserialize)]
+pub(crate) struct AttachmentWire {
+    pub id: String,
+    pub name: Option<String>,
+    #[serde(rename = "contentType")]
+    pub content_type: Option<String>,
+    pub size: Option<i64>,
+}

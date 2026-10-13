@@ -1,9 +1,12 @@
 //! Microsoft 365 through Microsoft Graph v1.0, over the shared `ApiClient` in its Graph dialect
 //! (immutable ids on every request, Graph's error envelope, at most `GRAPH_CONCURRENCY`
-//! requests in flight): folders, search, envelopes, and the delta under one combined cursor.
+//! requests in flight): folders, the delta under one combined cursor, search, envelopes,
+//! bodies and attachments.
 //! Graph's own JSON never leaves this module; every string it returns is outside text.
 
+mod attachment;
 mod batch;
+mod body;
 mod cursor;
 mod dates;
 mod delta;
@@ -13,6 +16,8 @@ mod message;
 mod search;
 mod wire;
 
+#[cfg(test)]
+mod body_tests;
 #[cfg(test)]
 mod delta_tests;
 #[cfg(test)]
@@ -37,7 +42,9 @@ use super::{
 use crate::config::SyncSettings;
 use crate::ops::M365_NOT_YET;
 
+pub use attachment::REFERENCE_ATTACHMENT;
 pub use batch::MAX_BATCH;
+pub use body::HTML_BODY;
 pub use cursor::MAX_CURSOR_BYTES;
 pub use delta::{GRAPH_PAGES_PER_CALL, PAGE_SIZE};
 pub use folders::{MAX_FOLDER_DEPTH, MAX_FOLDERS, SKIPPED_ROOTS, WELL_KNOWN};
@@ -154,8 +161,8 @@ impl super::Provider for GraphProvider {
         self.delta(cursor).await
     }
 
-    async fn body(&self, _: &str) -> Result<Body, ProviderError> {
-        Err(not_yet())
+    async fn body(&self, id: &str) -> Result<Body, ProviderError> {
+        self.read_body(id).await
     }
 
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<RemoteId>, ProviderError> {
@@ -187,8 +194,8 @@ impl super::Provider for GraphProvider {
         Err(not_yet())
     }
 
-    async fn attachment(&self, _: &RemoteId, _: &str) -> Result<Vec<u8>, ProviderError> {
-        Err(not_yet())
+    async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError> {
+        self.attachment_bytes(message, part).await
     }
 
     async fn draft_create(&self, _: &[u8], _: Option<&str>) -> Result<DraftIds, ProviderError> {
