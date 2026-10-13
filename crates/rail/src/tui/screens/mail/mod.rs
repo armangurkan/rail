@@ -10,6 +10,7 @@ mod composing_flow;
 mod drafts_flow;
 mod drafts_pane;
 mod events;
+mod header;
 mod layout;
 mod list;
 mod m365;
@@ -45,7 +46,7 @@ pub(crate) use actions::UNDO_TICKS;
 pub use list::MAX_WINDOW;
 pub use list::{ListWindow, Place};
 pub use sidebar::Sidebar;
-pub use status::{DaemonState, StatusBar, error_line};
+pub use status::{DaemonState, StatusBar, Summary, error_line};
 pub use view::Glyphs;
 pub(crate) use view::visible_offset;
 

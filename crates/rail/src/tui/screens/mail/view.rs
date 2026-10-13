@@ -167,7 +167,7 @@ impl MailScreen {
         self.render_list(frame, parts.list, theme, glyphs);
     }
 
-    fn scope_title(&self) -> String {
+    pub(super) fn scope_title(&self) -> String {
         let name = |i: usize| {
             self.accounts
                 .get(i)
