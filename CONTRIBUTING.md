@@ -54,7 +54,7 @@ crates/rail/             Binary: clap CLI, logging, and the account, daemon, doc
     tui/keys             Actions, their default keys and `[keys]` overrides: the keymap every screen reads
     tui/text             Escaping, width, wrapping and hyperlinks for text that came from outside
     tui/data             The mail screen's read side (the store reader) and its link to the daemon
-    tui/screens/mail     The mail screen: thread list, sidebar, status bar; `composing*.rs` is its side of writing mail, `drafts_pane.rs` and `drafts_flow.rs` its Drafts folder
+    tui/screens/mail     The mail screen: thread list, sidebar, status bar; `events.rs` takes the store's and the daemon's answers, `composing*.rs` is its side of writing mail, `drafts_pane.rs` and `drafts_flow.rs` its Drafts folder
     tui/screens/mail/tests/compose_gmail.rs, drafts_folder.rs  The tests of saving to Gmail and of the Drafts folder
     tui/screens/reader   The reader: messages, folded quotes, numbered links
     tui/screens/compose  The composer: the compose file, reply and forward prefill, prompts with completion, the review
