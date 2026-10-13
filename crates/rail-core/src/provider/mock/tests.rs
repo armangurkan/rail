@@ -4,22 +4,15 @@ use super::*;
 async fn a_sent_message_is_found_afterwards_by_its_header_id() {
     let mock = MockProvider::new();
     let raw = b"From: a@example.com\r\nMessage-ID: <abc@example.com>\r\n\r\nHi";
-    assert_eq!(
-        mock.message_by_header_id("<abc@example.com>")
-            .await
-            .unwrap(),
-        None
-    );
-    let receipt = mock.send(raw, None).await.unwrap();
+    assert_eq!(mock.find_header("<abc@example.com>").await.unwrap(), None);
+    let receipt = mock.send_raw(raw, None).await.unwrap();
     assert_eq!(receipt.message_id.as_deref(), Some("sent-1"));
     assert_eq!(receipt.thread_id.as_deref(), Some("t-sent-1"));
     assert_eq!(
-        mock.message_by_header_id("<abc@example.com>")
-            .await
-            .unwrap(),
+        mock.find_header("<abc@example.com>").await.unwrap(),
         Some("found-<abc@example.com>".to_string())
     );
-    let again = mock.send(raw, Some("t9")).await.unwrap();
+    let again = mock.send_raw(raw, Some("t9")).await.unwrap();
     assert_eq!(
         (
             again.message_id.as_deref().unwrap(),
@@ -198,9 +191,9 @@ async fn the_mock_refuses_stale_or_foreign_tokens_and_can_shuffle() {
 #[tokio::test]
 async fn a_draft_update_keeps_the_draft_id_and_changes_the_message_id() {
     let mock = MockProvider::new();
-    let created = mock.draft_create(b"one", Some("t1")).await.unwrap();
+    let created = mock.create_raw(b"one", Some("t1")).await.unwrap();
     let updated = mock
-        .draft_update(&created.draft_id, b"two", None)
+        .update_raw(&created.draft_id, b"two", None)
         .await
         .unwrap();
     assert_eq!(updated.draft_id, created.draft_id);
@@ -221,19 +214,19 @@ async fn a_draft_update_keeps_the_draft_id_and_changes_the_message_id() {
 async fn updating_or_deleting_a_missing_draft_is_not_found() {
     let mock = MockProvider::new();
     assert_eq!(
-        mock.draft_update("r9", b"x", None).await.unwrap_err(),
+        mock.update_raw("r9", b"x", None).await.unwrap_err(),
         ProviderError::NotFound
     );
     assert_eq!(
         mock.draft_delete("r9").await.unwrap_err(),
         ProviderError::NotFound
     );
-    let created = mock.draft_create(b"x", None).await.unwrap();
+    let created = mock.create_raw(b"x", None).await.unwrap();
     mock.with(|m| {
         m.missing_drafts.insert(created.draft_id.clone());
     });
     assert_eq!(
-        mock.draft_update(&created.draft_id, b"y", None)
+        mock.update_raw(&created.draft_id, b"y", None)
             .await
             .unwrap_err(),
         ProviderError::NotFound
@@ -247,7 +240,7 @@ async fn updating_or_deleting_a_missing_draft_is_not_found() {
 #[tokio::test]
 async fn find_answers_the_draft_of_a_message_and_a_delete_removes_it() {
     let mock = MockProvider::new();
-    let created = mock.draft_create(b"x", None).await.unwrap();
+    let created = mock.create_raw(b"x", None).await.unwrap();
     assert_eq!(
         mock.draft_find(&created.message_id).await.unwrap(),
         Some(created.draft_id.clone())
@@ -262,11 +255,11 @@ async fn a_draft_create_in_a_thread_gone_at_gmail_is_not_found_and_saves_nothing
     let mock = MockProvider::new();
     mock.with(|m| m.missing_threads.insert("t-gone".into()));
     assert_eq!(
-        mock.draft_create(b"x", Some("t-gone")).await.unwrap_err(),
+        mock.create_raw(b"x", Some("t-gone")).await.unwrap_err(),
         ProviderError::NotFound
     );
     assert!(mock.with(|m| m.drafts.is_empty()));
-    let created = mock.draft_create(b"x", None).await.unwrap();
+    let created = mock.create_raw(b"x", None).await.unwrap();
     assert_eq!(created.draft_id, "r1", "the refused create took no id");
 }
 
@@ -283,4 +276,64 @@ async fn the_mock_applies_a_change_as_gmail_would_and_records_it() {
         [(s(&["t1"]), s(&[]), s(&["INBOX"]))]
     );
     assert_eq!(mock.with(|m| m.applied.len()), 1);
+}
+
+#[tokio::test]
+async fn the_mocks_writing_methods_play_gmails_adapter_and_graph_mode_consumes_the_draft() {
+    use crate::provider::{DraftIds, Outgoing, OutgoingMail};
+    use crate::store::drafts::DraftKind;
+    let mail = |remote: Option<DraftIds>, thread: Option<&str>| OutgoingMail {
+        outgoing: Outgoing {
+            from_name: None,
+            from: "me@example.com".into(),
+            to: vec![crate::provider::Mailbox {
+                name: None,
+                address: "sam@example.com".into(),
+            }],
+            cc: vec![],
+            bcc: vec![],
+            subject: "s".into(),
+            message_id: "<w@example.com>".into(),
+            in_reply_to: None,
+            references: vec![],
+            body: "b\n".into(),
+            attachments: vec![],
+        },
+        kind: DraftKind::New,
+        source: None,
+        remote,
+        thread: thread.map(str::to_string),
+    };
+    let mock = MockProvider::new();
+    mock.with(|m| {
+        m.missing_threads.insert("t-gone".into());
+        m.missing_drafts.insert("r9".into());
+    });
+    let gone = DraftIds {
+        draft_id: "r9".into(),
+        message_id: "x".into(),
+    };
+    let saved = mock
+        .draft_save(&mail(Some(gone), Some("t-gone")))
+        .await
+        .unwrap();
+    assert_eq!(saved.draft_id, "r1");
+    assert_eq!(
+        mock.calls(),
+        [Call::DraftUpdate, Call::DraftCreate, Call::DraftCreate],
+        "update 404, create in the gone thread 404, create on its own"
+    );
+    assert!(!mock.sent_already(&mail(None, None)).await.unwrap());
+    mock.send(&mail(None, Some("t-gone"))).await.unwrap();
+    assert_eq!(mock.with(|m| m.sent[0].thread_id.clone()), None);
+    assert!(mock.sent_already(&mail(None, None)).await.unwrap());
+    assert!(!mock.send_consumes_draft() && !mock.forward_carries_originals());
+    mock.with(|m| m.graph_model = true);
+    mock.send(&mail(Some(saved), None)).await.unwrap();
+    assert!(
+        mock.with(|m| m.drafts.is_empty()),
+        "Graph's send consumes the draft"
+    );
+    assert!(mock.send_consumes_draft() && mock.forward_carries_originals());
+    assert_eq!(mock.with(|m| m.sent_mail.len()), 2);
 }

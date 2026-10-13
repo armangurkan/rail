@@ -5,7 +5,7 @@ use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
 use super::fixtures::{API_PATH, Gmail};
-use crate::provider::{Provider, ProviderError, SentReceipt};
+use crate::provider::{ProviderError, SentReceipt};
 
 #[tokio::test]
 async fn send_posts_raw_base64url_with_the_thread_id_and_returns_the_receipt() {
@@ -19,7 +19,11 @@ async fn send_posts_raw_base64url_with_the_thread_id_and_returns_the_receipt() {
         .expect(1)
         .mount(&gmail.server)
         .await;
-    let receipt = gmail.provider().send(b"Hello", Some("t1")).await.unwrap();
+    let receipt = gmail
+        .provider()
+        .send_raw(b"Hello", Some("t1"))
+        .await
+        .unwrap();
     assert_eq!(
         receipt,
         SentReceipt {
@@ -50,7 +54,7 @@ async fn a_2xx_with_an_unreadable_answer_is_a_send_with_unknown_ids() {
             .expect(1)
             .mount(&gmail.server)
             .await;
-        assert_eq!(provider.send(b"Hello", None).await.unwrap(), unknown);
+        assert_eq!(provider.send_raw(b"Hello", None).await.unwrap(), unknown);
     }
 }
 
@@ -68,7 +72,7 @@ async fn send_without_a_thread_omits_the_field_and_a_400_is_permanent_and_a_429_
         .expect(1)
         .mount(&gmail.server)
         .await;
-    let error = provider.send(b"Hello", None).await.unwrap_err();
+    let error = provider.send_raw(b"Hello", None).await.unwrap_err();
     assert!(
         matches!(error, ProviderError::Permanent { .. }),
         "{error:?}"
@@ -81,7 +85,7 @@ async fn send_without_a_thread_omits_the_field_and_a_400_is_permanent_and_a_429_
         .expect(1)
         .mount(&gmail.server)
         .await;
-    let error = provider.send(b"Hello", None).await.unwrap_err();
+    let error = provider.send_raw(b"Hello", None).await.unwrap_err();
     assert!(
         matches!(error, ProviderError::Transient { .. }),
         "a send is never retried inside the HTTP layer: one request"
@@ -93,7 +97,7 @@ async fn send_refuses_a_thread_id_that_is_not_a_plain_id() {
     let gmail = Gmail::start().await;
     let error = gmail
         .provider()
-        .send(b"Hello", Some("t1/../x"))
+        .send_raw(b"Hello", Some("t1/../x"))
         .await
         .unwrap_err();
     assert!(
@@ -119,7 +123,7 @@ async fn message_by_header_id_queries_rfc822msgid_and_maps_an_empty_list_to_none
         .await;
     assert_eq!(
         provider
-            .message_by_header_id("<abc@example.com>")
+            .find_by_header_id("<abc@example.com>")
             .await
             .unwrap(),
         Some("m1".into())
@@ -132,7 +136,7 @@ async fn message_by_header_id_queries_rfc822msgid_and_maps_an_empty_list_to_none
         .await;
     assert_eq!(
         provider
-            .message_by_header_id("<abc@example.com>")
+            .find_by_header_id("<abc@example.com>")
             .await
             .unwrap(),
         None
@@ -146,14 +150,14 @@ async fn message_by_header_id_queries_rfc822msgid_and_maps_an_empty_list_to_none
         .mount(&gmail.server)
         .await;
     let error = provider
-        .message_by_header_id("<abc@example.com>")
+        .find_by_header_id("<abc@example.com>")
         .await
         .unwrap_err();
     assert!(
         matches!(error, ProviderError::Permanent { .. }),
         "a found message with an unusable id is an error, not None: {error:?}"
     );
-    let error = provider.message_by_header_id("abc\"def").await.unwrap_err();
+    let error = provider.find_by_header_id("abc\"def").await.unwrap_err();
     assert!(
         matches!(error, ProviderError::Permanent { .. }),
         "a header id with a quote is refused"

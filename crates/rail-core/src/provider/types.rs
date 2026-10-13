@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::store::drafts::DraftKind;
+
 /// A provider's identifier for a message, thread or folder.
 pub type RemoteId = String;
 
@@ -250,6 +252,47 @@ mod tests {
         assert_eq!(FolderKind::parse("starred"), None);
         assert_eq!(FolderKind::parse(""), None);
     }
+
+    #[test]
+    fn an_outgoing_mails_debug_shows_no_content_and_a_carried_one_counts_its_size() {
+        use crate::store::drafts::DraftKind;
+        let mail = OutgoingMail {
+            outgoing: Outgoing {
+                from_name: Some("Dana".into()),
+                from: "dana@example.com".into(),
+                to: vec![Mailbox {
+                    name: None,
+                    address: "sam@example.com".into(),
+                }],
+                cc: vec![],
+                bcc: vec![],
+                subject: "Secret plans".into(),
+                message_id: "<x@example.com>".into(),
+                in_reply_to: None,
+                references: vec![],
+                body: "the body".into(),
+                attachments: vec![OutgoingAttachment {
+                    name: "plan.pdf".into(),
+                    mime: "application/pdf".into(),
+                    bytes: vec![],
+                    carried: Some(Carried {
+                        message: "m1".into(),
+                        part: "p1".into(),
+                        size: 7,
+                    }),
+                }],
+            },
+            kind: DraftKind::Forward,
+            source: Some("m1".into()),
+            remote: None,
+            thread: Some("t1".into()),
+        };
+        let shown = format!("{mail:?}");
+        for secret in ["dana", "sam", "Secret", "the body", "plan.pdf"] {
+            assert!(!shown.contains(secret), "{shown}");
+        }
+        assert_eq!(mail.outgoing.attachments[0].size(), 7);
+    }
 }
 
 /// What the daemon sends: every string is user or mail content.
@@ -287,12 +330,61 @@ pub struct OutgoingAttachment {
     pub name: String,
     pub mime: String,
     pub bytes: Vec<u8>,
+    /// Set for a forwarded original the provider's forward already holds: `bytes` is empty.
+    pub carried: Option<Carried>,
+}
+
+impl OutgoingAttachment {
+    /// Its size in bytes: the bytes read, or a carried one's listed size.
+    pub fn size(&self) -> usize {
+        self.carried.as_ref().map_or(self.bytes.len(), |c| c.size)
+    }
 }
 
 impl std::fmt::Debug for OutgoingAttachment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OutgoingAttachment")
             .field("bytes", &self.bytes.len())
+            .field("carried", &self.carried.is_some())
+            .finish()
+    }
+}
+
+/// A forwarded original the provider's own forward carries (Graph's `createForward`): its
+/// bytes are not read unless the provider finds its copy missing. Ids and a size only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Carried {
+    /// The provider id of the message it comes from.
+    pub message: RemoteId,
+    /// Its part (Graph: attachment) id in that message.
+    pub part: String,
+    /// Its size in bytes, as the store lists it.
+    pub size: usize,
+}
+
+/// A message going to the provider, with what a provider that writes through its own draft
+/// model needs besides it. Every string but the ids is user or mail content.
+#[derive(Clone, PartialEq, Eq)]
+pub struct OutgoingMail {
+    pub outgoing: Outgoing,
+    /// New, reply, reply-all or forward: Graph makes a reply or forward on its source.
+    pub kind: DraftKind,
+    /// The provider id of the message replied to or forwarded (`drafts.source_remote_id`).
+    pub source: Option<RemoteId>,
+    /// The provider's copy of this draft, once saved there.
+    pub remote: Option<DraftIds>,
+    /// Gmail's `threadId` (`drafts.remote_thread_id`).
+    pub thread: Option<RemoteId>,
+}
+
+impl std::fmt::Debug for OutgoingMail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutgoingMail")
+            .field("outgoing", &self.outgoing)
+            .field("kind", &self.kind)
+            .field("source", &self.source.is_some())
+            .field("remote", &self.remote.is_some())
+            .field("thread", &self.thread.is_some())
             .finish()
     }
 }

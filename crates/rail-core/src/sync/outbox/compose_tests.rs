@@ -46,7 +46,7 @@ fn the_outgoing_carries_the_drafts_headers_and_the_senders_name() {
     let (mut store, account) = store_with_account();
     let d = draft(&mut store, account, vec![]);
     let assembly = outgoing_for(&store, &d, "me@example.com", Some("Dana")).unwrap();
-    let out = assembly.outgoing;
+    let out = assembly.mail.outgoing;
     assert_eq!(
         (out.from.as_str(), out.from_name.as_deref()),
         ("me@example.com", Some("Dana"))
@@ -113,7 +113,7 @@ fn files_and_parts_are_listed_with_the_parts_message_at_gmail() {
             mime: "application/pdf".into()
         }]
     );
-    assert_eq!(assembly.outgoing.from_name, None);
+    assert_eq!(assembly.mail.outgoing.from_name, None);
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn no_references_is_an_empty_list() {
     let mut d = draft(&mut store, account, vec![]);
     d.references = None;
     let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
-    assert!(assembly.outgoing.references.is_empty());
+    assert!(assembly.mail.outgoing.references.is_empty());
 }
 
 /// An outside name that would split at `": "` and carries a bidi override.
@@ -223,5 +223,35 @@ async fn a_forwarded_part_whose_message_left_the_store_is_permanent_without_its_
     assert_eq!(
         message,
         "the message an attachment was forwarded from is no longer in the store"
+    );
+}
+
+#[test]
+fn the_mail_carries_the_drafts_kind_source_copy_and_thread() {
+    let (mut store, account) = store_with_account();
+    let mut d = draft(&mut store, account, vec![]);
+    d.source_remote_id = Some("m1".into());
+    d.remote_draft_id = Some("g1".into());
+    d.remote_message_id = Some("g1".into());
+    let mail = outgoing_for(&store, &d, "me@example.com", None)
+        .unwrap()
+        .mail;
+    assert_eq!(mail.kind, DraftKind::Reply);
+    assert_eq!(mail.source.as_deref(), Some("m1"));
+    assert_eq!(
+        mail.remote,
+        Some(crate::provider::DraftIds {
+            draft_id: "g1".into(),
+            message_id: "g1".into()
+        })
+    );
+    assert_eq!(mail.thread.as_deref(), Some("t1"));
+    d.remote_draft_id = None;
+    let mail = outgoing_for(&store, &d, "me@example.com", None)
+        .unwrap()
+        .mail;
+    assert_eq!(
+        mail.remote, None,
+        "not at the provider without its draft id"
     );
 }

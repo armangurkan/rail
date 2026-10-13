@@ -12,6 +12,7 @@ pub(crate) mod metadata;
 pub mod mime;
 mod send;
 mod wire;
+mod write;
 
 #[cfg(test)]
 mod actions_tests;
@@ -33,11 +34,13 @@ mod mime_tests;
 mod send_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod write_tests;
 
 use super::http::{ApiClient, is_bad_request};
 use super::{
-    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
-    RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
+    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, OutgoingMail, PageToken, Profile,
+    ProviderError, RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 
 pub use body::{MAX_BODY_BYTES, TRUNCATED_MARKER};
@@ -198,40 +201,30 @@ impl super::Provider for GmailProvider {
         self.apply_change(threads, change).await
     }
 
-    async fn send(
-        &self,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Result<SentReceipt, ProviderError> {
-        self.send_raw(raw, thread_id).await
+    async fn send(&self, mail: &OutgoingMail) -> Result<SentReceipt, ProviderError> {
+        self.send_mail(mail).await
     }
 
-    async fn message_by_header_id(
-        &self,
-        rfc822_message_id: &str,
-    ) -> Result<Option<RemoteId>, ProviderError> {
-        self.find_by_header_id(rfc822_message_id).await
+    async fn draft_save(&self, mail: &OutgoingMail) -> Result<DraftIds, ProviderError> {
+        self.save_draft(mail).await
+    }
+
+    async fn sent_already(&self, mail: &OutgoingMail) -> Result<bool, ProviderError> {
+        self.was_sent(mail).await
+    }
+
+    /// Gmail's send makes a new message: a saved draft of it stays until Rail deletes it.
+    fn send_consumes_draft(&self) -> bool {
+        false
+    }
+
+    /// Gmail sends the bytes Rail built: a forward's originals are read first.
+    fn forward_carries_originals(&self) -> bool {
+        false
     }
 
     async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError> {
         self.attachment_bytes(message, part).await
-    }
-
-    async fn draft_create(
-        &self,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Result<DraftIds, ProviderError> {
-        self.create_draft(raw, thread_id).await
-    }
-
-    async fn draft_update(
-        &self,
-        draft_id: &str,
-        raw: &[u8],
-        thread_id: Option<&str>,
-    ) -> Result<DraftIds, ProviderError> {
-        self.update_draft(draft_id, raw, thread_id).await
     }
 
     async fn draft_delete(&self, draft_id: &str) -> Result<(), ProviderError> {

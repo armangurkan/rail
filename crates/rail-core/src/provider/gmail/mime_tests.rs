@@ -31,11 +31,13 @@ fn outgoing() -> Outgoing {
                 name: "notes.txt".into(),
                 mime: "text/plain".into(),
                 bytes: b"notes".to_vec(),
+                carried: None,
             },
             OutgoingAttachment {
                 name: "../evil\u{202E}.pdf".into(),
                 mime: "application/pdf".into(),
                 bytes: vec![1, 2, 3],
+                carried: None,
             },
         ],
     }
@@ -103,6 +105,7 @@ fn a_message_over_the_cap_is_refused_before_any_call() {
             name: "big.bin".into(),
             mime: "application/octet-stream".into(),
             bytes: vec![0; MAX_MESSAGE_BYTES],
+            carried: None,
         }],
         ..outgoing()
     };
@@ -125,6 +128,7 @@ fn estimated_raw_size_is_what_build_checks() {
             name: "big.bin".into(),
             mime: "application/octet-stream".into(),
             bytes: vec![0; bytes],
+            carried: None,
         }],
         ..outgoing()
     };

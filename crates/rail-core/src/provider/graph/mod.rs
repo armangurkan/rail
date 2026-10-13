@@ -41,8 +41,8 @@ use std::time::Duration;
 
 use super::http::ApiClient;
 use super::{
-    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, PageToken, Profile, ProviderError,
-    RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
+    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, OutgoingMail, PageToken, Profile,
+    ProviderError, RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 use crate::config::SyncSettings;
 use crate::ops::M365_NOT_YET;
@@ -187,29 +187,30 @@ impl super::Provider for GraphProvider {
         self.apply_change(threads, change).await
     }
 
-    async fn send(&self, _: &[u8], _: Option<&str>) -> Result<SentReceipt, ProviderError> {
+    async fn send(&self, _: &OutgoingMail) -> Result<SentReceipt, ProviderError> {
         Err(not_yet())
     }
 
-    async fn message_by_header_id(&self, _: &str) -> Result<Option<RemoteId>, ProviderError> {
+    async fn draft_save(&self, _: &OutgoingMail) -> Result<DraftIds, ProviderError> {
         Err(not_yet())
+    }
+
+    async fn sent_already(&self, _: &OutgoingMail) -> Result<bool, ProviderError> {
+        Err(not_yet())
+    }
+
+    /// Graph sends its draft itself: the sent message keeps the draft's (immutable) id.
+    fn send_consumes_draft(&self) -> bool {
+        true
+    }
+
+    /// `createForward` copies the original's attachments onto the draft.
+    fn forward_carries_originals(&self) -> bool {
+        true
     }
 
     async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError> {
         self.attachment_bytes(message, part).await
-    }
-
-    async fn draft_create(&self, _: &[u8], _: Option<&str>) -> Result<DraftIds, ProviderError> {
-        Err(not_yet())
-    }
-
-    async fn draft_update(
-        &self,
-        _: &str,
-        _: &[u8],
-        _: Option<&str>,
-    ) -> Result<DraftIds, ProviderError> {
-        Err(not_yet())
     }
 
     async fn draft_delete(&self, _: &str) -> Result<(), ProviderError> {

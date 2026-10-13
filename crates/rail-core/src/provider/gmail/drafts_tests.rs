@@ -33,7 +33,7 @@ async fn a_create_posts_the_raw_message_in_its_thread_once() {
         .expect(1)
         .mount(&gmail.server)
         .await;
-    let created = provider.draft_create(b"Hello", Some("t1")).await.unwrap();
+    let created = provider.create_draft(b"Hello", Some("t1")).await.unwrap();
     assert_eq!(created, ids("r1", "m1"));
     assert_eq!(provider.api.units_taken(), 10);
 
@@ -45,7 +45,7 @@ async fn a_create_posts_the_raw_message_in_its_thread_once() {
         .expect(1)
         .mount(&gmail.server)
         .await;
-    let error = provider.draft_create(b"Hello", None).await.unwrap_err();
+    let error = provider.create_draft(b"Hello", None).await.unwrap_err();
     assert!(
         matches!(error, ProviderError::Transient { .. }),
         "a create is tried once: {error:?}"
@@ -66,7 +66,7 @@ async fn an_update_puts_the_message_and_a_404_is_not_found() {
         .mount(&gmail.server)
         .await;
     let updated = provider
-        .draft_update("r1", b"Hello", Some("t1"))
+        .update_draft("r1", b"Hello", Some("t1"))
         .await
         .unwrap();
     assert_eq!(updated, ids("r1", "m2"));
@@ -80,7 +80,7 @@ async fn an_update_puts_the_message_and_a_404_is_not_found() {
         .mount(&gmail.server)
         .await;
     let error = provider
-        .draft_update("r1", b"Hello", None)
+        .update_draft("r1", b"Hello", None)
         .await
         .unwrap_err();
     assert_eq!(error, ProviderError::NotFound);
@@ -175,16 +175,16 @@ async fn unsafe_ids_are_refused_before_any_request() {
     let gmail = Gmail::start().await;
     let provider = gmail.provider();
     let errors = [
-        provider.draft_update("r/1", b"x", None).await.unwrap_err(),
+        provider.update_draft("r/1", b"x", None).await.unwrap_err(),
         provider.draft_delete("../x").await.unwrap_err(),
         provider.draft_find("m 1").await.map(|_| ()).unwrap_err(),
         provider
-            .draft_create(b"x", Some("t 1"))
+            .create_draft(b"x", Some("t 1"))
             .await
             .map(|_| ())
             .unwrap_err(),
         provider
-            .draft_update("r1", b"x", Some("t 1"))
+            .update_draft("r1", b"x", Some("t 1"))
             .await
             .map(|_| ())
             .unwrap_err(),
@@ -208,7 +208,7 @@ async fn a_create_answer_rail_cannot_read_is_a_permanent_error_that_says_so() {
         .expect(1)
         .mount(&gmail.server)
         .await;
-    let error = provider.draft_create(b"Hello", None).await.unwrap_err();
+    let error = provider.create_draft(b"Hello", None).await.unwrap_err();
     assert_eq!(
         error,
         ProviderError::permanent("Gmail saved the draft but its answer was unreadable")
