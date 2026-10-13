@@ -8,15 +8,16 @@ use std::time::Duration;
 
 use super::client::DaemonClient;
 use super::{Connector, ServeConfig};
-use crate::ops::op::{ActionApply, ActionRetry, ActionUndo, SyncNow, SyncStatus};
+use crate::ops::op::{ActionApply, ActionRetry, ActionUndo, DraftSave, SyncNow, SyncStatus};
 use crate::ops::{
-    Action, ActionApplyRequest, ActionRetryRequest, ActionUndoRequest, ErrorCode, OpError,
-    RowToken, SyncNowRequest, SyncStatusRequest, names,
+    Action, ActionApplyRequest, ActionRetryRequest, ActionUndoRequest, DraftSaveRequest, ErrorCode,
+    M365_NOT_YET, OpError, RowToken, SyncNowRequest, SyncStatusRequest, names,
 };
 use crate::paths::Paths;
 use crate::provider::mock::{Call, MockProvider, envelope};
 use crate::provider::{FolderKind, ProviderError, RemoteFolder};
 use crate::store::Store;
+use crate::store::drafts::DraftKind;
 use crate::test_support::{daemon_context, mock_factory, start_daemon};
 
 const WORK: &str = "[general]\nsecrets = \"file\"\npoll_interval = \"60s\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\n";
@@ -264,17 +265,52 @@ async fn a_users_label_is_sent_to_gmail_by_its_remote_id() {
 }
 
 #[tokio::test]
-async fn microsoft_365_is_unsupported() {
+async fn microsoft_365_refuses_every_action_but_mark_read_and_every_draft() {
     let d = daemon(&format!("{WORK}{CORP}")).await;
-    let request = ActionApplyRequest {
+    let actions = [
+        Action::Archive {},
+        Action::Trash {},
+        Action::Star { on: true },
+        Action::Read { on: false },
+        Action::Labels {
+            add: vec![1],
+            remove: vec![],
+        },
+        Action::Move { to: 1 },
+    ];
+    for (n, action) in actions.into_iter().enumerate() {
+        let request = ActionApplyRequest {
+            account: "corp".into(),
+            threads: vec![1],
+            action,
+            grace: true,
+            client_token: format!("a{n}"),
+        };
+        let error = d.client.call::<ActionApply>(&request).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unsupported);
+        assert_eq!(error.message, M365_NOT_YET);
+    }
+    let save = DraftSaveRequest {
         account: "corp".into(),
-        threads: vec![1],
-        action: Action::Archive {},
-        grace: true,
-        client_token: "a".into(),
+        draft: None,
+        kind: DraftKind::New,
+        reply_to: None,
+        to: vec![],
+        cc: vec![],
+        bcc: vec![],
+        subject: String::new(),
+        body: String::new(),
+        attachments: vec![],
+        client_token: "s1".into(),
     };
-    let error = d.client.call::<ActionApply>(&request).await.unwrap_err();
-    assert_eq!(error.code, ErrorCode::Unsupported);
+    let error = d.client.call::<DraftSave>(&save).await.unwrap_err();
+    assert_eq!(error.message, M365_NOT_YET);
+    let rows: i64 = Store::open_reader(&d.paths.db_file())
+        .unwrap()
+        .conn()
+        .query_row("SELECT count(*) FROM outbox", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 0, "nothing queued");
 }
 
 #[tokio::test]

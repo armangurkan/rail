@@ -10,6 +10,7 @@ use crate::ops::{
 };
 use crate::store::Store;
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
+use crate::sync::Wants;
 
 fn unexpected() -> OpError {
     OpError::internal("the store answered an outbox write unexpectedly")
@@ -55,7 +56,7 @@ pub(super) async fn apply(
     let target = call
         .ctx
         .sync
-        .action_target(&call.ctx, &request.account)
+        .action_target(&call.ctx, &request.account, Wants::Action(&request.action))
         .await?;
     check_in_store(&call, target.account_id, threads.clone(), &request.action).await?;
     let grace = if request.grace {

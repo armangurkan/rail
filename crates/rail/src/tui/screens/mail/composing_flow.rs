@@ -79,6 +79,9 @@ impl MailScreen {
         if self.compose.is_some() || index >= self.accounts.len() {
             return Vec::new();
         }
+        if self.refuse_m365(self.is_m365_at(index)) {
+            return Vec::new();
+        }
         // A reply or draft read still in flight must not replace this message.
         self.composing.pending = None;
         let composing = self.new_composing(index);
@@ -106,6 +109,13 @@ impl MailScreen {
             self.status.notify("No message to answer.", self.tick);
             return Vec::new();
         };
+        let account = match (self.focus, self.reader.as_ref()) {
+            (Focus::Reader, Some(reader)) => Some(reader.detail().account_id),
+            _ => self.list.selected().map(|r| r.account_id),
+        };
+        if self.refuse_m365(account.is_some_and(|id| self.is_m365(id))) {
+            return Vec::new();
+        }
         self.read_source(kind, target, false)
     }
 
@@ -353,6 +363,9 @@ impl MailScreen {
 
     /// `y`: queue the saved draft; the review closes when the daemon has it.
     fn send_draft(&mut self) -> Vec<Effect> {
+        if self.refuse_m365_compose() {
+            return Vec::new();
+        }
         let Some(draft) = self.compose.as_ref().and_then(|c| c.composing().draft) else {
             self.status.notify("The draft is not saved yet.", self.tick);
             return Vec::new();
@@ -396,6 +409,9 @@ impl MailScreen {
     /// `s`: save text not stored yet, then save the draft to Gmail's Drafts; the review
     /// closes when the daemon has queued the push.
     fn push_draft(&mut self) -> Vec<Effect> {
+        if self.refuse_m365_compose() {
+            return Vec::new();
+        }
         let Some(draft) = self.compose.as_ref().map(|c| c.composing().draft) else {
             return Vec::new();
         };

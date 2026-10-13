@@ -223,6 +223,8 @@ pub struct SearchHit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SearchFailure {
     pub account: String,
+    /// The account's kind, so a front end names its provider.
+    pub kind: AccountKind,
     pub error: OpError,
 }
 

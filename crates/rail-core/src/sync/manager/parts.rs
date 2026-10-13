@@ -17,7 +17,7 @@ use crate::config::{
     self, AccountConfig, Config, ConfigError, OnePasswordConfig, SecretsBackend, SyncSettings,
 };
 use crate::error::ErrorClass;
-use crate::ops::{AccountSyncStatus, ErrorCode, OpError, SyncErrorInfo, SyncPhase};
+use crate::ops::{AccountSyncStatus, ErrorCode, M365_NOT_YET, OpError, SyncErrorInfo, SyncPhase};
 use crate::provider::Provider;
 use crate::provider::http::RetryObserver;
 use crate::store::{Store, SyncStateRow};
@@ -179,6 +179,11 @@ pub(super) fn unsupported() -> OpError {
         ErrorClass::Permanent,
         "Microsoft 365 sync arrives in a later phase of Rail",
     )
+}
+
+/// Part A's refusal on Microsoft 365: every action but marking read, and all writing.
+pub(super) fn m365_not_yet() -> OpError {
+    OpError::new(ErrorCode::Unsupported, ErrorClass::Permanent, M365_NOT_YET)
 }
 
 pub(super) fn not_running() -> OpError {

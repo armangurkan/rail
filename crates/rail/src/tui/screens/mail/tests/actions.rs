@@ -42,17 +42,6 @@ fn applying(f: &Fixture) {
     }));
 }
 
-fn applies(f: &Fixture) -> Vec<FakeCall> {
-    f.fake
-        .calls
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|c| matches!(c, FakeCall::Apply { .. }))
-        .cloned()
-        .collect()
-}
-
 async fn tick(f: &mut Fixture, n: usize) {
     for _ in 0..n {
         let effects = f.screen.update(Msg::Tick);

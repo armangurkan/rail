@@ -114,8 +114,8 @@ rail daemon install        # keep syncing after you log out and back in
    Gmail's quota). Set [`history_days`](#sync-settings) to sync only recent mail. Ctrl-C stops
    watching, not the sync.
 4. **`rail search <query>`** prints date, account, sender and subject for each matching thread,
-   newest first. Gmail's search syntax works for the Gmail part. When Gmail is busy or
-   refuses the connection, the Gmail part is retried once after a short wait; the local
+   newest first. Gmail's search syntax works for the Gmail part. When the provider is busy or
+   refuses the connection (`not searched on Gmail` or `on Microsoft 365` says which), the server part is retried once after a short wait; the local
    results still print.
 5. **`rail doctor`** reports on the config, store, token backend, each account's tokens and sync,
    the daemon and the login unit.
@@ -406,7 +406,9 @@ list, shows "Could not archive: …" on the thread's row, and keeps the error in
 `Enter` on it sends the action again. Refusals are listed in `:errors` again whenever Rail
 connects to the daemon, so one that happened while Rail was closed or disconnected is not lost.
 A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed`.
-Microsoft 365 accounts cannot be changed yet.
+On a Microsoft 365 account only opening a thread works (it marks the thread read); the action
+keys answer `Not supported for Microsoft 365 accounts yet.` at once, and a selection holding one of
+its threads is refused whole.
 
 ## Writing mail
 
@@ -420,7 +422,7 @@ other recipients except you, keeping the old `Cc` in `Cc`. A reply starts with `
 quoted text under `On <date>, <name> wrote:`; a forward starts with `Fwd:`, no recipients, and the
 original under a `Forwarded message` line, with its attachments. If the message's text is not in
 the store yet, Rail fetches it first (`fetching the message…`). Microsoft 365 accounts cannot
-write mail yet: the first save is refused.
+write mail yet: `c`, `r`, `R` and `f` answer `Not supported for Microsoft 365 accounts yet.` at once.
 
 **A new message** starts with two prompts on the bottom row. `To:` completes from the addresses
 your mail has taught Rail: type a few letters and matching addresses appear above, none
@@ -519,7 +521,7 @@ later, closes the review and says `saved to Gmail · z undoes`. `z` inside that 
 (`kept on this computer`). The review closes after `s`, so pressing `s` again means opening the
 draft again from the Drafts folder or `:drafts`; done inside the ten seconds, it makes one save with
 the newest text, and `z` after it cancels that save. `s` is refused when the message holds nothing at all.
-The status bar shows `saving to Gmail…` while a save is on its way. A save Gmail refuses on the
+The status bar shows `saving to Gmail…` (`saving to Microsoft 365…` for that provider) while a save is on its way. A save Gmail refuses on the
 spot keeps the review open (`Could not save to Gmail: …`); one that fails later is listed in
 `:errors` (`Could not save the draft to Gmail: …`), where `Enter` retries it. The first save
 creates the draft in Gmail and the next ones update it, so the draft keeps one place in Gmail's

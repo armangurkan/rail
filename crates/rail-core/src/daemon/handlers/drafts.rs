@@ -23,6 +23,7 @@ use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
 use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
+use crate::sync::Wants;
 
 pub(super) fn unexpected() -> OpError {
     OpError::internal("the store answered a draft write unexpectedly")
@@ -366,7 +367,7 @@ pub(super) async fn save(
     let target = call
         .ctx
         .sync
-        .action_target(&call.ctx, &request.account)
+        .action_target(&call.ctx, &request.account, Wants::Compose)
         .await?;
     let paths: Vec<String> = request
         .attachments
@@ -480,7 +481,11 @@ pub(super) async fn send(
         .ctx
         .blocking(move || draft_and_address(&reader, id))
         .await?;
-    let target = call.ctx.sync.action_target(&call.ctx, &address).await?;
+    let target = call
+        .ctx
+        .sync
+        .action_target(&call.ctx, &address, Wants::Compose)
+        .await?;
     if target.account_id != draft.account_id {
         return Err(no_such_draft());
     }

@@ -355,10 +355,13 @@ pub fn progress_line(status: &AccountSyncStatus, now: i64) -> String {
         SyncPhase::Delta => "fetching changes".to_string(),
         SyncPhase::Bodies => format!("fetching bodies ({})", status.bodies_fetched),
         SyncPhase::Prune => "tidying the store".to_string(),
-        SyncPhase::Retrying => match status.next_attempt_at {
-            Some(at) => format!("Gmail is busy; retrying in {}s", (at - now).max(0)),
-            None => "Gmail is busy; retrying".to_string(),
-        },
+        SyncPhase::Retrying => {
+            let name = status.kind.provider_name();
+            match status.next_attempt_at {
+                Some(at) => format!("{name} is busy; retrying in {}s", (at - now).max(0)),
+                None => format!("{name} is busy; retrying"),
+            }
+        }
         SyncPhase::NeedsAuth => "needs a login".to_string(),
         SyncPhase::Idle | SyncPhase::Unsupported | SyncPhase::Stopped => {
             status.phase.as_str().to_string()
@@ -461,6 +464,17 @@ mod tests {
         assert_eq!(
             progress_line(&s, 1_700_000_000),
             "work: Gmail is busy; retrying in 30s"
+        );
+    }
+
+    #[test]
+    fn a_microsoft_365_account_that_retries_says_microsoft_365() {
+        let mut s = AccountSyncStatus::new("corp", "c@corp.example", AccountKind::M365);
+        s.phase = SyncPhase::Retrying;
+        s.next_attempt_at = Some(1_030);
+        assert_eq!(
+            progress_line(&s, 1_000),
+            "corp: Microsoft 365 is busy; retrying in 30s"
         );
     }
 

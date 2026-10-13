@@ -204,6 +204,12 @@ impl MailScreen {
             self.status.notify("No thread to act on.", self.tick);
             return Vec::new();
         }
+        let m365 = targets
+            .iter()
+            .any(|(_, picked)| self.is_m365(picked.account_id));
+        if self.refuse_m365(m365) {
+            return Vec::new();
+        }
         match action {
             Action::ListArchive => self.send_action(MailAction::Archive {}, &targets, true),
             Action::ListTrash => self.confirm_trash(targets),

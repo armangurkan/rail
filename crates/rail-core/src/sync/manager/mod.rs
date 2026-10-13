@@ -18,7 +18,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-pub use self::outbox::ActionTarget;
+pub use self::outbox::{ActionTarget, Wants};
 use self::parts::{
     ConfigStamp, Engines, PlannedAccount, Prepared, Running, failed_status, finish_writer,
     initial_status, key, named, needs_login, not_running, not_syncing, read_config, retry_observer,
@@ -73,6 +73,8 @@ pub type ProviderFactory =
 /// An account the search operation asks.
 pub struct SearchTarget {
     pub name: String,
+    /// The account's kind: its provider's name in a failure.
+    pub kind: AccountKind,
     pub account_id: i64,
     pub provider: Arc<dyn Provider>,
 }
@@ -467,6 +469,7 @@ impl SyncManager {
             from_name: account.from_name.clone(),
             sync_wake: wake.clone(),
             draft_files_dir,
+            kind: account.kind,
         });
         let (stop, stopped) = watch::channel(false);
         let outbox_task = tokio::spawn(worker.run(stopped.clone()));
@@ -658,11 +661,13 @@ impl SyncManager {
             match engines.running.get(&status.address) {
                 Some(r) => targets.push(SearchTarget {
                     name: r.name.clone(),
+                    kind: status.kind,
                     account_id: r.account_id,
                     provider: r.provider.clone(),
                 }),
                 None => skipped.push(SearchFailure {
                     account: status.name.clone(),
+                    kind: status.kind,
                     error: self.reason(&engines, status),
                 }),
             }
@@ -686,6 +691,7 @@ impl SyncManager {
         Ok(match engines.running.get(&status.address) {
             Some(running) => Reach::Ready(SearchTarget {
                 name: running.name.clone(),
+                kind: status.kind,
                 account_id: running.account_id,
                 provider: running.provider.clone(),
             }),

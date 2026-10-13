@@ -6,16 +6,17 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 use super::SyncManager;
-use super::parts::{named, not_syncing, unsupported};
+use super::parts::{m365_not_yet, named, not_syncing, unsupported};
+use crate::config::AccountKind;
 use crate::daemon::DaemonContext;
 use crate::error::ErrorClass;
-use crate::ops::{ActionFailed, ErrorCode, OpError, SyncPhase};
+use crate::ops::{Action, ActionFailed, ErrorCode, OpError, SyncPhase};
 use crate::store::Store;
 use crate::store::outbox::OutboxRow;
 use crate::sync::FailureSubscriber;
 use crate::sync::outbox::publish_depth;
 
-/// A configured Gmail account with a store row.
+/// A configured account with a store row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionTarget {
     pub name: String,
@@ -23,12 +24,29 @@ pub struct ActionTarget {
     pub account_id: i64,
 }
 
+/// What a caller wants the account for: one action, or writing mail (save, send, push,
+/// import).
+#[derive(Debug, Clone, Copy)]
+pub enum Wants<'a> {
+    Action(&'a Action),
+    Compose,
+}
+
+impl Wants<'_> {
+    /// Whether a Microsoft 365 account does it in this version: marking read only.
+    fn reaches_m365(self) -> bool {
+        matches!(self, Self::Action(Action::Read { on: true }))
+    }
+}
+
 impl SyncManager {
-    /// The account `who` names (name or address): configured, Gmail, and in the store.
+    /// The account `who` names (name or address): configured, syncing, in the store, and able
+    /// to do what `wants` asks. A Microsoft 365 account refuses all but mark-read at once.
     pub async fn action_target(
         &self,
         ctx: &DaemonContext,
         who: &str,
+        wants: Wants<'_>,
     ) -> Result<ActionTarget, OpError> {
         self.settled().await;
         let all = self.board.all();
@@ -36,6 +54,9 @@ impl SyncManager {
             .iter()
             .find(|s| named(s, who))
             .ok_or_else(|| not_syncing(who))?;
+        if status.kind == AccountKind::M365 && !wants.reaches_m365() {
+            return Err(m365_not_yet());
+        }
         if status.phase == SyncPhase::Unsupported {
             return Err(unsupported());
         }
@@ -87,21 +108,22 @@ impl SyncManager {
     /// Every account's failed rows (at most `MAX_FAILED_ROWS` each) as the `action.failed`
     /// notifications a new watcher missed. A store that cannot be read gives none (logged).
     pub async fn failed_actions(&self, ctx: &DaemonContext) -> Vec<ActionFailed> {
-        let accounts: Vec<(String, String)> = self
+        let accounts: Vec<(String, String, AccountKind)> = self
             .board
             .all()
             .iter()
-            .map(|s| (s.name.clone(), s.address.clone()))
+            .map(|s| (s.name.clone(), s.address.clone(), s.kind))
             .collect();
         let db = ctx.paths.db_file();
         let read = ctx
             .blocking(move || {
                 let store = Store::open_reader(&db)?;
                 let mut failures = Vec::new();
-                for (name, address) in &accounts {
+                for (name, address, kind) in &accounts {
                     if let Some(id) = store.account_id(address)? {
                         let rows = store.failed_rows(id)?;
-                        failures.extend(rows.into_iter().map(|row| failed_notice(name, row)));
+                        failures
+                            .extend(rows.into_iter().map(|row| failed_notice(name, *kind, row)));
                     }
                 }
                 Ok(failures)
@@ -121,14 +143,14 @@ impl SyncManager {
 
 /// A stored failure as its notification: `last_error` is Rail's words, then (after the first
 /// `": "`) the provider's text, kept apart as the detail; a stored failure is final.
-fn failed_notice(account: &str, row: OutboxRow) -> ActionFailed {
+fn failed_notice(account: &str, kind: AccountKind, row: OutboxRow) -> ActionFailed {
     let last = row.last_error.unwrap_or_default();
     let (words, detail) = match last.split_once(": ") {
         Some((words, detail)) => (words.to_string(), Some(detail.to_string())),
         None => (last, None),
     };
     let words = if words.is_empty() {
-        "Gmail refused the change".to_string()
+        format!("{} refused the change", kind.provider_name())
     } else {
         words
     };

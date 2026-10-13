@@ -125,6 +125,7 @@ impl Rig {
             from_name,
             sync_wake,
             draft_files_dir: self.draft_files_dir(),
+            kind: crate::config::AccountKind::Gmail,
         })
     }
 

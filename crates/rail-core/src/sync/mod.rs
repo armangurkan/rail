@@ -20,7 +20,7 @@ pub use batch::{Batch, BatchOutcome, Origin, Prune, ResumeToken, StateUpdate, Sw
 pub use engine::{Clock, Engine, EngineParts, SyncError};
 pub use manager::{
     ActionTarget, CONFIG_CHECK, ENGINE_STOP, MAX_WRITER_RESTARTS, ProviderFactory, ProviderRequest,
-    Reach, SETTLE_WAIT, SearchTarget, SyncManager, WRITER_HEALTHY,
+    Reach, SETTLE_WAIT, SearchTarget, SyncManager, WRITER_HEALTHY, Wants,
 };
 pub use status::{FailureSubscriber, StatusBoard, Subscriber};
 pub use writer::{WRITER_QUEUE, WriterHandle, WriterTask, spawn_writer};

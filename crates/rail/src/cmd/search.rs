@@ -79,13 +79,14 @@ pub fn line(hit: &SearchHit) -> String {
     )
 }
 
-/// An account Gmail could not be asked for: Rail's words, then Gmail's (or the system's)
+/// An account its provider could not be asked for: Rail's words, then the provider's (or the system's)
 /// quoted on a line of their own, then the hint.
 fn failure_lines(failure: &SearchFailure) -> Vec<String> {
     let error = &failure.error;
     let mut lines = vec![format!(
-        "{}: not searched on Gmail: {}",
+        "{}: not searched on {}: {}",
         escaped(&failure.account),
+        failure.kind.provider_name(),
         escaped(&error.message)
     )];
     if let Some(detail) = &error.detail {
@@ -100,6 +101,7 @@ fn failure_lines(failure: &SearchFailure) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rail_core::config::AccountKind;
     use rail_core::error::ErrorClass;
     use rail_core::ops::{HitSource, OpError, Untrusted};
 
@@ -148,6 +150,7 @@ mod tests {
     fn a_failed_gmail_search_is_rails_words_then_gmails_quoted() {
         let failure = SearchFailure {
             account: "work".into(),
+            kind: AccountKind::Gmail,
             error: OpError::new(
                 ErrorCode::Provider,
                 ErrorClass::Transient,
@@ -164,9 +167,27 @@ mod tests {
         assert!(!lines.join("\n").contains('\u{1b}'), "{lines:?}");
     }
 
+    #[test]
+    fn a_failed_microsoft_365_search_names_microsoft_365() {
+        let failure = SearchFailure {
+            account: "corp".into(),
+            kind: AccountKind::M365,
+            error: OpError::new(
+                ErrorCode::Auth,
+                ErrorClass::Permanent,
+                "the account needs a new login",
+            ),
+        };
+        assert_eq!(
+            failure_lines(&failure)[0],
+            "corp: not searched on Microsoft 365: the account needs a new login"
+        );
+    }
+
     fn skipped(account: &str, code: ErrorCode, message: &str) -> SearchFailure {
         SearchFailure {
             account: account.into(),
+            kind: AccountKind::Gmail,
             error: OpError::new(code, ErrorClass::Permanent, message),
         }
     }
