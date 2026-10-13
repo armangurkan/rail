@@ -18,9 +18,10 @@ readable HTML and a command palette. It also speaks MCP, so an AI coding agent c
 up without ever seeing your secrets.
 
 > **Rail is pre-1.0.** Account setup, background sync, search, reading mail, acting on threads
-> (archive, trash, star, read) and writing mail (new messages, replies and forwards, with undo
-> send, and drafts saved to Gmail) work today for Gmail. Microsoft 365 accounts sync, search and
-> read today, and act on threads through the daemon; writing from them comes next.
+> (archive, trash, star, read, move) and writing mail (new messages, replies and forwards, with
+> undo send, and drafts saved to Gmail) work today for Gmail. Microsoft 365 accounts sync, search,
+> read and act on threads today (archive, trash, flag, read and unread, move to a folder); writing
+> from them comes next.
 
 ## Contents
 
@@ -50,9 +51,9 @@ up without ever seeing your secrets.
 - Gmail and Microsoft 365 sync into the local store: labels or folders, message envelopes, and
   bodies of recent threads, kept current by a background daemon that can start at login
   (`rail daemon install`).
-- Microsoft 365 sync and reading over Microsoft Graph: every mail folder, threads by conversation,
-  read and flag (star) state, new mail within one poll interval, server search, marking read on
-  open, and archive, trash, star, mark unread and move through the daemon. Labels answer
+- Microsoft 365 over Microsoft Graph: every mail folder, threads by conversation, read and flag
+  (star) state, new mail within one poll interval, server search, marking read on open, and
+  archive, trash, star, read or unread and move to a folder, with undo. `l` answers
   `Outlook uses folders, not labels: press m to move.`; sending and drafts answer
   `Not supported for Microsoft 365 accounts yet.` See [Microsoft 365 mail](#microsoft-365-mail).
 - `rail search` over the local store and, through each account's server (Gmail's search,
@@ -61,8 +62,9 @@ up without ever seeing your secrets.
   store, a sidebar with unread counts, a reader with folded quotes and numbered (clickable) links,
   filter as you type, a command palette, keys you can change in `config.toml`, and `o` to open a
   message's HTML in the browser. See [Reading mail](#reading-mail).
-- Archive, trash, star and mark read or unread, alone or as a selection, with undo. See
-  [Doing things to mail](#doing-things-to-mail), including labelling (`l`) and moving (`m`).
+- Archive, trash, star and mark read or unread, alone or as a selection, with undo, on Gmail and
+  Microsoft 365. See [Doing things to mail](#doing-things-to-mail), including labelling (`l`, Gmail)
+  and moving (`m`).
 - Writing mail: a new message, a reply, a reply to everyone or a forward, written in your own
   editor, reviewed in Rail and sent through Gmail with a ten second undo; drafts kept on this
   machine or saved to Gmail's Drafts, and a Drafts folder that lists both. See
@@ -207,11 +209,11 @@ are in, with `*` after the ones set in `config.toml`.
 | `list.top` | list | `home` `g g` | Newest thread. |
 | `list.bottom` | list | `end` `G` | Oldest thread. |
 | `list.archive` | list, reader | `e` | Archive the thread or the selection. |
-| `list.trash` | list, reader | `d` | Move to Gmail's Trash (asks first). |
+| `list.trash` | list, reader | `d` | Move to the trash (asks first). |
 | `list.star` | list, reader | `s` | Star or unstar. |
 | `list.read` | list, reader | `u` | Mark read or unread. |
-| `list.labels` | list, reader | `l` | Add or remove labels. |
-| `list.move` | list, reader | `m` | Move to a label (archives). |
+| `list.labels` | list, reader | `l` | Add or remove labels (Gmail). |
+| `list.move` | list, reader | `m` | Move to a label (Gmail) or a folder (Microsoft 365). |
 | `list.compose` | list, reader | `c` | Write a new message. |
 | `list.reply` | list, reader | `r` | Reply to the latest message. |
 | `list.reply_all` | list, reader | `R` | Reply to everyone. |
@@ -375,9 +377,10 @@ Inside tmux, `COLORTERM` must reach the inner shell (see Troubleshooting). An ac
 
 ## Doing things to mail
 
-From the thread list or the reader: `e` archives, `d` moves to Gmail's Trash (Rail asks first,
-`Trash "subject"?` or `Trash 3 threads?`, and Gmail keeps trashed mail there for 30 days; Rail
-never deletes mail for good), `s` stars or unstars (it stars unless every thread is already
+From the thread list or the reader: `e` archives, `d` moves to the account's trash (Rail asks
+first, `Trash "subject"?` or `Trash 3 threads?`, and says what the trash does: Gmail keeps trashed
+mail in its Trash for 30 days, and on Microsoft 365 it `Moves to Deleted Items.`; Rail never
+deletes mail for good), `s` stars or unstars (it stars unless every thread is already
 starred), `u` marks read or unread (it marks read if any thread is unread). An action applies to
 the whole thread, as in Gmail. The list changes at once; the daemon sends the change to Gmail in
 the background, so it also goes through if you quit Rail.
@@ -385,10 +388,10 @@ the background, so it also goes through if you quit Rail.
 `l` opens the account's labels: type to filter, `Space` ticks or unticks, `Enter` applies (labels
 you ticked are added, labels you unticked are removed; for a selection, the ticks start from every
 label any selected thread carries), `Esc` cancels. `Down`/`Up` (or `Ctrl-n`/`Ctrl-p`) move,
-because letters filter. `m` opens the same list to move: `Enter` adds the highlighted label and
-archives the thread. Gmail's system folders (Inbox, Sent, Trash and the like) are not in the list,
-and Rail does not create labels. A selection that spans two accounts cannot be labelled or moved
-at once; Rail says `Labels belong to one account: select threads from one account.`
+because letters filter. On Gmail, `m` opens the same list to move: `Enter` adds the highlighted
+label and archives the thread. Gmail's system folders (Inbox, Sent, Trash and the like) are not in
+the list, and Rail does not create labels. A selection that spans two accounts cannot be labelled
+or moved at once; Rail says `Labels belong to one account: select threads from one account.`
 
 `Space` selects the thread under the cursor (a `▸` replaces its dot, `>` with `icons = "ascii"`)
 and moves down; the status bar counts the selection (`3 selected`). With a selection, an action
@@ -419,12 +422,19 @@ list, shows "Could not archive: …" on the thread's row, and keeps the error in
 `Enter` on it sends the action again. Refusals are listed in `:errors` again whenever Rail
 connects to the daemon, so one that happened while Rail was closed or disconnected is not lost.
 A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed`.
-On a Microsoft 365 account, opening an unread thread marks every message in it read in Outlook
-(the status bar shows `1 queued` meanwhile). The daemon carries out `e`, `d`, `s`, `u` and `m` on
-a Microsoft 365 thread through Graph; a move target is one of its Inbox, Archive, Junk Email or
-own folders. `l` answers `Outlook uses folders, not labels: press m to move.`, and `e` on a
-mailbox with no Archive folder answers `This mailbox has no Archive folder; press m to move.`,
-both at once with nothing queued, also for a selection that holds one of its threads.
+On a Microsoft 365 account the same keys act through Outlook's folders, where a message lives in
+one folder. `e` moves the thread's Inbox messages to Archive; on a mailbox with no Archive folder
+it says `This mailbox has no Archive folder; press m to move.` (Rail never makes one). `d` moves
+the thread's messages to Deleted Items (the prompt says `Moves to Deleted Items.`). `m` lists
+Inbox, Archive, Junk Email and your own folders, and moves the thread's messages to the one you
+pick. Archive, trash and move leave your own messages in Sent Items and Drafts where they are.
+`s` flags the newest message, or clears every flag of a flagged thread; `u` marks every unread
+message read, or the newest message unread. `l` answers
+`Outlook uses folders, not labels: press m to move.` A selection may hold threads of both kinds:
+each account gets its own change, and `l` is refused for the whole selection. When Outlook
+refuses some messages of a thread (one deleted meanwhile, say), the others still change and the
+refusals are logged; only when it refuses every message does the action fail. Opening an unread
+thread marks it read in Outlook (the status bar shows `1 queued` meanwhile).
 
 ## Writing mail
 
@@ -720,8 +730,8 @@ MFA) can still intervene after consent; see [Microsoft sign-in errors](#microsof
 
 ### Microsoft 365 mail
 
-What a Microsoft 365 account does today. It syncs and reads over Microsoft Graph and acts on
-threads; writing mail comes next.
+What a Microsoft 365 account does today. It syncs, reads and acts on threads over Microsoft Graph;
+writing mail comes next.
 
 - **Folders.** Every mail folder is synced, nested ones as `Parent/Child`. Inbox, Sent Items,
   Drafts, Archive, Deleted Items and Junk Email take the Inbox, Sent, Drafts, Archive, Trash and
@@ -742,10 +752,15 @@ threads; writing mail comes next.
 - **Attachments.** A OneDrive or SharePoint link attachment is listed, and when Rail is asked for
   its bytes it says `This attachment is a link (OneDrive or SharePoint); open the message in
   Outlook on the web to reach it.` A message whose attachments are all inline lists none.
-- **Marking read.** Opening an unread thread marks its messages read in Outlook.
-- **Acting.** Archive, trash, star, mark unread and move reach Outlook. Labels answer
-  `Outlook uses folders, not labels: press m to move.`, and archiving in a mailbox with no Archive
-  folder answers `This mailbox has no Archive folder; press m to move.`
+- **Marking read.** Opening an unread thread marks its unread messages read in Outlook; `u`
+  marks them read, or the newest message unread.
+- **Acting on threads.** `e` archives to Outlook's Archive folder (a mailbox with no Archive
+  folder says `This mailbox has no Archive folder; press m to move.`), `d` moves to Deleted
+  Items, `m` moves to Inbox, Archive, Junk Email or one of your folders, and `s` flags the
+  newest message (or clears every flag), each with `z` to undo. Your own messages in Sent Items
+  and Drafts stay where they are. See [Doing things to mail](#doing-things-to-mail).
+- **Folders, not labels.** `l` answers `Outlook uses folders, not labels: press m to move.`
+  Outlook categories are not used.
 - **Not yet.** `c`, `r`, `R` and `f`, and the rows of the Drafts folder (including discarding a
   draft) answer `Not supported for Microsoft 365 accounts yet.` at once and send nothing.
 
@@ -1118,7 +1133,10 @@ their own.
 | Colours look wrong or a theme does nothing inside tmux | Add `set -as terminal-features ",xterm-256color:RGB"` (tmux 3.2+) or `set -ga terminal-overrides ",*:Tc"` to `~/.tmux.conf`, and make sure `COLORTERM=truecolor` reaches the shell inside tmux. |
 | `Microsoft 365 refused access: an administrator may need to grant consent (see "Work or school accounts and admin consent" in the README)` | An administrator grants consent, as in [Work or school accounts and admin consent](#work-or-school-accounts-and-admin-consent), then run `rail account login <name>` if the login also fails. |
 | `this mailbox cannot be reached through Microsoft Graph (on-premises, unlicensed or inactive)` | The mailbox must be an Exchange Online mailbox with a licence. |
-| `Not supported for Microsoft 365 accounts yet.` | Expected: Rail reads Microsoft 365 mail today. Acting on it and writing come next. |
+| `Not supported for Microsoft 365 accounts yet.` | Expected: Rail reads and acts on Microsoft 365 mail today; writing from a Microsoft 365 account comes next. |
+| `Outlook uses folders, not labels: press m to move.` | Expected: Outlook has folders, not labels. Press `m` to move the thread to a folder. |
+| `This mailbox has no Archive folder; press m to move.` | The mailbox has no Archive folder and Rail never makes one. Press `m` to move the thread to a folder. |
+| `the folder for this move no longer exists in Microsoft 365` | The folder was deleted in Outlook before the move was sent; Rail put the thread back. Press `m` and pick another folder. |
 | `Microsoft 365 is busy or unavailable (HTTP 429)`, or `retrying` in `rail sync` | Microsoft is throttling the mailbox. Rail waits as long as Microsoft asks (up to two minutes at a time) and tries again. |
 | `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |
 | `draft: saving to Gmail, try again in a moment` | A save of this draft to Gmail is still on its way, so it cannot be discarded yet. Wait for `saving to Gmail…` to leave the status bar and press `d` again. |

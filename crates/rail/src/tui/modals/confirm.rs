@@ -30,6 +30,12 @@ impl Confirm {
         }
     }
 
+    /// The body lines (tests).
+    #[cfg(test)]
+    pub(crate) fn lines(&self) -> &[String] {
+        &self.lines
+    }
+
     pub(super) fn key(&mut self, key: KeyEvent) -> ModalOutcome {
         match key.code {
             KeyCode::Char('y' | 'Y') | KeyCode::Enter => ModalOutcome::Run(self.yes.clone()),

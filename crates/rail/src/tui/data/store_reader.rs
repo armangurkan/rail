@@ -266,6 +266,18 @@ impl StoreReader {
         })
     }
 
+    /// The move picker's folders for one account (by its folder model) and the ones `threads`
+    /// are in now.
+    pub fn move_choices(&self, seq: u64, account_id: i64, threads: Vec<i64>) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| store.move_choices(account_id, &threads))
+                .await;
+            send(&sink, MailEvent::Labels { seq, result });
+        })
+    }
+
     /// The reply source of `target`: a message, or the newest message of a thread.
     pub fn reply_source(&self, seq: u64, target: ReplyTarget) -> Effect {
         let reader = self.clone();

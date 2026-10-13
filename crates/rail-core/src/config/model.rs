@@ -412,6 +412,14 @@ impl AccountKind {
         }
     }
 
+    /// What the trash prompt says of this provider's trash.
+    pub fn trash_note(self) -> &'static str {
+        match self {
+            Self::Gmail => "Gmail keeps trashed mail in its Trash for 30 days.",
+            Self::M365 => "Moves to Deleted Items.",
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Gmail => "gmail",
@@ -610,5 +618,14 @@ mod tests {
         let err = parse(text, Path::new("/x/config.toml")).unwrap_err();
         assert!(matches!(err, ConfigError::Parse { line: 6, .. }), "{err}");
         assert!(err.to_string().contains("always"), "{err}");
+    }
+
+    #[test]
+    fn the_trash_prompt_names_each_providers_trash() {
+        assert_eq!(
+            AccountKind::Gmail.trash_note(),
+            "Gmail keeps trashed mail in its Trash for 30 days."
+        );
+        assert_eq!(AccountKind::M365.trash_note(), "Moves to Deleted Items.");
     }
 }

@@ -1,6 +1,7 @@
-//! The label pickers (`l`, `m`): refused for a selection across accounts, otherwise a store
-//! read of the account's labels and what the threads carry, then the picker; its answer is a
-//! `labels` or `move` action with grace.
+//! The label and move pickers (`l`, `m`): refused for a selection across accounts, otherwise a
+//! store read of the account's labels (`l`) or move targets (`m`, by its folder model: Gmail's
+//! labels, or a Microsoft 365 account's Inbox, Archive, Junk and own folders) and what the
+//! threads are in, then the picker; its answer is a `labels` or `move` action with grace.
 
 use std::collections::BTreeSet;
 
@@ -38,7 +39,11 @@ impl MailScreen {
         let seq = self.next_seq();
         let threads = targets.iter().map(|(id, _)| *id).collect();
         self.actions.picking = Some(Picking { seq, mode, targets });
-        vec![self.ctx.store.labels(seq, account_id, threads)]
+        let read = match mode {
+            PickerKind::Move => self.ctx.store.move_choices(seq, account_id, threads),
+            _ => self.ctx.store.labels(seq, account_id, threads),
+        };
+        vec![read]
     }
 
     pub(super) fn labels_read(
