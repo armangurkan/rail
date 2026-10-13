@@ -320,7 +320,7 @@ impl crate::provider::Provider for Panics {
     async fn draft_save(
         &self,
         _: &crate::provider::OutgoingMail,
-    ) -> Result<crate::provider::DraftIds, crate::provider::ProviderError> {
+    ) -> Result<crate::provider::SavedDraft, crate::provider::ProviderError> {
         panic!("test: the engine panics")
     }
     async fn sent_already(
@@ -678,7 +678,7 @@ impl crate::provider::Provider for RetryingSearch {
     async fn draft_save(
         &self,
         mail: &crate::provider::OutgoingMail,
-    ) -> Answer<crate::provider::DraftIds> {
+    ) -> Answer<crate::provider::SavedDraft> {
         self.inner.draft_save(mail).await
     }
     async fn sent_already(&self, mail: &crate::provider::OutgoingMail) -> Answer<bool> {

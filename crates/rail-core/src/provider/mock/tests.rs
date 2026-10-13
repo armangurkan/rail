@@ -316,7 +316,8 @@ async fn the_mocks_writing_methods_play_gmails_adapter_and_graph_mode_consumes_t
     let saved = mock
         .draft_save(&mail(Some(gone), Some("t-gone")))
         .await
-        .unwrap();
+        .unwrap()
+        .ids;
     assert_eq!(saved.draft_id, "r1");
     assert_eq!(
         mock.calls(),

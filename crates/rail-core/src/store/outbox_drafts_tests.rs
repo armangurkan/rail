@@ -1,11 +1,12 @@
 //! The draft rows of the outbox: a push folded into the one still waiting, a push of a draft
 //! being sent, a push's completion, discard while a push is in flight and the Gmail delete it
-//! leaves, the Gmail delete a sent pushed draft leaves, an import, and the saving count.
+//! leaves, the Gmail delete a sent pushed draft leaves, an import, the saving count, and the
+//! listed sizes a push or a send's save records on the draft's files.
 
 use rusqlite::params;
 
 use super::Store;
-use super::drafts::{DraftKind, DraftSaved, DraftWrite, Recipient};
+use super::drafts::{Attachment, DraftKind, DraftSaved, DraftWrite, ListedFile, Recipient};
 use super::outbox::{
     DraftDeleteOutcome, NewAction, OutboxCounts, OutboxOutcome, OutboxState, OutboxWrite,
 };
@@ -90,6 +91,7 @@ fn complete_push(store: &mut Store, id: OutboxId, draft: DraftId, remote: (&str,
         draft,
         remote_draft_id: remote.0.into(),
         remote_message_id: remote.1.into(),
+        listed: vec![],
     };
     assert_eq!(store.outbox_write(&write, 0).unwrap(), OutboxOutcome::Done);
 }
@@ -263,6 +265,59 @@ fn complete_push_stores_the_gmail_ids_and_removes_the_row() {
     complete_push(&mut store, row, gone, ("r2", "dm2"));
     assert!(rows(&store).is_empty());
     assert!(store.draft(gone).unwrap().is_none());
+}
+
+fn file(path: &str, size: i64) -> Attachment {
+    Attachment::File {
+        path: path.into(),
+        name: "n.txt".into(),
+        mime: "text/plain".into(),
+        size,
+        listed: None,
+    }
+}
+
+fn listed_sizes(store: &Store, draft: DraftId) -> Vec<Option<i64>> {
+    let attachments = store.draft(draft).unwrap().unwrap().attachments;
+    attachments
+        .iter()
+        .map(|a| match a {
+            Attachment::File { listed, .. } => *listed,
+            Attachment::Part { .. } => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_push_records_the_listed_size_on_the_file_of_that_path_and_size_only() {
+    let (mut store, account) = store_with_account();
+    let mut w = write(account, 1);
+    w.attachments = vec![file("/f/a.txt", 41), file("/f/b.txt", 7)];
+    let d = store.draft_upsert(&w, 1).unwrap().unwrap();
+    let row = push(&mut store, account, d, "p", 100)[0];
+    claim(&mut store, account, 110);
+    let listed = |path: &str, size, listed| ListedFile {
+        path: path.into(),
+        size,
+        listed,
+    };
+    let write = OutboxWrite::CompletePush {
+        id: row,
+        draft: d,
+        remote_draft_id: "g1".into(),
+        remote_message_id: "g1".into(),
+        // b.txt was replaced since the push read it: its size is not the one pushed.
+        listed: vec![listed("/f/a.txt", 41, 239), listed("/f/b.txt", 9, 205)],
+    };
+    assert_eq!(store.outbox_write(&write, 0).unwrap(), OutboxOutcome::Done);
+    assert_eq!(listed_sizes(&store, d), [Some(239), None]);
+    let stamp = OutboxWrite::DraftSendAttempted {
+        draft: d,
+        remote: None,
+        listed: vec![listed("/f/b.txt", 7, 205)],
+    };
+    assert_eq!(store.outbox_write(&stamp, 0).unwrap(), OutboxOutcome::Done);
+    assert_eq!(listed_sizes(&store, d), [Some(239), Some(205)]);
 }
 
 #[test]
@@ -598,6 +653,7 @@ fn a_send_attempt_keeps_its_first_stamp_and_takes_the_drafts_newest_ids() {
             draft_id: draft_id.into(),
             message_id: message_id.into(),
         }),
+        listed: vec![],
     };
     store.outbox_write(&stamp(Some(("g1", "g1"))), 100).unwrap();
     let after = store.draft(d).unwrap().unwrap();

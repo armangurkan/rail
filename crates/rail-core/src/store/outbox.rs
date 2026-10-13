@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
 use super::apply_local::{self, Prior};
-use super::drafts::{DraftSaved, DraftWrite};
+use super::drafts::{DraftSaved, DraftWrite, ListedFile};
 use super::outbox_drafts::{draft_remote, draft_write, enqueue_draft, insert_delete_draft};
 use super::{Store, StoreError, rollup};
 use crate::ops::{Action, DraftId, OutboxId, RowToken};
@@ -109,10 +109,12 @@ pub enum OutboxWrite {
     },
     /// The draft is about to be handed to the provider's send: stamp `send_attempted_at` (kept
     /// once set) so every later send of it looks the message up first. `remote` is the
-    /// provider's draft that send sends (Graph), kept as the draft's remote ids.
+    /// provider's draft that send sends (Graph), kept as the draft's remote ids; `listed`, the
+    /// sizes its save says the provider lists for the draft's files, recorded on them.
     DraftSendAttempted {
         draft: DraftId,
         remote: Option<DraftIds>,
+        listed: Vec<ListedFile>,
     },
     /// `draft.save`'s write: every store write goes through the one writer.
     DraftSave {
@@ -122,12 +124,14 @@ pub enum OutboxWrite {
     /// `draft.discard`'s delete, refused while the draft is being sent or pushed; a draft
     /// Gmail holds leaves a Gmail delete.
     DraftDelete(DraftId),
-    /// A push landed: the draft keeps Gmail's ids and the row goes.
+    /// A push landed: the draft keeps the provider's ids and records the sizes it lists for
+    /// the draft's files (`listed`), and the row goes.
     CompletePush {
         id: OutboxId,
         draft: DraftId,
         remote_draft_id: String,
         remote_message_id: String,
+        listed: Vec<ListedFile>,
     },
     /// The import of a Gmail draft: one local draft per Gmail message, keeping Gmail's ids.
     DraftImport {

@@ -339,6 +339,7 @@ fn every_drafts_file_paths_are_listed_and_an_unreadable_list_stops_the_answer() 
         name: "n".into(),
         mime: "m".into(),
         size: 1,
+        listed: None,
     };
     let part = Attachment::Part {
         message: 1,

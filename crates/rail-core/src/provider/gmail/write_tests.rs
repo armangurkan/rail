@@ -154,17 +154,23 @@ async fn draft_save_creates_updates_by_id_and_creates_again_when_gmail_lost_it()
         .mount(&gmail.server)
         .await;
     let provider = gmail.provider();
-    let created = provider.draft_save(&mail(Some("t1"), None)).await.unwrap();
+    let created = provider
+        .draft_save(&mail(Some("t1"), None))
+        .await
+        .unwrap()
+        .ids;
     assert_eq!(created, ids("r2", "m2"));
     let updated = provider
         .draft_save(&mail(Some("t1"), Some("r1")))
         .await
-        .unwrap();
+        .unwrap()
+        .ids;
     assert_eq!(updated, ids("r1", "m3"));
     let again = provider
         .draft_save(&mail(None, Some("r-gone")))
         .await
-        .unwrap();
+        .unwrap()
+        .ids;
     assert_eq!(
         again,
         ids("r2", "m2"),
@@ -209,7 +215,8 @@ async fn a_draft_in_a_thread_gmail_no_longer_has_is_saved_on_its_own() {
         .provider()
         .draft_save(&mail(Some("t-gone"), None))
         .await
-        .unwrap();
+        .unwrap()
+        .ids;
     assert_eq!(saved, ids("r1", "m1"));
 }
 
@@ -253,6 +260,7 @@ async fn gmail_consumes_no_draft_carries_no_originals_and_refuses_an_unread_atta
             part: "p1".into(),
             size: 10,
         }),
+        listed: None,
     });
     let send = provider.send(&carried).await.unwrap_err();
     let save = provider.draft_save(&carried).await.unwrap_err();

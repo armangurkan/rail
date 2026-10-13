@@ -15,6 +15,7 @@ use super::compose::{self, Assembly};
 use crate::ops::{DraftId, OutboxId};
 use crate::paths::{import_dir_in, remove_dir_if_present};
 use crate::provider::{DraftIds, ProviderError};
+use crate::store::drafts::ListedFile;
 use crate::store::outbox::{OutboxOutcome, OutboxRow, OutboxWrite};
 
 /// What a send or a push reads from the store in one go.
@@ -63,11 +64,20 @@ impl Worker {
         loaded.send_attempted || row.attempts > 0 || self.recovered_ids().contains(&row.id)
     }
 
-    /// Stamp the draft before its send call, with the provider's draft that call sends
-    /// (Graph); no send without the stamp.
-    async fn stamp(&self, draft: DraftId, remote: Option<DraftIds>) -> Result<(), ProviderError> {
+    /// Stamp the draft before its send call, with the provider's draft that call sends and
+    /// the sizes it lists for the draft's files (Graph); no send without the stamp.
+    async fn stamp(
+        &self,
+        draft: DraftId,
+        remote: Option<DraftIds>,
+        listed: Vec<ListedFile>,
+    ) -> Result<(), ProviderError> {
         self.writer
-            .outbox(OutboxWrite::DraftSendAttempted { draft, remote })
+            .outbox(OutboxWrite::DraftSendAttempted {
+                draft,
+                remote,
+                listed,
+            })
             .await
             .map(|_| ())
             .map_err(|e| ProviderError::transient(&e.message))
@@ -93,21 +103,22 @@ impl Worker {
                 "the draft's attachments could not be read",
             ));
         }
+        let paths = compose::file_paths(&loaded.assembly);
         let mut mail = compose::attach(
             loaded.assembly,
             self.provider.as_ref(),
             self.kind.provider_name(),
         )
         .await?;
-        let saved = if self.provider.send_consumes_draft() {
-            Some(self.provider.draft_save(&mail).await?)
-        } else {
-            None
-        };
-        if let Some(ids) = &saved {
-            mail.remote = Some(ids.clone());
+        let (mut remote, mut listed) = (None, Vec::new());
+        if self.provider.send_consumes_draft() {
+            let saved = self.provider.draft_save(&mail).await?;
+            listed = compose::listed_files(&paths, &mail, &saved.listed);
+            compose::with_listed(&mut mail, &saved.listed);
+            mail.remote = Some(saved.ids.clone());
+            remote = Some(saved.ids);
         }
-        self.stamp(draft, saved).await?;
+        self.stamp(draft, remote, listed).await?;
         self.provider.send(&mail).await.map(|_| ())
     }
 

@@ -93,6 +93,10 @@ pub enum Attachment {
         name: String,
         mime: String,
         size: i64,
+        /// The size the provider lists for its copy of this file, once Rail uploaded or
+        /// imported it: Graph lists a file larger than its bytes. `None` until then.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        listed: Option<i64>,
     },
     Part {
         message: i64,
@@ -136,6 +140,25 @@ impl std::fmt::Debug for Attachment {
                 .field("size", size)
                 .finish_non_exhaustive(),
         }
+    }
+}
+
+/// The size the provider listed for one of a draft's files, by its path and its size in
+/// bytes: recorded on the draft's entry with that path and size, so a file replaced since does
+/// not take it. The path holds the file's name, so `Debug` shows sizes only.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ListedFile {
+    pub path: String,
+    pub size: i64,
+    pub listed: i64,
+}
+
+impl std::fmt::Debug for ListedFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ListedFile")
+            .field("size", &self.size)
+            .field("listed", &self.listed)
+            .finish_non_exhaustive()
     }
 }
 
@@ -272,7 +295,7 @@ const DRAFT_COLUMNS: &str = "id, account_id, kind, thread_id, remote_thread_id, 
     remote_draft_id, remote_message_id, state, updated_at, send_attempted_at, source_remote_id";
 
 /// Rail's own types as JSON; serialising them cannot fail.
-fn json<T: Serialize>(value: &T) -> String {
+pub(super) fn json<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "[]".into())
 }
 

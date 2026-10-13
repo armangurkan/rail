@@ -47,6 +47,7 @@ use crate::ops::{
     Action, ActionFailed, DraftId, ErrorCode, OpError, OutboxDepth, OutboxId, SyncPhase,
 };
 use crate::provider::{Change, DraftIds, Provider, ProviderError, ThreadTarget};
+use crate::store::drafts::ListedFile;
 use crate::store::outbox::{Failure, OutboxOutcome, OutboxRow, OutboxWrite};
 use crate::store::{Store, StoreError};
 
@@ -102,8 +103,12 @@ pub struct Worker {
 pub(super) enum Landed {
     /// Done: the row completes.
     Done,
-    /// A push landed: the draft keeps Gmail's ids.
-    Pushed { draft: DraftId, ids: DraftIds },
+    /// A push landed: the draft keeps the provider's ids, and the sizes it lists for its files.
+    Pushed {
+        draft: DraftId,
+        ids: DraftIds,
+        listed: Vec<ListedFile>,
+    },
 }
 
 /// What the loop does next.
@@ -275,7 +280,7 @@ impl Worker {
             Plan::SendDraft(draft) => unobserved(self.send_draft(row, draft)).await.map(done),
             Plan::PushDraft(draft) => unobserved(self.push_draft(draft))
                 .await
-                .map(|ids| Landed::Pushed { draft, ids }),
+                .map(|(ids, listed)| Landed::Pushed { draft, ids, listed }),
             Plan::DeleteDraft(id) => unobserved(self.delete_remote_draft(&id)).await.map(done),
         }
     }
@@ -306,11 +311,12 @@ impl Worker {
                 id: row.id,
                 draft_consumed: self.provider.send_consumes_draft(),
             },
-            Ok(Landed::Pushed { draft, ids }) => OutboxWrite::CompletePush {
+            Ok(Landed::Pushed { draft, ids, listed }) => OutboxWrite::CompletePush {
                 id: row.id,
                 draft: *draft,
                 remote_draft_id: ids.draft_id.clone(),
                 remote_message_id: ids.message_id.clone(),
+                listed: listed.clone(),
             },
             Err(ProviderError::NeedsAuth { .. }) => {
                 self.needs_login().await;

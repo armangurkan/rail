@@ -383,6 +383,7 @@ async fn a_vanished_attachment_fails_the_send_permanently() {
             name: "gone.pdf".into(),
             mime: "application/pdf".into(),
             size: 1,
+            listed: None,
         }],
     )
     .await;
@@ -667,6 +668,7 @@ async fn imported_draft(h: &Harness, n: i64, token: &str) -> (DraftId, std::path
         name: "plan.pdf".into(),
         mime: "application/pdf".into(),
         size: 17,
+        listed: None,
     };
     let (draft, _) = queued_draft(h, n, vec![attachment]).await;
     h.with_store(|s| {

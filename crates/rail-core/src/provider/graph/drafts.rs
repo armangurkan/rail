@@ -18,7 +18,9 @@ use crate::ops::MAX_ATTACHMENTS;
 use crate::provider::gmail::mime::{
     MAX_MESSAGE_BYTES, estimated_raw_size, too_large_text, validate,
 };
-use crate::provider::{DraftIds, FolderKind, Mailbox, OutgoingMail, ProviderError, RemoteId};
+use crate::provider::{
+    DraftIds, FolderKind, Mailbox, OutgoingMail, ProviderError, RemoteId, SavedDraft,
+};
 use crate::store::drafts::DraftKind;
 
 /// A message as a lookup by id or by `internetMessageId` (or a `PATCH`'s answer) reads it. A
@@ -134,8 +136,12 @@ fn create_action(kind: DraftKind) -> Option<&'static str> {
 
 impl GraphProvider {
     /// Save `mail` as an Outlook draft: update the one Rail holds or finds by its
-    /// `Message-ID`, else create it. Its ids (both Graph's id).
-    pub(crate) async fn save_draft(&self, mail: &OutgoingMail) -> Result<DraftIds, ProviderError> {
+    /// `Message-ID`, else create it. Its ids (both Graph's id), and the size Outlook lists for
+    /// each attachment.
+    pub(crate) async fn save_draft(
+        &self,
+        mail: &OutgoingMail,
+    ) -> Result<SavedDraft, ProviderError> {
         checked(mail)?;
         let known = match &mail.remote {
             Some(remote) => Some(remote.draft_id.clone()),
@@ -145,10 +151,13 @@ impl GraphProvider {
             Some(id) => self.update_or_create(&id, mail).await?,
             None => self.create(mail).await?,
         };
-        self.reconcile(&id, mail).await?;
-        Ok(DraftIds {
-            draft_id: id.clone(),
-            message_id: id,
+        let listed = self.reconcile(&id, mail).await?;
+        Ok(SavedDraft {
+            ids: DraftIds {
+                draft_id: id.clone(),
+                message_id: id,
+            },
+            listed,
         })
     }
 

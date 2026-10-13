@@ -21,8 +21,8 @@ pub use error::ProviderError;
 pub use types::{
     AttachmentMeta, Body, Carried, Change, ChangeSet, DraftIds, Envelope, EnvelopePage, FolderKind,
     INBOX_LABEL, IdPage, MAX_PAGE_TOKEN_BYTES, Mailbox, Outgoing, OutgoingAttachment, OutgoingMail,
-    PageToken, Profile, Relabel, RemoteFolder, RemoteId, STARRED_LABEL, SentReceipt, SyncCursor,
-    TargetMessage, ThreadTarget, UNREAD_LABEL, Window,
+    PageToken, Profile, Relabel, RemoteFolder, RemoteId, STARRED_LABEL, SavedDraft, SentReceipt,
+    SyncCursor, TargetMessage, ThreadTarget, UNREAD_LABEL, Window,
 };
 
 /// One account's mailbox, read through its provider's API. Every method speaks Rail types;
@@ -70,9 +70,10 @@ pub trait Provider: Send + Sync {
     async fn send(&self, mail: &OutgoingMail) -> Result<SentReceipt, ProviderError>;
     /// Save `mail` as the provider's draft: create it when `mail.remote` is `None`, else
     /// update that draft (one deleted at the provider is created again; one in a thread or on
-    /// a source the provider no longer has is saved on its own). Its ids at the provider. A
-    /// create is tried once: a transient error means unknown.
-    async fn draft_save(&self, mail: &OutgoingMail) -> Result<DraftIds, ProviderError>;
+    /// a source the provider no longer has is saved on its own). Its ids at the provider, and
+    /// the size it lists for each attachment. A create is tried once: a transient error means
+    /// unknown.
+    async fn draft_save(&self, mail: &OutgoingMail) -> Result<SavedDraft, ProviderError>;
     /// Whether the provider already holds `mail` as sent, by its `Message-ID`: the check
     /// before sending a message that may have reached the provider before.
     async fn sent_already(&self, mail: &OutgoingMail) -> Result<bool, ProviderError>;

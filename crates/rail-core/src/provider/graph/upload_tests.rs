@@ -2,7 +2,8 @@
 //! a large attachment goes up in 3,932,160-byte chunks with `Content-Range`, never with
 //! `Authorization` or `Prefer`; a failed chunk is sent again from where the session said it was;
 //! three failures are transient and the row's retry starts a new session; an attachment Outlook
-//! already shows is not uploaded again; the answers' reading.
+//! already shows is not uploaded again; a finished session reads the size Outlook lists for
+//! the file from one listing; the answers' reading.
 
 use serde_json::json;
 use wiremock::matchers::{body_json, header, method, path};
@@ -25,6 +26,7 @@ fn big() -> OutgoingAttachment {
         mime: "application/octet-stream".into(),
         bytes: vec![7; TOTAL],
         carried: None,
+        listed: None,
     }
 }
 
@@ -262,4 +264,37 @@ async fn an_upload_whose_last_answer_was_lost_is_not_uploaded_again() {
     g.provider().draft_save(&with_big()).await.unwrap();
     assert_eq!(sessions(&g).await, 0, "Outlook shows it: no second copy");
     assert!(puts(&g).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_finished_session_reads_the_size_outlook_lists_from_one_listing() {
+    let g = Graph::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{ROOT}/me/messages/g-d1/attachments")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"value": []})))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&g.server)
+        .await;
+    let listed = json!({"@odata.type": FILE_ATTACHMENT, "id": "att-big", "name": "big.bin",
+                        "size": TOTAL + 177, "contentType": "application/octet-stream",
+                        "isInline": false});
+    session(&g, json!([listed])).await;
+    chunk(&g, range(0, 3_932_159), more(3_932_160)).await;
+    chunk(&g, range(3_932_160, 7_864_319), more(7_864_320)).await;
+    chunk(&g, range(7_864_320, 7_999_999), ResponseTemplate::new(201)).await;
+    let saved = g.provider().draft_save(&with_big()).await.unwrap();
+    assert_eq!(saved.listed, [Some(TOTAL + 177)], "the size Outlook lists");
+    let listings = g
+        .server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.method.as_str() == "GET" && r.url.path().ends_with("/attachments"))
+        .count();
+    assert_eq!(
+        listings, 2,
+        "the reconcile's listing, and one after the upload"
+    );
 }

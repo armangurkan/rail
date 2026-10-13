@@ -15,7 +15,7 @@ All notable changes to Rail are recorded here. The format follows
   and `d` deletes them in Outlook. Replies and forwards are made on
   the original message, so they join the Outlook conversation; one whose original is gone from
   Outlook for good goes out as a new message. Attachments up to 25 MiB in all, through upload sessions
-  from 3 MiB; a forward keeps the original's attachments without downloading them, and inline
+  from 3 MiB, each uploaded once until it changes; a forward keeps the original's attachments without downloading them, and inline
   pictures, attached messages and OneDrive or SharePoint links stay as Outlook has them. A
   message is never sent twice: a retry or a restart asks Outlook for its `Message-ID`, and about the draft
   Rail saved, first.

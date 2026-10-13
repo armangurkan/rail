@@ -6,7 +6,7 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::StoreError;
-use super::drafts::{self, DraftSaved, DraftWrite};
+use super::drafts::{self, Attachment, DraftSaved, DraftWrite, ListedFile};
 use super::outbox::{
     DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite, draft_state, json, set_draft_state,
 };
@@ -148,14 +148,63 @@ pub(super) fn complete_push(
     tx: &Transaction,
     id: OutboxId,
     draft: DraftId,
-    remote_draft_id: &str,
-    remote_message_id: &str,
+    remote: (&str, &str),
+    listed: &[ListedFile],
 ) -> Result<(), StoreError> {
     tx.execute(
         "UPDATE drafts SET remote_draft_id = ?2, remote_message_id = ?3 WHERE id = ?1",
-        params![draft, remote_draft_id, remote_message_id],
+        params![draft, remote.0, remote.1],
     )?;
+    record_listed(tx, draft, listed)?;
     tx.execute("DELETE FROM outbox WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Record on the draft's files the sizes the provider lists for them: each on the file entry
+/// with its path and size in bytes, so an entry made for a file replaced since keeps none. A
+/// list that does not parse is left as it is (`draft_attachments_readable` refuses it).
+fn record_listed(
+    tx: &Transaction,
+    draft: DraftId,
+    listed: &[ListedFile],
+) -> Result<(), StoreError> {
+    if listed.is_empty() {
+        return Ok(());
+    }
+    let text: Option<String> = tx
+        .query_row(
+            "SELECT attachments_json FROM drafts WHERE id = ?1",
+            [draft],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(mut attachments) = text.and_then(|t| serde_json::from_str::<Vec<Attachment>>(&t).ok())
+    else {
+        return Ok(());
+    };
+    let mut changed = false;
+    for attachment in &mut attachments {
+        let Attachment::File {
+            path,
+            size,
+            listed: recorded,
+            ..
+        } = attachment
+        else {
+            continue;
+        };
+        let found = listed.iter().find(|l| l.path == *path && l.size == *size);
+        if let Some(l) = found.filter(|l| *recorded != Some(l.listed)) {
+            *recorded = Some(l.listed);
+            changed = true;
+        }
+    }
+    if changed {
+        tx.execute(
+            "UPDATE drafts SET attachments_json = ?2 WHERE id = ?1",
+            params![draft, drafts::json(&attachments)],
+        )?;
+    }
     Ok(())
 }
 
@@ -215,7 +264,11 @@ pub(super) fn draft_write(
     now: i64,
 ) -> Result<OutboxOutcome, StoreError> {
     Ok(match write {
-        OutboxWrite::DraftSendAttempted { draft, remote } => {
+        OutboxWrite::DraftSendAttempted {
+            draft,
+            remote,
+            listed,
+        } => {
             tx.execute(
                 "UPDATE drafts SET send_attempted_at = ?2
                  WHERE id = ?1 AND send_attempted_at IS NULL",
@@ -227,6 +280,7 @@ pub(super) fn draft_write(
                     params![draft, ids.draft_id, ids.message_id],
                 )?;
             }
+            record_listed(tx, *draft, listed)?;
             OutboxOutcome::Done
         }
         OutboxWrite::DraftSave {
@@ -239,8 +293,10 @@ pub(super) fn draft_write(
             draft,
             remote_draft_id,
             remote_message_id,
+            listed,
         } => {
-            complete_push(tx, *id, *draft, remote_draft_id, remote_message_id)?;
+            let remote = (remote_draft_id.as_str(), remote_message_id.as_str());
+            complete_push(tx, *id, *draft, remote, listed)?;
             OutboxOutcome::Done
         }
         OutboxWrite::DraftImport {

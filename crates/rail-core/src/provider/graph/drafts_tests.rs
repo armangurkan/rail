@@ -131,7 +131,7 @@ async fn a_new_draft_is_posted_with_rails_fields_and_its_id_is_both_ids() {
         .provider()
         .draft_save(&mail(DraftKind::New, None, None))
         .await;
-    assert_eq!(saved.unwrap(), ids("g-d1"));
+    assert_eq!(saved.unwrap().ids, ids("g-d1"));
 }
 
 #[tokio::test]
@@ -159,7 +159,7 @@ async fn a_reply_reply_all_and_forward_are_made_on_their_source_then_patched() {
             .provider()
             .draft_save(&mail(kind, Some("m-src"), None))
             .await;
-        assert_eq!(saved.unwrap(), ids("g-r1"), "{action}");
+        assert_eq!(saved.unwrap().ids, ids("g-r1"), "{action}");
         g.server.verify().await;
     }
 }
@@ -174,7 +174,7 @@ async fn an_update_patches_the_held_draft_and_a_404_creates_it_again() {
         .provider()
         .draft_save(&mail(DraftKind::New, None, Some("g-d1")))
         .await;
-    assert_eq!(saved.unwrap(), ids("g-d1"));
+    assert_eq!(saved.unwrap().ids, ids("g-d1"));
     let lookups = g
         .server
         .received_requests()
@@ -194,7 +194,7 @@ async fn an_update_patches_the_held_draft_and_a_404_creates_it_again() {
         .draft_save(&mail(DraftKind::New, None, Some("g-d1")))
         .await;
     assert_eq!(
-        saved.unwrap(),
+        saved.unwrap().ids,
         ids("g-d2"),
         "deleted in Outlook: made again"
     );
@@ -219,7 +219,7 @@ async fn a_source_outlook_no_longer_has_is_written_as_a_new_message() {
         .provider()
         .draft_save(&mail(DraftKind::Reply, Some("m-gone"), None))
         .await;
-    assert_eq!(saved.unwrap(), ids("g-n1"));
+    assert_eq!(saved.unwrap().ids, ids("g-n1"));
 }
 
 #[tokio::test]
@@ -237,7 +237,11 @@ async fn a_draft_lost_after_its_create_is_found_by_its_message_id_and_patched() 
         .provider()
         .draft_save(&mail(DraftKind::New, None, None))
         .await;
-    assert_eq!(saved.unwrap(), ids("g-old"), "the draft, not the sent copy");
+    assert_eq!(
+        saved.unwrap().ids,
+        ids("g-old"),
+        "the draft, not the sent copy"
+    );
 }
 
 #[tokio::test]
@@ -292,6 +296,7 @@ async fn a_message_rail_would_not_send_is_refused_before_any_request() {
             mime: "text/plain".into(),
             bytes: vec![1],
             carried: None,
+            listed: None,
         })
         .collect();
     let mut large = mail(DraftKind::Forward, Some("m-src"), None);
@@ -304,6 +309,7 @@ async fn a_message_rail_would_not_send_is_refused_before_any_request() {
             part: "p1".into(),
             size: 26 * 1024 * 1024,
         }),
+        listed: None,
     });
     for refused in [bad, many, large] {
         let error = provider.draft_save(&refused).await.unwrap_err();
@@ -382,7 +388,7 @@ async fn a_saved_draft_moved_to_deleted_items_is_made_again_in_drafts() {
     posted_new(&g, "g-d1", 1).await;
     let provider = g.provider();
     let first = provider.draft_save(&mail(DraftKind::New, None, None)).await;
-    assert_eq!(first.unwrap(), ids("g-d1"));
+    assert_eq!(first.unwrap().ids, ids("g-d1"));
     g.reset().await;
     g.mount_well_known(&[("drafts", "f-drafts")]).await;
     patched_in(&g, "g-d1", "f-deleted").await;
@@ -391,7 +397,7 @@ async fn a_saved_draft_moved_to_deleted_items_is_made_again_in_drafts() {
     let again = provider
         .draft_save(&mail(DraftKind::New, None, Some("g-d1")))
         .await;
-    assert_eq!(again.unwrap(), ids("g-d2"), "a new draft, in Drafts");
+    assert_eq!(again.unwrap().ids, ids("g-d2"), "a new draft, in Drafts");
     g.server.verify().await;
     assert_eq!(
         moved_or_deleted(&g, "g-d1").await,
@@ -406,7 +412,7 @@ async fn a_saved_draft_moved_to_deleted_items_is_made_again_in_drafts() {
     let kept = provider
         .draft_save(&mail(DraftKind::New, None, Some("g-d2")))
         .await;
-    assert_eq!(kept.unwrap(), ids("g-d2"), "one in Drafts is updated");
+    assert_eq!(kept.unwrap().ids, ids("g-d2"), "one in Drafts is updated");
 }
 
 #[tokio::test]
@@ -427,7 +433,7 @@ async fn the_message_id_lookup_takes_only_a_draft_in_drafts() {
     let provider = g.provider();
     let saved = provider.draft_save(&mail(DraftKind::New, None, None)).await;
     assert_eq!(
-        saved.unwrap(),
+        saved.unwrap().ids,
         ids("g-live"),
         "the one in Drafts, not the trashed copy"
     );
@@ -443,7 +449,7 @@ async fn the_message_id_lookup_takes_only_a_draft_in_drafts() {
     posted_new(&g, "g-new", 1).await;
     let saved = provider.draft_save(&mail(DraftKind::New, None, None)).await;
     assert_eq!(
-        saved.unwrap(),
+        saved.unwrap().ids,
         ids("g-new"),
         "only a trashed copy: made again"
     );

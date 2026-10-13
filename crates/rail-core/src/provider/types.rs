@@ -284,6 +284,7 @@ mod tests {
                         part: "p1".into(),
                         size: 7,
                     }),
+                    listed: None,
                 }],
             },
             kind: DraftKind::Forward,
@@ -336,6 +337,9 @@ pub struct OutgoingAttachment {
     pub bytes: Vec<u8>,
     /// Set for a forwarded original the provider's forward already holds: `bytes` is empty.
     pub carried: Option<Carried>,
+    /// The size the provider listed for its copy, once Rail uploaded or imported it (Graph
+    /// lists a file larger than its bytes): matched in place of `size()` when set.
+    pub listed: Option<usize>,
 }
 
 impl OutgoingAttachment {
@@ -351,6 +355,24 @@ impl std::fmt::Debug for OutgoingAttachment {
             .field("bytes", &self.bytes.len())
             .field("carried", &self.carried.is_some())
             .finish()
+    }
+}
+
+/// What a draft save left at the provider: its ids, and the size the provider lists for each
+/// of the message's attachments, in their order (`None` for one it did not say; empty for a
+/// provider that lists none, as Gmail's builds the whole message on every save).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedDraft {
+    pub ids: DraftIds,
+    pub listed: Vec<Option<usize>>,
+}
+
+impl From<DraftIds> for SavedDraft {
+    fn from(ids: DraftIds) -> Self {
+        Self {
+            ids,
+            listed: Vec::new(),
+        }
     }
 }
 

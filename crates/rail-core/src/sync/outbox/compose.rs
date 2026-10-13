@@ -5,7 +5,7 @@
 use crate::provider::{
     Carried, DraftIds, Mailbox, Outgoing, OutgoingAttachment, OutgoingMail, Provider, ProviderError,
 };
-use crate::store::drafts::{Attachment, Draft, DraftKind, Recipient};
+use crate::store::drafts::{Attachment, Draft, DraftKind, ListedFile, Recipient};
 use crate::store::{Store, StoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +13,8 @@ pub(super) struct FileRef {
     pub path: String,
     pub name: String,
     pub mime: String,
+    /// The size the provider listed for its copy, when recorded.
+    pub listed: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,11 +59,16 @@ fn listed(
     for attachment in attachments {
         match attachment {
             Attachment::File {
-                path, name, mime, ..
+                path,
+                name,
+                mime,
+                listed,
+                ..
             } => files.push(FileRef {
                 path: path.clone(),
                 name: name.clone(),
                 mime: mime.clone(),
+                listed: *listed,
             }),
             Attachment::Part {
                 message,
@@ -160,6 +167,7 @@ async fn read_file(file: FileRef) -> Result<OutgoingAttachment, ProviderError> {
         mime: file.mime,
         bytes,
         carried: None,
+        listed: file.listed.and_then(|l| usize::try_from(l).ok()),
     })
 }
 
@@ -183,6 +191,7 @@ async fn fetch_part(
         mime: part.mime,
         bytes,
         carried: None,
+        listed: None,
     })
 }
 
@@ -198,6 +207,7 @@ fn carried(part: PartRef) -> OutgoingAttachment {
             part: part.part,
             size: usize::try_from(part.size).unwrap_or(0),
         }),
+        listed: None,
     }
 }
 
@@ -228,4 +238,40 @@ pub(super) async fn attach(
         mail.outgoing.attachments.push(attachment);
     }
     Ok(mail)
+}
+
+/// The paths of the assembly's files, in the order `attach` puts them first in the message.
+pub(super) fn file_paths(assembly: &Assembly) -> Vec<String> {
+    assembly.files.iter().map(|f| f.path.clone()).collect()
+}
+
+/// The sizes a save says the provider lists for the message's files (the first `paths.len()`
+/// attachments, each read from the file at that path), for the draft to record.
+pub(super) fn listed_files(
+    paths: &[String],
+    mail: &OutgoingMail,
+    listed: &[Option<usize>],
+) -> Vec<ListedFile> {
+    paths
+        .iter()
+        .zip(&mail.outgoing.attachments)
+        .zip(listed)
+        .filter_map(|((path, attachment), listed)| {
+            Some(ListedFile {
+                path: path.clone(),
+                size: i64::try_from(attachment.bytes.len()).ok()?,
+                listed: i64::try_from((*listed)?).ok()?,
+            })
+        })
+        .collect()
+}
+
+/// The message with the sizes a save says the provider now lists for its attachments, so the
+/// next save of it (Graph's send saves again) matches them.
+pub(super) fn with_listed(mail: &mut OutgoingMail, listed: &[Option<usize>]) {
+    for (attachment, listed) in mail.outgoing.attachments.iter_mut().zip(listed) {
+        if listed.is_some() {
+            attachment.listed = *listed;
+        }
+    }
 }

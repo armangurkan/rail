@@ -89,6 +89,7 @@ fn file_attachment(path: String) -> Result<Attachment, OpError> {
         name,
         path,
         size: i64::try_from(meta.len()).unwrap_or(i64::MAX),
+        listed: None,
     })
 }
 
@@ -302,6 +303,43 @@ fn kept_parts(
         .collect())
 }
 
+/// The files to write, each taking the size the provider listed for the draft's entry with the
+/// same path and size in bytes: the same file, saved again. A file replaced since (other bytes)
+/// takes none, so the next save uploads it again.
+fn with_recorded(files: Vec<Attachment>, existing: Option<&Draft>) -> Vec<Attachment> {
+    let stored = existing.map_or(&[][..], |d| d.attachments.as_slice());
+    files
+        .into_iter()
+        .map(|file| match file {
+            Attachment::File {
+                path,
+                name,
+                mime,
+                size,
+                listed: None,
+            } => {
+                let listed = stored.iter().find_map(|a| match a {
+                    Attachment::File {
+                        path: p,
+                        size: s,
+                        listed,
+                        ..
+                    } if *p == path && *s == size => *listed,
+                    _ => None,
+                });
+                Attachment::File {
+                    path,
+                    name,
+                    mime,
+                    size,
+                    listed,
+                }
+            }
+            other => other,
+        })
+        .collect()
+}
+
 /// The draft to write: the existing one (the account's, not being sent) updated, or a new
 /// one with a fresh `Message-ID`. An update keeps the forwarded parts the request lists; the
 /// request's files replace its files.
@@ -323,7 +361,7 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
         (_, reply_to) => threading_for(&store, request.kind, reply_to, account_id)?,
     };
     let mut attachments = kept_parts(existing.as_ref(), &request.attachments, threading.parts)?;
-    attachments.extend(files);
+    attachments.extend(with_recorded(files, existing.as_ref()));
     check_total(request.body.len(), attachments.iter(), provider)?;
     Ok(DraftWrite {
         id: existing.as_ref().map(|d| d.id),

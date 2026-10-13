@@ -308,6 +308,7 @@ async fn an_import_with_its_body_stored_makes_a_draft_with_its_gmail_identity() 
             name: "plan.pdf".into(),
             mime: "application/pdf".into(),
             size: i64::try_from(PLAN.len()).unwrap(),
+            listed: Some(1234),
         }]
     );
     assert_eq!(d.thread_id, Some(source.thread_id));

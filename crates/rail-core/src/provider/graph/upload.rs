@@ -11,6 +11,7 @@ use serde_json::json;
 use url::Url;
 
 use super::drafts::unexpected;
+use super::reconcile::uploaded_of;
 use super::{COST_REQUEST, GraphProvider};
 use crate::provider::gmail::mime::sanitize_filename;
 use crate::provider::http::ChunkAnswer;
@@ -65,12 +66,14 @@ pub(super) fn progress(answer: &ChunkAnswer, offset: usize, total: usize) -> Pro
 }
 
 impl GraphProvider {
+    /// Upload `bytes` through a session; the id and listed size the last answer gives, if it
+    /// gives them (Graph's usually has no body).
     pub(super) async fn upload_large(
         &self,
         draft: &str,
         attachment: &OutgoingAttachment,
         bytes: &[u8],
-    ) -> Result<(), ProviderError> {
+    ) -> Result<Option<(String, usize)>, ProviderError> {
         let url = self.upload_session(draft, attachment, bytes.len()).await?;
         let total = bytes.len();
         let (mut offset, mut failures) = (0, 0);
@@ -79,7 +82,7 @@ impl GraphProvider {
             let chunk = bytes.get(offset..end).unwrap_or_default();
             match self.api.put_upload_chunk(&url, offset, chunk, total).await {
                 Ok(answer) => match progress(&answer, offset, total) {
-                    Progress::Done => return Ok(()),
+                    Progress::Done => return Ok(uploaded_of(Some(&answer.body))),
                     Progress::At(next) => {
                         offset = next;
                         continue;

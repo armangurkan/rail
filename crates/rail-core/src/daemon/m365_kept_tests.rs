@@ -44,12 +44,17 @@ async fn mount(c: &Corp, verb: &str, at: &str, answer: ResponseTemplate) {
 
 impl Corp {
     /// Push `draft`, make it due now and wait until its row is done (gone) or failed.
-    async fn pushed(&self, draft: i64, token: &str) {
+    pub(super) async fn pushed(&self, draft: i64, token: &str) {
         let request = DraftPushRequest {
             draft,
             client_token: token.into(),
         };
         let row = self.client.call::<DraftPush>(&request).await.unwrap().row;
+        self.finished(row).await;
+    }
+
+    /// Make the outbox row `row` due now and wait until it is done (gone) or failed.
+    pub(super) async fn finished(&self, row: i64) {
         Store::open(&self.paths.db_file())
             .unwrap()
             .conn()
@@ -73,7 +78,7 @@ impl Corp {
             }
         })
         .await
-        .expect("the push finished");
+        .expect("the row finished");
     }
 
     /// The requests that would add, delete or fetch an attachment.

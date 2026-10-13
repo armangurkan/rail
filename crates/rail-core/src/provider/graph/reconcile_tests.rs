@@ -1,8 +1,10 @@
-//! A draft's attachments made Rail's: the pure match by (cleaned name, size), in order, each
-//! once; against fake Graph, a save deletes Outlook's extra file attachment, uploads Rail's new
-//! one and keeps the rest, never touching inline or item attachments; a carried original Outlook
-//! holds is neither fetched nor uploaded, and one it lost is fetched from its message and
-//! uploaded; a listing with a next page is refused; a delete of an attachment gone is done.
+//! A draft's attachments made Rail's: the pure match by cleaned name and size (the one Outlook
+//! listed when Rail recorded it), in order, each once; against fake Graph, a save reports the
+//! size Outlook lists for each attachment, deletes Outlook's extra file attachment, uploads
+//! Rail's new one and keeps the rest, never touching inline or item attachments; a carried
+//! original Outlook holds is neither fetched nor uploaded, and one it lost is fetched from its
+//! message and uploaded; a listing with a next page is refused; a delete of an attachment gone
+//! is done.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -22,6 +24,7 @@ fn file(name: &str, bytes: &[u8]) -> OutgoingAttachment {
         mime: "text/plain".into(),
         bytes: bytes.to_vec(),
         carried: None,
+        listed: None,
     }
 }
 
@@ -35,6 +38,7 @@ fn carried(name: &str, size: usize) -> OutgoingAttachment {
             part: "p1".into(),
             size,
         }),
+        listed: None,
     }
 }
 
@@ -82,6 +86,7 @@ fn matched_kept_missing_uploaded_and_extra_deleted() {
         Changes {
             delete: vec!["att-a".into()],
             upload: vec![1],
+            matched: vec![Some(1), None],
         }
     );
 }
@@ -99,6 +104,7 @@ fn duplicates_match_once_each_in_order() {
         Changes {
             delete: vec![],
             upload: vec![2],
+            matched: vec![Some(0), Some(1), None],
         },
         "two listed copies match the first two; the third goes up"
     );
@@ -112,6 +118,7 @@ fn duplicates_match_once_each_in_order() {
         Changes {
             delete: vec!["att-2".into(), "att-3".into()],
             upload: vec![],
+            matched: vec![Some(0)],
         }
     );
 }
@@ -126,7 +133,80 @@ fn names_are_matched_cleaned_and_a_carried_one_by_its_listed_size() {
         listed("att-r", "report.txt", 3),
         listed("att-o", "orig.pdf", 1234),
     ];
-    assert_eq!(changes(&have, &wanted), Changes::default());
+    assert_eq!(
+        changes(&have, &wanted),
+        Changes {
+            delete: vec![],
+            upload: vec![],
+            matched: vec![Some(0), Some(1)],
+        }
+    );
+}
+
+#[test]
+fn a_recorded_listed_size_is_matched_in_place_of_the_bytes() {
+    let mut note = file("note.txt", &[b'n'; 41]);
+    let have = [listed("att-n", "note.txt", 239)];
+    assert_eq!(
+        changes(&have, std::slice::from_ref(&note)),
+        Changes {
+            delete: vec!["att-n".into()],
+            upload: vec![0],
+            matched: vec![None],
+        },
+        "nothing recorded: the bytes do not match Outlook's size"
+    );
+    note.listed = Some(239);
+    assert_eq!(
+        changes(&have, &[note]),
+        Changes {
+            delete: vec![],
+            upload: vec![],
+            matched: vec![Some(0)],
+        }
+    );
+}
+
+#[tokio::test]
+async fn a_save_reports_the_size_outlook_lists_for_each_attachment() {
+    let g = Graph::start().await;
+    patched(&g, "g-d1").await;
+    listing(
+        &g,
+        "g-d1",
+        json!([attachment_json(
+            "att-b",
+            "b.txt",
+            205,
+            FILE_ATTACHMENT,
+            false
+        )]),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{ROOT}/me/messages/g-d1/attachments")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": "att-c", "size": 203})))
+        .expect(1)
+        .mount(&g.server)
+        .await;
+    let mut draft = mail(DraftKind::New, None, Some("g-d1"));
+    let mut kept = file("b.txt", b"0123456789");
+    kept.listed = Some(205);
+    draft.outgoing.attachments = vec![kept, file("c.txt", b"hello")];
+    let saved = g.provider().draft_save(&draft).await.unwrap();
+    assert_eq!(saved.listed, [Some(205), Some(203)]);
+    let listings = g
+        .server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.method.as_str() == "GET")
+        .count();
+    assert_eq!(
+        listings, 1,
+        "the post's answer gives the size: no second listing"
+    );
 }
 
 #[test]
@@ -176,7 +256,10 @@ async fn a_save_deletes_outlooks_extra_uploads_rails_new_and_keeps_the_rest() {
         .await;
     let mut draft = mail(DraftKind::New, None, Some("g-d1"));
     draft.outgoing.attachments = vec![file("b.txt", b"0123456789"), file("c.txt", b"hello")];
-    assert_eq!(g.provider().draft_save(&draft).await.unwrap(), ids("g-d1"));
+    assert_eq!(
+        g.provider().draft_save(&draft).await.unwrap().ids,
+        ids("g-d1")
+    );
     let deleted: Vec<String> = g
         .server
         .received_requests()

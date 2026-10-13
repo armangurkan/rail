@@ -13,8 +13,8 @@ use std::time::Duration;
 use super::gmail::actions::GmailCall;
 use super::http::{RetryPolicy, retry_policy_override};
 use super::{
-    Body, ChangeSet, DraftIds, Envelope, EnvelopePage, IdPage, OutgoingMail, PageToken, Profile,
-    Provider, ProviderError, Relabel, RemoteFolder, RemoteId, SentReceipt, SyncCursor,
+    Body, ChangeSet, Envelope, EnvelopePage, IdPage, OutgoingMail, PageToken, Profile, Provider,
+    ProviderError, Relabel, RemoteFolder, RemoteId, SavedDraft, SentReceipt, SyncCursor,
     ThreadTarget, Window,
 };
 use crate::provider::FolderKind;
@@ -601,8 +601,8 @@ impl Provider for MockProvider {
         self.send_mail(mail).await
     }
 
-    async fn draft_save(&self, mail: &OutgoingMail) -> Result<DraftIds, ProviderError> {
-        self.save_mail(mail).await
+    async fn draft_save(&self, mail: &OutgoingMail) -> Result<SavedDraft, ProviderError> {
+        self.save_mail(mail).await.map(SavedDraft::from)
     }
 
     async fn sent_already(&self, mail: &OutgoingMail) -> Result<bool, ProviderError> {

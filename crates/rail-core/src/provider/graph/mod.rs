@@ -54,8 +54,9 @@ use std::time::Duration;
 
 use super::http::ApiClient;
 use super::{
-    Body, Change, ChangeSet, DraftIds, EnvelopePage, FolderKind, IdPage, OutgoingMail, PageToken,
-    Profile, ProviderError, RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
+    Body, Change, ChangeSet, EnvelopePage, FolderKind, IdPage, OutgoingMail, PageToken, Profile,
+    ProviderError, RemoteFolder, RemoteId, SavedDraft, SentReceipt, SyncCursor, ThreadTarget,
+    Window,
 };
 use crate::config::SyncSettings;
 
@@ -209,7 +210,7 @@ impl super::Provider for GraphProvider {
         self.send_mail(mail).await
     }
 
-    async fn draft_save(&self, mail: &OutgoingMail) -> Result<DraftIds, ProviderError> {
+    async fn draft_save(&self, mail: &OutgoingMail) -> Result<SavedDraft, ProviderError> {
         self.save_draft(mail).await
     }
 

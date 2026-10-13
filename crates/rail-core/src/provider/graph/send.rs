@@ -13,7 +13,7 @@ impl GraphProvider {
         &self,
         mail: &OutgoingMail,
     ) -> Result<SentReceipt, ProviderError> {
-        let ids = self.save_draft(mail).await?;
+        let ids = self.save_draft(mail).await?.ids;
         let path = format!("me/messages/{}/send", ids.draft_id);
         self.api
             .post_json_bytes(&path, None, COST_REQUEST, false)

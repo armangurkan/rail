@@ -790,9 +790,10 @@ Microsoft Graph.
   than Microsoft 365's 25 MiB limit`). A file of 3 MiB or more goes up in 3.75 MiB pieces, and a
   failed upload is tried again later. A forward keeps the original's attachments in Outlook
   without downloading them; remove one in the review and it goes from the draft too. Rail matches
-  its attachments to the draft's by name and size. A forward and an imported Outlook draft keep
-  pictures in the body, attached messages and OneDrive or SharePoint links as Outlook has them:
-  Rail does not list them for removal and never downloads or uploads them.
+  its attachments to the draft's by name and the size Outlook lists for them, so a save or send
+  uploads only a file that is new or was replaced with other bytes. A forward and an imported
+  Outlook draft keep pictures in the body, attached messages and OneDrive or SharePoint links as
+  Outlook has them: Rail does not list them for removal and never downloads or uploads them.
 - **Never sent twice.** Before any later attempt (a retry, or a start after the daemon stopped
   mid-send), Rail asks Outlook for a sent message with the draft's `Message-ID`, and about the
   draft it saved, and counts a sent one as sent.

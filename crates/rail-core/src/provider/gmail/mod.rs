@@ -39,8 +39,8 @@ mod write_tests;
 
 use super::http::{ApiClient, is_bad_request};
 use super::{
-    Body, Change, ChangeSet, DraftIds, EnvelopePage, IdPage, OutgoingMail, PageToken, Profile,
-    ProviderError, RemoteFolder, RemoteId, SentReceipt, SyncCursor, ThreadTarget, Window,
+    Body, Change, ChangeSet, EnvelopePage, IdPage, OutgoingMail, PageToken, Profile, ProviderError,
+    RemoteFolder, RemoteId, SavedDraft, SentReceipt, SyncCursor, ThreadTarget, Window,
 };
 
 pub use body::{MAX_BODY_BYTES, TRUNCATED_MARKER};
@@ -205,8 +205,8 @@ impl super::Provider for GmailProvider {
         self.send_mail(mail).await
     }
 
-    async fn draft_save(&self, mail: &OutgoingMail) -> Result<DraftIds, ProviderError> {
-        self.save_draft(mail).await
+    async fn draft_save(&self, mail: &OutgoingMail) -> Result<SavedDraft, ProviderError> {
+        self.save_draft(mail).await.map(SavedDraft::from)
     }
 
     async fn sent_already(&self, mail: &OutgoingMail) -> Result<bool, ProviderError> {

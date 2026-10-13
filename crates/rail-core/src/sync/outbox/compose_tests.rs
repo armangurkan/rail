@@ -85,6 +85,7 @@ fn files_and_parts_are_listed_with_the_parts_message_at_gmail() {
                 name: "a.txt".into(),
                 mime: "text/plain".into(),
                 size: 1,
+                listed: None,
             },
             Attachment::Part {
                 message: m1,
@@ -101,7 +102,8 @@ fn files_and_parts_are_listed_with_the_parts_message_at_gmail() {
         [FileRef {
             path: "/tmp/a.txt".into(),
             name: "a.txt".into(),
-            mime: "text/plain".into()
+            mime: "text/plain".into(),
+            listed: None,
         }]
     );
     assert_eq!(
@@ -167,6 +169,7 @@ async fn an_unreadable_file_is_a_permanent_error_without_its_name() {
             name: AWKWARD_NAME.into(),
             mime: "text/plain".into(),
             size: 1,
+            listed: None,
         }],
     );
     let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();

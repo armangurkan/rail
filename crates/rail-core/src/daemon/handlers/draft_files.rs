@@ -155,6 +155,8 @@ fn write_all(dir: &Path, fetched: Vec<Fetched>) -> Result<Vec<Attachment>, OpErr
             name: meta.filename,
             mime: meta.mime_type,
             size: i64::try_from(bytes.len()).unwrap_or(i64::MAX),
+            // The size the source listing gives: the provider's own for this file.
+            listed: Some(meta.size),
         });
     }
     std::fs::File::open(dir)
