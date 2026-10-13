@@ -366,3 +366,40 @@ async fn the_bar_follows_the_focus_and_carries_the_notice_and_the_accounts() {
     f.screen.status.notify("Archived", 0);
     assert_eq!(f.screen.bar(&theme).notice, Some(("Archived", false)));
 }
+
+/// Row 0 at 90x24, the stacked size: the header.
+fn header_row_at_90(f: &Fixture) -> String {
+    render_lines(90, 24, |frame| f.screen.view(frame, &Theme::default()))[0]
+        .trim_end()
+        .to_string()
+}
+
+#[tokio::test]
+async fn at_90_columns_a_lost_daemon_stays_in_the_header_with_threads_selected() {
+    let mut f = fixture(3).await;
+    let lost = MailEvent::Daemon(DaemonEvent::Lost(OpError::internal("gone")));
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(lost)));
+    settle(&mut f.screen, effects).await;
+    press_n(&mut f, KeyCode::Char(' '), 2).await;
+    assert_eq!(f.screen.actions.selection.len(), 2);
+    let row = header_row_at_90(&f);
+    assert!(
+        row.ends_with("daemon unreachable (Ctrl-r retries)"),
+        "{row:?}"
+    );
+    assert!(row.starts_with("▍Rail │"), "{row:?}");
+}
+
+#[tokio::test]
+async fn at_90_columns_a_daemon_back_again_is_drawn_whole_in_the_header() {
+    let mut f = fixture(3).await;
+    let lost = MailEvent::Daemon(DaemonEvent::Lost(OpError::internal("gone")));
+    let effects = f.screen.update(Msg::Task(TaskResult::Mail(lost)));
+    settle(&mut f.screen, effects).await;
+    press(&mut f, KeyCode::Enter).await;
+    let row = header_row_at_90(&f);
+    assert!(
+        row.ends_with("daemon reachable again (Ctrl-r resumes live updates)"),
+        "{row:?}"
+    );
+}

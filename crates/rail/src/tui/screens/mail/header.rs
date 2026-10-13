@@ -73,17 +73,21 @@ pub(super) struct HeaderCells {
     pub right: Option<String>,
 }
 
+/// Under 40 columns only the left part is drawn. Otherwise the summary is kept whole (cut only
+/// when it alone is wider than the row) and the left part is cut to the columns left beside it.
 pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
     let joined = header.joined();
-    let left_w = width(&joined);
-    let right_w = width(&header.right.text);
-    if cols < MIN_FOR_RIGHT || left_w + GAP + right_w > cols {
+    if cols < MIN_FOR_RIGHT {
         return HeaderCells {
             left: fit(&joined, cols),
             slot: None,
             right: None,
         };
     }
+    let right = fit(&header.right.text, cols);
+    let right_w = width(&right);
+    let left = fit(&joined, cols.saturating_sub(right_w + GAP));
+    let left_w = width(&left);
     let room = cols.saturating_sub(left_w + right_w + 2 * GAP);
     let slot = match &header.slot {
         Slot::Idle(text) | Slot::Active(text) if cols >= MIN_FOR_SLOT && room >= MIN_SLOT => {
@@ -92,9 +96,9 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
         _ => None,
     };
     HeaderCells {
-        left: joined,
+        left,
         slot,
-        right: Some(header.right.text.clone()),
+        right: Some(right),
     }
 }
 
@@ -107,8 +111,11 @@ pub(super) fn render_header(
 ) -> Option<Rect> {
     let cols = usize::from(area.width);
     let cells = header_cells(header, cols);
-    // The scope part is accent; whatever follows it (the selection count) is plain text.
-    let scope_chars = header.left.chars().count();
+    // The scope part is accent; whatever follows it (the selection count, or the `…` of a cut)
+    // is plain text.
+    let cut = cells.left != header.joined();
+    let kept = cells.left.chars().count().saturating_sub(usize::from(cut));
+    let scope_chars = header.left.chars().count().min(kept);
     let scope: String = cells.left.chars().take(scope_chars).collect();
     let rest: String = cells.left.chars().skip(scope_chars).collect();
     let mut spans = vec![Span::styled(scope, theme.accent)];
@@ -124,7 +131,8 @@ pub(super) fn render_header(
             _ => theme.muted,
         };
         spans.push(Span::styled(text.clone(), style));
-        let slot_cols = cols.saturating_sub(at + width(&header.right.text) + GAP);
+        let right_w = cells.right.as_deref().map_or(0, width);
+        let slot_cols = cols.saturating_sub(at + right_w + GAP);
         slot_rect = Some(Rect::new(
             area.x + u16::try_from(*at).unwrap_or(u16::MAX),
             area.y,
@@ -297,6 +305,24 @@ mod tests {
         let cells = header_cells(&h, 59);
         assert!(cells.slot.is_none());
         assert_eq!(cells.right.as_deref(), Some("● Synced 11:40"));
+        let long = header(
+            &"y".repeat(50),
+            Slot::Idle("/ Search".into()),
+            "● Synced 11:40",
+        );
+        let cells = header_cells(&long, 59);
+        assert!(cells.slot.is_none());
+        assert_eq!(
+            cells.right.as_deref(),
+            Some("● Synced 11:40"),
+            "the right stays whole"
+        );
+        assert_eq!(
+            width(&cells.left),
+            59 - 14 - 2,
+            "the left is cut to what is left"
+        );
+        assert!(cells.left.ends_with('…'), "{:?}", cells.left);
         let cells = header_cells(&h, 39);
         assert!(cells.slot.is_none());
         assert!(cells.right.is_none());
@@ -304,6 +330,36 @@ mod tests {
         let wide = header(&"y".repeat(40), Slot::None, "● Synced 11:40");
         let cells = header_cells(&wide, 30);
         assert_eq!(width(&cells.left), 30, "the left part is cut to the width");
+    }
+
+    #[test]
+    fn the_summary_outranks_the_scope_title_when_both_do_not_fit() {
+        let h = Header {
+            selected: Some(3),
+            ..header(
+                "▍Rail │ All inboxes · 2 accounts · 22,853 unread",
+                Slot::Idle("/ Search".into()),
+                "daemon reachable again (Ctrl-r resumes live updates)",
+            )
+        };
+        let right = "daemon reachable again (Ctrl-r resumes live updates)";
+        let cells = header_cells(&h, 90);
+        assert_eq!(
+            cells.right.as_deref(),
+            Some(right),
+            "the summary is kept whole"
+        );
+        assert_eq!(width(&cells.left), 90 - width(right) - 2);
+        assert!(cells.left.starts_with("▍Rail │"), "{:?}", cells.left);
+        assert!(cells.left.ends_with('…'), "{:?}", cells.left);
+        assert!(cells.slot.is_none(), "no room is left for the slot");
+        let cells = header_cells(&h, 45);
+        assert_eq!(
+            width(cells.right.as_deref().unwrap()),
+            45,
+            "a summary wider than the row is cut"
+        );
+        assert_eq!(cells.left, "");
     }
 
     #[test]
@@ -399,5 +455,38 @@ mod tests {
         assert_eq!(buffer[(at, 0)].symbol(), "s");
         assert_eq!(buffer[(at, 0)].fg, Color::Green);
         assert_eq!(buffer[(0, 0)].fg, theme.accent.fg.unwrap());
+    }
+
+    #[test]
+    fn a_cut_scope_ends_in_an_ellipsis_in_the_text_style() {
+        let h = header(&"y".repeat(60), Slot::None, "● Synced 11:40");
+        let theme = Theme {
+            text: Style::new().fg(Color::Green),
+            ..Theme::default()
+        };
+        let mut terminal = Terminal::new(TestBackend::new(50, 1)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_header(frame, frame.area(), &theme, &h);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let at = u16::try_from(50 - 14 - 2 - 1).unwrap();
+        assert_eq!(buffer[(at, 0)].symbol(), "…");
+        assert_eq!(buffer[(at, 0)].fg, Color::Green);
+        assert_eq!(buffer[(0, 0)].fg, theme.accent.fg.unwrap());
+        let tiny = render_lines(40, 1, |frame| {
+            render_header(
+                frame,
+                frame.area(),
+                &theme,
+                &header("x", Slot::None, &"z".repeat(60)),
+            );
+        });
+        assert_eq!(
+            width(tiny[0].trim_end()),
+            40,
+            "a summary alone too wide fills the row"
+        );
     }
 }
