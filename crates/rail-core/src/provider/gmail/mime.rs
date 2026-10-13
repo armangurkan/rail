@@ -27,12 +27,12 @@ pub fn estimated_raw_size(body_bytes: usize, attachments: &[usize]) -> usize {
     })
 }
 
-/// The refusal for a message of `bytes`: "the message is 26.6 MiB, larger than Gmail's
-/// 25 MiB limit".
-pub fn too_large_text(bytes: usize) -> String {
+/// The refusal for a message of `bytes` on `provider`: "the message is 26.6 MiB, larger than
+/// Gmail's 25 MiB limit".
+pub fn too_large_text(bytes: usize, provider: &str) -> String {
     let tenths = bytes.saturating_mul(10) / MIB;
     format!(
-        "the message is {}.{} MiB, larger than Gmail's 25 MiB limit",
+        "the message is {}.{} MiB, larger than {provider}'s 25 MiB limit",
         tenths / 10,
         tenths % 10
     )
@@ -88,7 +88,7 @@ pub fn build(outgoing: &Outgoing) -> Result<Vec<u8>, ProviderError> {
 }
 
 fn too_large(bytes: usize) -> ProviderError {
-    ProviderError::permanent(&too_large_text(bytes))
+    ProviderError::permanent(&too_large_text(bytes, "Gmail"))
 }
 
 fn strip_controls(text: &str) -> String {

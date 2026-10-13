@@ -95,11 +95,13 @@ fn file_attachments(paths: Vec<String>) -> Result<Vec<Attachment>, OpError> {
     paths.into_iter().map(file_attachment).collect()
 }
 
-/// At most `MAX_ATTACHMENTS`, and the message with `body_bytes` of text at most Gmail's
-/// 25 MiB as the MIME builder estimates it (attachments grow by a third once encoded).
+/// At most `MAX_ATTACHMENTS`, and the message with `body_bytes` of text at most the 25 MiB the
+/// MIME builder estimates (Gmail's limit, kept for every provider; attachments grow by a third
+/// once encoded). The refusal names `provider`.
 fn check_total<'a>(
     body_bytes: usize,
     attachments: impl Iterator<Item = &'a Attachment>,
+    provider: &str,
 ) -> Result<(), OpError> {
     let sizes: Vec<usize> = attachments
         .map(|a| usize::try_from(a.size()).unwrap_or(0))
@@ -113,7 +115,7 @@ fn check_total<'a>(
     if estimated > MAX_MESSAGE_BYTES {
         return Err(OpError::invalid_input(format!(
             "attachments: {}",
-            too_large_text(estimated)
+            too_large_text(estimated, provider)
         )));
     }
     Ok(())
@@ -224,6 +226,8 @@ struct SaveInput {
     request: DraftSaveRequest,
     recipients: CheckedRecipients,
     files: Vec<Attachment>,
+    /// The account's provider, named by the size refusal.
+    provider: &'static str,
 }
 
 /// The draft an update names: the account's, and not being sent.
@@ -301,6 +305,7 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
         request,
         recipients,
         files,
+        provider,
     } = input;
     let existing = editable(&store, request.draft, account_id)?;
     let threading = match (&existing, request.reply_to.as_ref()) {
@@ -311,7 +316,7 @@ fn compose_write(db: &Path, input: SaveInput) -> Result<DraftWrite, OpError> {
     };
     let mut attachments = kept_parts(existing.as_ref(), &request.attachments, threading.parts)?;
     attachments.extend(files);
-    check_total(request.body.len(), attachments.iter())?;
+    check_total(request.body.len(), attachments.iter(), provider)?;
     Ok(DraftWrite {
         id: existing.as_ref().map(|d| d.id),
         account_id,
@@ -394,6 +399,7 @@ pub(super) async fn save(
         request,
         recipients,
         files,
+        provider: target.kind.provider_name(),
     };
     let reader = db.clone();
     let write = call
@@ -435,8 +441,9 @@ pub(super) fn draft_and_address(db: &Path, id: DraftId) -> Result<(Draft, String
     Ok((draft, address))
 }
 
-/// Every file still there and readable, and the total still under the cap.
-fn check_sendable(draft: &Draft) -> Result<(), OpError> {
+/// Every file still there and readable, and the total still under the cap (the refusal names
+/// `provider`).
+fn check_sendable(draft: &Draft, provider: &str) -> Result<(), OpError> {
     if draft.to.is_empty() && draft.cc.is_empty() && draft.bcc.is_empty() {
         return Err(OpError::invalid_input("to: add at least one recipient"));
     }
@@ -453,7 +460,7 @@ fn check_sendable(draft: &Draft) -> Result<(), OpError> {
         .attachments
         .iter()
         .filter(|a| matches!(a, Attachment::Part { .. }));
-    check_total(draft.body.len(), files.iter().chain(parts))
+    check_total(draft.body.len(), files.iter().chain(parts), provider)
 }
 
 /// Why an enqueue wrote no row: the draft is being sent, or it is gone.
@@ -511,7 +518,10 @@ pub(super) async fn send(
         return Err(no_such_draft());
     }
     let account_id = draft.account_id;
-    call.ctx.blocking(move || check_sendable(&draft)).await?;
+    let provider = target.kind.provider_name();
+    call.ctx
+        .blocking(move || check_sendable(&draft, provider))
+        .await?;
     let new = send_action(account_id, id, request.client_token);
     let outcome = call
         .ctx

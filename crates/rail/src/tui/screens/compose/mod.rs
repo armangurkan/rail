@@ -142,9 +142,9 @@ impl Composer {
     }
 
     /// Name these keys on the bottom row: the labels of send, push, edit, headers, attach,
-    /// remove, keep and discard, in that order.
-    pub fn with_hint(mut self, labels: &[String; 8]) -> Self {
-        self.hint = review::hint(labels);
+    /// remove, keep and discard, in that order; `provider` is where `s` saves.
+    pub fn with_hint(mut self, labels: &[String; 8], provider: &str) -> Self {
+        self.hint = review::hint(labels, provider);
         self
     }
 

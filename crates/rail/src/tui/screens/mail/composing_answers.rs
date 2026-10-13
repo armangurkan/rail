@@ -181,14 +181,15 @@ impl MailScreen {
         client_token: String,
         result: Result<DraftPushResponse, OpError>,
     ) -> Vec<Effect> {
-        let wanted = Pending::Pushing {
-            seq,
-            draft,
-            client_token: client_token.clone(),
+        let provider = match &self.composing.queuing {
+            Some(Pending::Pushing {
+                seq: s,
+                draft: d,
+                client_token: t,
+                provider,
+            }) if *s == seq && *d == draft && *t == client_token => *provider,
+            _ => return Vec::new(),
         };
-        if self.composing.queuing.as_ref() != Some(&wanted) {
-            return Vec::new();
-        }
         self.composing.queuing = None;
         let ours = self
             .compose
@@ -200,10 +201,13 @@ impl MailScreen {
                 if ours {
                     self.hide_composer();
                 }
-                self.pushed_record(RowToken {
-                    row: answer.row,
-                    client_token,
-                });
+                self.pushed_record(
+                    RowToken {
+                        row: answer.row,
+                        client_token,
+                    },
+                    provider,
+                );
             }
             Err(error) => {
                 tracing::warn!(code = ?error.code, "draft.push failed");
@@ -212,7 +216,7 @@ impl MailScreen {
                 if let Some(composer) = self.compose.as_mut().filter(|_| ours) {
                     composer.set_error(line.clone());
                 }
-                let text = format!("Could not save to Gmail: {line}");
+                let text = format!("Could not save to {provider}: {line}");
                 self.status.error(text, self.ctx.clock.now(), self.tick);
             }
         }
@@ -220,19 +224,21 @@ impl MailScreen {
     }
 
     /// Why `draft` cannot open: it is the one a `draft.send` or `draft.push` in flight is for.
-    fn in_flight(&self, draft: DraftId) -> Option<&'static str> {
-        match self.composing.queuing {
-            Some(Pending::Sending { draft: d, .. }) if d == draft => {
-                Some("This draft is being sent; wait for it to be queued.")
+    fn in_flight(&self, draft: DraftId) -> Option<String> {
+        match &self.composing.queuing {
+            Some(Pending::Sending { draft: d, .. }) if *d == draft => {
+                Some("This draft is being sent; wait for it to be queued.".to_string())
             }
-            Some(Pending::Pushing { draft: d, .. }) if d == draft => {
-                Some("This draft is being saved to Gmail; wait a moment.")
-            }
+            Some(Pending::Pushing {
+                draft: d, provider, ..
+            }) if *d == draft => Some(format!(
+                "This draft is being saved to {provider}; wait a moment."
+            )),
             _ => None,
         }
     }
 
-    /// The open review's own draft is being sent or saved to Gmail: the editor and attachment
+    /// The open review's own draft is being sent or saved to the account's Drafts: the editor and attachment
     /// changes wait for the answer, which may close the review. Says so.
     pub(super) fn own_draft_queuing(&mut self) -> bool {
         let own = self
@@ -250,8 +256,10 @@ impl MailScreen {
     /// so `y` and `s` work again, and the bar says its outcome is not known.
     pub(super) fn queuing_lost(&mut self, error: &OpError) {
         let (what, look) = match self.composing.queuing.take() {
-            Some(Pending::Sending { .. }) => ("the send", "Sent and Drafts"),
-            Some(Pending::Pushing { .. }) => ("the save to Gmail", "Drafts"),
+            Some(Pending::Sending { .. }) => ("the send".to_string(), "Sent and Drafts"),
+            Some(Pending::Pushing { provider, .. }) => {
+                (format!("the save to {provider}"), "Drafts")
+            }
             _ => return,
         };
         let text = format!(
@@ -304,7 +312,8 @@ impl MailScreen {
         self.resume_draft(draft)
     }
 
-    /// Open a stored draft in the composer; not the one being sent or saved to Gmail.
+    /// Open a stored draft in the composer; not the one being sent or saved to the account's
+    /// Drafts.
     pub(super) fn resume_draft(&mut self, draft: DraftId) -> Vec<Effect> {
         if self.compose.is_some() {
             self.status.notify(BUSY, self.tick);

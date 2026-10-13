@@ -1,7 +1,8 @@
 //! The Drafts folder from the mail screen's side: its reads, its keys (thread actions refused),
-//! Enter resuming a local draft or importing a Gmail one, `d` discarding either kind, and
+//! Enter resuming a local draft or importing a provider one, `d` discarding either kind, and
 //! `:drafts`, which lists the same rows for the scope's accounts.
 
+use rail_core::config::AccountKind;
 use rail_core::ops::{DraftImportResponse, OpError, client_token};
 use rail_core::store::drafts_folder::{DraftsRow, DraftsRowKind};
 
@@ -17,12 +18,12 @@ use crate::tui::screens::compose::prefill;
 /// Said for a thread action pressed in the Drafts folder.
 pub(super) const NOT_ON_DRAFTS: &str = "Not available on drafts";
 
-/// What an imported Gmail draft is for once the daemon answers.
+/// What an imported provider draft is for once the daemon answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AfterImport {
     /// Open its review.
     Open,
-    /// Discard it (and so its Gmail copy).
+    /// Discard it (and so its provider copy).
     Discard,
 }
 
@@ -123,18 +124,15 @@ impl MailScreen {
         busy
     }
 
-    /// Enter on a row of the pane or of `:drafts`: resume a local draft; import a Gmail one,
-    /// then resume it.
+    /// Enter on a row of the pane or of `:drafts`: resume a local draft; import a provider
+    /// one, then resume it.
     pub(super) fn open_draft_row(&mut self, row: DraftsRow) -> Vec<Effect> {
-        if self.refuse_m365(self.is_m365(row.account_id)) {
-            return Vec::new();
-        }
         if self.composing_busy() {
             return Vec::new();
         }
         match row.kind {
             DraftsRowKind::Local { draft, .. } => self.resume_draft(draft),
-            DraftsRowKind::Gmail { message } => {
+            DraftsRowKind::Remote { message } => {
                 self.import_row(row.account_id, message, AfterImport::Open)
             }
         }
@@ -167,24 +165,25 @@ impl MailScreen {
             self.status.notify("No draft to discard.", self.tick);
             return Vec::new();
         };
-        if self.refuse_m365(self.is_m365(row.account_id)) {
-            return Vec::new();
-        }
+        let drafts = self
+            .kind_of(row.account_id)
+            .unwrap_or(AccountKind::Gmail)
+            .drafts_name();
         let detail = match row.kind {
             DraftsRowKind::Local {
-                on_gmail: false, ..
-            } => "It is kept only on this computer: it is gone for good.",
-            DraftsRowKind::Local { on_gmail: true, .. } => {
-                "Its copy in Gmail's Drafts is deleted too."
-            }
-            DraftsRowKind::Gmail { .. } => {
+                on_remote: false, ..
+            } => "It is kept only on this computer: it is gone for good.".to_string(),
+            DraftsRowKind::Local {
+                on_remote: true, ..
+            } => format!("Its copy in {drafts} is deleted too."),
+            DraftsRowKind::Remote { .. } => {
                 if self.composing_busy() {
                     return Vec::new();
                 }
-                "It is deleted from Gmail's Drafts."
+                format!("It is deleted from {drafts}.")
             }
         };
-        let lines = vec!["Discard this draft? (y/n)".to_string(), detail.to_string()];
+        let lines = vec!["Discard this draft? (y/n)".to_string(), detail];
         self.drafts.discarding = Some(row);
         self.modal = Some(Modal::Confirm(Confirm::new(
             "Discard?",
@@ -194,7 +193,7 @@ impl MailScreen {
         Vec::new()
     }
 
-    /// The discard question answered yes: a local draft is discarded; a Gmail one is imported
+    /// The discard question answered yes: a local draft is discarded; a provider one is imported
     /// first, then its draft discarded.
     pub(super) fn discard_draft_row(&mut self) -> Vec<Effect> {
         let Some(row) = self.drafts.discarding.take() else {
@@ -202,8 +201,8 @@ impl MailScreen {
         };
         match row.kind {
             DraftsRowKind::Local { draft, .. } => vec![self.ctx.link.draft_discard(draft)],
-            DraftsRowKind::Gmail { .. } if self.composing_busy() => Vec::new(),
-            DraftsRowKind::Gmail { message } => {
+            DraftsRowKind::Remote { .. } if self.composing_busy() => Vec::new(),
+            DraftsRowKind::Remote { message } => {
                 self.import_row(row.account_id, message, AfterImport::Discard)
             }
         }
@@ -330,7 +329,7 @@ impl MailScreen {
         };
         let to = match row.kind {
             DraftsRowKind::Local {
-                on_gmail: false, ..
+                on_remote: false, ..
             } => "(local)".to_string(),
             _ => row
                 .to

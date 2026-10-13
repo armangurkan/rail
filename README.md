@@ -19,9 +19,8 @@ up without ever seeing your secrets.
 
 > **Rail is pre-1.0.** Account setup, background sync, search, reading mail, acting on threads
 > (archive, trash, star, read, move) and writing mail (new messages, replies and forwards, with
-> undo send, and drafts saved to Gmail) work today for Gmail. Microsoft 365 accounts sync, search,
-> read and act on threads today (archive, trash, flag, read and unread, move to a folder); writing
-> from them comes next.
+> undo send, and drafts saved to the account's Drafts) work today for Gmail and Microsoft 365.
+> Labels are Gmail's; on Microsoft 365 `m` moves to a folder instead.
 
 ## Contents
 
@@ -52,10 +51,11 @@ up without ever seeing your secrets.
   bodies of recent threads, kept current by a background daemon that can start at login
   (`rail daemon install`).
 - Microsoft 365 over Microsoft Graph: every mail folder, threads by conversation, read and flag
-  (star) state, new mail within one poll interval, server search, marking read on open, and
-  archive, trash, star, read or unread and move to a folder, with undo. `l` answers
-  `Outlook uses folders, not labels: press m to move.`; sending and drafts answer
-  `Not supported for Microsoft 365 accounts yet.` See [Microsoft 365 mail](#microsoft-365-mail).
+  (star) state, new mail within one poll interval, server search, marking read on open,
+  archive, trash, star, read or unread and move to a folder, with undo, and writing: new
+  messages, replies in the Outlook conversation, forwards, attachments up to 25 MiB and drafts in
+  Outlook's Drafts. `l` answers `Outlook uses folders, not labels: press m to move.` See
+  [Microsoft 365 mail](#microsoft-365-mail).
 - `rail search` over the local store and, through each account's server (Gmail's search,
   Microsoft Graph's `$search`), the mailbox itself.
 - Reading mail in the terminal: a unified inbox and per-account and per-label lists over the local
@@ -66,16 +66,16 @@ up without ever seeing your secrets.
   Microsoft 365. See [Doing things to mail](#doing-things-to-mail), including labelling (`l`, Gmail)
   and moving (`m`).
 - Writing mail: a new message, a reply, a reply to everyone or a forward, written in your own
-  editor, reviewed in Rail and sent through Gmail with a ten second undo; drafts kept on this
-  machine or saved to Gmail's Drafts, and a Drafts folder that lists both. See
+  editor, reviewed in Rail and sent through the account (Gmail or Microsoft 365) with a ten second
+  undo; drafts kept on this machine or saved to the account's Drafts, and a Drafts folder that
+  lists both. See
   [Writing mail](#writing-mail).
 - `rail doctor`, a single health check for config, store, tokens, sync and the daemon.
 - An MCP server (`rail mcp`) for setting up and inspecting Rail from an AI agent.
 
 **Coming**
 
-- Next: writing Microsoft 365 mail (send, drafts, and reply threading headers).
-- After that: agent tools for drafts and sends, the last piece of mail work, governed by the per-account `ai_send` policy.
+- Next: agent tools for drafts and sends, the last piece of mail work, governed by the per-account `ai_send` policy.
 - Later: search operators, layout options, inline images, display-quality HTML in the
   terminal.
 
@@ -239,7 +239,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `reader.top` | reader | `home` `g g` | First line. |
 | `reader.bottom` | reader | `end` `G` | Last line. |
 | `compose.send` | compose | `y` | Send. |
-| `compose.push` | compose | `s` | Save to Gmail's Drafts. |
+| `compose.push` | compose | `s` | Save to Drafts (Gmail or Microsoft 365). |
 | `compose.edit` | compose | `e` | Edit in your editor. |
 | `compose.headers` | compose | `t` | Change To, Cc, Bcc or Subject. |
 | `compose.attach` | compose | `a` | Attach a file. |
@@ -342,7 +342,7 @@ line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond th
 
 The status bar shows each account's sync state (`✓` caught up, `⟳` syncing, with a count during
 the first sync, `retrying`, `stopped`, and `!` for `needs login` or `sync failed`). After the state
-come `sending…` while a message is on its way to Gmail, `saving to Gmail…` while a draft is saved,
+come `sending…` while a message is on its way, `saving to Gmail…` (`saving to Microsoft 365…`) while a draft is saved,
 `2 queued` for actions on their way to the
 account's server and `1 failed` for actions it refused; see
 [Doing things to mail](#doing-things-to-mail).
@@ -448,10 +448,8 @@ reply goes to the message's `Reply-To` when it has one, otherwise to its sender;
 other recipients except you, keeping the old `Cc` in `Cc`. A reply starts with `Re:` once and the
 quoted text under `On <date>, <name> wrote:`; a forward starts with `Fwd:`, no recipients, and the
 original under a `Forwarded message` line, with its attachments. If the message's text is not in
-the store yet, Rail fetches it first (`fetching the message…`). From a Microsoft 365
-account, `c`, `r`, `R` and `f` (and picking it in `Write from`) answer
-`Not supported for Microsoft 365 accounts yet.` at once; writing from a Gmail account is
-unaffected.
+the store yet, Rail fetches it first (`fetching the message…`). Writing from a Microsoft 365
+account works the same way; [Microsoft 365 mail](#microsoft-365-mail) says what differs.
 
 **A new message** starts with two prompts on the bottom row. `To:` completes from the addresses
 your mail has taught Rail: type a few letters and matching addresses appear above, none
@@ -505,7 +503,7 @@ the mail system sees. The bottom row names the keys:
 | Key | What it does |
 |---|---|
 | `y` | Send. |
-| `s` | Save the draft to Gmail's Drafts. |
+| `s` | Save the draft to the account's Drafts (`s save to Gmail` or `s save to Microsoft 365` on the bottom row). |
 | `e` | Edit again in your editor. |
 | `t` | Change `To`, `Cc`, `Bcc` and `Subject`, one prompt after another. |
 | `a` | Attach a file: type its path (`~` works, `Tab` completes names from the folder, relative paths are made absolute) and press `Enter`. |
@@ -546,7 +544,7 @@ error (`Could not send: Gmail refused the request (HTTP 400)`) and the failure i
 local store, so a crash or a closed terminal loses nothing. A reply whose original message has
 since left the store keeps its threading. A draft stays on this computer until you press `s` on
 its review: Rail saves any text not stored yet, saves the draft to Gmail's Drafts ten seconds
-later, closes the review and says `saved to Gmail · z undoes`. `z` inside that window cancels it
+later (Outlook's Drafts for a Microsoft 365 account), closes the review and says `saved to Gmail · z undoes` (`saved to Microsoft 365 · z undoes`). `z` inside that window cancels it
 (`kept on this computer`). The review closes after `s`, so pressing `s` again means opening the
 draft again from the Drafts folder or `:drafts`; done inside the ten seconds, it makes one save with
 the newest text, and `z` after it cancels that save. `s` is refused when the message holds nothing at all.
@@ -572,8 +570,8 @@ at its review. A Gmail draft is fetched first (`fetching the draft…`), togethe
 attachments, and from then on is a draft of this computer too, its Gmail copy updated by `s`.
 A Gmail draft Rail already holds that was edited elsewhere since is listed again as a Gmail row;
 opening it opens Rail's copy, as Rail's version wins. `d`
-asks `Discard this draft? (y/n)`; yes deletes it, and its Gmail copy with it. While a save to Gmail
-is still on its way the discard is refused (`draft: saving to Gmail, try again in a moment`): try
+asks `Discard this draft? (y/n)`; yes deletes it, and its copy in the account's Drafts with it (Outlook moves it to Deleted Items). While a save to Gmail
+is still on its way the discard is refused (`draft: saving to Gmail, try again in a moment`, or `draft: saving to Microsoft 365, try again in a moment`): try
 again once it has landed. A Gmail draft that was deleted elsewhere before you opened or discarded
 it says `Gmail no longer has this draft`; one that cannot be fetched says `Could not open the
 draft: …` or `Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
@@ -582,8 +580,9 @@ select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`, `space`, `r`, `R
 The filter line is hidden in this folder. The pane is read again whenever sync or the outbox
 changes something. `:drafts` (`Open a draft` in the palette) lists the same rows for the account
 in view; in the unified inbox it merges every account's, and `Enter` opens one the same way.
-A Microsoft 365 account's draft rows are refused: `Enter` and `d` on one answer
-`Not supported for Microsoft 365 accounts yet.`
+A Microsoft 365 account's rows are its Outlook drafts and behave the same way: `Enter` imports
+one with its attachments, `d` says `It is deleted from Outlook's Drafts.` and deletes it there,
+and one deleted in Outlook first says `Microsoft 365 no longer has this draft`.
 
 **Files of an imported draft.** The attachments of a Gmail draft are fetched once, when you open
 it, into private files the daemon keeps in the `draft-files` folder of the data directory
@@ -592,7 +591,7 @@ the draft removes its files, and so does a completed send; when the daemon start
 file no draft refers to, which catches any a removal could not.
 
 **Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
-limit), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger
+limit, kept for Microsoft 365), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger
 than the files (so about 18 MiB of files fit); the review's total shows the files' own sizes, and
 a file that would take the message over is refused when you attach it, naming the size the
 message would have. File names are cleaned before they are sent. Attachments come from files you
@@ -731,8 +730,8 @@ MFA) can still intervene after consent; see [Microsoft sign-in errors](#microsof
 
 ### Microsoft 365 mail
 
-What a Microsoft 365 account does today. It syncs, reads and acts on threads over Microsoft Graph;
-writing mail comes next.
+What a Microsoft 365 account does today. It syncs, reads, acts on threads and writes mail over
+Microsoft Graph.
 
 - **Folders.** Every mail folder is synced, nested ones as `Parent/Child`. Inbox, Sent Items,
   Drafts, Archive, Deleted Items and Junk Email take the Inbox, Sent, Drafts, Archive, Trash and
@@ -762,8 +761,29 @@ writing mail comes next.
   and Drafts stay where they are. See [Doing things to mail](#doing-things-to-mail).
 - **Folders, not labels.** `l` answers `Outlook uses folders, not labels: press m to move.`
   Outlook categories are not used.
-- **Not yet.** `c`, `r`, `R` and `f`, and the rows of the Drafts folder (including discarding a
-  draft) answer `Not supported for Microsoft 365 accounts yet.` at once and send nothing.
+- **Writing.** `c`, `r`, `R` and `f` write as on Gmail, and `y` sends with the ten second `z`
+  undo. Rail writes each message as an Outlook draft: a reply, reply to everyone or forward is
+  made on the original message, so it joins the Outlook conversation and others see it
+  threaded; Rail then sets its subject, text, recipients and `Message-ID`. The text goes as plain
+  text. `y` sends that draft, and the sent copy arrives in Sent Items with the next sync. A reply
+  or forward whose original was deleted in Outlook goes out as a new message, outside the
+  conversation.
+- **Drafts.** `s` saves the draft to Outlook's Drafts (`saved to Microsoft 365 · z undoes`); later
+  saves update the same Outlook draft, and one deleted in Outlook is made again. Sending a saved
+  draft sends that very draft, so none is left in Drafts. A draft written in Outlook opens in Rail
+  with its attachments; `d` on it deletes it in Outlook (it goes to Deleted Items). When Outlook
+  made a reply, reply to everyone or forward draft but its answer was lost on the way back (a
+  timeout, say), Rail does not know that draft exists and makes another on the retry, so an extra
+  copy can stay in Outlook's Drafts: delete it there.
+- **Attachments.** At most 50 files and 25 MiB in all, as on Gmail (`the message is … MiB, larger
+  than Microsoft 365's 25 MiB limit`). A file of 3 MiB or more goes up in 3.75 MiB pieces, and a
+  failed upload is tried again later. A forward keeps the original's attachments in Outlook
+  without downloading them; remove one in the review and it goes from the draft too. Rail matches
+  its attachments to the draft's by name and size, and leaves inline pictures and attached
+  messages of a draft written in Outlook alone.
+- **Never sent twice.** Before any later attempt (a retry, or a start after the daemon stopped
+  mid-send), Rail asks Outlook for a sent message with the draft's `Message-ID`, and about the
+  draft it saved, and counts a sent one as sent.
 
 ### Presets for your organisation
 
@@ -878,7 +898,7 @@ syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. M
 finds on its server outside the window is kept for 14 days after it was last searched for. Rail
 changes mail on the server only when you act on it (archive, trash, star, read, labels, move),
 send, or save or discard a draft. It never deletes mail permanently, except a Gmail draft you
-discard or send, and the daemon is the only process that talks to Gmail or Microsoft 365.
+discard or send (a Microsoft 365 draft you discard goes to Deleted Items), and the daemon is the only process that talks to Gmail or Microsoft 365.
 
 Remote content in mail is loaded only by your browser, never by Rail, and only when you ask for
 it: `o` opens a message's HTML there, after you confirm once per session, and `g x` opens a link
@@ -1134,13 +1154,15 @@ their own.
 | Colours look wrong or a theme does nothing inside tmux | Add `set -as terminal-features ",xterm-256color:RGB"` (tmux 3.2+) or `set -ga terminal-overrides ",*:Tc"` to `~/.tmux.conf`, and make sure `COLORTERM=truecolor` reaches the shell inside tmux. |
 | `Microsoft 365 refused access: an administrator may need to grant consent (see "Work or school accounts and admin consent" in the README)` | An administrator grants consent, as in [Work or school accounts and admin consent](#work-or-school-accounts-and-admin-consent), then run `rail account login <name>` if the login also fails. |
 | `this mailbox cannot be reached through Microsoft Graph (on-premises, unlicensed or inactive)` | The mailbox must be an Exchange Online mailbox with a licence. |
-| `Not supported for Microsoft 365 accounts yet.` | Expected: Rail reads and acts on Microsoft 365 mail today; writing from a Microsoft 365 account comes next. |
 | `Outlook uses folders, not labels: press m to move.` | Expected: Outlook has folders, not labels. Press `m` to move the thread to a folder. |
 | `This mailbox has no Archive folder; press m to move.` | The mailbox has no Archive folder and Rail never makes one. Press `m` to move the thread to a folder. |
 | `the folder for this move no longer exists in Microsoft 365` | The folder was deleted in Outlook before the move was sent; Rail put the thread back. Press `m` and pick another folder. |
 | `Microsoft 365 is busy or unavailable (HTTP 429)`, or `retrying` in `rail sync` | Microsoft is throttling the mailbox. Rail waits as long as Microsoft asks (up to two minutes at a time) and tries again. |
 | `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |
+| `Microsoft 365 no longer has this draft` | The draft was deleted in Outlook since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Outlook again. |
 | `draft: saving to Gmail, try again in a moment` | A save of this draft to Gmail is still on its way, so it cannot be discarded yet. Wait for `saving to Gmail…` to leave the status bar and press `d` again. |
+| `draft: saving to Microsoft 365, try again in a moment` | A save of this draft to Outlook's Drafts is still on its way, so it cannot be discarded yet. Wait for `saving to Microsoft 365…` to leave the status bar and press `d` again. |
+| A reply from Microsoft 365 is not in the Outlook conversation | The message it answered was deleted in Outlook before the send, so Rail sent the reply as a new message. |
 | Two copies of one draft in Gmail's Drafts | Creating a Gmail draft is tried once; a failure that hid a success can leave a second copy. Delete the extra one in Gmail. |
 | The login URL did not open in a browser | Select it on screen and open it while Rail is still running. |
 | The editor opens and Rail comes straight back with the message unchanged | A graphical editor that returns at once. Give it its wait flag in `general.editor`, e.g. `editor = "code --wait"`. |

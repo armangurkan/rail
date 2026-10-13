@@ -37,7 +37,7 @@ pub(super) struct DraftsPane {
 fn same(a: &DraftsRow, b: &DraftsRow) -> bool {
     match (a.kind, b.kind) {
         (DraftsRowKind::Local { draft: x, .. }, DraftsRowKind::Local { draft: y, .. }) => x == y,
-        (DraftsRowKind::Gmail { message: x }, DraftsRowKind::Gmail { message: y }) => x == y,
+        (DraftsRowKind::Remote { message: x }, DraftsRowKind::Remote { message: y }) => x == y,
         _ => false,
     }
 }
@@ -113,7 +113,7 @@ fn people(row: &DraftsRow) -> String {
     if matches!(
         row.kind,
         DraftsRowKind::Local {
-            on_gmail: false,
+            on_remote: false,
             ..
         }
     ) {
@@ -173,7 +173,7 @@ impl MailScreen {
         let people = pad(&people(row), people_cols);
         let mark = match row.kind {
             DraftsRowKind::Local {
-                on_gmail: false, ..
+                on_remote: false, ..
             } => glyphs.draft,
             _ => " ",
         };

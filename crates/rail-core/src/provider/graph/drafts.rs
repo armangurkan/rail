@@ -82,7 +82,10 @@ fn checked(mail: &OutgoingMail) -> Result<(), ProviderError> {
     }
     let estimated = estimated_raw_size(mail.outgoing.body.len(), &sizes);
     if estimated > MAX_MESSAGE_BYTES {
-        return Err(ProviderError::permanent(&too_large_text(estimated)));
+        return Err(ProviderError::permanent(&too_large_text(
+            estimated,
+            "Microsoft 365",
+        )));
     }
     Ok(())
 }

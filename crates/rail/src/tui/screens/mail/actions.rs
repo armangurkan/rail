@@ -110,7 +110,7 @@ pub(crate) fn verbs(action: &MailAction) -> (&'static str, &'static str) {
         MailAction::Labels { .. } => ("labelled", "change the labels of"),
         MailAction::Move { .. } => ("moved", "move"),
         MailAction::Send { .. } => ("sent", "send"),
-        MailAction::PushDraft { .. } => ("saved to Gmail", "save the draft to Gmail"),
+        MailAction::PushDraft { .. } => ("saved", "save the draft"),
         MailAction::DeleteDraft { .. } => ("discarded", "discard the draft"),
     }
 }
@@ -654,10 +654,10 @@ impl MailScreen {
         self.draft_record(row, Record::Sent, "sent");
     }
 
-    /// `draft.push` queued the draft for Gmail under `row`'s token: `z` takes it back while
-    /// the grace lasts, and the draft stays on this computer.
-    pub(super) fn pushed_record(&mut self, row: RowToken) {
-        self.draft_record(row, Record::Pushed, "saved to Gmail");
+    /// `draft.push` queued the draft for `provider`'s Drafts under `row`'s token: `z` takes it
+    /// back while the grace lasts, and the draft stays on this computer.
+    pub(super) fn pushed_record(&mut self, row: RowToken, provider: &str) {
+        self.draft_record(row, Record::Pushed, &format!("saved to {provider}"));
     }
 
     fn draft_record(&mut self, row: RowToken, kind: Record, done: &str) {
@@ -679,11 +679,15 @@ impl MailScreen {
     }
 
     fn action_failed(&mut self, failure: ActionFailed) -> Vec<Effect> {
-        let text = format!(
-            "Could not {}: {}",
-            verbs(&failure.action).1,
-            error_line(&failure.error)
-        );
+        let what = match &failure.action {
+            MailAction::PushDraft { .. } => format!(
+                "{} to {}",
+                verbs(&failure.action).1,
+                self.kind_named(&failure.account).provider_name()
+            ),
+            action => verbs(action).1.to_string(),
+        };
+        let text = format!("Could not {what}: {}", error_line(&failure.error));
         let row = RowToken {
             row: failure.row,
             client_token: failure.client_token.clone(),

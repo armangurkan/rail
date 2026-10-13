@@ -420,6 +420,14 @@ impl AccountKind {
         }
     }
 
+    /// The provider's Drafts folder in what Rail says.
+    pub fn drafts_name(self) -> &'static str {
+        match self {
+            Self::Gmail => "Gmail's Drafts",
+            Self::M365 => "Outlook's Drafts",
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Gmail => "gmail",
@@ -627,5 +635,11 @@ mod tests {
             "Gmail keeps trashed mail in its Trash for 30 days."
         );
         assert_eq!(AccountKind::M365.trash_note(), "Moves to Deleted Items.");
+    }
+
+    #[test]
+    fn each_kind_names_its_drafts_folder() {
+        assert_eq!(AccountKind::Gmail.drafts_name(), "Gmail's Drafts");
+        assert_eq!(AccountKind::M365.drafts_name(), "Outlook's Drafts");
     }
 }

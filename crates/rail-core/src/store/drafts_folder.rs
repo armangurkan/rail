@@ -15,10 +15,11 @@ pub const MAX_DRAFTS_ROWS: usize = 500;
 /// What a Drafts-folder row stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DraftsRowKind {
-    /// One of the store's drafts; `on_gmail` once it was pushed or imported.
-    Local { draft: DraftId, on_gmail: bool },
-    /// A synced Gmail draft no local draft owns (written elsewhere): the store's message id.
-    Gmail { message: i64 },
+    /// One of the store's drafts; `on_remote` once it was pushed or imported.
+    Local { draft: DraftId, on_remote: bool },
+    /// A synced provider draft (Gmail's or Outlook's) no local draft owns (written elsewhere):
+    /// the store's message id.
+    Remote { message: i64 },
 }
 
 /// One row of the Drafts folder. `to` and `subject` are outside text.
@@ -98,7 +99,7 @@ fn read_local(r: &Row<'_>) -> rusqlite::Result<DraftsRow> {
     Ok(DraftsRow {
         kind: DraftsRowKind::Local {
             draft: r.get(0)?,
-            on_gmail: r.get(2)?,
+            on_remote: r.get(2)?,
         },
         account_id: r.get(1)?,
         to: parsed(&r.get::<_, String>(3)?),
@@ -110,7 +111,7 @@ fn read_local(r: &Row<'_>) -> rusqlite::Result<DraftsRow> {
 fn read_gmail(r: &Row<'_>) -> rusqlite::Result<DraftsRow> {
     let to: Vec<Mailbox> = parsed(&r.get::<_, String>(2)?);
     Ok(DraftsRow {
-        kind: DraftsRowKind::Gmail { message: r.get(0)? },
+        kind: DraftsRowKind::Remote { message: r.get(0)? },
         account_id: r.get(1)?,
         to: to.into_iter().map(Recipient::from).collect(),
         subject: r.get(3)?,
@@ -122,7 +123,7 @@ fn read_gmail(r: &Row<'_>) -> rusqlite::Result<DraftsRow> {
 fn order_key(row: &DraftsRow) -> (i64, bool, i64) {
     match row.kind {
         DraftsRowKind::Local { draft, .. } => (row.date, true, draft),
-        DraftsRowKind::Gmail { message } => (row.date, false, message),
+        DraftsRowKind::Remote { message } => (row.date, false, message),
     }
 }
 
