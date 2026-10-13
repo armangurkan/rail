@@ -24,7 +24,7 @@ use self::parts::{
     initial_status, key, named, needs_login, not_running, not_syncing, read_config, retry_observer,
     shutting_down, stop_engine, stop_engine_within, unsupported, writer_gone,
 };
-pub(crate) use self::parts::{m365_not_yet, retry_delay, unobserved};
+pub(crate) use self::parts::{retry_delay, unobserved};
 use super::batch::{Batch, StateUpdate};
 use super::engine::{Engine, EngineParts};
 use super::outbox::{Worker, WorkerParts};

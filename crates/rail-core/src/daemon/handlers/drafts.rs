@@ -24,7 +24,7 @@ use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
 use crate::store::drafts::{Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite};
 use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
-use crate::sync::{Wants, m365_not_yet};
+use crate::sync::Wants;
 
 pub(super) fn unexpected() -> OpError {
     OpError::internal("the store answered a draft write unexpectedly")
@@ -38,13 +38,16 @@ pub(super) fn being_sent() -> OpError {
     OpError::invalid_input("draft: this draft is being sent; undo first")
 }
 
-/// A push of the draft is in flight: its Gmail id may be about to change, so a discard now
-/// could leave the Gmail copy behind. It clears up once the push lands.
-fn being_pushed() -> OpError {
+/// A push of the draft is in flight: its provider id may be about to change, so a discard now
+/// could leave the provider's copy behind. It clears up once the push lands.
+fn being_pushed(kind: AccountKind) -> OpError {
     OpError::new(
         ErrorCode::InvalidInput,
         ErrorClass::Transient,
-        "draft: saving to Gmail, try again in a moment",
+        format!(
+            "draft: saving to {}, try again in a moment",
+            kind.provider_name()
+        ),
     )
 }
 
@@ -562,12 +565,13 @@ pub(super) async fn discard(
     request: DraftDiscardRequest,
 ) -> Result<DraftDiscardResponse, OpError> {
     checked_id(request.draft)?;
-    // A Microsoft 365 draft is refused like any other write (#31), decided from the store so a
-    // Gmail draft still goes while its account is not live; a draft already gone is a no-op.
+    // The provider's name for a refusal; a draft already gone is a no-op.
     let (db, id) = (call.ctx.paths.db_file(), request.draft);
-    if call.ctx.blocking(move || draft_owner(&db, id)).await? == Some(AccountKind::M365) {
-        return Err(m365_not_yet());
-    }
+    let kind = call
+        .ctx
+        .blocking(move || draft_owner(&db, id))
+        .await?
+        .unwrap_or(AccountKind::Gmail);
     let (db, paths, id) = (
         call.ctx.paths.db_file(),
         call.ctx.paths.clone(),
@@ -587,7 +591,9 @@ pub(super) async fn discard(
     match outcome {
         OutboxOutcome::DraftDeleted(DraftDeleteOutcome::Deleted) => {}
         OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingSent) => return Err(being_sent()),
-        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingPushed) => return Err(being_pushed()),
+        OutboxOutcome::DraftDeleted(DraftDeleteOutcome::BeingPushed) => {
+            return Err(being_pushed(kind));
+        }
         _ => return Err(unexpected()),
     }
     let files = remove_dirs(&owned);

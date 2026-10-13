@@ -75,7 +75,7 @@ pub(crate) fn remove_dirs(dirs: &[PathBuf]) -> usize {
         .count()
 }
 
-/// One attachment fetched from Gmail.
+/// One attachment fetched from the provider.
 struct Fetched {
     meta: ReplyAttachment,
     bytes: Vec<u8>,
@@ -85,17 +85,18 @@ async fn fetch_all(
     provider: &dyn Provider,
     remote: &str,
     parts: Vec<ReplyAttachment>,
+    provider_name: &str,
 ) -> Result<Vec<Fetched>, OpError> {
     let mut fetched = Vec::with_capacity(parts.len());
     for meta in parts {
-        // The name is Gmail's text and stays out of the message.
+        // The name is the provider's text and stays out of the message.
         let bytes = provider
             .attachment(&remote.to_string(), &meta.part_id)
             .await
             .map_err(|e| match e {
-                ProviderError::NotFound => {
-                    OpError::not_found("an attachment of this draft is no longer in Gmail")
-                }
+                ProviderError::NotFound => OpError::not_found(format!(
+                    "an attachment of this draft is no longer in {provider_name}"
+                )),
                 other => other.into(),
             })?;
         fetched.push(Fetched { meta, bytes });
@@ -162,7 +163,7 @@ fn write_all(dir: &Path, fetched: Vec<Fetched>) -> Result<Vec<Attachment>, OpErr
     Ok(files)
 }
 
-/// Claim `dir`, fetch every part of the Gmail message `remote` and store it there; the file
+/// Claim `dir`, fetch every part of the provider's message `remote` and store it there; the file
 /// entries. Once claimed, any failure removes `dir` and fails the import.
 pub(crate) async fn fetch_into(
     ctx: &DaemonContext,
@@ -170,6 +171,7 @@ pub(crate) async fn fetch_into(
     remote: &str,
     parts: Vec<ReplyAttachment>,
     dir: PathBuf,
+    provider_name: &str,
 ) -> Result<Vec<Attachment>, OpError> {
     let (db, root, claimed) = (
         ctx.paths.db_file(),
@@ -177,7 +179,7 @@ pub(crate) async fn fetch_into(
         dir.clone(),
     );
     ctx.blocking(move || claim(&db, &root, &claimed)).await?;
-    let fetched = match fetch_all(provider, remote, parts).await {
+    let fetched = match fetch_all(provider, remote, parts, provider_name).await {
         Ok(fetched) => fetched,
         Err(e) => {
             remove_dirs(std::slice::from_ref(&dir));

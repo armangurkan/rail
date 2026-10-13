@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 use super::SyncManager;
-use super::parts::{m365_labels, m365_not_yet, named, not_syncing, unsupported};
+use super::parts::{m365_labels, named, not_syncing, unsupported};
 use crate::config::AccountKind;
 use crate::daemon::DaemonContext;
 use crate::error::ErrorClass;
@@ -22,6 +22,8 @@ pub struct ActionTarget {
     pub name: String,
     pub address: String,
     pub account_id: i64,
+    /// The account's provider: its name in what the handlers say.
+    pub kind: AccountKind,
 }
 
 /// What a caller wants the account for: one action, or writing mail (save, send, push,
@@ -33,24 +35,16 @@ pub enum Wants<'a> {
 }
 
 impl Wants<'_> {
-    /// Whether a Microsoft 365 account does it in this version: every thread action but labels
-    /// (Outlook has folders). Draft actions never come as `Action`: `action.apply` refuses them.
-    fn reaches_m365(self) -> bool {
-        matches!(self, Self::Action(a) if !matches!(a, Action::Labels { .. }))
-    }
-
-    /// What a Microsoft 365 account answers at once to what it does not do.
-    fn m365_refusal(self) -> OpError {
-        match self {
-            Self::Action(_) => m365_labels(),
-            Self::Compose => m365_not_yet(),
-        }
+    /// Whether a Microsoft 365 account refuses it at once: a labels action (Outlook has
+    /// folders, and `m` moves to one). Every other action and all writing reach it.
+    fn refused_on_m365(self) -> bool {
+        matches!(self, Self::Action(Action::Labels { .. }))
     }
 }
 
 impl SyncManager {
     /// The account `who` names (name or address): configured, syncing, in the store, and able
-    /// to do what `wants` asks. A Microsoft 365 account refuses labels and all writing at once.
+    /// to do what `wants` asks. A Microsoft 365 account refuses labels at once.
     pub async fn action_target(
         &self,
         ctx: &DaemonContext,
@@ -63,8 +57,8 @@ impl SyncManager {
             .iter()
             .find(|s| named(s, who))
             .ok_or_else(|| not_syncing(who))?;
-        if status.kind == AccountKind::M365 && !wants.reaches_m365() {
-            return Err(wants.m365_refusal());
+        if status.kind == AccountKind::M365 && wants.refused_on_m365() {
+            return Err(m365_labels());
         }
         if status.phase == SyncPhase::Unsupported {
             return Err(unsupported());
@@ -81,6 +75,7 @@ impl SyncManager {
             name: status.name.clone(),
             address: status.address.clone(),
             account_id,
+            kind: status.kind,
         })
     }
 

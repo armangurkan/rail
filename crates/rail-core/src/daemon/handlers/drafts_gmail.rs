@@ -324,12 +324,13 @@ async fn find_gmail_draft(
     account: &str,
     account_id: i64,
     source: &ImportSource,
+    provider_name: &str,
 ) -> Result<Found, OpError> {
     let provider = provider_of(ctx, account).await?;
     let remote_draft_id = provider
         .draft_find(&source.remote_id)
         .await?
-        .ok_or_else(|| OpError::not_found("Gmail no longer has this draft"))?;
+        .ok_or_else(|| OpError::not_found(format!("{provider_name} no longer has this draft")))?;
     let (db, held) = (ctx.paths.db_file(), remote_draft_id.clone());
     let bound = ctx
         .blocking(move || -> Result<Option<DraftId>, OpError> {
@@ -350,6 +351,7 @@ async fn from_gmail(
     provider: &dyn Provider,
     source: ImportSource,
     token: &str,
+    provider_name: &str,
 ) -> Result<(ImportSource, Vec<Attachment>, PathBuf), OpError> {
     let mut source = with_body(ctx, account, source).await?;
     let (dir, parts) = (
@@ -357,7 +359,7 @@ async fn from_gmail(
         std::mem::take(&mut source.attachments),
     );
     let remote = source.remote_id.clone();
-    let files = fetch_into(ctx, provider, &remote, parts, dir.clone()).await?;
+    let files = fetch_into(ctx, provider, &remote, parts, dir.clone(), provider_name).await?;
     Ok((source, files, dir))
 }
 
@@ -374,6 +376,7 @@ pub(super) async fn import(
         .sync
         .action_target(ctx, &request.account, Wants::Compose)
         .await?;
+    let provider_name = target.kind.provider_name();
     let source = import_source(ctx, request.message, target.account_id).await?;
     let _imports = IMPORTS.lock().await;
     let (db, remote, held) = (ctx.paths.db_file(), source.remote_id.clone(), token.clone());
@@ -385,23 +388,28 @@ pub(super) async fn import(
         return Ok(DraftImportResponse { draft });
     }
     let (provider, remote_draft_id) =
-        match find_gmail_draft(ctx, &request.account, account_id, &source).await? {
+        match find_gmail_draft(ctx, &request.account, account_id, &source, provider_name).await? {
             Found::Held(draft) => return Ok(DraftImportResponse { draft }),
             Found::Gmail(provider, id) => (provider, id),
         };
-    let (source, files, dir) =
-        from_gmail(ctx, &request.account, provider.as_ref(), source, &token).await?;
+    let (source, files, dir) = from_gmail(
+        ctx,
+        &request.account,
+        provider.as_ref(),
+        source,
+        &token,
+        provider_name,
+    )
+    .await?;
     let count = files.len();
-    let remote_message_id = source.remote_id.clone();
     let import = ImportWrite {
+        remote_message_id: source.remote_id.clone(),
         write: import_write(source, files, &target.address),
         remote_draft_id,
-        remote_message_id,
         client_token: token,
         dir,
     };
     let draft = write_import(ctx, import).await?;
-    let message = request.message;
-    tracing::info!(account = %target.name, draft, message, files = count, "a Gmail draft was imported");
+    tracing::info!(account = %target.name, draft, message = request.message, files = count, "a provider draft was imported");
     Ok(DraftImportResponse { draft })
 }
