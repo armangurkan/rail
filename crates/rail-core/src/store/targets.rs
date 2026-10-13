@@ -6,6 +6,7 @@
 use crate::config::FolderModel;
 use rusqlite::{Connection, OptionalExtension, params};
 
+use super::accounts::folder_model_in;
 use super::apply_local::Prior;
 use super::outbox::OutboxRow;
 use super::{Store, StoreError};
@@ -130,8 +131,15 @@ fn folder_facts(
 }
 
 /// `facts` as they were before `prior`'s change: the old flags, and the first folder of the
-/// old set (the folders now, less those the change added, plus those it removed).
-fn before(conn: &Connection, facts: &mut TargetMessage, prior: &Prior) -> Result<(), StoreError> {
+/// old set. On a one-folder mailbox that is the folder the change took the message out of,
+/// when it took it out of one (a later row may have moved it since; `merge` keeps the oldest
+/// first); otherwise the folders now, less those the change added, plus those it removed.
+fn before(
+    conn: &Connection,
+    single: bool,
+    facts: &mut TargetMessage,
+    prior: &Prior,
+) -> Result<(), StoreError> {
     if let Some(read) = prior.read {
         facts.unread = !read;
     }
@@ -141,11 +149,15 @@ fn before(conn: &Connection, facts: &mut TargetMessage, prior: &Prior) -> Result
     if prior.added.is_empty() && prior.removed.is_empty() {
         return Ok(());
     }
-    let first = folders_of(conn, prior.message)?
-        .into_iter()
-        .filter(|f| !prior.added.contains(f))
-        .chain(prior.removed.iter().copied())
-        .min();
+    let first = if single && !prior.removed.is_empty() {
+        prior.removed.first().copied()
+    } else {
+        folders_of(conn, prior.message)?
+            .into_iter()
+            .filter(|f| !prior.added.contains(f))
+            .chain(prior.removed.iter().copied())
+            .min()
+    };
     (facts.folder, facts.folder_remote) = match first {
         Some(folder) => folder_facts(conn, folder)?,
         None => (None, None),
@@ -197,6 +209,7 @@ impl Store {
     /// already shows that change. Threads and messages come in store order.
     pub(crate) fn row_targets(&self, row: &OutboxRow) -> Result<Vec<ThreadTarget>, StoreError> {
         let mut stored = targets_in(&self.conn, row.account_id, &row.thread_ids)?;
+        let single = folder_model_in(&self.conn, row.account_id)? == FolderModel::SingleFolder;
         for target in &mut stored {
             let thread = target.thread;
             for (facts, local) in target.target.messages.iter_mut().zip(&target.messages) {
@@ -205,7 +218,7 @@ impl Store {
                     .iter()
                     .find(|p| p.message == *local && p.thread == thread);
                 if let Some(prior) = prior {
-                    before(&self.conn, facts, prior)?;
+                    before(&self.conn, single, facts, prior)?;
                 }
             }
         }

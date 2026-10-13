@@ -7,10 +7,11 @@
 use super::Store;
 use super::apply_local_tests::{enqueue, folder, state, thread, undo};
 use super::outbox::{Failure, OutboxOutcome, OutboxWrite};
+use crate::actions::scope::touched;
 use crate::config::FolderModel;
 use crate::ops::Action;
 use crate::provider::mock::envelope;
-use crate::provider::{Envelope, FolderKind, RemoteFolder, TargetMessage};
+use crate::provider::{Change, Envelope, FolderKind, RemoteFolder, TargetMessage};
 use crate::sync::batch::Batch;
 
 const NOW: i64 = 1_760_000_000;
@@ -42,6 +43,11 @@ fn message(id: &str, thread: &str, ms: i64, folder: &str, read: bool) -> Envelop
 /// A Microsoft 365 account (id 1): conversation c1 holds m1 (Inbox, unread), m2 (the user's
 /// reply in Sent Items) and m3 (Projects, unread, the newest); c2 holds m4 (Projects).
 fn seeded() -> Store {
+    seeded_with(folders())
+}
+
+/// `seeded`, with the account's folders listed (and so numbered) in `folders`' order.
+fn seeded_with(folders: Vec<RemoteFolder>) -> Store {
     let mut store = Store::open_in_memory().unwrap();
     store
         .conn()
@@ -51,7 +57,7 @@ fn seeded() -> Store {
         )
         .unwrap();
     let batch = Batch {
-        folders: Some(folders()),
+        folders: Some(folders),
         upserts: vec![
             message("m1", "c1", 1_000, "f-inbox", false),
             message("m2", "c1", 2_000, "f-sent", true),
@@ -319,4 +325,129 @@ fn undo_with_no_delta_still_puts_the_message_back_in_the_inbox() {
     let id = enqueue(&mut store, Action::Archive {}, vec![c1], "a");
     undo(&mut store, vec![id]);
     assert_eq!(places(&store)[0], ["f-inbox"]);
+}
+
+/// A pending move of c1 to Projects (only m1 moves), then a folder sync that no longer lists
+/// Projects: its row goes, and with it m1's only folder.
+fn moved_then_target_deleted() -> (Store, i64) {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let to = folder(&store, "f-proj");
+    let id = enqueue(&mut store, Action::Move { to }, vec![c1], "a");
+    assert_eq!(places(&store)[0], ["f-proj"]);
+    let listing = Batch {
+        folders: Some(
+            folders()
+                .into_iter()
+                .filter(|f| f.remote_id != "f-proj")
+                .collect(),
+        ),
+        ..Batch::new(1)
+    };
+    store.apply(&listing, NOW + 1).unwrap();
+    assert!(places(&store)[0].is_empty(), "m1's folder row is gone");
+    (store, id)
+}
+
+fn fail_for_good(store: &mut Store, id: i64) {
+    claim(store);
+    let fail = OutboxWrite::Fail {
+        id,
+        failure: Failure::Permanent("the folder for this move no longer exists".into()),
+    };
+    store.outbox_write(&fail, NOW + 20).unwrap();
+}
+
+#[test]
+fn a_failed_move_whose_folder_is_gone_puts_the_message_back_in_the_inbox() {
+    let (mut store, id) = moved_then_target_deleted();
+    fail_for_good(&mut store, id);
+    assert_eq!(places(&store)[0], ["f-inbox"], "in exactly its old folder");
+}
+
+#[test]
+fn undo_of_a_move_whose_folder_is_gone_puts_the_message_back_in_the_inbox() {
+    let (mut store, id) = moved_then_target_deleted();
+    undo(&mut store, vec![id]);
+    assert_eq!(places(&store)[0], ["f-inbox"], "in exactly its old folder");
+}
+
+#[test]
+fn a_sync_after_the_move_folder_is_gone_keeps_the_way_back_to_the_inbox() {
+    let (mut store, id) = moved_then_target_deleted();
+    let delta = Batch {
+        upserts: vec![message("m2", "c1", 2_000, "f-sent", true)],
+        ..Batch::new(1)
+    };
+    store.apply(&delta, NOW + 2).unwrap();
+    fail_for_good(&mut store, id);
+    assert_eq!(places(&store)[0], ["f-inbox"], "in exactly its old folder");
+}
+
+/// The folders as Graph lists them, by name: Archive and Deleted Items number below Inbox.
+fn folders_by_name() -> Vec<RemoteFolder> {
+    let mut by_name = folders();
+    by_name.sort_by(|a, b| a.name.cmp(&b.name));
+    by_name
+}
+
+#[test]
+fn a_stacked_rows_targets_show_the_exact_folder_each_message_left() {
+    let mut store = seeded_with(folders_by_name());
+    let c1 = thread(&store, "c1");
+    let archive = enqueue(&mut store, Action::Archive {}, vec![c1], "a");
+    enqueue(&mut store, Action::Trash {}, vec![c1], "b");
+    assert_eq!(places(&store)[0], ["f-del"], "the store shows both rows");
+    let row = claim(&mut store);
+    assert_eq!(row.id, archive);
+    let m1 = store
+        .row_targets(&row)
+        .unwrap()
+        .remove(0)
+        .messages
+        .remove(0);
+    assert_eq!(
+        (m1.folder, m1.folder_remote.as_deref()),
+        (Some(FolderKind::Inbox), Some("f-inbox")),
+        "the archive row sees m1 in the Inbox"
+    );
+    store
+        .outbox_write(&OutboxWrite::Complete { id: archive }, NOW + 20)
+        .unwrap();
+    let trash = claim(&mut store);
+    let m1 = store
+        .row_targets(&trash)
+        .unwrap()
+        .remove(0)
+        .messages
+        .remove(0);
+    assert_eq!(
+        (m1.folder, m1.folder_remote.as_deref()),
+        (Some(FolderKind::Archive), Some("f-arch")),
+        "the trash row sees m1 in Archive"
+    );
+}
+
+#[test]
+fn a_stacked_archive_is_sent_for_the_inbox_message_when_the_trash_after_it_fails() {
+    let mut store = seeded_with(folders_by_name());
+    let c1 = thread(&store, "c1");
+    let archive = enqueue(&mut store, Action::Archive {}, vec![c1], "a");
+    let trash = enqueue(&mut store, Action::Trash {}, vec![c1], "b");
+    let row = claim(&mut store);
+    let facts = store.row_targets(&row).unwrap().remove(0).messages;
+    assert_eq!(
+        touched(&Change::Archive, &facts),
+        [0],
+        "the archive request names m1"
+    );
+    store
+        .outbox_write(&OutboxWrite::Complete { id: archive }, NOW + 20)
+        .unwrap();
+    fail_for_good(&mut store, trash);
+    assert_eq!(
+        places(&store)[..3],
+        [vec!["f-arch"], vec!["f-sent"], vec!["f-proj"]],
+        "the store shows what Outlook did: m1 archived, the trash undone"
+    );
 }

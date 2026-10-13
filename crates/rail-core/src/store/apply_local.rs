@@ -233,8 +233,10 @@ fn apply_labels(
     Ok(priors)
 }
 
-/// True when `p` moved the message into a folder it has since left: on a one-folder mailbox
-/// the server's folder then stands and `p`'s folder part is stale.
+/// True when `p` moved the message into a folder and the server has since put it in another:
+/// on a one-folder mailbox the server's folder then stands and `p`'s folder part is stale. A
+/// message in no folder at all (the folder `p` put it in was deleted, and its membership with
+/// it) has not left: its old folder goes back.
 fn left_its_folder(tx: &Transaction, p: &Prior) -> Result<bool, StoreError> {
     if p.added.is_empty() {
         return Ok(false);
@@ -244,7 +246,7 @@ fn left_its_folder(tx: &Transaction, p: &Prior) -> Result<bool, StoreError> {
             return Ok(false);
         }
     }
-    Ok(true)
+    Ok(!super::targets::folders_of(tx, p.message)?.is_empty())
 }
 
 /// Put back what `priors` record of `account`. On a one-folder mailbox the folder part goes
