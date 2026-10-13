@@ -49,8 +49,20 @@ pub(super) enum Slot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Header {
     pub left: String,
+    /// The selected threads, drawn after `left` in the text style.
+    pub selected: Option<u64>,
     pub slot: Slot,
     pub right: Summary,
+}
+
+impl Header {
+    /// `left` and the selection count, joined: what the width rules measure.
+    fn joined(&self) -> String {
+        match self.selected {
+            Some(n) => format!("{} · {} selected", self.left, thousands(n)),
+            None => self.left.clone(),
+        }
+    }
 }
 
 /// The header fitted to a width: the left text, the slot's column and text, the right text.
@@ -66,11 +78,12 @@ pub(super) struct HeaderCells {
     expect(dead_code, reason = "drawn from the frame task on; remove then")
 )]
 pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
-    let left_w = width(&header.left);
+    let joined = header.joined();
+    let left_w = width(&joined);
     let right_w = width(&header.right.text);
     if cols < MIN_FOR_RIGHT || left_w + GAP + right_w > cols {
         return HeaderCells {
-            left: fit(&header.left, cols),
+            left: fit(&joined, cols),
             slot: None,
             right: None,
         };
@@ -83,7 +96,7 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
         _ => None,
     };
     HeaderCells {
-        left: header.left.clone(),
+        left: joined,
         slot,
         right: Some(header.right.text.clone()),
     }
@@ -102,7 +115,14 @@ pub(super) fn render_header(
 ) -> Option<Rect> {
     let cols = usize::from(area.width);
     let cells = header_cells(header, cols);
-    let mut spans = vec![Span::styled(cells.left.clone(), theme.accent)];
+    // The scope part is accent; whatever follows it (the selection count) is plain text.
+    let scope_chars = header.left.chars().count();
+    let scope: String = cells.left.chars().take(scope_chars).collect();
+    let rest: String = cells.left.chars().skip(scope_chars).collect();
+    let mut spans = vec![Span::styled(scope, theme.accent)];
+    if !rest.is_empty() {
+        spans.push(Span::styled(rest, theme.text));
+    }
     let mut used = width(&cells.left);
     let mut slot_rect = None;
     if let Some((at, text)) = &cells.slot {
@@ -144,7 +164,8 @@ impl MailScreen {
     )]
     pub(super) fn header(&self) -> Header {
         Header {
-            left: self.header_left(),
+            left: self.scope_left(),
+            selected: self.selected_count(),
             slot: self.slot(),
             right: self.status.summary(
                 &self.accounts,
@@ -161,19 +182,44 @@ impl MailScreen {
         expect(dead_code, reason = "drawn from the frame task on; remove then")
     )]
     pub(crate) fn header_left(&self) -> String {
+        Header {
+            left: self.scope_left(),
+            selected: self.selected_count(),
+            slot: Slot::None,
+            right: Summary {
+                text: String::new(),
+                error: false,
+            },
+        }
+        .joined()
+    }
+
+    /// The scope, its account count and its unread count.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "drawn from the frame task on; remove then")
+    )]
+    fn scope_left(&self) -> String {
         let glyphs = Glyphs::of(self.ctx.icons);
         let mut left = format!("{}Rail │ {}", glyphs.bar, self.scope_title());
         if self.scope == ScopeChoice::Unified {
-            let n = self.accounts.len();
-            left.push_str(&format!(" · {n} account{}", if n == 1 { "" } else { "s" }));
+            let n = u64::try_from(self.accounts.len()).unwrap_or(u64::MAX);
+            let plural = if n == 1 { "" } else { "s" };
+            left.push_str(&format!(" · {} account{plural}", thousands(n)));
         }
         let unread = self.sidebar.unread(&self.scope);
         left.push_str(&format!(" · {} unread", thousands(unread)));
-        let selected = self.actions.selection.len();
-        if selected > 0 {
-            left.push_str(&format!(" · {selected} selected"));
-        }
         left
+    }
+
+    /// How many threads are selected, when any.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "drawn from the frame task on; remove then")
+    )]
+    fn selected_count(&self) -> Option<u64> {
+        let n = self.actions.selection.len();
+        (n > 0).then(|| u64::try_from(n).unwrap_or(u64::MAX))
     }
 
     /// The summary's text, for tests.
@@ -220,6 +266,10 @@ mod tests {
 
     use rail_core::paths::Paths;
 
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::{Color, Style};
+
     use super::*;
     use crate::tui::data::FakeDaemon;
     use crate::tui::test_util::{mail_ctx, render_lines, work_and_home};
@@ -227,6 +277,7 @@ mod tests {
     fn header(left: &str, slot: Slot, right: &str) -> Header {
         Header {
             left: left.to_string(),
+            selected: None,
             slot,
             right: Summary {
                 text: right.to_string(),
@@ -242,6 +293,11 @@ mod tests {
         assert_eq!(thousands(1_000), "1,000");
         assert_eq!(thousands(22_853), "22,853");
         assert_eq!(thousands(1_234_567), "1,234,567");
+        let h = Header {
+            selected: Some(1_234),
+            ..header("▍Rail │ All inboxes", Slot::None, "x")
+        };
+        assert_eq!(h.joined(), "▍Rail │ All inboxes · 1,234 selected");
     }
 
     #[test]
@@ -346,5 +402,30 @@ mod tests {
             assert!(render_header(frame, frame.area(), &theme, &h).is_none());
         });
         assert_eq!(wide[0].trim_end(), "▍Rail │ All inboxes");
+    }
+
+    #[test]
+    fn the_selection_count_is_drawn_in_the_text_style_not_the_accent() {
+        let h = Header {
+            selected: Some(3),
+            ..header("▍Rail │ All inboxes", Slot::None, "● Synced 11:40")
+        };
+        let theme = Theme {
+            text: Style::new().fg(Color::Green),
+            ..Theme::default()
+        };
+        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_header(frame, frame.area(), &theme, &h);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..80).map(|x| buffer[(x, 0)].symbol()).collect();
+        let byte = row.find("selected").unwrap();
+        let at = u16::try_from(row[..byte].chars().count()).unwrap();
+        assert_eq!(buffer[(at, 0)].symbol(), "s");
+        assert_eq!(buffer[(at, 0)].fg, Color::Green);
+        assert_eq!(buffer[(0, 0)].fg, theme.accent.fg.unwrap());
     }
 }

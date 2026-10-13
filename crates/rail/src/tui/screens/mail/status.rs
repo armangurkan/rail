@@ -335,6 +335,7 @@ fn rank(name: &str, s: Option<&AccountSyncStatus>, glyphs: &Glyphs) -> (u8, Stri
             RANK_BROKEN,
             format!("{} {name} sync failed", glyphs.problem),
         ),
+        SyncPhase::Idle if s.last_success_at.is_none() => (RANK_BUSY, NO_SYNC_YET.to_string()),
         SyncPhase::Idle => (RANK_SYNCED, String::new()),
         SyncPhase::Stopped => (RANK_STOPPED, format!("{name} stopped")),
         SyncPhase::Retrying => (RANK_RETRYING, format!("{} retrying", glyphs.syncing)),
@@ -502,6 +503,12 @@ mod tests {
         let mut other = status("home", "h@example.com", SyncPhase::Idle);
         other.last_success_at = None;
         assert_eq!(summary_of(&bar(vec![fresh, other])).text, "– no sync yet");
+        let synced = status("work", "w@example.com", SyncPhase::Idle);
+        let mut never = status("home", "h@example.com", SyncPhase::Idle);
+        never.last_success_at = None;
+        let s = summary_of(&bar(vec![synced, never]));
+        assert_eq!(s.text, "– no sync yet", "one account that never synced");
+        assert!(!s.error);
     }
 
     #[test]
