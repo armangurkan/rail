@@ -1339,6 +1339,7 @@ their own.
 | The login URL did not open in a browser | Select it on screen and open it while Rail is still running. |
 | The editor opens and Rail comes straight back with the message unchanged | A graphical editor that returns at once. Give it its wait flag in `general.editor`, e.g. `editor = "code --wait"`. |
 | `cannot run "vi"` (or your editor's name) when writing | No editor was found: `general.editor`, `$VISUAL` and `$EDITOR` are unset or name a program that is not installed, and `vi` is missing. Set `general.editor`. |
+| The editor's text is still on screen after it closes | Rail could not take the terminal back from the editor. It repaints the whole screen on the next frame and logs `could not take the terminal back from the editor` in `rail.log`. |
 | `Could not send: Gmail refused the request (HTTP 400)` | Gmail refused the message and did not say why. The review opens again: check the addresses with `t` and send again. |
 
 ### Microsoft sign-in errors

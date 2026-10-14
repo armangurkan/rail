@@ -309,6 +309,9 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- When Rail could not take the terminal back from the editor, the next frame drew only what
+  changed, so the editor's text could stay on screen. It now repaints the whole screen and logs
+  the error (#23).
 - `:thread-order` with the reader's cursor on a rule or a blank line moved the cursor to
   another message; it stays on the message it was in.
 - A reader 15 to 18 columns wide showed `…  /  4 messages` under the subject (or, at 15, lost

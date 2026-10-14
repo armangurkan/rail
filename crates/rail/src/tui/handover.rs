@@ -21,21 +21,47 @@ pub trait Suspend {
     fn take_returned(&mut self) -> bool;
 }
 
+/// How `Handover` gives the terminal away or takes it back.
+type TerminalStep = fn() -> io::Result<()>;
+
 /// The real terminal's hand-over; the guard in `terminal::enter` still restores it once.
-#[derive(Default)]
 pub struct Handover {
     returned: bool,
+    give: TerminalStep,
+    take_back: TerminalStep,
+}
+
+impl Default for Handover {
+    fn default() -> Self {
+        Self {
+            returned: false,
+            give: terminal::suspend,
+            take_back: terminal::resume,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Handover {
+    /// A hand-over through `give` and `take_back` instead of the real terminal.
+    pub(crate) fn with(give: TerminalStep, take_back: TerminalStep) -> Self {
+        Self {
+            returned: false,
+            give,
+            take_back,
+        }
+    }
 }
 
 impl Suspend for Handover {
     fn suspend(&mut self) -> io::Result<()> {
-        terminal::suspend()
+        (self.give)()
     }
 
     fn resume(&mut self) -> io::Result<()> {
-        terminal::resume()?;
+        // The editor drew on the screen: repaint it whole even if taking it back fails.
         self.returned = true;
-        Ok(())
+        (self.take_back)()
     }
 
     fn take_returned(&mut self) -> bool {
@@ -120,8 +146,9 @@ where
 
 /// Hand the terminal to the editor, wait for it, take the terminal back. A failed hand-over
 /// still tries to take the terminal back, and says so. Once the editor ran its exit code is
-/// the answer: a failure to take the terminal back is logged (the screen repaints anyway), so
-/// what the editor wrote is still read.
+/// the answer: a failure to take the terminal back is logged, and the next frame repaints the
+/// whole screen (`resume` marks the return before it tries), so what the editor wrote is still
+/// read.
 pub fn run_editor_blocking(
     suspend: &mut impl Suspend,
     command: &[String],
