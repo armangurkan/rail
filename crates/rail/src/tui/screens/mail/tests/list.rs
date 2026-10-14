@@ -152,3 +152,113 @@ async fn a_page_down_moves_by_the_threads_that_fit() {
         "the cursor on the last list row"
     );
 }
+
+/// Review Focus 5 (selection and opening).
+#[tokio::test]
+async fn space_selects_across_a_group_row_and_enter_opens_the_thread_under_the_cursor() {
+    let mut f = grouped(2, 2).await;
+    let ids = thread_ids(&f);
+    press(&mut f, KeyCode::Char('j')).await;
+    press(&mut f, KeyCode::Char(' ')).await;
+    assert_eq!(
+        selected(&f).as_deref(),
+        Some("subject ym1"),
+        "Space moved over the group row"
+    );
+    press(&mut f, KeyCode::Char(' ')).await;
+    let selection = &f.screen.actions.selection;
+    assert_eq!(selection.len(), 2);
+    assert!(selection.contains(ids[1]) && selection.contains(ids[2]));
+    let rows = lines(&f, 90, 24);
+    assert!(rows[3].starts_with("▸  W  Sender"), "{}", rows[3]);
+    assert_eq!(rows[4].trim_end(), "YESTERDAY");
+    assert!(rows[5].starts_with("▸  W  Sender"), "{}", rows[5]);
+    assert!(
+        rows[6].starts_with("·  W  Sender"),
+        "the read thread: {}",
+        rows[6]
+    );
+    press(&mut f, KeyCode::Char('k')).await;
+    press(&mut f, KeyCode::Enter).await;
+    let reader = f.screen.reader.as_ref().expect("a thread opened");
+    assert_eq!(reader.thread_id(), ids[2], "the thread under the cursor");
+    let rows = lines(&f, 150, 40);
+    assert!(
+        rows[2].contains("│TODAY"),
+        "the list beside the reader: {}",
+        rows[2]
+    );
+    assert!(
+        rows[2].contains("subject ym1"),
+        "the reader's title: {}",
+        rows[2]
+    );
+}
+
+/// Review Focus 4 (through the screen).
+#[tokio::test]
+async fn home_and_end_show_their_group_rows_and_the_cursor() {
+    let mut f = grouped(10, 10).await;
+    let _ = lines(&f, 90, 12);
+    press(&mut f, KeyCode::End).await;
+    assert_eq!(selected(&f).as_deref(), Some("subject ym0"));
+    let rows = lines(&f, 90, 12);
+    assert_eq!(
+        rows[1].trim_end(),
+        "YESTERDAY",
+        "the group of what is on screen"
+    );
+    assert!(rows[10].contains("subject ym0"), "{}", rows[10]);
+    assert_eq!(
+        cursor_row(&f, 90, 12),
+        Some(10),
+        "the cursor on the last list row"
+    );
+    press(&mut f, KeyCode::Home).await;
+    assert_eq!(selected(&f).as_deref(), Some("subject dm9"));
+    let rows = lines(&f, 90, 12);
+    assert_eq!(rows[1].trim_end(), "TODAY");
+    assert_eq!(cursor_row(&f, 90, 12), Some(2));
+}
+
+#[tokio::test]
+async fn the_badge_shows_in_merged_mailboxes_and_not_in_an_accounts_inbox() {
+    let mut f = grouped(2, 0).await;
+    let first = |f: &Fixture| lines(f, 90, 24)[2].clone();
+    assert!(first(&f).starts_with("●  W  Sender"), "{}", first(&f));
+    let theme = Theme::default();
+    let backend = ratatui::backend::TestBackend::new(90, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|frame| f.screen.view(frame, &theme)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    assert_eq!(
+        buffer[(3, 3)].symbol(),
+        "W",
+        "the second thread, off the cursor row"
+    );
+    assert_eq!(
+        buffer[(3, 3)].bg,
+        ratatui::style::Color::Cyan,
+        "work's colour"
+    );
+    assert_eq!(buffer[(3, 3)].fg, ratatui::style::Color::Black);
+    press(&mut f, KeyCode::Char('1')).await;
+    assert!(
+        first(&f).starts_with("● Sender"),
+        "no badge in work's inbox: {}",
+        first(&f)
+    );
+    press(&mut f, KeyCode::Char('0')).await;
+    assert!(first(&f).starts_with("●  W  Sender"), "{}", first(&f));
+}
+
+#[tokio::test]
+async fn the_grouped_list_in_ascii() {
+    let f = grouped_with(2, 2, Icons::Ascii).await;
+    insta::assert_snapshot!(
+        "grouped_list_ascii_90x24",
+        crate::tui::test_util::snapshot(90, 24, |frame| {
+            f.screen.view(frame, &Theme::default())
+        })
+    );
+}

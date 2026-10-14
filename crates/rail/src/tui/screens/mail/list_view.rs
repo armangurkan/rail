@@ -548,6 +548,83 @@ mod tests {
         }
     }
 
+    /// The columns at which a unified row with a " (12)" count leaves its subject no room:
+    /// dot 2 + badge 4 + people 12 + gap 2 + marks 4 + count 5 + gap 2 + time 10.
+    const NO_ROOM_COLS: u16 = 41;
+
+    #[test]
+    fn at_the_width_where_the_subjects_room_is_zero_the_row_is_the_count_alone() {
+        let (theme, glyphs) = (Theme::default(), Glyphs::of(Icons::Unicode));
+        let row = thread("Q4 roadmap", 12, 1);
+        let shown = text(&thread_line(
+            &row,
+            &context(Some("W"), "11:54"),
+            NO_ROOM_COLS,
+            &theme,
+            &glyphs,
+        ));
+        assert_eq!(width(&shown), usize::from(NO_ROOM_COLS), "{shown}");
+        assert!(!shown.contains("Q4") && !shown.contains('…'), "{shown}");
+        assert!(shown.contains(" (12)"), "the count whole: {shown}");
+        let _ = drawn(
+            thread_line(
+                &row,
+                &context(Some("W"), "11:54"),
+                NO_ROOM_COLS,
+                &theme,
+                &glyphs,
+            ),
+            NO_ROOM_COLS,
+        );
+    }
+
+    #[test]
+    fn a_subject_exactly_as_wide_as_its_room_is_drawn_in_full() {
+        let (theme, glyphs) = (Theme::default(), Glyphs::of(Icons::Unicode));
+        // At 90 columns the room is 44 cells (the long-subject test: 43 and the cut mark).
+        let exact = thread(&"x".repeat(44), 1, 1);
+        let shown = text(&thread_line(
+            &exact,
+            &context(Some("W"), "11:54"),
+            90,
+            &theme,
+            &glyphs,
+        ));
+        assert!(
+            shown.contains(&"x".repeat(44)) && !shown.contains('…'),
+            "{shown}"
+        );
+        let over = thread(&"x".repeat(45), 1, 1);
+        let shown = text(&thread_line(
+            &over,
+            &context(Some("W"), "11:54"),
+            90,
+            &theme,
+            &glyphs,
+        ));
+        assert!(shown.contains('…'), "one cell over is cut: {shown}");
+    }
+
+    #[test]
+    fn a_wide_grapheme_subject_is_cut_by_cell_width_not_characters() {
+        let (theme, glyphs) = (Theme::default(), Glyphs::of(Icons::Unicode));
+        let row = thread(&"漢".repeat(40), 1, 1);
+        let shown = text(&thread_line(
+            &row,
+            &context(Some("W"), "11:54"),
+            90,
+            &theme,
+            &glyphs,
+        ));
+        assert_eq!(width(&shown), 90, "{shown}");
+        assert!(shown.contains('…'), "{shown}");
+        assert!(
+            shown.contains(&"漢".repeat(21)),
+            "43 cells hold 21: {shown}"
+        );
+        assert!(!shown.contains(&"漢".repeat(22)), "{shown}");
+    }
+
     #[test]
     fn a_group_row_heads_each_run_of_threads_in_one_group() {
         let lines = list_lines(&[Today, Today, Yesterday, ThisWeek, Older, Older]);
