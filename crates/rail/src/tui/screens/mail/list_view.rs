@@ -50,8 +50,9 @@ pub(super) fn list_lines(groups: &[Group]) -> Vec<ListLine> {
 /// remembered first thread `offset` (thread indices). The first row is the group row of the
 /// line the pane starts at, drawn over that line when it is a thread. The pane starts one
 /// line above the offset thread, moves just enough to show the cursor, never past the last
-/// full screen, and one line higher when the group row would cover the cursor. One row shows
-/// the cursor's thread alone.
+/// full screen, one line higher when the group row would cover the cursor, and one line lower
+/// when the kept group row would head no thread on screen. One row shows the cursor's thread
+/// alone.
 pub(super) fn frame_lines(
     lines: &[ListLine],
     offset: usize,
@@ -78,6 +79,11 @@ pub(super) fn frame_lines(
     let mut start = visible_offset(top, cursor, height).min(last_screen);
     if start == cursor && matches!(lines[start], ListLine::Thread(_)) {
         start = start.saturating_sub(1);
+    }
+    // A start just above a group row would keep a group with nothing on screen over it. The
+    // cursor is a thread below that row, so it stays in view.
+    if matches!(lines.get(start + 1), Some(ListLine::Group(_))) {
+        start += 1;
     }
     let group = lines[..=start].iter().rev().find_map(|line| match line {
         ListLine::Group(group) => Some(ListLine::Group(*group)),
@@ -607,5 +613,13 @@ mod tests {
         );
         assert!(frame_lines(&lines, 0, 0, 0).is_empty());
         assert!(frame_lines(&[], 0, 0, 5).is_empty());
+        // [G(Today), T0..T9, G(Yesterday), T10..T19]: the third page down from the top, five
+        // rows, would start on T9, the last of TODAY, right above YESTERDAY's row.
+        let ten_and_ten = list_lines(&[[Today; 10], [Yesterday; 10]].concat());
+        assert_eq!(
+            frame_lines(&ten_and_ten, 9, 12, 5),
+            [G(Yesterday), T(10), T(11), T(12), T(13)],
+            "a kept group row heads a thread on screen: no TODAY over YESTERDAY"
+        );
     }
 }
