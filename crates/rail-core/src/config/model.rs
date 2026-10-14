@@ -58,6 +58,8 @@ pub struct General {
     /// `general.hints`: the key hints in the bottom bar; `false` keeps only notices and each
     /// account's state there. `:hints` toggles it.
     pub hints: bool,
+    /// `general.clock`: the time of day at the right edge of the header. `:clock` toggles it.
+    pub clock: bool,
     /// `general.time`: how a time of day is written on screen. `:time` toggles it.
     pub time: TimeFormat,
     /// `general.thread_order`: how the reader runs a thread's older messages.
@@ -79,6 +81,7 @@ impl Default for General {
             theme: None,
             accent: None,
             hints: true,
+            clock: true,
             time: TimeFormat::H24,
             thread_order: ThreadOrder::Oldest,
         }
