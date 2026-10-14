@@ -265,6 +265,21 @@ archive = "e"
     }
 
     #[test]
+    fn time_defaults_to_24h_and_takes_12h() {
+        use crate::config::TimeFormat;
+        assert_eq!(p("").unwrap().general.time, TimeFormat::H24);
+        let twelve = p("[general]\ntime = \"12h\"\n").unwrap();
+        assert_eq!(twelve.general.time, TimeFormat::H12);
+        assert_eq!(TimeFormat::H12.as_str(), "12h");
+        assert_eq!(
+            p("[general]\ntime = \"24h\"\n").unwrap().general.time,
+            TimeFormat::H24
+        );
+        let err = p("[general]\ntime = \"13h\"\n").unwrap_err().to_string();
+        assert!(err.contains(":2:"), "{err}");
+    }
+
+    #[test]
     fn icons_default_to_unicode_and_take_ascii() {
         assert_eq!(p("").unwrap().general.icons, crate::config::Icons::Unicode);
         let ascii = p("[general]\nicons = \"ascii\"\n").unwrap();
