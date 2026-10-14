@@ -563,6 +563,7 @@ impl MailScreen {
             Target::Theme => self.open_theme_picker(),
             Target::Accent => self.open_accent_picker(),
             Target::Hints => self.toggle_hints(),
+            Target::Clock => self.toggle_clock(),
             Target::Time => self.toggle_time(),
             Target::ThreadOrder => self.toggle_thread_order(),
             Target::Scope(scope) => {

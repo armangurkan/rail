@@ -8,6 +8,12 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- `clock = false` under `[general]` hides the header's clock; `:clock` in the palette hides it
+  or shows it again for the session (`clock: off`, `clock: on`) and saves the choice. A save
+  that fails says `Could not save the clock setting: …` and keeps the choice.
+- The header's right edge has the time of day after the sync summary
+  (`● Synced 14:47 │ 15:02`, `3:02 pm` with `time = "12h"`), and a search region before the
+  slot (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`). Under 60 columns both go.
 - `:thread-order` in the palette turns the reader's older messages round for the session
   (`thread order: newest`, `thread order: oldest`), in the open thread too, and saves the
   choice as `thread_order` under `[general]`; a save that fails says

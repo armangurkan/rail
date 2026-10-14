@@ -26,6 +26,7 @@ fn header(left: &str, slot: Slot, right: &str) -> Header {
             text: right.to_string(),
             error: false,
         },
+        clock: None,
         icons: Icons::Unicode,
     }
 }
@@ -353,4 +354,99 @@ fn a_label_names_the_account_on_screen_and_a_blank_one_falls_back_to_the_name() 
         texts.contains(&"Go to Personal's inbox".to_string()),
         "{texts:?}"
     );
+}
+
+/// `header` with the clock reading `12:39`.
+fn clocked(left: &str, slot: Slot, right: &str) -> Header {
+    Header {
+        clock: Some("12:39".into()),
+        ..header(left, slot, right)
+    }
+}
+
+/// The summary and the clock as one text, as they are drawn.
+fn right_unit(cells: &HeaderCells) -> String {
+    format!(
+        "{}{}",
+        cells.right.as_deref().unwrap_or_default(),
+        cells.clock.as_deref().unwrap_or_default()
+    )
+}
+
+#[test]
+fn the_clock_is_kept_whole_with_the_summary_at_the_right_edge() {
+    let h = clocked(
+        "▍Rail │ All inboxes",
+        Slot::Idle("/ Search".into()),
+        "● Synced 11:40",
+    );
+    let cells = header_cells(&h, 80);
+    assert_eq!(right_unit(&cells), "● Synced 11:40 │ 12:39");
+    let (at, text) = cells.slot.clone().unwrap();
+    assert_eq!(at, width("▍Rail │ All inboxes") + 2 + width("│ 🔍 "));
+    assert_eq!(text, "/ Search");
+    let cells = header_cells(&h, 59);
+    assert!(cells.clock.is_none(), "under 60 columns the clock goes");
+    assert!(cells.slot.is_none());
+    assert_eq!(right_unit(&cells), "● Synced 11:40");
+    let cells = header_cells(&h, 40);
+    assert!(cells.clock.is_none());
+    assert_eq!(cells.right.as_deref(), Some("● Synced 11:40"));
+    let cells = header_cells(&h, 39);
+    assert!(cells.clock.is_none());
+    assert!(cells.right.is_none());
+    assert_eq!(cells.left, "▍Rail │ All inboxes");
+}
+
+#[test]
+fn a_long_scope_is_cut_so_the_summary_and_the_clock_stay_whole() {
+    let h = clocked(
+        &"y".repeat(70),
+        Slot::Idle("/ Search".into()),
+        "● Synced 11:40",
+    );
+    let cells = header_cells(&h, 80);
+    assert_eq!(right_unit(&cells), "● Synced 11:40 │ 12:39");
+    assert_eq!(width(&cells.left), 80 - width("● Synced 11:40 │ 12:39") - 2);
+    assert!(cells.left.ends_with('…'), "{:?}", cells.left);
+    assert!(cells.slot.is_none());
+    let none = clocked("▍Rail │ work · Drafts", Slot::None, "● Synced 11:40");
+    let cells = header_cells(&none, 80);
+    assert_eq!(cells.prefix, "");
+    assert_eq!(right_unit(&cells), "● Synced 11:40 │ 12:39");
+}
+
+#[test]
+fn the_clock_is_drawn_muted_after_an_error_summary() {
+    let h = Header {
+        right: Summary {
+            text: "! work sync failed".into(),
+            error: true,
+        },
+        ..clocked("▍Rail │ All inboxes", Slot::Idle("/ Search".into()), "")
+    };
+    let theme = Theme {
+        error: Style::new().fg(Color::Red),
+        muted: Style::new().fg(Color::DarkGray),
+        ..Theme::default()
+    };
+    let lines = render_lines(80, 1, |frame| {
+        render_header(frame, frame.area(), &theme, &h);
+    });
+    assert!(
+        lines[0].ends_with("! work sync failed │ 12:39"),
+        "{:?}",
+        lines[0]
+    );
+    let (buffer, slot) = drawn(80, 1, &theme, &h);
+    assert_eq!(buffer[(79, 0)].symbol(), "9");
+    assert_eq!(buffer[(79, 0)].fg, Color::DarkGray, "the clock is muted");
+    let bang = column_of(&buffer, 0, "!").unwrap();
+    assert_eq!(
+        buffer[(bang, 0)].fg,
+        Color::Red,
+        "the summary keeps its error"
+    );
+    let slot = slot.unwrap();
+    assert_eq!(column_of(&buffer, 0, "/"), Some(slot.x));
 }

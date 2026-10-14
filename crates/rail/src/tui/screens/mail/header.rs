@@ -53,6 +53,8 @@ pub(super) struct Header {
     pub selected: Option<u64>,
     pub slot: Slot,
     pub right: Summary,
+    /// The time of day at the right edge; `None` when `:clock` (or `clock = false`) hid it.
+    pub clock: Option<String>,
     /// The glyph set: the search region's prefix and the box's lines.
     pub icons: Icons,
 }
@@ -76,10 +78,13 @@ pub(super) struct HeaderCells {
     pub prefix: String,
     pub slot: Option<(usize, String)>,
     pub right: Option<String>,
+    /// ` │ 14:07` after the summary, at `MIN_FOR_SLOT` columns and wider when the clock is on.
+    pub clock: Option<String>,
 }
 
-/// Under 40 columns only the left part is drawn. Otherwise the summary is kept whole (cut only
-/// when it alone is wider than the row) and the left part is cut to the columns left beside it.
+/// Under 40 columns only the left part is drawn. Otherwise the summary (and from 60 columns the
+/// clock after it) is kept whole, cut only when it alone is wider than the row, and the left part
+/// is cut to the columns left beside it.
 pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
     let joined = header.joined();
     if cols < MIN_FOR_RIGHT {
@@ -88,13 +93,20 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
             prefix: String::new(),
             slot: None,
             right: None,
+            clock: None,
         };
     }
-    let right = fit(&header.right.text, cols);
-    let right_w = width(&right);
+    let glyphs = Glyphs::of(header.icons);
+    let clock = match &header.clock {
+        Some(time) if cols >= MIN_FOR_SLOT => Some(format!(" {} {time}", glyphs.separator)),
+        _ => None,
+    };
+    let clock_w = clock.as_deref().map_or(0, width);
+    let right = fit(&header.right.text, cols.saturating_sub(clock_w));
+    let right_w = width(&right) + clock_w;
     let left = fit(&joined, cols.saturating_sub(right_w + GAP));
     let left_w = width(&left);
-    let prefix = Glyphs::of(header.icons).search;
+    let prefix = glyphs.search;
     let prefix_w = width(prefix);
     let room = cols.saturating_sub(left_w + right_w + 2 * GAP + prefix_w);
     let slot = match &header.slot {
@@ -112,7 +124,13 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
         },
         slot,
         right: Some(right),
+        clock,
     }
+}
+
+/// The summary's and the clock's columns together.
+fn right_width(cells: &HeaderCells) -> usize {
+    cells.right.as_deref().map_or(0, width) + cells.clock.as_deref().map_or(0, width)
 }
 
 /// The slot's spans after `used` columns, its rect for the filter line, and the column after
@@ -135,7 +153,7 @@ fn slot_spans(
         Span::styled(cells.prefix.clone(), theme.muted),
         Span::styled(text.clone(), style),
     ];
-    let right_w = cells.right.as_deref().map_or(0, width);
+    let right_w = right_width(cells);
     let slot_cols = usize::from(area.width).saturating_sub(at + right_w + GAP);
     let rect = Rect::new(
         area.x + u16::try_from(*at).unwrap_or(u16::MAX),
@@ -175,7 +193,7 @@ pub(super) fn render_header(
     }
     if let Some(right) = &cells.right {
         spans.push(Span::raw(
-            " ".repeat(cols.saturating_sub(used + width(right))),
+            " ".repeat(cols.saturating_sub(used + right_width(&cells))),
         ));
         let style = if header.right.error {
             theme.error
@@ -183,6 +201,9 @@ pub(super) fn render_header(
             theme.muted
         };
         spans.push(Span::styled(right.clone(), style));
+        if let Some(clock) = &cells.clock {
+            spans.push(Span::styled(clock.clone(), theme.muted));
+        }
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
     slot_rect
@@ -201,6 +222,9 @@ impl MailScreen {
                 &self.ctx.keymap,
                 &self.ctx.clock,
             ),
+            clock: self
+                .show_clock
+                .then(|| self.ctx.clock.short(self.ctx.clock.now())),
             icons: self.ctx.icons,
         }
     }
@@ -216,6 +240,7 @@ impl MailScreen {
                 text: String::new(),
                 error: false,
             },
+            clock: None,
             icons: self.ctx.icons,
         }
         .joined()

@@ -83,8 +83,8 @@ impl MailScreen {
             .collect()
     }
 
-    /// `hints`, `time` and `thread-order`, each saying what it will do.
-    fn toggles(&self) -> [(&'static str, &'static str, Target); 3] {
+    /// `hints`, `time`, `thread-order` and `clock`, each saying what it will do.
+    fn toggles(&self) -> [(&'static str, &'static str, Target); 4] {
         let hints = if self.hints {
             "Turn the key hints off"
         } else {
@@ -98,10 +98,16 @@ impl MailScreen {
             ThreadOrder::Oldest => "Show older messages newest first",
             ThreadOrder::Newest => "Show older messages oldest first",
         };
+        let clock = if self.show_clock {
+            "Hide the clock"
+        } else {
+            "Show the clock"
+        };
         [
             (hints, "hints", Target::Hints),
             (time, "time", Target::Time),
             (order, "thread-order", Target::ThreadOrder),
+            (clock, "clock", Target::Clock),
         ]
     }
 

@@ -316,11 +316,14 @@ region (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`; the filter sho
 the Drafts folder has none), and on the right one line for every account's
 sync: `● Synced 14:47` when all are caught up (the earliest account's time), else the worst
 state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
-`! work needs login`, `! work sync failed`, or the daemon's state). At `split_threshold` (140
+`! work needs login`, `! work sync failed`, or the daemon's state), then the time of day at the
+right edge: `● Synced 14:47 │ 15:02` (`3:02 pm` with `time = "12h"`; `:time` changes it at once).
+`clock = false` under `[general]`, or `:clock`, hides the clock. At `split_threshold` (140
 columns by default) and wider the sidebar, the list and the reader are boxed, the focused pane in
 the accent colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and the
 header reads `|Rail | All inboxes …`. When the scope and the summary do not both fit, the
-summary stays whole and the scope is cut. The status bar at the bottom names the keys of the
+summary and the clock stay whole and the scope is cut. Under 60 columns the clock and the search
+region go, and under 40 the summary. The status bar at the bottom names the keys of the
 pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your
 `config.toml` sets) and shows each account's state on the right. Narrower than `split_threshold`
 it is one row; at `split_threshold` and wider (and at least 12 rows high) it takes three rows and
@@ -415,8 +418,11 @@ folded away in the sidebar or not. `:errors` lists the session's recent errors; 
 is an action Gmail refused, `j`/`k` or `↓`/`↑` highlight an entry and `Enter` sends that action
 again. `:hints` turns the key hints off, or back on, and saves the choice (`hints = false` under
 `[general]`; turning them on removes the key); a save that fails says
-`Could not save the hints setting: …` and keeps the choice for this session. `:time` switches
-every time of day on screen (the list, `● Synced 14:47`, the Drafts list, `:errors`, the
+`Could not save the hints setting: …` and keeps the choice for this session. `:clock` hides the
+header's clock (`clock: off`), or shows it again (`clock: on`), and saves the choice (`clock = false` under `[general]`;
+showing it removes the key); a save that fails says `Could not save the clock setting: …` and
+keeps the choice for this session. `:time` switches
+every time of day on screen (the list, `● Synced 14:47`, the header's clock, the Drafts list, `:errors`, the
 reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines) between 24-hour and 12-hour
 (`2:47 pm`, `4:32 am`, `Date: Fri 10 Oct 2025 12:40 pm`) and saves the choice (`time = "12h"`
 under `[general]`; 24-hour removes the key); a save that fails says
@@ -1070,7 +1076,8 @@ running syncs carry on unchanged.
 | `accent` | unset | The accent colour: a palette slot `0` to `15` of the scheme (a number, or a string such as `"5"`), a colour name such as `"blue"`, or `"#rrggbb"`. Without truecolor a `"#rrggbb"` accent is not applied. |
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
 | `hints` | `true` | `false` turns the key hints off: the bottom row keeps only notices and each account's state, and the key boxes' rows go to the panes. `:hints` in the palette toggles it and saves it. |
-| `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced`, the Drafts list, `:errors`, the reader's title block and cards (`04:32` today, `Thu 08:55` yesterday and this week), and the `Date:` header line `h` shows). `:time` in the palette toggles it and saves it. |
+| `clock` | `true` | `false` hides the time of day at the right edge of the header. `:clock` in the palette toggles it and saves it. |
+| `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced` and its clock, the Drafts list, `:errors`, the reader's title block and cards (`04:32` today, `Thu 08:55` yesterday and this week), and the `Date:` header line `h` shows). `:time` in the palette toggles it and saves it. |
 | `thread_order` | `"oldest"` | How the reader lists a thread's older messages under the newest one: `"oldest"` first or `"newest"` first. `:thread-order` in the palette toggles it and saves it. |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |

@@ -32,6 +32,8 @@ pub enum Target {
     Accent,
     /// `:hints`: turn the key hints off or on.
     Hints,
+    /// `:clock`: show or hide the time of day in the header.
+    Clock,
     /// `:time`: 24-hour or 12-hour times.
     Time,
     /// `:thread-order`: the reader's older messages oldest or newest first.

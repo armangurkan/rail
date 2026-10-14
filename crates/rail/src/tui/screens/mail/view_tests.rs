@@ -525,7 +525,10 @@ async fn the_header_and_the_hint_bar_are_on_every_screen() {
         "{top}"
     );
     assert!(top.contains("/ Search"), "{top}");
-    assert!(top.trim_end().ends_with("⟳ Backfill 1200/5000"), "{top}");
+    assert!(
+        top.trim_end().ends_with("⟳ Backfill 1200/5000 │ 12:40"),
+        "{top}"
+    );
     let bottom = rows(&screen, 90, 24)[23].clone();
     assert!(bottom.starts_with("Enter open  j/k move"), "{bottom}");
     assert!(
@@ -670,7 +673,12 @@ async fn the_filter_is_typed_in_the_header_slot_and_falls_back_to_the_hint_row_w
         crate::tui::test_util::render_lines(w, h, |frame| screen.view(frame, &Theme::default()))
     };
     let top = rows(&screen, 90, 24)[0].clone();
-    assert!(top.contains("/is:unread"), "typed in the slot: {top}");
+    assert!(top.contains("is:unread"), "typed in the slot: {top}");
+    assert!(
+        top.contains("unread  │ 🔍  "),
+        "after the search region's prefix: {top}"
+    );
+    assert!(top.trim_end().ends_with("│ 12:40"), "{top}");
     let bottom = rows(&screen, 90, 24)[23].clone();
     assert!(
         bottom.starts_with("Enter open"),
@@ -701,7 +709,12 @@ async fn the_filter_is_typed_in_the_header_slot_and_falls_back_to_the_hint_row_w
     assert_eq!(screen.slot_text(), "/ is:unread");
     let top = rows(&screen, 90, 24)[0].clone();
     assert!(
-        top.contains("/ is:unread"),
+        top.contains("│ 🔍  / is:unre…"),
+        "active filter in the slot, cut to its room beside the clock: {top}"
+    );
+    let top = rows(&screen, 120, 24)[0].clone();
+    assert!(
+        top.contains("│ 🔍  / is:unread"),
         "active filter in the slot: {top}"
     );
 }

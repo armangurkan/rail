@@ -473,6 +473,7 @@ impl MailScreen {
             MailEvent::Labels { seq, result } => self.labels_read(seq, result),
             MailEvent::ThemeSaved { result } => self.theme_saved(result),
             MailEvent::HintsSaved { result } => self.hints_saved(result),
+            MailEvent::ClockSaved { result } => self.clock_saved(result),
             MailEvent::TimeSaved { result } => self.time_saved(result),
             MailEvent::ThreadOrderSaved { result } => self.thread_order_saved(result),
             other => self.compose_event(other),

@@ -2,7 +2,7 @@
 source: crates/rail/src/tui/screens/mail/tests/pickers.rs
 expression: shot
 ---
-▍Rail │ All inboxes · 2 accounts · 5 unread  │ 🔍  / Search                  ● Synced 12:39
+▍Rail │ All inboxes · 2 accounts · 5 unread  │ 🔍  / Search          ● Synced 12:39 │ 12:40
 YESTERDAY
 ●  W  Sender                      subject wm2                                        08:55
 ●  H  Sender                      subject hm1                                        08:54

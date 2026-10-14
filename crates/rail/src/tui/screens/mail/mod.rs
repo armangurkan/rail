@@ -4,6 +4,7 @@
 
 mod actions;
 mod actions_pick;
+mod clock_toggle;
 mod composing;
 mod composing_answers;
 mod composing_flow;
@@ -97,6 +98,8 @@ pub struct MailContext {
     pub split_threshold: u16,
     /// `general.hints`: the key hints in the bottom bar.
     pub hints: bool,
+    /// `general.clock`: the time of day at the right edge of the header.
+    pub show_clock: bool,
     /// `general.thread_order`: how the reader runs a thread's older messages; `:thread-order`
     /// flips it for the session.
     pub thread_order: ThreadOrder,
@@ -212,6 +215,8 @@ pub struct MailScreen {
     pub(crate) themes: themes::ThemeState,
     /// The key hints are shown: from the config, then whatever `:hints` chose this session.
     hints: bool,
+    /// The header's clock is shown: from the config, then whatever `:clock` chose this session.
+    show_clock: bool,
     /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
     open_files: OpenFiles,
     /// The browser confirmation was answered yes this session.
@@ -253,6 +258,7 @@ impl MailScreen {
         let open_files = OpenFiles::new(&ctx.paths.cache_dir);
         let themes = themes::ThemeState::new(ctx.theme_choice);
         let hints = ctx.hints;
+        let show_clock = ctx.show_clock;
         Self {
             ctx,
             account_ids: vec![None; accounts.len()],
@@ -277,6 +283,7 @@ impl MailScreen {
             actions: actions::ActionState::default(),
             themes,
             hints,
+            show_clock,
             open_files,
             html_confirmed: false,
             pending_open: None,

@@ -1,5 +1,5 @@
 //! `:theme` and `:accent`: preview on every move, Esc restores, Enter keeps and writes config,
-//! the non-truecolor path, a failed write; `:hints` and `:time` and their saves.
+//! the non-truecolor path, a failed write; `:hints`, `:time` and `:clock` and their saves.
 
 use ratatui::style::Color;
 
@@ -458,4 +458,106 @@ async fn a_failed_hints_save_keeps_the_setting_and_reports() {
         f.screen.status_line()
     );
     assert_eq!(f.screen.error_count(), 1);
+}
+
+/// `:clock` typed in the palette and run with Enter.
+async fn run_clock_from_the_palette(f: &mut Fixture) {
+    press(f, KeyCode::Char(':')).await;
+    type_text(f, "clock").await;
+    press(f, KeyCode::Enter).await;
+}
+
+#[tokio::test]
+async fn colon_clock_hides_the_clock_and_shows_it_again_and_saves_the_choice() {
+    let mut f = fixture(3).await;
+    write_config(&f, "[general]\neditor = \"vi\" # mine\n");
+    assert_eq!(f.screen.header().clock.as_deref(), Some("12:40"));
+    run_clock_from_the_palette(&mut f).await;
+    assert!(f.screen.modal.is_none());
+    assert!(
+        f.screen.status_line().contains("clock: off"),
+        "{}",
+        f.screen.status_line()
+    );
+    assert_eq!(f.screen.header().clock, None, "the clock is hidden");
+    let text = config_text(&f);
+    assert!(text.contains("editor = \"vi\" # mine"), "{text}");
+    let config = rail_core::config::parse(&text, &f.paths.config_file()).unwrap();
+    assert!(!config.general.clock, "{text}");
+    assert!(text.contains("clock = false"), "{text}");
+    assert!(
+        f.screen
+            .palette_entries()
+            .iter()
+            .any(|e| e.target == Target::Clock && e.text == "Show the clock")
+    );
+
+    run_clock_from_the_palette(&mut f).await;
+    assert!(
+        f.screen.status_line().contains("clock: on"),
+        "{}",
+        f.screen.status_line()
+    );
+    assert_eq!(f.screen.header().clock.as_deref(), Some("12:40"));
+    let text = config_text(&f);
+    assert!(!text.contains("clock"), "true is the default: {text}");
+    assert!(text.contains("editor = \"vi\" # mine"), "{text}");
+    assert!(
+        f.screen
+            .palette_entries()
+            .iter()
+            .any(|e| e.target == Target::Clock && e.text == "Hide the clock")
+    );
+}
+
+#[tokio::test]
+async fn the_clock_follows_colon_time_at_once() {
+    let mut f = fixture(3).await;
+    write_config(&f, "[general]\n");
+    run_target(&mut f, Target::Time).await;
+    assert_eq!(f.screen.header().clock.as_deref(), Some("12:40 pm"));
+}
+
+#[tokio::test]
+async fn a_failed_clock_save_keeps_the_setting_and_reports() {
+    let mut f = fixture(3).await;
+    write_config(&f, "[general]\n");
+    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
+    let writable = std::fs::metadata(&dir).unwrap().permissions();
+    let mut read_only = writable.clone();
+    read_only.set_readonly(true);
+    std::fs::set_permissions(&dir, read_only).unwrap();
+    if std::fs::write(dir.join("probe"), "x").is_ok() {
+        eprintln!("skipped: this user can write a read-only directory");
+        std::fs::set_permissions(&dir, writable).unwrap();
+        return;
+    }
+    run_target(&mut f, Target::Clock).await;
+    std::fs::set_permissions(&dir, writable).unwrap();
+    assert_eq!(f.screen.header().clock, None, "kept hidden for the session");
+    assert!(
+        f.screen
+            .status_line()
+            .contains("Could not save the clock setting:"),
+        "{}",
+        f.screen.status_line()
+    );
+    assert_eq!(f.screen.error_count(), 1);
+}
+
+#[test]
+fn clock_false_in_the_config_starts_with_the_clock_hidden() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ctx = MailContext {
+        show_clock: false,
+        ..mail_ctx(&Paths::all_in(tmp.path()), Arc::new(FakeDaemon::default()))
+    };
+    let screen = MailScreen::new(ctx, work_and_home());
+    assert_eq!(screen.header().clock, None);
+    let entries = screen.palette_entries();
+    let clock = entries
+        .iter()
+        .find(|e| e.target == Target::Clock)
+        .expect("the clock's entry");
+    assert_eq!(clock.text, "Show the clock");
 }

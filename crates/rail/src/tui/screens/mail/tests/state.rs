@@ -380,7 +380,7 @@ async fn at_90_columns_a_lost_daemon_stays_in_the_header_with_threads_selected()
     assert_eq!(f.screen.actions.selection.len(), 2);
     let row = header_row_at_90(&f);
     assert!(
-        row.ends_with("daemon unreachable (Ctrl-r retries)"),
+        row.ends_with("daemon unreachable (Ctrl-r retries) │ 12:40"),
         "{row:?}"
     );
     assert!(row.starts_with("▍Rail │"), "{row:?}");
@@ -395,7 +395,7 @@ async fn at_90_columns_a_daemon_back_again_is_drawn_whole_in_the_header() {
     press(&mut f, KeyCode::Enter).await;
     let row = header_row_at_90(&f);
     assert!(
-        row.ends_with("daemon reachable again (Ctrl-r resumes live updates)"),
+        row.ends_with("daemon reachable again (Ctrl-r resumes live updates) │ 12:40"),
         "{row:?}"
     );
 }
