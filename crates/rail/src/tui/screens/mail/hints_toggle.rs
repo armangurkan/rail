@@ -4,7 +4,6 @@ use super::MailScreen;
 use super::themes::Saved;
 use crate::tui::app::Effect;
 use crate::tui::data::MailEvent;
-use crate::tui::text::escape;
 
 impl MailScreen {
     /// Flip the hints and save: `hints = false` when off (`hints: off`); on removes the key,
@@ -12,25 +11,14 @@ impl MailScreen {
     /// so a `hints: off` still showing goes too.
     pub(super) fn toggle_hints(&mut self) -> Vec<Effect> {
         self.hints = !self.hints;
-        let value = if self.hints {
+        let (notice, value) = if self.hints {
             self.status.dismiss("hints: off");
-            None
+            (None, None)
         } else {
-            self.status.notify("hints: off", self.tick);
-            Some(false)
+            (Some("hints: off".to_string()), Some(false))
         };
-        vec![self.save_general("hints", Saved::Bool(value), |result| {
+        self.flip_and_save(notice, "hints", Saved::Bool(value), |result| {
             MailEvent::HintsSaved { result }
-        })]
-    }
-
-    /// The config write answered: a failure keeps the setting for the session and says so.
-    pub(super) fn hints_saved(&mut self, result: Result<(), String>) -> Vec<Effect> {
-        if let Err(reason) = result {
-            tracing::warn!("could not save the hints setting to config.toml");
-            let text = format!("Could not save the hints setting: {}", escape(&reason));
-            self.status.error(text, self.ctx.clock.now(), self.tick);
-        }
-        Vec::new()
+        })
     }
 }

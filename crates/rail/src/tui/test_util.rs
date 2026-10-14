@@ -590,3 +590,11 @@ pub async fn settle_capturing<S: Screen>(
         }
     }
 }
+
+/// Make `config.toml` unwritable for any user, root too: its directory is a regular file, so
+/// reading and replacing it both fail.
+pub fn block_config(paths: &Paths) {
+    let dir = paths.config_dir.clone();
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::write(&dir, "not a directory").unwrap();
+}

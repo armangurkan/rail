@@ -243,22 +243,10 @@ async fn colon_thread_order_turns_the_open_readers_cards_round_and_saves_the_cho
 async fn a_failed_thread_order_save_keeps_the_order_and_reports() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);
-    write_config(&f, "[general]\n");
     press(&mut f, KeyCode::Enter).await;
-    // `rename` replaces a read-only file, so the directory is what must refuse the write.
-    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
-    let writable = std::fs::metadata(&dir).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&dir, read_only).unwrap();
-    if std::fs::write(dir.join("probe"), "x").is_ok() {
-        eprintln!("skipped: this user can write a read-only directory");
-        std::fs::set_permissions(&dir, writable).unwrap();
-        return;
-    }
+    crate::tui::test_util::block_config(&f.paths);
     let errors = f.screen.error_count();
     run_thread_order(&mut f).await;
-    std::fs::set_permissions(&dir, writable).unwrap();
     assert!(
         f.screen
             .status_line()

@@ -7,7 +7,6 @@ use super::MailScreen;
 use super::themes::Saved;
 use crate::tui::app::Effect;
 use crate::tui::data::MailEvent;
-use crate::tui::text::escape;
 
 impl MailScreen {
     /// Flip the format on the clock (the open reader's copy too), say so, and save:
@@ -25,22 +24,9 @@ impl MailScreen {
             TimeFormat::H24 => None,
             TimeFormat::H12 => Some(format.as_str().to_string()),
         };
-        self.status
-            .notify(format!("time: {}", format.as_str()), self.tick);
-        vec![
-            self.save_general("time", Saved::Text(value), |result| MailEvent::TimeSaved {
-                result,
-            }),
-        ]
-    }
-
-    /// The config write answered: a failure keeps the setting for the session and says so.
-    pub(super) fn time_saved(&mut self, result: Result<(), String>) -> Vec<Effect> {
-        if let Err(reason) = result {
-            tracing::warn!("could not save the time setting to config.toml");
-            let text = format!("Could not save the time setting: {}", escape(&reason));
-            self.status.error(text, self.ctx.clock.now(), self.tick);
-        }
-        Vec::new()
+        let notice = format!("time: {}", format.as_str());
+        self.flip_and_save(Some(notice), "time", Saved::Text(value), |result| {
+            MailEvent::TimeSaved { result }
+        })
     }
 }

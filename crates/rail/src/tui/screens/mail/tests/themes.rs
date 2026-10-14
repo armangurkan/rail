@@ -141,22 +141,10 @@ async fn an_ansi_terminal_keeps_the_default_theme_and_still_saves() {
 #[tokio::test]
 async fn a_failed_config_write_keeps_the_theme_and_reports() {
     let mut f = fixture(3).await;
-    write_config(&f, "[general]\n");
-    // `rename` replaces a read-only file, so the directory is what must refuse the write.
-    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
-    let writable = std::fs::metadata(&dir).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&dir, read_only).unwrap();
-    if std::fs::write(dir.join("probe"), "x").is_ok() {
-        eprintln!("skipped: this user can write a read-only directory");
-        std::fs::set_permissions(&dir, writable).unwrap();
-        return;
-    }
+    crate::tui::test_util::block_config(&f.paths);
     run_target(&mut f, Target::Theme).await;
     type_text(&mut f, "dracula").await;
     press(&mut f, KeyCode::Enter).await;
-    std::fs::set_permissions(&dir, writable).unwrap();
     assert_eq!(
         f.screen.themes.current.scheme.map(|s| s.name),
         Some("Dracula"),
@@ -441,19 +429,8 @@ async fn colon_time_switches_to_am_pm_and_back_and_saves_the_choice() {
 #[tokio::test]
 async fn a_failed_time_save_keeps_the_setting_and_reports() {
     let mut f = fixture(3).await;
-    write_config(&f, "[general]\n");
-    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
-    let writable = std::fs::metadata(&dir).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&dir, read_only).unwrap();
-    if std::fs::write(dir.join("probe"), "x").is_ok() {
-        eprintln!("skipped: this user can write a read-only directory");
-        std::fs::set_permissions(&dir, writable).unwrap();
-        return;
-    }
+    crate::tui::test_util::block_config(&f.paths);
     run_target(&mut f, Target::Time).await;
-    std::fs::set_permissions(&dir, writable).unwrap();
     assert_eq!(
         f.screen.ctx.clock.format(),
         rail_core::config::TimeFormat::H12,
@@ -472,19 +449,8 @@ async fn a_failed_time_save_keeps_the_setting_and_reports() {
 #[tokio::test]
 async fn a_failed_hints_save_keeps_the_setting_and_reports() {
     let mut f = fixture(3).await;
-    write_config(&f, "[general]\n");
-    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
-    let writable = std::fs::metadata(&dir).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&dir, read_only).unwrap();
-    if std::fs::write(dir.join("probe"), "x").is_ok() {
-        eprintln!("skipped: this user can write a read-only directory");
-        std::fs::set_permissions(&dir, writable).unwrap();
-        return;
-    }
+    crate::tui::test_util::block_config(&f.paths);
     run_target(&mut f, Target::Hints).await;
-    std::fs::set_permissions(&dir, writable).unwrap();
     assert!(!f.screen.hints, "kept off for the session");
     assert!(
         f.screen
@@ -557,19 +523,8 @@ async fn the_clock_follows_colon_time_at_once() {
 #[tokio::test]
 async fn a_failed_clock_save_keeps_the_setting_and_reports() {
     let mut f = fixture(3).await;
-    write_config(&f, "[general]\n");
-    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
-    let writable = std::fs::metadata(&dir).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&dir, read_only).unwrap();
-    if std::fs::write(dir.join("probe"), "x").is_ok() {
-        eprintln!("skipped: this user can write a read-only directory");
-        std::fs::set_permissions(&dir, writable).unwrap();
-        return;
-    }
+    crate::tui::test_util::block_config(&f.paths);
     run_target(&mut f, Target::Clock).await;
-    std::fs::set_permissions(&dir, writable).unwrap();
     assert_eq!(
         f.screen.header(false).clock,
         None,

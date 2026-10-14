@@ -7,7 +7,6 @@ use super::MailScreen;
 use super::themes::Saved;
 use crate::tui::app::Effect;
 use crate::tui::data::MailEvent;
-use crate::tui::text::escape;
 
 impl MailScreen {
     /// Flip the order (the open reader's too), say so, and save: `thread_order = "newest"`;
@@ -25,22 +24,9 @@ impl MailScreen {
             ThreadOrder::Oldest => None,
             ThreadOrder::Newest => Some(order.as_str().to_string()),
         };
-        self.status
-            .notify(format!("thread order: {}", order.as_str()), self.tick);
-        vec![
-            self.save_general("thread_order", Saved::Text(value), |result| {
-                MailEvent::ThreadOrderSaved { result }
-            }),
-        ]
-    }
-
-    /// The config write answered: a failure keeps the order for the session and says so.
-    pub(super) fn thread_order_saved(&mut self, result: Result<(), String>) -> Vec<Effect> {
-        if let Err(reason) = result {
-            tracing::warn!("could not save the thread order to config.toml");
-            let text = format!("Could not save the thread order: {}", escape(&reason));
-            self.status.error(text, self.ctx.clock.now(), self.tick);
-        }
-        Vec::new()
+        let notice = format!("thread order: {}", order.as_str());
+        self.flip_and_save(Some(notice), "thread_order", Saved::Text(value), |result| {
+            MailEvent::ThreadOrderSaved { result }
+        })
     }
 }
