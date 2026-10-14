@@ -297,6 +297,16 @@ async fn mail_screen_snapshots() {
     }
 }
 
+/// At 120 columns the sidebar shows by default and, below the split, sits unboxed beside its
+/// right rule.
+#[tokio::test]
+async fn the_sidebar_unboxed_at_120_columns() {
+    let (_tmp, screen) = screen(Icons::Unicode).await;
+    let _ = draw(&screen, 120, 30);
+    assert!(screen.sidebar_visible(), "shown by default at 120 columns");
+    insta::assert_snapshot!("mail_sidebar_unboxed_120x30", draw(&screen, 120, 30));
+}
+
 #[tokio::test]
 async fn the_sidebar_focused_and_a_label_scope() {
     let (_tmp, mut screen) = screen(Icons::Unicode).await;

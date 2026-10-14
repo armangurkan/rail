@@ -59,9 +59,10 @@ up without ever seeing your secrets.
 - `rail search` over the local store and, through each account's server (Gmail's search,
   Microsoft Graph's `$search`), the mailbox itself.
 - Reading mail in the terminal: a unified inbox and per-account and per-label lists over the local
-  store, a sidebar with unread counts, a reader with folded quotes and numbered (clickable) links,
-  filter as you type, a command palette, keys you can change in `config.toml`, and `o` to open a
-  message's HTML in the browser. See [Reading mail](#reading-mail).
+  store, a sidebar of merged mailboxes and each account's folders as a folding tree, a reader with
+  folded quotes and numbered (clickable) links, filter as you type, a command palette, keys you can
+  change in `config.toml`, and `o` to open a message's HTML in the browser. See
+  [Reading mail](#reading-mail).
 - Archive, trash, star and mark read or unread, alone or as a selection, with undo, on Gmail and
   Microsoft 365. See [Doing things to mail](#doing-things-to-mail), including labelling (`l`, Gmail)
   and moving (`m`).
@@ -297,7 +298,8 @@ and their counts on the right with thousands separators. With `icons = "ascii"` 
 current mailbox's row is in the accent colour; the sidebar scrolls to keep it (or, while the
 sidebar has focus, the cursor) in view.
 
-The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread` (`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), a search slot
+The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread`
+(`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), a search slot
 (`/ Search`; the filter shows there once set), and on the right one line for every account's
 sync: `● Synced 14:47` when all are caught up (the earliest account's time), else the worst
 state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
@@ -379,11 +381,14 @@ local store only (`rail search` also asks each account's server).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account,
 a label or a merged mailbox (`Mailbox: Starred`, `Mailbox: Drafts`, `Mailbox: Sent`,
-`Mailbox: Trash`: that mailbox of every account together, newest first) and press `Enter`; the key bound to each command is shown beside it. A label is listed as `Label: AXON · Inbox/Infrastructure/Linode`: the account's label and the folder's whole path, folded away in the sidebar or not. `:errors` lists
-the session's recent errors; while one of them is an action Gmail refused, `j`/`k` or `↓`/`↑`
-highlight an entry and `Enter` sends that action again. `:hints` turns the key hints off, or back
-on, and saves the choice (`hints = false` under `[general]`; turning them on removes the key); a
-save that fails says `Could not save the hints setting: …` and keeps the choice for this session.
+`Mailbox: Trash`: that mailbox of every account together, newest first) and press `Enter`; the
+key bound to each command is shown beside it. A label is listed as
+`Label: AXON · Inbox/Infrastructure/Linode`: the account's label and the folder's whole path,
+folded away in the sidebar or not. `:errors` lists the session's recent errors; while one of them
+is an action Gmail refused, `j`/`k` or `↓`/`↑` highlight an entry and `Enter` sends that action
+again. `:hints` turns the key hints off, or back on, and saves the choice (`hints = false` under
+`[general]`; turning them on removes the key); a save that fails says
+`Could not save the hints setting: …` and keeps the choice for this session.
 `?` shows the keys of the view you are in,
 marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.help` is bound to),
 `Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more`
@@ -622,12 +627,13 @@ that attempt may have reached Gmail but its answer was lost, the retry later can
 copy of the draft in Gmail's Drafts. Delete the extra one there; updating a draft, deleting it
 and listing drafts are retried freely and cannot do this.
 
-**The Drafts folder.** Each account's `Drafts` in the sidebar lists its drafts in one pane (`Drafts` under UNIFIED lists every account's), newest
-first, up to 500: the drafts saved on this computer and the Gmail drafts written elsewhere (on
-your phone, in the browser). A row shows the date, the recipients and the subject, like a thread;
-a draft kept only on this computer says `(local)` where the recipients go and has `✎` (`*` with
-ASCII icons) before its subject, and a draft saved to Gmail is listed once. `Enter` opens a draft
-at its review. A Gmail draft is fetched first (`fetching the draft…`), together with its
+**The Drafts folder.** Each account's `Drafts` in the sidebar lists its drafts in one pane
+(`Drafts` under UNIFIED lists every account's), newest first, up to 500: the drafts saved on this
+computer and the Gmail drafts written elsewhere (on your phone, in the browser). A row shows the
+date, the recipients and the subject, like a thread; a draft kept only on this computer says
+`(local)` where the recipients go and has `✎` (`*` with ASCII icons) before its subject, and a
+draft saved to Gmail is listed once. `Enter` opens a draft at its review. A Gmail draft is
+fetched first (`fetching the draft…`), together with its
 attachments, and from then on is a draft of this computer too, its Gmail copy updated by `s`.
 A Gmail draft Rail already holds that was edited elsewhere since is listed again as a Gmail row;
 opening it opens Rail's copy, as Rail's version wins. `d` asks `Discard this draft? (y/n)`; yes
@@ -642,7 +648,8 @@ select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`, `space`, `r`, `R
 `Not available on drafts`; `Esc` does nothing there and `c` writes a new message as everywhere.
 The search slot is empty in this folder: the pane is not filtered. The pane is read again whenever sync or the outbox
 changes something. `:drafts` (`Open a draft` in the palette) lists the same rows for the account
-in view; in the unified inbox it merges every account's, and `Enter` opens one the same way.
+in view; in the unified inbox and the merged mailboxes it merges every account's, and `Enter`
+opens one the same way.
 A Microsoft 365 account's rows are its Outlook drafts and behave the same way: `Enter` imports
 one with its attached files, `d` says `It is deleted from Outlook's Drafts.` and deletes it there,
 and one deleted in Outlook first says `Microsoft 365 no longer has this draft`.

@@ -144,6 +144,14 @@ async fn a_label_pushed_past_the_sidebar_cap_is_not_called_deleted() {
     let notice = f.screen.status.notice().unwrap_or_default().to_string();
     assert!(notice.contains("more than 500 labels"), "{notice}");
     assert!(!notice.contains("is gone"), "{notice}");
+    assert!(
+        f.screen
+            .sidebar
+            .rows()
+            .iter()
+            .any(|r| r.label == "More folders (498)" && r.account() == Some(0)),
+        "the capped account keeps its rows: Inbox, Sent and 498 under More folders"
+    );
 }
 
 #[tokio::test]

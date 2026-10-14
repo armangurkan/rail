@@ -280,7 +280,7 @@ impl MailScreen {
     }
 
     /// `:drafts`: the Drafts-folder rows of the scope's account (every account's in the
-    /// unified inbox).
+    /// unified inbox and the merged mailboxes).
     pub(super) fn drafts_picker(&mut self) -> Vec<Effect> {
         if self.composing_busy() {
             return Vec::new();
