@@ -58,6 +58,8 @@ pub struct General {
     /// `general.hints`: the key hints in the bottom bar; `false` keeps only notices and each
     /// account's state there. `:hints` toggles it.
     pub hints: bool,
+    /// `general.time`: how a time of day is written on screen. `:time` toggles it.
+    pub time: TimeFormat,
 }
 
 impl Default for General {
@@ -74,6 +76,7 @@ impl Default for General {
             theme: None,
             accent: None,
             hints: true,
+            time: TimeFormat::H24,
         }
     }
 }
@@ -126,6 +129,26 @@ pub enum Icons {
     #[default]
     Unicode,
     Ascii,
+}
+
+/// `general.time`: `24h` writes `14:05`, `12h` writes `2:05 pm`.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+pub enum TimeFormat {
+    #[default]
+    #[serde(rename = "24h")]
+    H24,
+    #[serde(rename = "12h")]
+    H12,
+}
+
+impl TimeFormat {
+    /// The config value: `24h` or `12h`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::H24 => "24h",
+            Self::H12 => "12h",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

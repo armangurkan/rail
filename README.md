@@ -284,7 +284,9 @@ selected with `Space`), the account's badge in `All inboxes`, `Starred`, `Sent` 
 label's first letter on its colour), the people, `★` for starred and `📎` for attachments, the
 subject with the message count after it (`(3)`, never cut), and at the right edge the time:
 `14:05` today and yesterday, `Mon 18:20` this week, `Oct 03` earlier this year, `2024-10-03`
-before; mail dated after today is under `TODAY` with its date. Unread threads are bold.
+before; mail dated after today is under `TODAY` with its date. With `time = "12h"` (or
+`:time`) the times read `2:05 pm` and `Mon 6:20 pm`, and the time column is two cells wider.
+Unread threads are bold.
 With `icons = "ascii"` the dots are `*`, `.` and `>`, `★` is `+` and `📎` is `@`.
 `1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
 and wider; `b` toggles it, `Tab` moves into it) has two sections. UNIFIED holds `All inboxes`,
@@ -396,7 +398,12 @@ folded away in the sidebar or not. `:errors` lists the session's recent errors; 
 is an action Gmail refused, `j`/`k` or `↓`/`↑` highlight an entry and `Enter` sends that action
 again. `:hints` turns the key hints off, or back on, and saves the choice (`hints = false` under
 `[general]`; turning them on removes the key); a save that fails says
-`Could not save the hints setting: …` and keeps the choice for this session.
+`Could not save the hints setting: …` and keeps the choice for this session. `:time` switches
+every time of day on screen (the list, `● Synced 14:47`, the Drafts list, `:errors`, the
+reader's `Fri 10 Oct 2025 12:40`)
+between 24-hour and 12-hour (`2:47 pm`, `Fri 10 Oct 2025 12:40 pm`) and saves the choice
+(`time = "12h"` under `[general]`; 24-hour removes the key); a save that fails says
+`Could not save the time setting: …` and keeps the choice for this session.
 `?` shows the keys of the view you are in,
 marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.help` is bound to),
 `Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more`
@@ -1042,6 +1049,7 @@ running syncs carry on unchanged.
 | `accent` | unset | The accent colour: a palette slot `0` to `15` of the scheme (a number, or a string such as `"5"`), a colour name such as `"blue"`, or `"#rrggbb"`. Without truecolor a `"#rrggbb"` accent is not applied. |
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
 | `hints` | `true` | `false` turns the key hints off: the bottom row keeps only notices and each account's state, and the key boxes' rows go to the panes. `:hints` in the palette toggles it and saves it. |
+| `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced`, the Drafts list, `:errors`, the reader's dates). `:time` in the palette toggles it and saves it. |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 

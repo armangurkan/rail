@@ -109,6 +109,12 @@ impl Reader {
         self.generation.set(self.generation.get() + 1);
     }
 
+    /// Dates are written against `clock` from now on (`:time`).
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.clock = clock;
+        self.changed();
+    }
+
     /// The thread read again: each message keeps its expansion (new ones get the default),
     /// errors stay only on bodies still missing, folds stay open.
     /// An unchanged thread leaves everything as it is, unless a body it waited for did not

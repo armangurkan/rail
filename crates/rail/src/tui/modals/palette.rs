@@ -32,6 +32,8 @@ pub enum Target {
     Accent,
     /// `:hints`: turn the key hints off or on.
     Hints,
+    /// `:time`: 24-hour or 12-hour times.
+    Time,
     Scope(ScopeChoice),
     /// Write a new message (`c`).
     Compose,

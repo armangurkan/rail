@@ -3,27 +3,61 @@
 
 use jiff::tz::TimeZone;
 use jiff::{Timestamp, Zoned};
+use rail_core::config::TimeFormat;
 
-/// Now and the time zone.
+/// Now, the time zone, and how a time of day is written.
 #[derive(Debug, Clone)]
 pub struct Clock {
     /// Fixed "now" (Unix seconds) for tests; the system clock when `None`.
     now: Option<i64>,
     tz: TimeZone,
+    format: TimeFormat,
 }
 
 impl Clock {
-    /// The system clock in the system's time zone.
-    pub fn system() -> Self {
+    /// The system clock in the system's time zone, writing times as `format` says.
+    pub fn system(format: TimeFormat) -> Self {
         Self {
             now: None,
             tz: TimeZone::system(),
+            format,
         }
     }
 
     #[cfg(test)]
     pub fn fixed(now: i64, tz: TimeZone) -> Self {
-        Self { now: Some(now), tz }
+        Self {
+            now: Some(now),
+            tz,
+            format: TimeFormat::H24,
+        }
+    }
+
+    /// How a time of day is written.
+    pub fn format(&self) -> TimeFormat {
+        self.format
+    }
+
+    /// Write times of day as `format` says from now on.
+    pub fn set_format(&mut self, format: TimeFormat) {
+        self.format = format;
+    }
+
+    /// The columns the list's time column needs: `2024-10-03` and `Wed 12:53` in 24h,
+    /// `Wed 12:53 pm` in 12h.
+    pub fn time_cols(&self) -> usize {
+        match self.format {
+            TimeFormat::H24 => 10,
+            TimeFormat::H12 => 12,
+        }
+    }
+
+    /// The time of day: `14:05` in 24h, `2:05 pm` in 12h.
+    fn hhmm(&self, when: &Zoned) -> String {
+        match self.format {
+            TimeFormat::H24 => when.strftime("%H:%M").to_string(),
+            TimeFormat::H12 => when.strftime("%-I:%M %P").to_string(),
+        }
     }
 
     /// Unix seconds.
@@ -47,14 +81,14 @@ impl Clock {
             .map(|t| t.to_zoned(self.tz.clone()))
     }
 
-    /// The list's date: `10:42` today, `Yesterday`, a weekday within six days, `Oct 03`
-    /// this year, `2024-10-03` before; `?` for a time out of range.
+    /// The list's date: `10:42` (`10:42 am` in 12h) today, `Yesterday`, a weekday within six
+    /// days, `Oct 03` this year, `2024-10-03` before; `?` for a time out of range.
     pub fn short(&self, secs: i64) -> String {
         let Some((when, now, days)) = self.days_back(secs) else {
             return "?".to_string();
         };
         match days {
-            0 => when.strftime("%H:%M").to_string(),
+            0 => self.hhmm(&when),
             1 => "Yesterday".to_string(),
             2..=6 => when.strftime("%a").to_string(),
             _ => date(&when, &now),
@@ -74,7 +108,8 @@ impl Clock {
 
     /// The time a list row shows at its right edge, by its group: `14:05` today and
     /// yesterday, `Mon 18:20` this week, `Oct 03` this year or `2024-10-03` before, and a later
-    /// day's date (in `TODAY`); `?` for a time out of range.
+    /// day's date (in `TODAY`); `?` for a time out of range. In 12h the times read `2:05 pm`
+    /// and `Mon 6:20 pm`.
     pub fn time_in_group(&self, secs: i64, group: Group) -> String {
         let Some((when, now, days)) = self.days_back(secs) else {
             return "?".to_string();
@@ -83,8 +118,8 @@ impl Clock {
             return date(&when, &now);
         }
         match group {
-            Group::Today | Group::Yesterday => when.strftime("%H:%M").to_string(),
-            Group::ThisWeek => when.strftime("%a %H:%M").to_string(),
+            Group::Today | Group::Yesterday => self.hhmm(&when),
+            Group::ThisWeek => format!("{} {}", when.strftime("%a"), self.hhmm(&when)),
             Group::Older => date(&when, &now),
         }
     }
@@ -97,11 +132,11 @@ impl Clock {
         Some((when, now, days))
     }
 
-    /// The reader's date: `Fri 10 Oct 2025 12:40`.
+    /// The reader's date: `Fri 10 Oct 2025 12:40` (`Fri 10 Oct 2025 12:40 pm` in 12h).
     pub fn long(&self, secs: i64) -> String {
         self.zoned(secs).map_or_else(
             || "?".to_string(),
-            |when| when.strftime("%a %d %b %Y %H:%M").to_string(),
+            |when| format!("{} {}", when.strftime("%a %d %b %Y"), self.hhmm(&when)),
         )
     }
 }
@@ -208,6 +243,44 @@ mod tests {
         );
         assert_eq!(clock.short(midnight - 6 * day + 60), "Sat");
         assert_eq!(clock.short(midnight - 6 * day - 60), "Oct 03");
+    }
+
+    #[test]
+    fn twelve_hour_times_carry_am_or_pm_and_widen_the_column() {
+        let mut clock = Clock::fixed(NOW, TimeZone::UTC);
+        assert_eq!(clock.format(), TimeFormat::H24);
+        assert_eq!(clock.time_cols(), 10);
+        clock.set_format(TimeFormat::H12);
+        assert_eq!(clock.format(), TimeFormat::H12);
+        assert_eq!(clock.time_cols(), 12);
+        let day = 86_400;
+        let midnight = NOW - 45_600; // 2025-10-10 00:00 UTC
+        assert_eq!(clock.short(NOW - 3_600), "11:40 am");
+        assert_eq!(clock.short(midnight), "12:00 am", "midnight is 12 am");
+        assert_eq!(
+            clock.short(midnight + 12 * 3_600),
+            "12:00 pm",
+            "noon is 12 pm"
+        );
+        assert_eq!(
+            clock.short(midnight + 9 * 3_600),
+            "9:00 am",
+            "no leading zero"
+        );
+        assert_eq!(clock.short(NOW - day), "Yesterday");
+        assert_eq!(clock.short(NOW - 30 * day), "Sep 10", "dates are unchanged");
+        assert_eq!(clock.time_in_group(NOW, Group::Today), "12:40 pm");
+        assert_eq!(clock.time_in_group(NOW - day, Group::Yesterday), "12:40 pm");
+        assert_eq!(
+            clock.time_in_group(NOW - 3 * day + 6 * 3_600, Group::ThisWeek),
+            "Tue 6:40 pm"
+        );
+        assert_eq!(clock.time_in_group(NOW - 30 * day, Group::Older), "Sep 10");
+        assert_eq!(clock.long(NOW), "Fri 10 Oct 2025 12:40 pm");
+        assert_eq!(clock.long(midnight + 30 * 60), "Fri 10 Oct 2025 12:30 am");
+        assert_eq!(clock.time_in_group(i64::MAX, Group::Older), "?");
+        clock.set_format(TimeFormat::H24);
+        assert_eq!(clock.long(NOW), "Fri 10 Oct 2025 12:40", "back to 24h");
     }
 
     #[test]
