@@ -175,12 +175,34 @@ async fn a_child_listing_not_found_skips_that_subtree_only() {
         folder("f-proj", "Projects", 1),
     ]))
     .await;
-    // f-gone's childFolders is not mounted: fake Graph answers 404.
+    g.mount_children("f-gone", json!([folder("f-old", "Old", 0)]))
+        .await;
     g.mount_children("f-proj", json!([folder("f-2026", "2026", 0)]))
         .await;
     g.mount_well_known(&[]).await;
-    let found = g.provider().folders().await.unwrap();
-    assert_eq!(ids(&found), ["f-gone", "f-proj", "f-2026"]);
+    let provider = g.provider();
+    provider.folders().await.unwrap();
+    // Now f-gone's childFolders answers 404; it is skipped, and f-old is carried over.
+    g.reset().await;
+    g.mount_root(json!([
+        folder("f-gone", "Gone", 1),
+        folder("f-proj", "Projects", 1),
+    ]))
+    .await;
+    g.mount_children("f-proj", json!([folder("f-2026", "2026", 0)]))
+        .await;
+    g.mount_well_known(&[]).await;
+    let found = provider.folders().await.unwrap();
+    assert_eq!(ids(&found), ["f-gone", "f-old", "f-proj", "f-2026"]);
+}
+
+#[tokio::test]
+async fn a_cold_provider_fails_the_pass_on_a_child_listing_not_found() {
+    let g = Graph::start().await;
+    g.mount_root(json!([folder("f-gone", "Gone", 1)])).await;
+    g.mount_well_known(&[]).await;
+    let error = g.provider().folders().await.unwrap_err();
+    assert_eq!(error, ProviderError::NotFound);
 }
 
 #[tokio::test]

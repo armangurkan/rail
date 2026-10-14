@@ -577,3 +577,24 @@ async fn a_child_listing_not_found_does_not_expire_a_cursor_that_knows_the_subfo
     let set = provider.changes(&set.cursor).await.unwrap();
     assert_eq!(state_of(&set, "f-sub"), State::CaughtUp);
 }
+
+#[tokio::test]
+async fn a_cold_provider_with_a_missing_subtree_fails_instead_of_expiring_the_cursor() {
+    let g = Graph::start().await;
+    projects_mailbox(&g, false).await;
+    let known = cursor(
+        &g,
+        &[
+            ("f-inbox", Some("d-f-inbox"), "caught_up"),
+            ("f-proj", Some("d-f-proj"), "caught_up"),
+            ("f-sub", Some("d-f-sub"), "caught_up"),
+        ],
+    );
+    let provider = g.provider();
+    assert_eq!(
+        provider.folders().await.unwrap_err(),
+        ProviderError::NotFound
+    );
+    let error = provider.changes(&known).await.unwrap_err();
+    assert_eq!(error, ProviderError::NotFound);
+}
