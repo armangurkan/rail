@@ -11,6 +11,8 @@ mod drafts_flow;
 mod drafts_pane;
 mod events;
 mod header;
+#[cfg(test)]
+mod header_tests;
 mod hints;
 mod hints_toggle;
 mod layout;

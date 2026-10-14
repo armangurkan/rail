@@ -311,8 +311,9 @@ focus the current mailbox's row is in the accent colour; the sidebar scrolls to 
 sidebar has focus, the cursor) in view.
 
 The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread`
-(`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), a search slot
-(`/ Search`; the filter shows there once set), and on the right one line for every account's
+(`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), the search
+region (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`; the filter shows there once set, and
+the Drafts folder has none), and on the right one line for every account's
 sync: `● Synced 14:47` when all are caught up (the earliest account's time), else the worst
 state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
 `! work needs login`, `! work sync failed`, or the daemon's state). At `split_threshold` (140

@@ -2,6 +2,7 @@
 //! sync summary on the right. The parts are computed as text first (`Header`, `header_cells`)
 //! so the width rules are tested without a terminal.
 
+use rail_core::config::Icons;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -52,11 +53,13 @@ pub(super) struct Header {
     pub selected: Option<u64>,
     pub slot: Slot,
     pub right: Summary,
+    /// The glyph set: the search region's prefix and the box's lines.
+    pub icons: Icons,
 }
 
 impl Header {
     /// `left` and the selection count, joined: what the width rules measure.
-    fn joined(&self) -> String {
+    pub(super) fn joined(&self) -> String {
         match self.selected {
             Some(n) => format!("{} · {} selected", self.left, thousands(n)),
             None => self.left.clone(),
@@ -64,10 +67,13 @@ impl Header {
     }
 }
 
-/// The header fitted to a width: the left text, the slot's column and text, the right text.
+/// The header fitted to a width: the left text, the search region's prefix, the slot's column
+/// (after the prefix) and text, the right text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct HeaderCells {
     pub left: String,
+    /// `│ 🔍 ` before the slot, drawn only with it; empty when the slot is not drawn.
+    pub prefix: String,
     pub slot: Option<(usize, String)>,
     pub right: Option<String>,
 }
@@ -79,6 +85,7 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
     if cols < MIN_FOR_RIGHT {
         return HeaderCells {
             left: fit(&joined, cols),
+            prefix: String::new(),
             slot: None,
             right: None,
         };
@@ -87,15 +94,22 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
     let right_w = width(&right);
     let left = fit(&joined, cols.saturating_sub(right_w + GAP));
     let left_w = width(&left);
-    let room = cols.saturating_sub(left_w + right_w + 2 * GAP);
+    let prefix = Glyphs::of(header.icons).search;
+    let prefix_w = width(prefix);
+    let room = cols.saturating_sub(left_w + right_w + 2 * GAP + prefix_w);
     let slot = match &header.slot {
         Slot::Idle(text) | Slot::Active(text) if cols >= MIN_FOR_SLOT && room >= MIN_SLOT => {
-            Some((left_w + GAP, fit(text, room)))
+            Some((left_w + GAP + prefix_w, fit(text, room)))
         }
         _ => None,
     };
     HeaderCells {
         left,
+        prefix: if slot.is_some() {
+            prefix.to_string()
+        } else {
+            String::new()
+        },
         slot,
         right: Some(right),
     }
@@ -115,8 +129,10 @@ fn slot_spans(
         Slot::Active(_) => theme.accent,
         _ => theme.muted,
     };
+    let prefix_at = at.saturating_sub(width(&cells.prefix));
     let spans = vec![
-        Span::raw(" ".repeat(at.saturating_sub(used))),
+        Span::raw(" ".repeat(prefix_at.saturating_sub(used))),
+        Span::styled(cells.prefix.clone(), theme.muted),
         Span::styled(text.clone(), style),
     ];
     let right_w = cells.right.as_deref().map_or(0, width);
@@ -185,6 +201,7 @@ impl MailScreen {
                 &self.ctx.keymap,
                 &self.ctx.clock,
             ),
+            icons: self.ctx.icons,
         }
     }
 
@@ -199,6 +216,7 @@ impl MailScreen {
                 text: String::new(),
                 error: false,
             },
+            icons: self.ctx.icons,
         }
         .joined()
     }
@@ -255,303 +273,5 @@ impl MailScreen {
         }
         let parsed = escape(&self.filter.describe().join(" · "));
         Slot::Active(format!("{key} {parsed}"))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use rail_core::paths::Paths;
-
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-    use ratatui::style::{Color, Style};
-
-    use super::*;
-    use crate::tui::data::FakeDaemon;
-    use crate::tui::test_util::{mail_ctx, render_lines, work_and_home};
-
-    fn header(left: &str, slot: Slot, right: &str) -> Header {
-        Header {
-            left: left.to_string(),
-            selected: None,
-            slot,
-            right: Summary {
-                text: right.to_string(),
-                error: false,
-            },
-        }
-    }
-
-    #[test]
-    fn thousands_separators() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(999), "999");
-        assert_eq!(thousands(1_000), "1,000");
-        assert_eq!(thousands(22_853), "22,853");
-        assert_eq!(thousands(1_234_567), "1,234,567");
-        let h = Header {
-            selected: Some(1_234),
-            ..header("▍Rail │ All inboxes", Slot::None, "x")
-        };
-        assert_eq!(h.joined(), "▍Rail │ All inboxes · 1,234 selected");
-    }
-
-    #[test]
-    fn a_wide_header_has_the_slot_between_left_and_right() {
-        let h = header(
-            "▍Rail │ All inboxes",
-            Slot::Idle("/ Search".into()),
-            "● Synced 11:40",
-        );
-        let cells = header_cells(&h, 80);
-        assert_eq!(cells.left, "▍Rail │ All inboxes");
-        let (at, text) = cells.slot.unwrap();
-        assert_eq!(at, width("▍Rail │ All inboxes") + 2);
-        assert_eq!(text, "/ Search");
-        assert_eq!(cells.right.as_deref(), Some("● Synced 11:40"));
-    }
-
-    #[test]
-    fn under_sixty_columns_the_slot_goes_and_under_forty_the_right_part_goes() {
-        let h = header(
-            "▍Rail │ All inboxes",
-            Slot::Idle("/ Search".into()),
-            "● Synced 11:40",
-        );
-        let cells = header_cells(&h, 59);
-        assert!(cells.slot.is_none());
-        assert_eq!(cells.right.as_deref(), Some("● Synced 11:40"));
-        let long = header(
-            &"y".repeat(50),
-            Slot::Idle("/ Search".into()),
-            "● Synced 11:40",
-        );
-        let cells = header_cells(&long, 59);
-        assert!(cells.slot.is_none());
-        assert_eq!(
-            cells.right.as_deref(),
-            Some("● Synced 11:40"),
-            "the right stays whole"
-        );
-        assert_eq!(
-            width(&cells.left),
-            59 - 14 - 2,
-            "the left is cut to what is left"
-        );
-        assert!(cells.left.ends_with('…'), "{:?}", cells.left);
-        let cells = header_cells(&h, 39);
-        assert!(cells.slot.is_none());
-        assert!(cells.right.is_none());
-        assert_eq!(cells.left, "▍Rail │ All inboxes");
-        let wide = header(&"y".repeat(40), Slot::None, "● Synced 11:40");
-        let cells = header_cells(&wide, 30);
-        assert_eq!(width(&cells.left), 30, "the left part is cut to the width");
-    }
-
-    #[test]
-    fn the_summary_outranks_the_scope_title_when_both_do_not_fit() {
-        let h = Header {
-            selected: Some(3),
-            ..header(
-                "▍Rail │ All inboxes · 2 accounts · 22,853 unread",
-                Slot::Idle("/ Search".into()),
-                "daemon reachable again (Ctrl-r resumes live updates)",
-            )
-        };
-        let right = "daemon reachable again (Ctrl-r resumes live updates)";
-        let cells = header_cells(&h, 90);
-        assert_eq!(
-            cells.right.as_deref(),
-            Some(right),
-            "the summary is kept whole"
-        );
-        assert_eq!(width(&cells.left), 90 - width(right) - 2);
-        assert!(cells.left.starts_with("▍Rail │"), "{:?}", cells.left);
-        assert!(cells.left.ends_with('…'), "{:?}", cells.left);
-        assert!(cells.slot.is_none(), "no room is left for the slot");
-        let cells = header_cells(&h, 45);
-        assert_eq!(
-            width(cells.right.as_deref().unwrap()),
-            45,
-            "a summary wider than the row is cut"
-        );
-        assert_eq!(cells.left, "");
-    }
-
-    #[test]
-    fn a_long_filter_is_cut_from_the_right_and_a_tiny_slot_is_dropped() {
-        let long = "x".repeat(100);
-        let h = header("▍Rail │ All inboxes", Slot::Active(long), "● Synced 11:40");
-        let (_, text) = header_cells(&h, 80).slot.unwrap();
-        assert!(text.ends_with('…'));
-        assert_eq!(
-            width(&text),
-            80 - width("▍Rail │ All inboxes") - width("● Synced 11:40") - 4
-        );
-        let h = header(
-            &"y".repeat(40),
-            Slot::Idle("/ Search".into()),
-            "● Synced 11:40",
-        );
-        assert!(
-            header_cells(&h, 64).slot.is_none(),
-            "under 8 cells the slot is dropped"
-        );
-    }
-
-    #[test]
-    fn no_slot_leaves_the_middle_empty() {
-        let h = header("▍Rail │ work · Drafts", Slot::None, "● Synced 11:40");
-        let cells = header_cells(&h, 80);
-        assert!(cells.slot.is_none());
-        assert_eq!(cells.right.as_deref(), Some("● Synced 11:40"));
-    }
-
-    fn bare_screen() -> (tempfile::TempDir, MailScreen) {
-        let tmp = tempfile::tempdir().unwrap();
-        let ctx = mail_ctx(&Paths::all_in(tmp.path()), Arc::new(FakeDaemon::default()));
-        (tmp, MailScreen::new(ctx, work_and_home()))
-    }
-
-    #[test]
-    fn the_screen_builds_its_header_from_its_state() {
-        let (_tmp, screen) = bare_screen();
-        assert_eq!(
-            screen.header_left(),
-            "▍Rail │ All inboxes · 2 accounts · 0 unread"
-        );
-        assert_eq!(screen.header_summary(), "connecting to the daemon…");
-        assert_eq!(screen.slot_text(), "/ Search");
-        assert_eq!(screen.header().slot, Slot::Idle("/ Search".into()));
-    }
-
-    #[test]
-    fn the_header_is_drawn_with_the_slot_between_left_and_right() {
-        let h = header(
-            "▍Rail │ All inboxes",
-            Slot::Idle("/ Search".into()),
-            "● Synced 11:40",
-        );
-        let theme = Theme::default();
-        let mut slot = None;
-        let lines = render_lines(80, 1, |frame| {
-            slot = render_header(frame, frame.area(), &theme, &h);
-        });
-        let row = &lines[0];
-        assert!(row.starts_with("▍Rail │ All inboxes  / Search"), "{row:?}");
-        assert!(row.trim_end().ends_with("● Synced 11:40"), "{row:?}");
-        let slot = slot.expect("the slot is drawn at 80 columns");
-        assert_eq!((slot.x, slot.y, slot.height), (21, 0, 1));
-        let wide = render_lines(30, 1, |frame| {
-            assert!(render_header(frame, frame.area(), &theme, &h).is_none());
-        });
-        assert_eq!(wide[0].trim_end(), "▍Rail │ All inboxes");
-    }
-
-    #[test]
-    fn the_selection_count_is_drawn_in_the_text_style_not_the_accent() {
-        let h = Header {
-            selected: Some(3),
-            ..header("▍Rail │ All inboxes", Slot::None, "● Synced 11:40")
-        };
-        let theme = Theme {
-            text: Style::new().fg(Color::Green),
-            ..Theme::default()
-        };
-        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_header(frame, frame.area(), &theme, &h);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-        let row: String = (0..80).map(|x| buffer[(x, 0)].symbol()).collect();
-        let byte = row.find("selected").unwrap();
-        let at = u16::try_from(row[..byte].chars().count()).unwrap();
-        assert_eq!(buffer[(at, 0)].symbol(), "s");
-        assert_eq!(buffer[(at, 0)].fg, Color::Green);
-        assert_eq!(buffer[(0, 0)].fg, theme.accent.fg.unwrap());
-    }
-
-    #[test]
-    fn a_cut_scope_ends_in_an_ellipsis_in_the_text_style() {
-        let h = header(&"y".repeat(60), Slot::None, "● Synced 11:40");
-        let theme = Theme {
-            text: Style::new().fg(Color::Green),
-            ..Theme::default()
-        };
-        let mut terminal = Terminal::new(TestBackend::new(50, 1)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_header(frame, frame.area(), &theme, &h);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-        let at = u16::try_from(50 - 14 - 2 - 1).unwrap();
-        assert_eq!(buffer[(at, 0)].symbol(), "…");
-        assert_eq!(buffer[(at, 0)].fg, Color::Green);
-        assert_eq!(buffer[(0, 0)].fg, theme.accent.fg.unwrap());
-        let tiny = render_lines(40, 1, |frame| {
-            render_header(
-                frame,
-                frame.area(),
-                &theme,
-                &header("x", Slot::None, &"z".repeat(60)),
-            );
-        });
-        assert_eq!(
-            width(tiny[0].trim_end()),
-            40,
-            "a summary alone too wide fills the row"
-        );
-    }
-
-    /// Review Focus 1 (the label half).
-    #[test]
-    fn a_label_names_the_account_on_screen_and_a_blank_one_falls_back_to_the_name() {
-        let mut config = crate::tui::test_util::existing_config();
-        config.accounts[0].label = Some("Personal".into());
-        let mut second = config.accounts[0].clone();
-        second.name = "home".into();
-        second.address = "h@example.com".into();
-        second.label = Some("  ".into());
-        config.accounts.push(second);
-        let mut accounts = crate::tui::screens::mail::AccountEntry::from_config(&config);
-        assert_eq!(accounts[0].name, "work", "the name stays the identifier");
-        assert_eq!(accounts[0].label, "Personal");
-        assert_eq!(accounts[1].label, "home", "a blank label is no label");
-        accounts[1].label = "Ev\u{7}il".into();
-        let tmp = tempfile::tempdir().unwrap();
-        let ctx = mail_ctx(&Paths::all_in(tmp.path()), Arc::new(FakeDaemon::default()));
-        let mut screen = MailScreen::new(ctx, accounts);
-        screen.scope = crate::tui::data::ScopeChoice::Account(0);
-        assert_eq!(screen.header_left(), "▍Rail │ Personal · Inbox · 0 unread");
-        screen.scope = crate::tui::data::ScopeChoice::Account(1);
-        assert_eq!(
-            screen.header_left(),
-            "▍Rail │ Ev\\u{7}il · Inbox · 0 unread"
-        );
-        let bar = screen.bar(&Theme::default());
-        assert!(
-            bar.right[0].1.starts_with("Personal"),
-            "{:?}",
-            bar.right[0].1
-        );
-        assert!(
-            bar.right[1].1.starts_with("Ev\\u{7}il"),
-            "{:?}",
-            bar.right[1].1
-        );
-        let texts: Vec<String> = screen
-            .palette_entries()
-            .into_iter()
-            .map(|e| e.text)
-            .collect();
-        assert!(
-            texts.contains(&"Go to Personal's inbox".to_string()),
-            "{texts:?}"
-        );
     }
 }

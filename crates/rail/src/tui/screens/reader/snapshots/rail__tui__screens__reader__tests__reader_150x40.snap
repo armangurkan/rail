@@ -2,7 +2,7 @@
 source: crates/rail/src/tui/screens/reader/tests.rs
 expression: "draw(&f, width, height)"
 ---
-▍Rail │ All inboxes · 1 account · 1 unread  / Search                                                                                    ● Synced 12:39
+▍Rail │ All inboxes · 1 account · 1 unread  │ 🔍  / Search                                                                               ● Synced 12:39
 ┌────────────────────────┐┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────────────────┐
 │UNIFIED                 ││YESTERDAY                                             ││Q4 plan                                                           │
 │✉  All inboxes         1││●  W  Tom, Sender     📎  Q4 plan (3)             08:55││Sender  Thu 08:55   W  WORK                                       │

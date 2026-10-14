@@ -2,7 +2,7 @@
 source: crates/rail/src/tui/screens/mail/view_tests.rs
 expression: "draw(&screen, width, height)"
 ---
-|Rail | All inboxes · 2 accounts · 5 unread  / Search                                                                             ~ Backfill 1200/5000
+|Rail | All inboxes · 2 accounts · 5 unread  | / Search                                                                           ~ Backfill 1200/5000
 +------------------------++------------------------------------------------------++------------------------------------------------------------------+
 |UNIFIED                 ||TODAY                                                 ||Open a thread with Enter; it shows here.                          |
 |i  All inboxes         5||*  W  Dana Reyes, …  +   Q4 roadmap r… (3)       11:54||                                                                  |
