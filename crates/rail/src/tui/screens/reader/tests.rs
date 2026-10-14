@@ -279,7 +279,7 @@ async fn the_newest_opens_under_the_title_block_and_n_p_tab_move_through_the_car
     press(&mut f, KeyCode::Enter).await;
     let text = draw(&f, 90, 40);
     assert!(
-        text.contains("Sender  08:55   W  WORK"),
+        text.contains("Sender  Thu 08:55   W  WORK"),
         "the title block: {text}"
     );
     assert!(text.contains("/  3 messages"), "{text}");

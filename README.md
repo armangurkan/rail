@@ -337,11 +337,12 @@ and account states at every width, and `?` still lists the keys.
 
 `Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
 beside the list; narrower, it covers the screen. `q` or `Esc` closes it. The reader starts with
-the thread's title block: the subject; the newest message's sender, its time as the list writes
-it and the account's badge and label (`Dana Reyes  04:32   W  WORK`); its recipients by name
-and the thread's size (`To: Vito, Tom  /  4 messages`, or `/  4 messages` when it names none);
-then a rule. The newest message is open under it. The older messages follow as cards between
-rules, oldest first (`thread_order = "newest"` under `[general]` runs them newest first): a
+the thread's title block: the subject; the newest message's sender, its time (`04:32` today,
+`Thu 08:55` yesterday and this week, `Oct 03` or `2024-10-03` before) and the account's badge
+and label (`Dana Reyes  04:32   W  WORK`); its recipients by name and the thread's size
+(`To: Vito, Tom  /  4 messages`, or `/  4 messages` when it names none); then a rule. The
+newest message is open under it. The older messages follow as cards between rules, oldest
+first (`thread_order = "newest"` under `[general]` runs them newest first): a
 card is the message's number in the thread in a grey box, its sender (bold while unread, `★`
 when starred) and its time at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its
 text. When a long thread's oldest messages are not shown,
@@ -1068,7 +1069,7 @@ running syncs carry on unchanged.
 | `accent` | unset | The accent colour: a palette slot `0` to `15` of the scheme (a number, or a string such as `"5"`), a colour name such as `"blue"`, or `"#rrggbb"`. Without truecolor a `"#rrggbb"` accent is not applied. |
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
 | `hints` | `true` | `false` turns the key hints off: the bottom row keeps only notices and each account's state, and the key boxes' rows go to the panes. `:hints` in the palette toggles it and saves it. |
-| `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced`, the Drafts list, `:errors`, the reader's title block and cards, and the `Date:` header line `h` shows). `:time` in the palette toggles it and saves it. |
+| `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced`, the Drafts list, `:errors`, the reader's title block and cards (`04:32` today, `Thu 08:55` yesterday and this week), and the `Date:` header line `h` shows). `:time` in the palette toggles it and saves it. |
 | `thread_order` | `"oldest"` | How the reader lists a thread's older messages under the newest one: `"oldest"` first or `"newest"` first. `:thread-order` in the palette toggles it and saves it. |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |

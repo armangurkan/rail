@@ -11,6 +11,7 @@ use rail_core::provider::Mailbox;
 use rail_core::store::view::{MessageView, ThreadDetail};
 
 use super::lines::{LineKind, ReaderLine, State, Tone, content, fields, sender};
+use crate::tui::clock::Group;
 use crate::tui::text::{escape, fit, width as cells};
 
 /// The cells a card keeps for its sender however narrow the pane: the time is cut first.
@@ -103,10 +104,16 @@ fn sender_line(m: &MessageView, state: &State<'_>) -> Vec<(String, Tone)> {
     segments
 }
 
-/// When `m` arrived, as the thread list writes it: `04:32`, `Mon 22:11`, `Oct 03`.
+/// When `m` arrived, as the thread list writes it (`04:32`, `Mon 22:11`, `Oct 03`), except
+/// that yesterday takes the week form, `Thu 08:55`: the reader has no heading to tell the days
+/// apart.
 fn time(m: &MessageView, state: &State<'_>) -> String {
     let secs = m.internal_date / 1000;
-    state.clock.time_in_group(secs, state.clock.group(secs))
+    let group = match state.clock.group(secs) {
+        Group::Yesterday => Group::ThisWeek,
+        group => group,
+    };
+    state.clock.time_in_group(secs, group)
 }
 
 /// `To: Vito, dana@example.com  /  4 messages`, the names cut so the count stays whole;

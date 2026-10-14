@@ -606,3 +606,22 @@ fn a_cards_preview_is_escaped_and_cut_under_its_sender() {
     assert!(preview.text.ends_with('…'), "{}", preview.text);
     assert_eq!(width(&preview.text), 60);
 }
+
+/// The reader has no `YESTERDAY` heading, so yesterday takes the week form; today keeps the
+/// bare time.
+#[test]
+fn a_message_from_yesterday_shows_its_weekday_and_one_from_today_only_its_time() {
+    // Thu 09 Oct 2025 08:55 UTC, the day before the fixed clock's NOW.
+    let yesterday = 1_760_000_100;
+    let mut detail = four(0);
+    detail.messages[1].internal_date = yesterday * 1000;
+    let lines = Setup::of(&detail).lines(&detail, 90);
+    assert_eq!(
+        card_of(&lines, 1).text,
+        card_text("▸   2   Tom", "Thu 08:55", 90)
+    );
+    assert_eq!(lines[1].text, "David Hallas  04:32   A  AXON", "today");
+    detail.messages[3].internal_date = yesterday * 1000;
+    let lines = Setup::of(&detail).lines(&detail, 90);
+    assert_eq!(lines[1].text, "David Hallas  Thu 08:55   A  AXON");
+}
