@@ -309,6 +309,9 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- Undoing a Microsoft 365 move that a sync had overtaken could put the message back in two
+  folders until its next sync; it goes back to the one folder it left. An undo no longer puts a
+  message into a folder that took a deleted folder's place in the store (#33).
 - `m` on a Microsoft 365 account with no synced folders said `This account has no labels to
   choose from.`; it now says `This account has no folders to choose from.` (#34).
 - A Microsoft 365 draft's attachment overwritten in place with new bytes of the same length kept
