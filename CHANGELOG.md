@@ -204,8 +204,8 @@ All notable changes to Rail are recorded here. The format follows
 ### Changed
 
 - The reader opens on a title block: the subject, the newest message's sender, its time as the
-  list writes it and the account's badge and label, its recipients by name with the thread's
-  size (`To: Vito  /  4 messages`), and a rule; the newest message is open under it, and the
+  list writes it (yesterday with its weekday, `Thu 08:55`) and the account's badge and label,
+  its recipients by name with the thread's size (`To: Vito  /  4 messages`), and a rule; the newest message is open under it, and the
   subject scrolls away with it. The older messages are cards between rules, oldest first
   (`thread_order = "newest"` under `[general]` runs them newest first): each shows its number in
   the thread, its sender (bold while unread) and its time at the right edge over a line of its
