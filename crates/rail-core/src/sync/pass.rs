@@ -125,7 +125,7 @@ impl Engine {
                 ..Batch::new(self.account_id)
             };
             if let (Some(started_at), false) = (load, more) {
-                self.end_load(&mut batch, started_at, window);
+                self.end_load(&mut batch, started_at, window, &set.cursor);
             }
             self.write(batch).await?;
             if load.is_some() {
@@ -147,9 +147,9 @@ impl Engine {
     /// The answer that caught a load up ends it, with the sweep when the provider walked every
     /// folder. Else the sweep would delete the mail of the folders it left, so the load ends
     /// without one: mail deleted at the provider meanwhile stays until a later full load.
-    fn end_load(&self, batch: &mut Batch, started_at: i64, window: Option<i64>) {
+    fn end_load(&self, batch: &mut Batch, started_at: i64, window: Option<i64>, at: &SyncCursor) {
         batch.state.backfill_started_at = Some(None);
-        if !self.provider.walked_everything() {
+        if !self.provider.walked_everything(at) {
             tracing::warn!(account = %self.account.name, "the provider left folders unwalked; the load ended without a sweep");
             return;
         }

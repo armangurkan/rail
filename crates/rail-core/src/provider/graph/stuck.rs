@@ -24,11 +24,6 @@ impl Stuck {
         self.given_up.contains_key(id)
     }
 
-    /// True while any folder is given up on.
-    pub(super) fn any(&self) -> bool {
-        !self.given_up.is_empty()
-    }
-
     /// Count `step` for folder `id` (shown as `name`); true when the folder is given up on now.
     /// Only catching up clears the count: a page that walks on leaves it as it is, so a folder
     /// whose last page's link is always too long is given up on too.

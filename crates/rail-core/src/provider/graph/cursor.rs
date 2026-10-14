@@ -193,13 +193,27 @@ impl GraphCursor {
         Ok(step)
     }
 
-    /// Leave folder `id` out of this round, its link kept: it counts as caught up, so the
-    /// other folders' rounds go on and the call can end, and the next round asks it from where
-    /// it stood.
+    /// Leave folder `id` out of this round: it counts as caught up, so the other folders'
+    /// rounds go on and the call can end. A due folder keeps its delta link (it caught up last
+    /// round); one mid-walk or not started loses its link, so it starts over next round and
+    /// `walked_all` knows it was not walked.
     pub(crate) fn set_aside(&mut self, id: &str) {
         if let Some(folder) = self.folders.get_mut(id) {
+            if folder.state != State::Due {
+                folder.link = None;
+            }
             folder.state = State::CaughtUp;
         }
+    }
+
+    /// False when a folder is caught up with no link: set aside, given up on, or answered a
+    /// page with neither link before it had one, so not walked in this round. A load that ends
+    /// on such a cursor must not sweep.
+    pub(crate) fn walked_all(&self) -> bool {
+        !self
+            .folders
+            .values()
+            .any(|f| f.state == State::CaughtUp && f.link.is_none())
     }
 
     /// Set folder `id` aside for this pass: caught up, with no link, so a round that asks it
@@ -352,15 +366,26 @@ mod tests {
         assert_eq!(cursor.folders["f-1"].state, State::CaughtUp);
         cursor.park("f-1");
         assert_eq!(cursor.folders["f-1"].link, None);
+        assert!(!cursor.walked_all(), "parked: not walked");
         cursor.advance("f-1", Some("n1".into()), None).unwrap();
         cursor.set_aside("f-1");
         assert_eq!(
             cursor.folders["f-1"],
             Folder {
-                link: Some("n1".into()),
+                link: None,
                 state: State::CaughtUp,
             },
-            "set aside, it keeps its place"
+            "set aside mid-walk, it starts over next round"
+        );
+        assert!(!cursor.walked_all());
+        cursor.advance("f-1", None, Some("d1".into())).unwrap();
+        assert!(cursor.walked_all());
+        cursor.begin_round();
+        cursor.set_aside("f-1");
+        assert_eq!(
+            cursor.folders["f-1"].link,
+            Some("d1".into()),
+            "due: its delta link kept"
         );
     }
 

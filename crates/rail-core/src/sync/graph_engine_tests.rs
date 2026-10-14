@@ -18,9 +18,9 @@ use super::status::StatusBoard;
 use super::writer::{WriterHandle, WriterTask, spawn_writer};
 use crate::config::{AccountConfig, AccountKind, SyncSettings};
 use crate::ops::{AccountSyncStatus, SyncPhase};
-use crate::provider::Provider;
 use crate::provider::graph::fixtures::{Graph, ROOT, folder, message, recent};
 use crate::provider::graph::{GraphProvider, MAX_LINK_BYTES};
+use crate::provider::{Provider, SyncCursor};
 use crate::store::{Store, SyncStateRow};
 use crate::test_support::sample_account;
 
@@ -442,8 +442,151 @@ async fn a_resync_with_a_subtree_skipped_sweeps_none_of_its_mail() {
     let page = g.page(vec![message("mp", "mp", "f-proj", &at)], None, Some("d3"));
     g.mount_initial("f-proj", page).await;
     recorded_pass(&engine_on(&h, provider.clone(), 0, now + 60)).await;
-    assert!(!provider.walked_everything());
+    let at = SyncCursor(state(&h).cursor.unwrap());
+    assert!(!provider.walked_everything(&at), "Sub was set aside");
     assert_eq!(stored(&h), ["m1", "mp", "ms"], "Sub's mail is not swept");
     assert_load_ended(&h);
     assert!(!h.board.get(ADDRESS).unwrap().last_pass_failed);
+}
+
+/// How Aside, Box's subfolder (`Box/Aside`, walked before Projects), fares in a two-pass load.
+#[derive(Clone, Copy, PartialEq)]
+enum Aside {
+    /// Listed and walked.
+    Walked,
+    /// Its listing answers not found in the first pass: set aside, never walked in the load.
+    Skipped,
+    /// Its links run over the cap: given up in the first pass; the second pass runs on a new
+    /// provider (a daemon restart) that has forgotten it.
+    GivenUp,
+}
+
+/// Inbox, Box with its subfolder Aside (listed when `listed`), and Projects.
+async fn aside_mailbox(g: &Graph, listed: bool) {
+    g.mount_root(json!([
+        folder("f-inbox", "Inbox", 0),
+        folder("f-box", "Box", 1),
+        folder("f-proj", "Projects", 0),
+    ]))
+    .await;
+    if listed {
+        g.mount_children("f-box", json!([folder("f-aside", "Aside", 0)]))
+            .await;
+    }
+    g.mount_well_known(&[("inbox", "f-inbox")]).await;
+}
+
+/// Page `n` of Projects' twelve-page walk (`pr01` to `pr12`), linked as `pr<n>`.
+fn projects_page(g: &Graph, n: usize, at: &str) -> serde_json::Value {
+    let item = message(&format!("pr{n:02}"), &format!("pr{n}"), "f-proj", at);
+    match n {
+        12 => g.page(vec![item], None, Some("d-pr")),
+        _ => g.page(vec![item], Some(&format!("pr{}", n + 1)), None),
+    }
+}
+
+/// A clean load of `m-gone` (inbox), `b0` (Box), `a1` (Aside) and `p0` (Projects), then a
+/// resync whose load
+/// spans two passes: the first fails on Projects' page 10 after one saved answer, the
+/// second finishes it. What the store holds at the end; the load has ended.
+async fn two_pass_resync(aside: Aside) -> Vec<String> {
+    let g = Graph::start().await;
+    let h = harness();
+    let now = crate::auth::unix_now();
+    let at = recent(60);
+    aside_mailbox(&g, true).await;
+    for (folder, id) in [
+        ("f-inbox", "m-gone"),
+        ("f-box", "b0"),
+        ("f-proj", "p0"),
+        ("f-aside", "a1"),
+    ] {
+        let page = g.page(
+            vec![message(id, id, folder, &at)],
+            None,
+            Some(&format!("d-{folder}")),
+        );
+        g.mount_initial(folder, page).await;
+    }
+    let provider = Arc::new(g.provider());
+    recorded_pass(&engine_on(&h, provider.clone(), 0, now)).await;
+    assert_eq!(stored(&h), ["a1", "b0", "m-gone", "p0"]);
+    // Graph forgets the inbox's link; m-gone is gone meanwhile.
+    g.reset().await;
+    aside_mailbox(&g, aside != Aside::Skipped).await;
+    inbox_link_forgotten(&g).await;
+    let box_page = g.page(vec![message("b0", "b0", "f-box", &at)], None, Some("d-b"));
+    g.mount_initial("f-box", box_page).await;
+    let long = "l".repeat(MAX_LINK_BYTES);
+    match aside {
+        Aside::Walked => {
+            let page = g.page(vec![message("a1", "a1", "f-aside", &at)], None, Some("d-a"));
+            g.mount_initial("f-aside", page).await;
+        }
+        Aside::Skipped => {}
+        Aside::GivenUp => {
+            g.mount_initial("f-aside", g.page(vec![], None, Some(&long)))
+                .await;
+        }
+    }
+    g.mount_initial("f-proj", projects_page(&g, 1, &at)).await;
+    for n in 2..=9 {
+        g.mount_link(&format!("pr{n}"), projects_page(&g, n, &at))
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("{ROOT}/links/pr10")))
+        .respond_with(ResponseTemplate::new(400))
+        .mount(&g.server)
+        .await;
+    let first = engine_on(&h, provider.clone(), 0, now + 60).pass().await;
+    assert!(first.is_err(), "the first pass stops on page 10");
+    assert!(state(&h).backfill_started_at.is_some(), "the load goes on");
+    // The second pass: Aside lists again; on a new provider when it was given up on.
+    g.reset().await;
+    aside_mailbox(&g, true).await;
+    for n in 2..=12 {
+        g.mount_link(&format!("pr{n}"), projects_page(&g, n, &at))
+            .await;
+    }
+    let provider = match aside {
+        Aside::GivenUp => Arc::new(g.provider()),
+        _ => provider,
+    };
+    recorded_pass(&engine_on(&h, provider, 0, now + 120)).await;
+    assert_load_ended(&h);
+    stored(&h)
+}
+
+#[tokio::test]
+async fn a_clean_two_pass_load_still_sweeps() {
+    let stored = two_pass_resync(Aside::Walked).await;
+    assert!(!stored.contains(&"m-gone".to_string()), "swept: {stored:?}");
+    assert!(stored.contains(&"a1".to_string()), "{stored:?}");
+}
+
+#[tokio::test]
+async fn a_subtree_set_aside_in_one_pass_of_a_load_is_not_swept_when_it_lists_again() {
+    let stored = two_pass_resync(Aside::Skipped).await;
+    assert!(
+        stored.contains(&"a1".to_string()),
+        "Aside's mail stays: {stored:?}"
+    );
+    assert!(
+        stored.contains(&"m-gone".to_string()),
+        "no sweep: {stored:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_folder_given_up_in_a_load_is_not_swept_after_a_restart() {
+    let stored = two_pass_resync(Aside::GivenUp).await;
+    assert!(
+        stored.contains(&"a1".to_string()),
+        "Aside's mail stays: {stored:?}"
+    );
+    assert!(
+        stored.contains(&"m-gone".to_string()),
+        "no sweep: {stored:?}"
+    );
 }

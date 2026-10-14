@@ -204,10 +204,10 @@ impl super::Provider for GraphProvider {
         self.stuck().error()
     }
 
-    /// False while a folder is given up on, or the last listing skipped a subtree.
-    fn walked_everything(&self) -> bool {
-        let skipped = self.skipped.lock().unwrap_or_else(PoisonError::into_inner);
-        skipped.is_empty() && !self.stuck().any()
+    /// From the cursor itself, so it holds across a restart: false while a folder in it is
+    /// caught up with no link (set aside, given up on), or when it does not read.
+    fn walked_everything(&self, cursor: &SyncCursor) -> bool {
+        cursor::GraphCursor::decode(cursor).is_ok_and(|c| c.walked_all())
     }
 
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {

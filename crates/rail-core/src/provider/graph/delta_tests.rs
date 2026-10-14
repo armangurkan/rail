@@ -645,7 +645,7 @@ async fn a_folder_whose_link_stays_over_the_cap_stops_after_three_restarts() {
         "the other folders go on"
     );
     assert!(!second.more, "the other folders are caught up");
-    assert_given_up(&provider, "Projects");
+    assert_given_up(&provider, &second.cursor, "Projects");
 }
 
 /// How many requests the link `name` got.
@@ -661,14 +661,14 @@ async fn link_requests(g: &Graph, name: &str) -> usize {
 }
 
 /// `provider` stands failed on the folder `name`, named only as outside text.
-fn assert_given_up(provider: &GraphProvider, name: &str) {
+fn assert_given_up(provider: &GraphProvider, cursor: &SyncCursor, name: &str) {
     let error = provider.standing_error().expect("a standing error");
     assert_eq!(
         error.to_string(),
         "a folder cannot be synced: its sync link is longer than 4 KiB"
     );
     assert_eq!(error.detail(), Some(name));
-    assert!(!provider.walked_everything());
+    assert!(!provider.walked_everything(cursor), "parked: not walked");
 }
 
 #[tokio::test]
@@ -692,5 +692,5 @@ async fn a_two_page_folder_whose_last_link_stays_over_the_cap_is_given_up_too() 
     );
     assert_eq!(initial_requests(&g, "f-proj").await, 2);
     assert!(!first.more);
-    assert_given_up(&provider, "Projects");
+    assert_given_up(&provider, &first.cursor, "Projects");
 }

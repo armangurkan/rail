@@ -56,10 +56,10 @@ pub trait Provider: Send + Sync {
     fn standing_error(&self) -> Option<ProviderError> {
         None
     }
-    /// False when the last pass left folders unwalked (Graph: a folder it gave up syncing, or
-    /// a subtree its listing skipped): a load that catches up then ends without its sweep,
-    /// which would delete their mail. True by default.
-    fn walked_everything(&self) -> bool {
+    /// False when `cursor`, the one a load caught up on, holds folders the load never walked
+    /// (Graph: a folder it gave up syncing, or one of a subtree its listing skipped): the load
+    /// then ends without its sweep, which would delete their mail. True by default.
+    fn walked_everything(&self, _cursor: &SyncCursor) -> bool {
         true
     }
     /// What changed since `cursor`. `ProviderError::CursorExpired` means a full resync.
