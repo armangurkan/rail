@@ -3,7 +3,7 @@
 //! and across calls, an expired link, folders added and gone, corrupt and oversized cursors,
 //! every folder polled past the page budget, the history cutoff, the profile, and envelopes in
 //! folders Rail does not sync; a partial update after a full one, a refused check, and a
-//! cursor resumed mid-folder.
+//! cursor resumed mid-folder; a folder given up on, then deleted.
 
 use serde_json::{Map, Value, json};
 use wiremock::matchers::{method, path, query_param};
@@ -693,4 +693,41 @@ async fn a_two_page_folder_whose_last_link_stays_over_the_cap_is_given_up_too() 
     assert_eq!(initial_requests(&g, "f-proj").await, 2);
     assert!(!first.more);
     assert_given_up(&provider, &first.cursor, "Projects");
+}
+
+#[tokio::test]
+async fn a_given_up_folder_deleted_in_outlook_clears_the_standing_error() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    quiet(&g, &["f-inbox", "f-arch"]).await;
+    let long = "l".repeat(MAX_LINK_BYTES);
+    g.mount_link("d-f-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    g.mount_initial("f-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    let provider = g.provider();
+    provider.folders().await.unwrap();
+    let first = provider.changes(&caught_up(&g)).await.unwrap();
+    assert_given_up(&provider, &first.cursor, "Projects");
+
+    // Projects is deleted: the next listing no longer has it.
+    g.reset().await;
+    g.mount_root(json!([
+        folder("f-inbox", "Inbox", 0),
+        folder("f-arch", "Archive", 0),
+    ]))
+    .await;
+    g.mount_well_known(&[("inbox", "f-inbox"), ("archive", "f-arch")])
+        .await;
+    quiet(&g, &["f-inbox", "f-arch"]).await;
+    provider.folders().await.unwrap();
+    assert_eq!(
+        provider.changes(&first.cursor).await.unwrap_err(),
+        ProviderError::CursorExpired,
+        "a folder gone: the resync"
+    );
+    assert!(
+        provider.standing_error().is_none(),
+        "the folder given up on is gone, and so is its error"
+    );
 }

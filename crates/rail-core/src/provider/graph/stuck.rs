@@ -1,7 +1,7 @@
 //! Folders whose delta links keep running over `MAX_LINK_BYTES`: each start-over in a row is
 //! counted, and after `MAX_LINK_RESETS` the folder is given up on for the rest of the daemon's
 //! life, with a standing error that the sync status carries (the folder's name, outside text,
-//! as its detail).
+//! as its detail). A folder the listing no longer has is forgotten.
 
 use std::collections::BTreeMap;
 
@@ -48,6 +48,14 @@ impl Stuck {
         );
         self.given_up.insert(id.to_string(), name.to_string());
         true
+    }
+
+    /// Forget every folder the last listing (`folders`) no longer has: a folder given up on and
+    /// then deleted no longer keeps the standing error.
+    pub(super) fn keep_only(&mut self, folders: &[RemoteFolder]) {
+        let listed = |id: &RemoteId| folders.iter().any(|f| &f.remote_id == id);
+        self.resets.retain(|id, _| listed(id));
+        self.given_up.retain(|id, _| listed(id));
     }
 
     /// The standing error: Rail's words, with the names of every folder given up on (outside

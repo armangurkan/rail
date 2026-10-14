@@ -101,6 +101,7 @@ impl GraphProvider {
     pub(crate) async fn delta(&self, raw: &SyncCursor) -> Result<ChangeSet, ProviderError> {
         let mut cursor = GraphCursor::decode(raw)?;
         let folders = self.known_folders().await?;
+        self.stuck().keep_only(&folders);
         cursor.follow(&folders)?;
         cursor.begin_round();
         let mut net = Net::default();

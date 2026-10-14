@@ -219,9 +219,10 @@ fn folder_remote(tx: &Transaction, folder: i64) -> Result<Option<String>, StoreE
         .optional()?)
 }
 
-/// The folder `p` recorded as `folder`, as the store numbers it now: itself while it still
-/// has the provider id recorded, else the account's folder holding that id now; `None`, logged,
-/// when none does. A record from before ids were kept names the folder as it is.
+/// The folder `p` recorded as `folder`, as the store numbers it now: itself while it is still
+/// the account's and has the provider id recorded, else the account's folder holding that id
+/// now; `None`, logged, when none does. Both lookups stay in `account`: Gmail's label ids repeat
+/// across accounts. A record from before ids were kept names the folder as it is.
 fn resolved(
     tx: &Transaction,
     account: i64,
@@ -231,7 +232,7 @@ fn resolved(
     let Some(remote) = p.remotes.get(&folder) else {
         return Ok(Some(folder));
     };
-    if folder_remote(tx, folder)?.as_ref() == Some(remote) {
+    if super::targets::folder_remote_in(tx, account, folder)?.as_ref() == Some(remote) {
         return Ok(Some(folder));
     }
     let now: Option<i64> = tx
