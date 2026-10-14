@@ -6,7 +6,7 @@
 
 use rail_core::config::AccountKind;
 use rail_core::error::ErrorClass;
-use rail_core::ops::{AccountSyncStatus, Action as MailAction, M365_LABELS};
+use rail_core::ops::{AccountSyncStatus, Action as MailAction, M365_LABELS, SyncErrorInfo};
 use rail_core::ops::{ActionFailed, DraftImportResponse, ErrorCode, OpError};
 use rail_core::store::drafts_folder::{DraftsRow, DraftsRowKind};
 
@@ -370,4 +370,31 @@ async fn trash_notes_for_an_account_it_does_not_know_add_none() {
         unread: false,
     };
     assert!(f.screen.trash_notes(&[(1, unknown)]).is_empty());
+}
+
+#[tokio::test]
+async fn a_folder_microsoft_365_cannot_sync_is_kept_in_errors_once() {
+    let mut f = m365_fixture().await;
+    let mut home = AccountSyncStatus::new("home", "h@example.com", AccountKind::M365);
+    home.last_pass_failed = true;
+    home.last_success_at = Some(1);
+    home.last_error = Some(SyncErrorInfo {
+        code: "permanent".into(),
+        class: Some(ErrorClass::Permanent),
+        message: "folder \"Projects\" cannot be synced: its sync link is longer than 4 KiB".into(),
+        at: 1,
+        detail: None,
+    });
+    for _ in 0..2 {
+        let event = MailEvent::Daemon(DaemonEvent::Progress(Box::new(home.clone())));
+        let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+        settle(&mut f.screen, effects).await;
+    }
+    let kept: Vec<&str> = f.screen.status.errors().map(|e| e.text.as_str()).collect();
+    assert_eq!(
+        kept,
+        ["home: folder \"Projects\" cannot be synced: its sync link is longer than 4 KiB"]
+    );
+    let summary = f.screen.header_summary();
+    assert!(summary.contains("home sync failed"), "{summary}");
 }

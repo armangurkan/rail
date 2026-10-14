@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
-use super::cursor::{GraphCursor, MAX_CURSOR_BYTES, State};
+use super::cursor::{GraphCursor, MAX_CURSOR_BYTES, MAX_LINK_BYTES, State};
 use super::dates::iso;
 use super::fixtures::{Graph, ROOT, folder, message, removed};
 use crate::provider::{ChangeSet, Provider, ProviderError, Relabel, SyncCursor, Window};
@@ -597,4 +597,43 @@ async fn a_cold_provider_with_a_missing_subtree_fails_instead_of_expiring_the_cu
     );
     let error = provider.changes(&known).await.unwrap_err();
     assert_eq!(error, ProviderError::NotFound);
+}
+
+/// How many initial delta requests `folder` got.
+async fn initial_requests(g: &Graph, folder: &str) -> usize {
+    let at = format!("{ROOT}/me/mailFolders/{folder}/messages/delta");
+    g.server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == at)
+        .count()
+}
+
+#[tokio::test]
+async fn a_folder_whose_link_stays_over_the_cap_stops_after_three_restarts() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    quiet(&g, &["f-inbox", "f-arch"]).await;
+    let long = "l".repeat(MAX_LINK_BYTES);
+    g.mount_link("d-f-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    g.mount_initial("f-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    let provider = g.provider();
+    let first = provider.changes(&caught_up(&g)).await.unwrap();
+    assert_eq!(
+        initial_requests(&g, "f-proj").await,
+        2,
+        "its link, then two starts over: the third start-over gives up"
+    );
+    let second = provider.changes(&first.cursor).await.unwrap();
+    assert_eq!(initial_requests(&g, "f-proj").await, 2, "then it stops");
+    assert!(!second.more, "the other folders are caught up");
+    let error = provider.standing_error().expect("a standing error");
+    assert_eq!(
+        error.to_string(),
+        "folder \"Projects\" cannot be synced: its sync link is longer than 4 KiB"
+    );
 }

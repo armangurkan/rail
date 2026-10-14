@@ -19,6 +19,7 @@ mod message;
 mod reconcile;
 mod search;
 mod send;
+mod stuck;
 mod upload;
 mod wire;
 
@@ -93,6 +94,8 @@ pub struct GraphProvider {
     /// The folders of `folders` whose parent's child listing answered not found in the last
     /// listing: kept as known, not walked this pass.
     skipped: Mutex<HashSet<RemoteId>>,
+    /// Folders whose delta links keep running over the cap, for the daemon's life.
+    stuck: Mutex<stuck::Stuck>,
 }
 
 impl GraphProvider {
@@ -102,6 +105,7 @@ impl GraphProvider {
             history_days: 0,
             folders: Mutex::new(Vec::new()),
             skipped: Mutex::new(HashSet::new()),
+            stuck: Mutex::new(stuck::Stuck::default()),
         }
     }
 
@@ -109,6 +113,10 @@ impl GraphProvider {
     pub fn with_history_days(mut self, days: u32) -> Self {
         self.history_days = days;
         self
+    }
+
+    fn stuck(&self) -> std::sync::MutexGuard<'_, stuck::Stuck> {
+        self.stuck.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// List the folders, and remember them.
@@ -189,6 +197,10 @@ impl super::Provider for GraphProvider {
 
     fn backfills_by_delta(&self) -> bool {
         true
+    }
+
+    fn standing_error(&self) -> Option<ProviderError> {
+        self.stuck().error()
     }
 
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {

@@ -134,6 +134,8 @@ pub(crate) struct Mailbox {
     pub graph_model: bool,
     /// Every `OutgoingMail` a send took, in order (refused ones left out).
     pub sent_mail: Vec<OutgoingMail>,
+    /// What `standing_error` answers.
+    pub standing_error: Option<ProviderError>,
 }
 
 impl Default for Mailbox {
@@ -184,6 +186,7 @@ impl Default for Mailbox {
             missing_drafts: HashSet::new(),
             graph_model: false,
             sent_mail: Vec::new(),
+            standing_error: None,
         }
     }
 }
@@ -615,6 +618,10 @@ impl Provider for MockProvider {
 
     fn forward_carries_originals(&self) -> bool {
         self.lock().graph_model
+    }
+
+    fn standing_error(&self) -> Option<ProviderError> {
+        self.lock().standing_error.clone()
     }
 
     async fn attachment(&self, message: &RemoteId, part: &str) -> Result<Vec<u8>, ProviderError> {

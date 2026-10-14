@@ -3,7 +3,8 @@
 //! folders is a removal in one and an add in the other, in this call or another: an add wins
 //! over a removal of the same id, and a removal left unpaired is checked (`envelopes_of`)
 //! before it is reported deleted, so a message Graph still has, in a folder Rail syncs, is
-//! upserted where it is now. Bodies never come through the delta.
+//! upserted where it is now. Bodies never come through the delta. A folder whose link stays over
+//! the cap is given up on after three start-overs in a row (`stuck`).
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::PoisonError;
@@ -15,6 +16,7 @@ use super::dates::iso;
 use super::errors::on_delta;
 use super::message::{Item, item};
 use super::search::MESSAGE_FIELDS;
+use super::stuck::name_of;
 use super::wire::Page;
 use super::{COST_REQUEST, GraphProvider};
 use crate::provider::{
@@ -111,6 +113,10 @@ impl GraphProvider {
             if skipped.contains(&id) {
                 continue;
             }
+            if self.stuck().given_up(&id) {
+                cursor.park(&id);
+                continue;
+            }
             while let Some(folder) = cursor
                 .folders
                 .get(&id)
@@ -126,7 +132,10 @@ impl GraphProvider {
                     .await
                     .map_err(on_delta)?;
                 net.page(&id, page.value);
-                cursor.advance(&id, page.next_link, page.delta_link)?;
+                let step = cursor.advance(&id, page.next_link, page.delta_link)?;
+                if self.stuck().count(&id, step, &name_of(&folders, &id)) {
+                    cursor.park(&id);
+                }
             }
         }
         self.finish(net, cursor).await

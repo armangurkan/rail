@@ -50,6 +50,12 @@ pub trait Provider: Send + Sync {
     fn backfills_by_delta(&self) -> bool {
         false
     }
+    /// A permanent condition the provider found while passes otherwise go on (Graph: a folder
+    /// it gave up syncing). The engine records a pass that went through as failed with it, so
+    /// the status and `:errors` show it. `None` by default.
+    fn standing_error(&self) -> Option<ProviderError> {
+        None
+    }
     /// What changed since `cursor`. `ProviderError::CursorExpired` means a full resync.
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError>;
     /// One message's body, rendered to text.

@@ -37,6 +37,15 @@ pub(crate) enum State {
     Due,
 }
 
+/// What `advance` did with a folder's page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Step {
+    /// The folder walks on, or is caught up.
+    Walked,
+    /// Its link was over `MAX_LINK_BYTES`: it starts over from its first page.
+    StartedOver,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Folder {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -152,7 +161,7 @@ impl GraphCursor {
         id: &str,
         next: Option<String>,
         delta: Option<String>,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<Step, ProviderError> {
         let folder = self
             .folders
             .get_mut(id)
@@ -165,7 +174,7 @@ impl GraphCursor {
                 "a Microsoft 365 delta link is over its cap; the folder starts over"
             );
             *folder = Folder::unstarted();
-            return Ok(());
+            return Ok(Step::StartedOver);
         }
         *folder = match (next, delta) {
             (Some(next), _) => Folder {
@@ -187,7 +196,18 @@ impl GraphCursor {
                 }
             }
         };
-        Ok(())
+        Ok(Step::Walked)
+    }
+
+    /// Set folder `id` aside for this pass: caught up, with no link, so a round that asks it
+    /// again would start it from its first page.
+    pub(crate) fn park(&mut self, id: &str) {
+        if let Some(folder) = self.folders.get_mut(id) {
+            *folder = Folder {
+                link: None,
+                state: State::CaughtUp,
+            };
+        }
     }
 
     /// The cursor's folders in walk order: the inbox, the other well-known folders, then the
@@ -310,14 +330,25 @@ mod tests {
     fn an_over_long_link_resets_its_folder_instead_of_being_stored() {
         let mut cursor = GraphCursor::start(&[folder("f-1", "One", FolderKind::User)], None);
         let long = "l".repeat(MAX_LINK_BYTES + 1);
-        cursor.advance("f-1", Some(long.clone()), None).unwrap();
+        assert_eq!(
+            cursor.advance("f-1", Some(long.clone()), None).unwrap(),
+            Step::StartedOver
+        );
         assert_eq!(cursor.folders["f-1"], Folder::unstarted());
-        cursor.advance("f-1", None, Some(long)).unwrap();
+        assert_eq!(
+            cursor.advance("f-1", None, Some(long)).unwrap(),
+            Step::StartedOver
+        );
         assert_eq!(cursor.folders["f-1"], Folder::unstarted());
-        cursor
-            .advance("f-1", None, Some("l".repeat(MAX_LINK_BYTES)))
-            .unwrap();
+        assert_eq!(
+            cursor
+                .advance("f-1", None, Some("l".repeat(MAX_LINK_BYTES)))
+                .unwrap(),
+            Step::Walked
+        );
         assert_eq!(cursor.folders["f-1"].state, State::CaughtUp);
+        cursor.park("f-1");
+        assert_eq!(cursor.folders["f-1"].link, None);
     }
 
     #[test]

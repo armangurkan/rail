@@ -309,6 +309,11 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A Microsoft 365 folder whose sync link stayed longer than 4 KiB started over from its first
+  page on every pass, forever. After three start-overs in a row Rail stops syncing it until the
+  daemon restarts and says so in the header's failed state and in `:errors`
+  (`folder "Projects" cannot be synced: its sync link is longer than 4 KiB`). A permanent sync
+  error is now kept in `:errors` (#28).
 - A Microsoft 365 folder whose own name holds `/` showed as two levels; the `/` now shows as
   `∕`. A folder whose subfolders vanished while Rail listed them no longer fails the whole sync
   pass, and an action on a conversation whose messages left the store says so instead of
