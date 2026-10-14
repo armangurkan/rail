@@ -163,6 +163,12 @@ that does not by itself mean Rail is broken.
   commands and `rail mcp` only send requests. No capability exists only in one front end.
 - Store migrations are embedded and numbered; never edit a shipped migration's statements, add a
   new one instead.
+- The interface is opinionated, and wherever a choice is cheap it is offered. Rail picks one way
+  to draw things (24-hour times, the key hints in the bar, the reader's order of messages) and
+  ships that as the default, with a `[general]` key and a palette command for the other way
+  (`time` and `:time`, `hints` and `:hints`, `theme`, `accent`). When you add something a user
+  could reasonably want the other way, keep the default decided and give the option; do not make
+  the design itself a setting.
 
 ## Commits and pull requests
 
