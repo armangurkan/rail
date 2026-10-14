@@ -8,6 +8,7 @@ use super::*;
 use crate::tui::test_util::render_lines;
 
 const HOUR_MS: i64 = 3_600_000;
+const DAY_MS: i64 = 24 * HOUR_MS;
 const GROUPS: [&str; 4] = ["TODAY", "YESTERDAY", "THIS WEEK", "OLDER"];
 
 /// `n` one-message inbox threads for `work`, `{prefix}t0`.., a minute apart from `start_ms`
@@ -150,12 +151,124 @@ async fn a_page_down_moves_by_the_threads_that_fit() {
         "YESTERDAY",
         "the group's row stays on top"
     );
-    assert!(rows[22].contains("subject ym18"), "{}", rows[22]);
+    assert!(
+        rows[2].contains("subject ym20"),
+        "held at the last full screen: {}",
+        rows[2]
+    );
+    assert!(rows[22].contains("subject ym0"), "{}", rows[22]);
+    assert_eq!(cursor_row(&f, 90, 24), Some(4), "the cursor on ym18");
+}
+
+/// Spec §5 (C1): a page over a screen with three group rows lands on the thread after the last
+/// one shown, and the next screen starts with it: no thread is skipped.
+#[tokio::test]
+async fn a_page_down_over_three_group_rows_starts_with_the_thread_after_the_last_shown() {
+    let mut envelopes = threads("o", BASE_MS - 10 * DAY_MS, 30);
+    envelopes.extend(threads("y", BASE_MS, 5));
+    envelopes.extend(threads("d", BASE_MS + 26 * HOUR_MS, 5));
+    let mut f = seeded(&envelopes, Icons::Unicode).await;
+    let before = lines(&f, 90, 24);
+    assert_eq!(before[1].trim_end(), "TODAY");
+    assert!(
+        before[22].contains("subject om21"),
+        "the last shown: {}",
+        before[22]
+    );
+    press(&mut f, KeyCode::PageDown).await;
+    assert_eq!(selected(&f).as_deref(), Some("subject om20"));
+    let after = lines(&f, 90, 24);
+    assert_eq!(after[1].trim_end(), "OLDER");
+    assert!(
+        after[2].contains("subject om20"),
+        "the thread after the last one shown: {}",
+        after[2]
+    );
+    assert_eq!(cursor_row(&f, 90, 24), Some(2));
+    press(&mut f, KeyCode::PageUp).await;
+    assert_eq!(
+        selected(&f).as_deref(),
+        Some("subject dm4"),
+        "back to the top"
+    );
+}
+
+/// The final review's finding 1: the cursor on the bottom row and a next screen with more group
+/// rows (so fewer threads) than this one. The next screen still starts with the thread after
+/// the last one shown, and the cursor clamps to its last thread.
+#[tokio::test]
+async fn a_page_down_from_the_bottom_row_starts_with_the_thread_after_the_last_shown() {
+    let mut envelopes = threads("o", BASE_MS - 10 * DAY_MS, 30);
+    envelopes.extend(threads("w", BASE_MS - 2 * DAY_MS, 2));
+    envelopes.extend(threads("y", BASE_MS, 2));
+    envelopes.extend(threads("d", BASE_MS + 26 * HOUR_MS, 21));
+    let mut f = seeded(&envelopes, Icons::Unicode).await;
+    let before = lines(&f, 90, 24);
+    assert_eq!(before[1].trim_end(), "TODAY");
+    assert!(
+        before[22].contains("subject dm0"),
+        "the last shown: {}",
+        before[22]
+    );
+    for _ in 0..20 {
+        press(&mut f, KeyCode::Char('j')).await;
+    }
     assert_eq!(
         cursor_row(&f, 90, 24),
         Some(22),
-        "the cursor on the last list row"
+        "the cursor on the bottom row"
     );
+    press(&mut f, KeyCode::PageDown).await;
+    let after = lines(&f, 90, 24);
+    assert_eq!(after[1].trim_end(), "YESTERDAY", "{after:?}");
+    assert!(
+        after[2].contains("subject ym1"),
+        "the thread after the last one shown: {}",
+        after[2]
+    );
+    assert_eq!(
+        selected(&f).as_deref(),
+        Some("subject om15"),
+        "the screen's last thread"
+    );
+    assert_eq!(cursor_row(&f, 90, 24), Some(22));
+}
+
+/// The mirror: the cursor on the top row and a screen above with more group rows than this one.
+/// The previous screen ends with the thread before the first one shown.
+#[tokio::test]
+async fn a_page_up_from_the_top_row_ends_with_the_thread_before_the_first_shown() {
+    let mut envelopes = threads("o", BASE_MS - 10 * DAY_MS, 40);
+    envelopes.extend(threads("w", BASE_MS - 2 * DAY_MS, 2));
+    envelopes.extend(threads("y", BASE_MS, 2));
+    envelopes.extend(threads("d", BASE_MS + 26 * HOUR_MS, 2));
+    let mut f = seeded(&envelopes, Icons::Unicode).await;
+    let _ = lines(&f, 90, 24);
+    press(&mut f, KeyCode::End).await;
+    for _ in 0..20 {
+        press(&mut f, KeyCode::Char('k')).await;
+    }
+    let before = lines(&f, 90, 24);
+    assert_eq!(before[1].trim_end(), "OLDER");
+    assert!(
+        before[2].contains("subject om20"),
+        "the first shown: {}",
+        before[2]
+    );
+    assert_eq!(cursor_row(&f, 90, 24), Some(2), "the cursor on the top row");
+    press(&mut f, KeyCode::PageUp).await;
+    let after = lines(&f, 90, 24);
+    assert!(
+        after[22].contains("subject om21"),
+        "the thread before the first one shown: {after:?}"
+    );
+    assert_eq!(after[1].trim_end(), "THIS WEEK", "{after:?}");
+    assert_eq!(
+        selected(&f).as_deref(),
+        Some("subject wm0"),
+        "the cursor keeps its row"
+    );
+    assert_eq!(cursor_row(&f, 90, 24), Some(2));
 }
 
 /// Review Focus 5 (selection and opening).
@@ -230,7 +343,6 @@ async fn home_and_end_show_their_group_rows_and_the_cursor() {
 /// threads above the remembered first row; a re-read must keep them in the window.
 #[tokio::test]
 async fn a_re_read_after_end_keeps_the_drawn_threads_and_fills_the_pane() {
-    const DAY_MS: i64 = 24 * HOUR_MS;
     let mut envelopes = threads("o", BASE_MS - 10 * DAY_MS, 10);
     envelopes.extend(threads("w", BASE_MS - 2 * DAY_MS, 1));
     envelopes.extend(threads("y", BASE_MS, 1));
@@ -256,6 +368,33 @@ async fn a_re_read_after_end_keeps_the_drawn_threads_and_fills_the_pane() {
     assert!(
         after[1..11].iter().all(|r| !r.trim().is_empty()),
         "no blank list row: {after:?}"
+    );
+}
+
+/// Spec §5 (C4): the groups are worked out once per list read and per day, not per frame.
+#[tokio::test]
+async fn the_groups_are_worked_out_once_per_read_and_per_day() {
+    let mut f = grouped(2, 2).await;
+    let _ = lines(&f, 90, 24);
+    let _ = lines(&f, 90, 24);
+    assert_eq!(f.screen.list_groups.builds(), 1, "two frames, one read");
+    store_changed(&mut f).await;
+    let _ = lines(&f, 90, 24);
+    assert_eq!(
+        f.screen.list_groups.builds(),
+        2,
+        "a list read works them out again"
+    );
+    f.screen
+        .ctx
+        .clock
+        .set_now(crate::tui::test_util::NOW + 86_400);
+    let rows = lines(&f, 90, 24);
+    assert_eq!(f.screen.list_groups.builds(), 3, "so does a new day");
+    assert_eq!(
+        rows[1].trim_end(),
+        "YESTERDAY",
+        "today's threads are yesterday's now"
     );
 }
 

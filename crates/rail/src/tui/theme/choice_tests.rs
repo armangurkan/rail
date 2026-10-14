@@ -105,6 +105,11 @@ fn an_ansi_terminal_keeps_the_default_look_except_a_safe_accent() {
         Some(Color::Cyan),
         "an RGB accent is not applied on Ansi"
     );
+    assert_eq!(
+        rgb.border_focus.fg,
+        Some(Color::Cyan),
+        "nor on the focus border"
+    );
 }
 
 #[test]

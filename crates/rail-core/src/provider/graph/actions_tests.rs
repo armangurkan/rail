@@ -217,11 +217,23 @@ async fn nothing_to_touch_sends_nothing() {
         to: "f-proj".into(),
     };
     provider.apply(&[filed], &to).await.unwrap();
-    provider
+    assert_eq!(g.batch.posts(), 0, "no batch and no folder listing");
+    assert!(g.server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_conversation_with_no_stored_messages_is_refused_naming_it() {
+    let g = Graph::start().await;
+    let error = g
+        .provider()
         .apply(&[ThreadTarget::from("c-empty")], &Change::Archive)
         .await
-        .unwrap();
-    assert_eq!(g.batch.posts(), 0, "no batch and no folder listing");
+        .unwrap_err();
+    assert!(
+        matches!(error, ProviderError::Permanent { .. }),
+        "{error:?}"
+    );
+    assert_eq!(error.detail(), Some("c-empty"));
     assert!(g.server.received_requests().await.unwrap().is_empty());
 }
 
@@ -369,6 +381,29 @@ async fn a_410_on_a_move_is_a_refusal_not_an_expired_cursor() {
         .unwrap_err();
     assert!(
         matches!(&error, ProviderError::Permanent { message, .. } if message == "Microsoft 365 refused the request (HTTP 410)"),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_503_among_answered_items_fails_the_call_as_transient() {
+    let g = Graph::start().await;
+    g.batch
+        .answer("PATCH", "/me/messages/m1", 200, json!({"id": "m1"}));
+    let busy = json!({"error": {"code": "ServiceUnavailable", "message": "later"}});
+    g.batch.answer("PATCH", "/me/messages/m2", 503, busy);
+    g.batch
+        .answer("PATCH", "/me/messages/m3", 200, json!({"id": "m3"}));
+    let error = g
+        .provider()
+        .apply(
+            &[inbox(&["m1", "m2", "m3"], true)],
+            &Change::Read { on: true },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, ProviderError::Transient { .. }),
         "{error:?}"
     );
 }

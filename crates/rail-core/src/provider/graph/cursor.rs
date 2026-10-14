@@ -37,6 +37,17 @@ pub(crate) enum State {
     Due,
 }
 
+/// What `advance` did with a folder's page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Step {
+    /// A next link: the folder walks on.
+    Walking,
+    /// A delta link (or a page with neither link): the folder is caught up for this round.
+    CaughtUp,
+    /// Its link was over `MAX_LINK_BYTES`: it starts over from its first page.
+    StartedOver,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Folder {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -144,14 +155,16 @@ impl GraphCursor {
         self.folders.values().any(|f| f.state != State::CaughtUp)
     }
 
-    /// Where folder `id` goes on after a page: a next link keeps it walking, a delta link
-    /// ends its round. A page with neither is not one Rail can go on from.
+    /// Where folder `id` goes on after a page: a next link keeps it walking, a delta link ends
+    /// its round. A page with neither ends its walk for this pass: a due folder keeps the delta
+    /// link it had; one mid-walk or not started loses its link, so it starts over next round and
+    /// `walked_all` knows its remainder was not read. Answers which of these it was (`Step`).
     pub(crate) fn advance(
         &mut self,
         id: &str,
         next: Option<String>,
         delta: Option<String>,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<Step, ProviderError> {
         let folder = self
             .folders
             .get_mut(id)
@@ -164,24 +177,61 @@ impl GraphCursor {
                 "a Microsoft 365 delta link is over its cap; the folder starts over"
             );
             *folder = Folder::unstarted();
-            return Ok(());
+            return Ok(Step::StartedOver);
         }
-        *folder = match (next, delta) {
-            (Some(next), _) => Folder {
-                link: Some(next),
-                state: State::Running,
-            },
-            (None, Some(delta)) => Folder {
-                link: Some(delta),
-                state: State::CaughtUp,
-            },
+        let (link, state, step) = match (next, delta) {
+            (Some(next), _) => (Some(next), State::Running, Step::Walking),
+            (None, Some(delta)) => (Some(delta), State::CaughtUp, Step::CaughtUp),
             (None, None) => {
-                return Err(ProviderError::permanent(
-                    "Microsoft 365's delta page had neither a next nor a delta link",
-                ));
+                tracing::warn!(
+                    folder = %id,
+                    "Microsoft 365's delta page had neither a next nor a delta link; the folder counts as caught up for this pass"
+                );
+                let link = folder
+                    .link
+                    .take()
+                    .filter(|_| folder.state != State::Running);
+                (link, State::CaughtUp, Step::CaughtUp)
             }
         };
-        Ok(())
+        *folder = Folder { link, state };
+        Ok(step)
+    }
+
+    /// Leave folder `id` out of this round: it counts as caught up, so the other folders'
+    /// rounds go on and the call can end. Only a folder mid-walk or not started (`Running`)
+    /// loses its link, so it starts over next round and `walked_all` knows it was not walked.
+    /// A due or caught-up folder keeps its delta link, so setting it aside again in a later call
+    /// of the same pass or round keeps what the first call kept.
+    pub(crate) fn set_aside(&mut self, id: &str) {
+        if let Some(folder) = self.folders.get_mut(id) {
+            if folder.state == State::Running {
+                folder.link = None;
+            }
+            folder.state = State::CaughtUp;
+        }
+    }
+
+    /// False when a folder is caught up with no link: set aside or given up on before it caught
+    /// up, or answered a page with neither link mid-walk or before it had one, so not walked in
+    /// this round. A load that ends
+    /// on such a cursor must not sweep.
+    pub(crate) fn walked_all(&self) -> bool {
+        !self
+            .folders
+            .values()
+            .any(|f| f.state == State::CaughtUp && f.link.is_none())
+    }
+
+    /// Set folder `id` aside for this pass: caught up, with no link, so a round that asks it
+    /// again would start it from its first page.
+    pub(crate) fn park(&mut self, id: &str) {
+        if let Some(folder) = self.folders.get_mut(id) {
+            *folder = Folder {
+                link: None,
+                state: State::CaughtUp,
+            };
+        }
     }
 
     /// The cursor's folders in walk order: the inbox, the other well-known folders, then the
@@ -242,7 +292,72 @@ mod tests {
         assert!(!cursor.more());
         cursor.begin_round();
         assert!(cursor.folders.values().all(|f| f.state == State::Due));
-        assert!(cursor.advance("f-1", None, None).is_err());
+    }
+
+    #[test]
+    fn a_page_with_neither_link_mid_walk_drops_the_next_link() {
+        let mut cursor = GraphCursor::start(&[folder("f-1", "One", FolderKind::User)], None);
+        cursor.advance("f-1", Some("n1".into()), None).unwrap();
+        cursor.advance("f-1", None, None).unwrap();
+        assert_eq!(
+            cursor.folders["f-1"],
+            Folder {
+                link: None,
+                state: State::CaughtUp,
+            },
+            "mid-walk: it starts over next round"
+        );
+        assert!(!cursor.more());
+        assert!(!cursor.walked_all(), "its remainder was not read");
+    }
+
+    #[test]
+    fn a_page_with_neither_link_keeps_a_due_folders_delta_link() {
+        let mut cursor = GraphCursor::start(&[folder("f-1", "One", FolderKind::User)], None);
+        cursor.advance("f-1", None, Some("d1".into())).unwrap();
+        cursor.begin_round();
+        cursor.advance("f-1", None, None).unwrap();
+        assert_eq!(
+            cursor.folders["f-1"],
+            Folder {
+                link: Some("d1".into()),
+                state: State::CaughtUp,
+            },
+            "the next round goes on from the delta link it had"
+        );
+    }
+
+    #[test]
+    fn a_due_folder_set_aside_twice_keeps_its_delta_link() {
+        let mut cursor = GraphCursor::start(&[folder("f-1", "One", FolderKind::User)], None);
+        cursor.advance("f-1", None, Some("d1".into())).unwrap();
+        cursor.begin_round();
+        cursor.set_aside("f-1");
+        cursor.set_aside("f-1");
+        assert_eq!(
+            cursor.folders["f-1"],
+            Folder {
+                link: Some("d1".into()),
+                state: State::CaughtUp,
+            },
+            "a second call of the pass keeps the link the first one kept"
+        );
+        assert!(cursor.walked_all());
+    }
+
+    #[test]
+    fn a_running_folder_set_aside_loses_its_link() {
+        let mut cursor = GraphCursor::start(&[folder("f-1", "One", FolderKind::User)], None);
+        cursor.advance("f-1", Some("n1".into()), None).unwrap();
+        cursor.set_aside("f-1");
+        assert_eq!(
+            cursor.folders["f-1"],
+            Folder {
+                link: None,
+                state: State::CaughtUp,
+            }
+        );
+        assert!(!cursor.walked_all());
     }
 
     #[test]
@@ -289,14 +404,46 @@ mod tests {
     fn an_over_long_link_resets_its_folder_instead_of_being_stored() {
         let mut cursor = GraphCursor::start(&[folder("f-1", "One", FolderKind::User)], None);
         let long = "l".repeat(MAX_LINK_BYTES + 1);
-        cursor.advance("f-1", Some(long.clone()), None).unwrap();
+        assert_eq!(
+            cursor.advance("f-1", Some(long.clone()), None).unwrap(),
+            Step::StartedOver
+        );
         assert_eq!(cursor.folders["f-1"], Folder::unstarted());
-        cursor.advance("f-1", None, Some(long)).unwrap();
+        assert_eq!(
+            cursor.advance("f-1", None, Some(long)).unwrap(),
+            Step::StartedOver
+        );
         assert_eq!(cursor.folders["f-1"], Folder::unstarted());
-        cursor
-            .advance("f-1", None, Some("l".repeat(MAX_LINK_BYTES)))
-            .unwrap();
+        assert_eq!(
+            cursor
+                .advance("f-1", None, Some("l".repeat(MAX_LINK_BYTES)))
+                .unwrap(),
+            Step::CaughtUp
+        );
         assert_eq!(cursor.folders["f-1"].state, State::CaughtUp);
+        cursor.park("f-1");
+        assert_eq!(cursor.folders["f-1"].link, None);
+        assert!(!cursor.walked_all(), "parked: not walked");
+        cursor.advance("f-1", Some("n1".into()), None).unwrap();
+        cursor.set_aside("f-1");
+        assert_eq!(
+            cursor.folders["f-1"],
+            Folder {
+                link: None,
+                state: State::CaughtUp,
+            },
+            "set aside mid-walk, it starts over next round"
+        );
+        assert!(!cursor.walked_all());
+        cursor.advance("f-1", None, Some("d1".into())).unwrap();
+        assert!(cursor.walked_all());
+        cursor.begin_round();
+        cursor.set_aside("f-1");
+        assert_eq!(
+            cursor.folders["f-1"].link,
+            Some("d1".into()),
+            "due: its delta link kept"
+        );
     }
 
     #[test]

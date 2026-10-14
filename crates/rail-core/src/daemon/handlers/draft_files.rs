@@ -16,7 +16,7 @@ use crate::paths::{Paths, create_private_dir, remove_dir_if_present};
 use crate::provider::gmail::mime::sanitize_filename;
 use crate::provider::{Provider, ProviderError};
 use crate::store::Store;
-use crate::store::drafts::{Attachment, ReplyAttachment};
+use crate::store::drafts::{Attachment, ReplyAttachment, modified_ns};
 
 /// Held by an import from its token check to its store write, and by the start sweep: a
 /// directory being filled is never swept, and two imports never share one.
@@ -157,6 +157,7 @@ fn write_all(dir: &Path, fetched: Vec<Fetched>) -> Result<Vec<Attachment>, OpErr
             size: i64::try_from(bytes.len()).unwrap_or(i64::MAX),
             // The size the source listing gives: the provider's own for this file.
             listed: Some(meta.size),
+            modified: std::fs::metadata(path).ok().as_ref().and_then(modified_ns),
         });
     }
     std::fs::File::open(dir)

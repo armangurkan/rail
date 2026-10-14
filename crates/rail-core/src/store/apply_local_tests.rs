@@ -429,3 +429,67 @@ fn a_row_left_with_no_thread_is_deleted_and_a_two_thread_row_keeps_the_other() {
     assert_eq!(threads, format!("[{t1}]"));
     assert!(store.failed_rows(1).unwrap().is_empty());
 }
+
+/// How many messages folder `id` holds.
+fn members(store: &Store, id: i64) -> i64 {
+    store
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM message_folders WHERE folder_id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn an_undo_never_restores_into_another_accounts_folder_with_the_same_remote_id() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    let p = folder(&store, "Label_1");
+    store
+        .conn()
+        .execute(
+            "INSERT INTO message_folders (message_id, folder_id) \
+             SELECT id, ?1 FROM messages WHERE thread_id = ?2",
+            params![p, t1],
+        )
+        .unwrap();
+    let removal = enqueue(
+        &mut store,
+        Action::Labels {
+            add: vec![],
+            remove: vec![p],
+        },
+        vec![t1],
+        "b",
+    );
+    // p's rowid now belongs to a second account's folder with the same Gmail label id, and
+    // account 1 holds Label_1 under a new rowid.
+    let conn = store.conn();
+    conn.execute(
+        "INSERT INTO accounts (name, kind, address) VALUES ('o', 'gmail', 'o@example.com')",
+        [],
+    )
+    .unwrap();
+    conn.execute("UPDATE folders SET account_id = 2 WHERE id = ?1", [p])
+        .unwrap();
+    conn.execute(
+        "INSERT INTO folders (account_id, remote_id, name, kind) \
+         VALUES (1, 'Label_1', 'Projects', 'user')",
+        [],
+    )
+    .unwrap();
+    let now = conn.last_insert_rowid();
+    undo(&mut store, vec![removal]);
+    assert_eq!(
+        members(&store, p),
+        0,
+        "the other account's folder gets nothing"
+    );
+    assert_eq!(
+        members(&store, now),
+        2,
+        "both of t1's messages go back to Label_1"
+    );
+}

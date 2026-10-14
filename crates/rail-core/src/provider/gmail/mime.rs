@@ -50,7 +50,7 @@ pub fn build(outgoing: &Outgoing) -> Result<Vec<u8>, ProviderError> {
         .from(address(outgoing.from_name.as_deref(), &outgoing.from))
         .subject(strip_controls(&outgoing.subject))
         .message_id(outgoing.message_id.trim_matches(['<', '>']))
-        .text_body(outgoing.body.as_str());
+        .text_body(crlf(&outgoing.body));
     if !outgoing.to.is_empty() {
         builder = builder.to(list(&outgoing.to));
     }
@@ -85,6 +85,13 @@ pub fn build(outgoing: &Outgoing) -> Result<Vec<u8>, ProviderError> {
         return Err(too_large(raw.len()));
     }
     Ok(raw)
+}
+
+/// `text` with CRLF line ends: a CRLF already there is kept and a bare LF gains its CR, so the
+/// text part decodes to CRLF whichever transfer encoding mail-builder picks (RFC 2045; its
+/// 7bit path leaves an existing CRLF alone).
+fn crlf(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
 fn too_large(bytes: usize) -> ProviderError {

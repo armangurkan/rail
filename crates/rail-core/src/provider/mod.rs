@@ -8,6 +8,7 @@ pub(crate) mod html;
 #[cfg(test)]
 mod html_tests;
 pub mod http;
+pub(crate) mod limits;
 pub mod links;
 #[cfg(test)]
 mod links_tests;
@@ -48,6 +49,18 @@ pub trait Provider: Send + Sync {
     /// the delta over.
     fn backfills_by_delta(&self) -> bool {
         false
+    }
+    /// A permanent condition the provider found while passes otherwise go on (Graph: a folder
+    /// it gave up syncing). The engine records a pass that went through as failed with it, so
+    /// the status and `:errors` show it. `None` by default.
+    fn standing_error(&self) -> Option<ProviderError> {
+        None
+    }
+    /// False when `cursor`, the one a load caught up on, holds folders the load never walked
+    /// (Graph: a folder it gave up syncing, or one of a subtree its listing skipped): the load
+    /// then ends without its sweep, which would delete their mail. True by default.
+    fn walked_everything(&self, _cursor: &SyncCursor) -> bool {
+        true
     }
     /// What changed since `cursor`. `ProviderError::CursorExpired` means a full resync.
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError>;

@@ -61,26 +61,54 @@ pub enum RowKind {
     },
 }
 
-/// A row's identity across rebuilds: the cursor and the fold state are kept by it.
+/// A row's identity across rebuilds: the cursor and the fold state are kept by it. Accounts are
+/// named by their address, so a reload that reorders them keeps every fold.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RowKey {
     Heading(&'static str),
     /// The rule closing UNIFIED (`None`) or the one above an account's `More folders`.
-    Rule(Option<usize>),
+    Rule(Option<String>),
     /// A merged mailbox by its name.
     Unified(&'static str),
-    Account(usize),
-    More(usize),
+    Account(String),
+    More(String),
     /// A folder by its store id: a renamed label keeps its row.
     Folder {
-        account: usize,
+        account: String,
         folder_id: i64,
     },
     /// A tree node that is only a path prefix (`[Imap]`, `Categories`).
     Prefix {
-        account: usize,
+        account: String,
         path: String,
     },
+}
+
+/// An account as the tree takes it: its label, drawn, and its address, its rows' key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeAccount {
+    pub label: String,
+    pub address: String,
+}
+
+/// The account a row belongs to: its place in config (the scope's) and its address (the key's).
+#[derive(Debug, Clone, Copy)]
+struct Owner<'a> {
+    index: usize,
+    address: &'a str,
+}
+
+impl Owner<'_> {
+    fn key(self) -> RowKey {
+        RowKey::Account(self.address.to_string())
+    }
+
+    fn folder_key(self, folder_id: i64) -> RowKey {
+        RowKey::Folder {
+            account: self.address.to_string(),
+            folder_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,11 +180,15 @@ fn folded_by_default(key: &RowKey) -> bool {
     !matches!(key, RowKey::Account(_))
 }
 
-/// Every row, folded away or not, in order; `labels` are the accounts' labels in config order.
-pub fn build(labels: &[String], outcome: &SidebarOutcome, folds: &Folds) -> Vec<SidebarRow> {
+/// Every row, folded away or not, in order; `accounts` in config order.
+pub fn build(accounts: &[TreeAccount], outcome: &SidebarOutcome, folds: &Folds) -> Vec<SidebarRow> {
     let mut rows = unified_rows(outcome);
     rows.push(heading(ACCOUNTS));
-    for (index, label) in labels.iter().enumerate() {
+    for (index, account) in accounts.iter().enumerate() {
+        let owner = Owner {
+            index,
+            address: &account.address,
+        };
         let id = outcome.account_ids.get(index).copied().flatten();
         let own: Vec<&FolderCount> = outcome
             .counts
@@ -164,9 +196,14 @@ pub fn build(labels: &[String], outcome: &SidebarOutcome, folds: &Folds) -> Vec<
             .iter()
             .filter(|f| Some(f.account_id) == id)
             .collect();
-        rows.push(account_row(index, label, inbox_unread(outcome, id), folds));
-        rows.extend(system_rows(index, &own, drafts_of(outcome, id)));
-        rows.extend(more_rows(index, &own, folds));
+        rows.push(account_row(
+            owner,
+            &account.label,
+            inbox_unread(outcome, id),
+            folds,
+        ));
+        rows.extend(system_rows(owner, &own, drafts_of(outcome, id)));
+        rows.extend(more_rows(owner, &own, folds));
     }
     rows
 }
@@ -260,13 +297,13 @@ fn inbox_unread(outcome: &SidebarOutcome, id: Option<i64>) -> u64 {
         .map_or(0, |a| a.unread)
 }
 
-fn account_row(index: usize, label: &str, unread: u64, folds: &Folds) -> SidebarRow {
-    let key = RowKey::Account(index);
+fn account_row(owner: Owner<'_>, label: &str, unread: u64, folds: &Folds) -> SidebarRow {
+    let key = owner.key();
     SidebarRow {
         foldable: true,
         folded: folds.is_folded(&key),
         ..row(
-            RowKind::Account { index },
+            RowKind::Account { index: owner.index },
             key,
             label.to_string(),
             0,
@@ -279,15 +316,17 @@ fn kind_of(f: &FolderCount) -> FolderKind {
     FolderKind::parse(&f.kind).unwrap_or(FolderKind::User)
 }
 
-/// The inbox opens the account's inbox scope; any other folder its own.
+/// The inbox opens the account's inbox scope; any other folder its own, with its kind.
 fn folder_scope(account: usize, f: &FolderCount) -> ScopeChoice {
-    if kind_of(f) == FolderKind::Inbox {
+    let kind = kind_of(f);
+    if kind == FolderKind::Inbox {
         ScopeChoice::Account(account)
     } else {
         ScopeChoice::Folder {
             account,
             folder_id: f.folder_id,
             name: f.name.clone(),
+            kind,
         }
     }
 }
@@ -301,20 +340,15 @@ fn folder_count(kind: FolderKind, f: &FolderCount) -> Option<u64> {
     }
 }
 
-fn folder_row(account: usize, f: &FolderCount, label: String, depth: u8) -> SidebarRow {
+fn folder_row(owner: Owner<'_>, f: &FolderCount, label: String, depth: u8) -> SidebarRow {
     let kind = kind_of(f);
-    let key = RowKey::Folder {
-        account,
-        folder_id: f.folder_id,
-    };
-    let scope = folder_scope(account, f);
     row(
         RowKind::Folder {
-            account,
-            scope,
+            account: owner.index,
+            scope: folder_scope(owner.index, f),
             kind,
         },
-        key,
+        owner.folder_key(f.folder_id),
         label,
         depth,
         folder_count(kind, f),
@@ -324,18 +358,18 @@ fn folder_row(account: usize, f: &FolderCount, label: String, depth: u8) -> Side
 /// The account's system folders at depth 1, in the store's order (inbox, sent, drafts,
 /// archive, spam, trash), under the provider's own names; the Drafts row counts `drafts`, what
 /// the Drafts pane shows for the account.
-fn system_rows(index: usize, own: &[&FolderCount], drafts: u64) -> Vec<SidebarRow> {
+fn system_rows(owner: Owner<'_>, own: &[&FolderCount], drafts: u64) -> Vec<SidebarRow> {
     own.iter()
         .filter(|f| SYSTEM.contains(&kind_of(f)))
         .map(|f| {
-            let row = folder_row(index, f, f.name.clone(), 1);
+            let row = folder_row(owner, f, f.name.clone(), 1);
             let count = if kind_of(f) == FolderKind::Drafts {
                 Some(drafts)
             } else {
                 row.count
             };
             SidebarRow {
-                parents: vec![RowKey::Account(index)],
+                parents: vec![owner.key()],
                 count,
                 ..row
             }
@@ -356,7 +390,7 @@ fn drafts_of(outcome: &SidebarOutcome, id: Option<i64>) -> u64 {
 
 /// The rule, `More folders (N)` and, under it, every other folder as a tree; nothing when the
 /// account has no other folder.
-fn more_rows(index: usize, own: &[&FolderCount], folds: &Folds) -> Vec<SidebarRow> {
+fn more_rows(owner: Owner<'_>, own: &[&FolderCount], folds: &Folds) -> Vec<SidebarRow> {
     let other: Vec<&FolderCount> = own
         .iter()
         .copied()
@@ -365,20 +399,20 @@ fn more_rows(index: usize, own: &[&FolderCount], folds: &Folds) -> Vec<SidebarRo
     if other.is_empty() {
         return Vec::new();
     }
-    let account = RowKey::Account(index);
-    let more = RowKey::More(index);
+    let account = owner.key();
+    let more = RowKey::More(owner.address.to_string());
     let rule = SidebarRow {
         parents: vec![account.clone()],
         ..row(
             RowKind::Rule,
-            RowKey::Rule(Some(index)),
+            RowKey::Rule(Some(owner.address.to_string())),
             String::new(),
             1,
             None,
         )
     };
     let kind = RowKind::More {
-        account: index,
+        account: owner.index,
         hidden: other.len(),
     };
     let label = format!("More folders ({})", other.len());
@@ -389,7 +423,7 @@ fn more_rows(index: usize, own: &[&FolderCount], folds: &Folds) -> Vec<SidebarRo
         ..row(kind, more.clone(), label, 1, None)
     };
     let mut rows = vec![rule, head];
-    Node::tree(&other).emit(index, 2, &[account, more], folds, &mut rows);
+    Node::tree(&other).emit(owner, 2, &[account, more], folds, &mut rows);
     rows
 }
 
@@ -479,37 +513,34 @@ impl<'a> Node<'a> {
     /// This node's children as rows at `depth`, each under `parents`, then theirs.
     fn emit(
         &self,
-        account: usize,
+        owner: Owner<'_>,
         depth: u8,
         parents: &[RowKey],
         folds: &Folds,
         out: &mut Vec<SidebarRow>,
     ) {
         for child in &self.children {
-            let row = child.row(account, depth, parents, folds);
+            let row = child.row(owner, depth, parents, folds);
             let mut inner = parents.to_vec();
             inner.push(row.key.clone());
             out.push(row);
-            child.emit(account, depth.saturating_add(1), &inner, folds, out);
+            child.emit(owner, depth.saturating_add(1), &inner, folds, out);
         }
     }
 
     /// A leaf folder's row, or a parent's: foldable, its unread summed while folded, its own
     /// (or none) while unfolded.
-    fn row(&self, account: usize, depth: u8, parents: &[RowKey], folds: &Folds) -> SidebarRow {
+    fn row(&self, owner: Owner<'_>, depth: u8, parents: &[RowKey], folds: &Folds) -> SidebarRow {
         if let (Some(f), true) = (self.folder, self.children.is_empty()) {
             return SidebarRow {
                 parents: parents.to_vec(),
-                ..folder_row(account, f, self.name.clone(), depth)
+                ..folder_row(owner, f, self.name.clone(), depth)
             };
         }
         let key = match self.folder {
-            Some(f) => RowKey::Folder {
-                account,
-                folder_id: f.folder_id,
-            },
+            Some(f) => owner.folder_key(f.folder_id),
             None => RowKey::Prefix {
-                account,
+                account: owner.address.to_string(),
                 path: self.path.clone(),
             },
         };
@@ -520,9 +551,9 @@ impl<'a> Node<'a> {
             self.folder.map(|f| f.unread)
         };
         let kind = RowKind::Parent {
-            account,
+            account: owner.index,
             path: self.path.clone(),
-            scope: self.folder.map(|f| folder_scope(account, f)),
+            scope: self.folder.map(|f| folder_scope(owner.index, f)),
         };
         SidebarRow {
             foldable: true,
@@ -624,8 +655,21 @@ pub(super) mod fixtures {
         }
     }
 
-    /// The two accounts' labels.
-    pub fn labels() -> Vec<String> {
-        vec!["Personal".into(), "AXON".into()]
+    /// The two accounts as the tree takes them: Personal and AXON.
+    pub fn accounts() -> Vec<super::TreeAccount> {
+        vec![
+            super::TreeAccount {
+                label: "Personal".into(),
+                address: PERSONAL.into(),
+            },
+            super::TreeAccount {
+                label: "AXON".into(),
+                address: AXON.into(),
+            },
+        ]
     }
+
+    /// Their addresses, the keys of their rows.
+    pub const PERSONAL: &str = "personal@example.com";
+    pub const AXON: &str = "axon@example.com";
 }

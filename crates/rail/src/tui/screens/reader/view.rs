@@ -45,7 +45,7 @@ fn number(theme: &Theme) -> Style {
 /// the row itself in `theme.selected`.
 fn styled(line: &ReaderLine, theme: &Theme, badge: Color, cursor: bool) -> Line<'static> {
     let spans: Vec<Span<'static>> = line
-        .segments
+        .segments()
         .iter()
         .map(|(text, tone)| {
             let style = if cursor {
@@ -101,7 +101,7 @@ impl Reader {
             let Some(links) = self.detail.messages.get(message).map(|m| &m.links) else {
                 continue;
             };
-            for marker in markers(&line.text, links.len()) {
+            for marker in markers(line.text(), links.len()) {
                 let Some(url) = links.get(marker.number - 1).and_then(|a| safe_link(a)) else {
                     continue;
                 };
@@ -133,17 +133,15 @@ mod tests {
     use super::*;
     use crate::tui::screens::reader::ReaderAccount;
 
-    /// A line of `segments`, its text their concatenation.
+    /// A line of `segments`, built as the reader builds them.
     fn line(segments: &[(&str, Tone)]) -> ReaderLine {
-        let segments: Vec<(String, Tone)> = segments
-            .iter()
-            .map(|(text, tone)| ((*text).to_string(), *tone))
-            .collect();
-        ReaderLine {
-            kind: LineKind::Note,
-            text: segments.iter().map(|(t, _)| t.as_str()).collect(),
-            segments,
-        }
+        ReaderLine::of(
+            LineKind::Note,
+            segments
+                .iter()
+                .map(|(text, tone)| ((*text).to_string(), *tone))
+                .collect(),
+        )
     }
 
     #[test]
@@ -216,7 +214,10 @@ mod tests {
             "the second account's"
         );
         let gone = ReaderAccount::unknown();
-        assert_eq!(gone.color(&theme), Color::Reset);
+        assert_eq!(
+            gone.color, None,
+            "nothing of it is drawn, so it has no colour"
+        );
         assert!(gone.badge.is_empty() && gone.label.is_empty());
     }
 }

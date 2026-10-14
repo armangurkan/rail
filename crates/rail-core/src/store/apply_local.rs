@@ -1,8 +1,9 @@
 //! The optimistic local change of an action, and its exact reverse. `apply` follows the
 //! account's folder model (Gmail's labels here, one folder per message in `apply_single`) and
-//! records, per message, only what it changed (the old flag, the folders it added or removed); `revert`
-//! puts that back, touching a message only while it still belongs to the thread recorded
-//! (rowids can be reused). `restack` drops or brings back rows among overlapping ones;
+//! records, per message, only what it changed (the old flag, the folders it added or removed,
+//! each folder's provider id); `revert` puts that back, touching a message only while it still
+//! belongs to the thread recorded (rowids can be reused) and a folder only while it still has
+//! the provider id recorded. `restack` drops or brings back rows among overlapping ones;
 //! `reapply_live` is the conflict rule; `forget_threads` removes deleted threads from rows.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,6 +33,10 @@ pub struct Prior {
     /// Folders the action removed (a revert adds them back).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removed: Vec<i64>,
+    /// The provider id each folder of `added` and `removed` had when the action ran: a revert
+    /// finds the folder by it, since SQLite can give a deleted folder's id to a new one.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub remotes: BTreeMap<i64, String>,
 }
 
 impl Prior {
@@ -178,17 +183,73 @@ pub(super) fn set_flag(
 }
 
 /// Apply `action` to the messages of `threads` its account's folder model picks; what it
-/// changed. Rollups are the caller's.
+/// changed, with each folder's provider id. Rollups are the caller's.
 pub(crate) fn apply(
     tx: &Transaction,
     account: i64,
     action: &Action,
     threads: &[i64],
 ) -> Result<Vec<Prior>, StoreError> {
-    match folder_model_in(tx, account)? {
-        FolderModel::Labels => apply_labels(tx, account, action, threads),
-        FolderModel::SingleFolder => super::apply_single::apply(tx, account, action, threads),
+    let priors = match folder_model_in(tx, account)? {
+        FolderModel::Labels => apply_labels(tx, account, action, threads)?,
+        FolderModel::SingleFolder => super::apply_single::apply(tx, account, action, threads)?,
+    };
+    with_remote_ids(tx, priors)
+}
+
+/// `priors` with the provider id of every folder they name, read now.
+fn with_remote_ids(tx: &Transaction, mut priors: Vec<Prior>) -> Result<Vec<Prior>, StoreError> {
+    for p in &mut priors {
+        for &folder in p.added.iter().chain(&p.removed) {
+            if let Some(remote) = folder_remote(tx, folder)? {
+                p.remotes.entry(folder).or_insert(remote);
+            }
+        }
     }
+    Ok(priors)
+}
+
+fn folder_remote(tx: &Transaction, folder: i64) -> Result<Option<String>, StoreError> {
+    Ok(tx
+        .query_row(
+            "SELECT remote_id FROM folders WHERE id = ?1",
+            [folder],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// The folder `p` recorded as `folder`, as the store numbers it now: itself while it is still
+/// the account's and has the provider id recorded, else the account's folder holding that id
+/// now; `None`, logged, when none does. Both lookups stay in `account`: Gmail's label ids repeat
+/// across accounts. A record from before ids were kept names the folder as it is.
+fn resolved(
+    tx: &Transaction,
+    account: i64,
+    p: &Prior,
+    folder: i64,
+) -> Result<Option<i64>, StoreError> {
+    let Some(remote) = p.remotes.get(&folder) else {
+        return Ok(Some(folder));
+    };
+    if super::targets::folder_remote_in(tx, account, folder)?.as_ref() == Some(remote) {
+        return Ok(Some(folder));
+    }
+    let now: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM folders WHERE account_id = ?1 AND remote_id = ?2",
+            params![account, remote],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if now.is_none() {
+        tracing::info!(
+            message = p.message,
+            folder,
+            "a folder an undo would restore is gone; the message is not put back in it"
+        );
+    }
+    Ok(now)
 }
 
 /// Gmail's labels: `action` on every message of `threads`.
@@ -249,8 +310,10 @@ fn left_its_folder(tx: &Transaction, p: &Prior) -> Result<bool, StoreError> {
     Ok(!super::targets::folders_of(tx, p.message)?.is_empty())
 }
 
-/// Put back what `priors` record of `account`. On a one-folder mailbox the folder part goes
-/// back only while the message is still in the folder the action put it in.
+/// Put back what `priors` record of `account`, each folder found by its provider id. On a
+/// one-folder mailbox the folder part goes back only while the message is still in the folder
+/// the action put it in, and only one folder goes back: the oldest prior's (`merge` keeps it
+/// first).
 pub(crate) fn revert(tx: &Transaction, account: i64, priors: &[Prior]) -> Result<(), StoreError> {
     let single = folder_model_in(tx, account)? == FolderModel::SingleFolder;
     for p in priors {
@@ -264,10 +327,19 @@ pub(crate) fn revert(tx: &Transaction, account: i64, priors: &[Prior]) -> Result
             continue;
         }
         for &folder in &p.added {
-            remove_membership(tx, p.message, p.thread, folder)?;
+            if let Some(folder) = resolved(tx, account, p, folder)? {
+                remove_membership(tx, p.message, p.thread, folder)?;
+            }
         }
-        for &folder in &p.removed {
-            add_membership(tx, p.message, p.thread, folder)?;
+        let back = if single {
+            &p.removed[..p.removed.len().min(1)]
+        } else {
+            &p.removed[..]
+        };
+        for &folder in back {
+            if let Some(folder) = resolved(tx, account, p, folder)? {
+                add_membership(tx, p.message, p.thread, folder)?;
+            }
         }
     }
     Ok(())
@@ -290,6 +362,9 @@ fn merge(mut old: Vec<Prior>, new: Vec<Prior>) -> Vec<Prior> {
                     if !o.removed.contains(&f) {
                         o.removed.push(f);
                     }
+                }
+                for (folder, remote) in p.remotes {
+                    o.remotes.entry(folder).or_insert(remote);
                 }
             }
             None => old.push(p),
@@ -391,7 +466,8 @@ pub(crate) fn reapply_live(
 }
 
 /// After a rollup: threads of `touched` that no longer exist leave every outbox row (live or
-/// failed; a row left with no thread is deleted), with their reversal entries, so a reused rowid is never acted on.
+/// failed; a row left with no thread is deleted), with their reversal entries, so a reused
+/// rowid is never acted on.
 pub(crate) fn forget_threads(tx: &Transaction, touched: &BTreeSet<i64>) -> Result<(), StoreError> {
     let mut gone = BTreeSet::new();
     for &thread in touched {

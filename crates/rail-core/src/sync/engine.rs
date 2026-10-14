@@ -231,9 +231,15 @@ impl Engine {
         Ok(outcome)
     }
 
-    /// Record how a pass ended in the store and the status. True when the engine must pause
-    /// until it is woken (the account needs a login).
+    /// Record how a pass ended in the store and the status; a provider's standing error makes a
+    /// pass that went through a failed one. True when the engine must pause until it is woken (the
+    /// account needs a login).
     pub(crate) async fn record(&self, outcome: Result<(), SyncError>) -> bool {
+        // A pass that went through still fails with what the provider keeps finding.
+        let outcome = outcome.and_then(|()| match self.provider.standing_error() {
+            Some(error) => Err(error.into()),
+            None => Ok(()),
+        });
         let now = (self.clock)();
         if let Err(error) = &outcome {
             tracing::warn!(account = %self.account.name, code = %error.code(), error = %error.message(), "a sync pass failed");

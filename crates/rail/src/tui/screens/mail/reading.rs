@@ -601,7 +601,10 @@ impl MailScreen {
     /// The text of the reader's cursor line (tests).
     #[cfg(test)]
     pub(crate) fn reader_cursor_text(&self) -> Option<String> {
-        self.reader.as_ref()?.cursor_line().map(|l| l.text)
+        self.reader
+            .as_ref()?
+            .cursor_line()
+            .map(|l| l.text().to_string())
     }
 
     #[cfg(test)]

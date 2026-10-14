@@ -475,3 +475,90 @@ fn a_stacked_archive_is_sent_for_the_inbox_message_when_the_trash_after_it_fails
         "the store shows what Outlook did: m1 archived, the trash undone"
     );
 }
+
+#[test]
+fn undo_of_a_move_after_a_server_move_lands_the_message_in_one_folder() {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let to = folder(&store, "f-arch");
+    let id = enqueue(&mut store, Action::Move { to }, vec![c1], "a");
+    let moved = Batch {
+        upserts: vec![message("m1", "c1", 1_000, "f-proj", false)],
+        ..Batch::new(1)
+    };
+    store.apply(&moved, NOW + 1).unwrap();
+    assert_eq!(places(&store)[0], ["f-arch"], "the pending move holds");
+    undo(&mut store, vec![id]);
+    assert_eq!(
+        places(&store)[0],
+        ["f-inbox"],
+        "in exactly one folder: the oldest prior's"
+    );
+}
+
+#[test]
+fn undo_does_not_put_a_message_in_a_folder_that_took_its_old_folders_id() {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let to = folder(&store, "f-proj");
+    let id = enqueue(&mut store, Action::Move { to }, vec![c1], "a");
+    // The Inbox deleted and another folder made under its id.
+    store
+        .conn()
+        .execute(
+            "UPDATE folders SET remote_id = 'f-other', name = 'Other', kind = 'user'
+             WHERE remote_id = 'f-inbox'",
+            [],
+        )
+        .unwrap();
+    undo(&mut store, vec![id]);
+    assert!(
+        places(&store)[0].is_empty(),
+        "not put in f-other: the folder it left is gone"
+    );
+}
+
+#[test]
+fn undo_finds_a_folder_made_again_under_a_new_id_by_its_remote_id() {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let to = folder(&store, "f-proj");
+    let id = enqueue(&mut store, Action::Move { to }, vec![c1], "a");
+    store
+        .conn()
+        .execute_batch(
+            "UPDATE folders SET remote_id = 'f-other', name = 'Other', kind = 'user'
+               WHERE remote_id = 'f-inbox';
+             INSERT INTO folders (account_id, remote_id, name, kind)
+               VALUES (1, 'f-inbox', 'Inbox', 'inbox');",
+        )
+        .unwrap();
+    undo(&mut store, vec![id]);
+    assert_eq!(
+        places(&store)[0],
+        ["f-inbox"],
+        "back in the Inbox, at its new id"
+    );
+}
+
+#[test]
+fn an_undo_record_without_remote_ids_still_puts_the_message_back() {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let to = folder(&store, "f-proj");
+    let id = enqueue(&mut store, Action::Move { to }, vec![c1], "a");
+    store
+        .conn()
+        .execute(
+            "UPDATE outbox SET reversal = (SELECT json_group_array(json(json_remove(value, '$.remotes')))
+               FROM json_each(outbox.reversal)) WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+    undo(&mut store, vec![id]);
+    assert_eq!(
+        places(&store)[0],
+        ["f-inbox"],
+        "a record from before remote ids"
+    );
+}

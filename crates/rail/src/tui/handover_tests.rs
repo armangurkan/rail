@@ -13,7 +13,7 @@ use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
 
 use super::app::{App, Effect};
-use super::handover::{Suspend, run_editor_blocking};
+use super::handover::{Handover, Suspend, run_editor_blocking};
 use super::run::run_loop;
 use super::test_util::{Hello, RecordingClipboard, key};
 
@@ -320,4 +320,43 @@ async fn a_failed_resume_after_the_editor_ran_still_answers_its_exit_code() {
     };
     let screen = edit_then_quit(&["/bin/sh", "-c", "exit 0"], &mut recorder).await;
     assert_eq!(screen.edited, vec![Ok(0)]);
+}
+
+/// Issue #23: when taking the terminal back fails, the editor's text may still be on the
+/// screen, so the next frame repaints it whole.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_failed_take_back_still_repaints_the_whole_screen() {
+    let full_clears = Arc::new(AtomicUsize::new(0));
+    let mut terminal = Terminal::new(NoCursor {
+        inner: TestBackend::new(30, 3),
+        full_clears: full_clears.clone(),
+    })
+    .unwrap();
+    let mut app = App::new(
+        editing(&["/bin/sh", "-c", "exit 0"]),
+        Box::new(RecordingClipboard::default()),
+    );
+    let mut made = 0;
+    let make = move || {
+        made += 1;
+        let code = if made == 1 { 'e' } else { 'q' };
+        stream::iter(vec![Ok(TermEvent::Key(key(KeyCode::Char(code))))])
+    };
+    let mut handover = Handover::with(|| Ok(()), || Err(io::Error::other("no raw mode")));
+
+    run_loop(&mut terminal, &mut app, make, &mut handover)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.screen.edited,
+        vec![Ok(0)],
+        "the editor's answer is kept"
+    );
+    assert_eq!(
+        full_clears.load(Ordering::SeqCst),
+        1,
+        "the screen is repainted whole"
+    );
 }

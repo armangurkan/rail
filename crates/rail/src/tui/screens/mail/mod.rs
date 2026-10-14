@@ -1,6 +1,7 @@
-//! The mail screen: the thread list over the local store, the sidebar of accounts and labels,
-//! and the status bar (the reader and the modals join in later tasks). Keys go through the
-//! keymap; every read and daemon call is a job whose answer comes back as a `MailEvent`.
+//! The mail screen: the header (the scope, the search slot, the sync summary, the clock), the
+//! sidebar of merged mailboxes, accounts and folders, the thread list or the Drafts pane, the
+//! reader, the hint bar, and the modals over them. Keys go through the keymap; every read and
+//! daemon call is a job whose answer comes back as a `MailEvent`.
 
 mod actions;
 mod actions_pick;
@@ -190,6 +191,8 @@ pub struct MailScreen {
     /// The newest filter keystroke: only its timer reads.
     filter_token: u64,
     list: ListWindow,
+    /// The list's date groups, kept beside the rows.
+    list_groups: list::GroupCache,
     /// Where the selection goes when the newest list read answers.
     place: Place,
     sidebar: Sidebar,
@@ -202,6 +205,8 @@ pub struct MailScreen {
     size: Cell<(u16, u16)>,
     /// The first thread the last list frame drew (a window index), for the re-read.
     drawn_top: Cell<Option<usize>>,
+    /// The thread list's rows in the last frame drawn (threads and group rows), for a page.
+    list_rows: Cell<usize>,
     /// The header's search slot from the last frame drawn, when it was drawn.
     slot_rect: Cell<Option<Rect>>,
     /// The newest list read that replaces the window (a scope change, `Home`, `End`) while it
@@ -268,6 +273,7 @@ impl MailScreen {
             filter_text: String::new(),
             filter_token: 0,
             list: ListWindow::default(),
+            list_groups: list::GroupCache::default(),
             place: Place::Top,
             sidebar: Sidebar::default(),
             status: StatusBar::default(),
@@ -276,6 +282,7 @@ impl MailScreen {
             store_state: StoreState::Loading,
             size: Cell::new((0, 0)),
             drawn_top: Cell::new(None),
+            list_rows: Cell::new(0),
             slot_rect: Cell::new(None),
             navigating: None,
             reader: None,
@@ -479,13 +486,13 @@ impl MailScreen {
 
     fn list_action(&mut self, action: Action) -> Vec<Effect> {
         let height = self.height();
-        let page = isize::try_from(height).unwrap_or(isize::MAX);
+        let top = self.drawn_top.get().unwrap_or(self.list.offset());
         let wanted = match action {
             Action::ListOpen => return self.open_selected(),
             Action::ListDown => self.list.move_by(1, height),
             Action::ListUp => self.list.move_by(-1, height),
-            Action::ListPageDown => self.list.move_by(page, height),
-            Action::ListPageUp => self.list.move_by(-page, height),
+            Action::ListPageDown => self.page(true, top, height),
+            Action::ListPageUp => self.page(false, top, height),
             Action::ListTop => self.list.top(height),
             Action::ListBottom => self.list.bottom(height),
             _ => None,
@@ -501,6 +508,20 @@ impl MailScreen {
             }
             None => Vec::new(),
         }
+    }
+
+    /// A page of the list from a screen starting at thread `top` that showed `threads`
+    /// threads, each screen worked out from the window's groups and the pane's rows.
+    fn page(&mut self, forward: bool, top: usize, threads: usize) -> Option<PageAt> {
+        let groups = self.list_groups.groups(&self.list, &self.ctx.clock);
+        let lines = list_view::list_lines(&groups);
+        let rows = match self.list_rows.get() {
+            0 => FALLBACK_HEIGHT,
+            rows => rows,
+        };
+        self.list.page(forward, top, threads, |start| {
+            list_view::last_thread_from(&lines, start, rows)
+        })
     }
 
     fn sidebar_action(&mut self, action: Action) -> Vec<Effect> {

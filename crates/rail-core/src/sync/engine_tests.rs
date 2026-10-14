@@ -684,3 +684,35 @@ mod pass_tests;
 
 #[path = "backfill_tests.rs"]
 mod backfill_tests;
+
+#[tokio::test]
+async fn a_standing_provider_error_fails_a_pass_that_went_through() {
+    let h = harness(&["a@example.com"]);
+    let mock = MockProvider::new();
+    seed_days(&mock, &[("m1", 1)]);
+    let engine = engine(&h, &mock, 0);
+    let text = "a folder cannot be synced: its sync link is longer than 4 KiB";
+    let standing = ProviderError::permanent(text).with_detail("Projects".into());
+    mock.with(|m| m.standing_error = Some(standing));
+    let pass = engine.pass().await;
+    assert!(pass.is_ok(), "the pass itself went through");
+    engine.record(pass).await;
+    let status = h.board.get("a@example.com").unwrap();
+    assert!(status.last_pass_failed);
+    let error = status.last_error.unwrap();
+    assert_eq!(
+        (error.code.as_str(), error.message.as_str()),
+        ("permanent", text)
+    );
+    let detail = error.detail.as_ref().map(|d| d.get().as_str());
+    assert_eq!(
+        detail,
+        Some("Projects"),
+        "the folder's name, as outside text"
+    );
+    assert_eq!(
+        (status.messages, status.threads),
+        (1, 1),
+        "the mail still synced"
+    );
+}

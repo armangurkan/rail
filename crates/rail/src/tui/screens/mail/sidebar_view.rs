@@ -222,11 +222,12 @@ mod tests {
                     account: 0,
                     folder_id: 1,
                     name: label.into(),
+                    kind: rail_core::provider::FolderKind::User,
                 },
                 kind: FolderKind::User,
             },
             key: RowKey::Folder {
-                account: 0,
+                account: "w@example.com".into(),
                 folder_id: 1,
             },
             label: label.into(),

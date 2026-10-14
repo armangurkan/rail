@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use rail_core::store::view::MAX_SIDEBAR_FOLDERS;
 
-use super::sidebar_tree::{self, Folds, RowKey, SidebarRow};
+use super::sidebar_tree::{self, Folds, RowKey, SidebarRow, TreeAccount};
 use super::{AccountEntry, MailScreen};
 use crate::tui::app::Effect;
 use crate::tui::data::{ReadError, ScopeChoice, SidebarOutcome};
@@ -20,8 +20,8 @@ pub struct Sidebar {
     rows: Vec<SidebarRow>,
     cursor: Option<RowKey>,
     folds: Folds,
-    /// The accounts' labels and the counts the rows came from, kept for a fold.
-    labels: Vec<String>,
+    /// The accounts' labels and addresses and the counts the rows came from, kept for a fold.
+    accounts: Vec<TreeAccount>,
     outcome: Option<SidebarOutcome>,
     /// The last read failed: the old rows stay, under a note.
     failed: bool,
@@ -44,17 +44,24 @@ impl Sidebar {
         &self.all
     }
 
-    /// The cursor's index in `rows`.
+    /// The cursor's index in `rows`: its row, else the first row it can stop on.
     pub fn cursor(&self) -> usize {
         self.cursor
             .as_ref()
             .and_then(|k| self.rows.iter().position(|r| &r.key == k))
+            .or_else(|| self.rows.iter().position(SidebarRow::selectable))
             .unwrap_or(0)
     }
 
     /// The rows for `accounts` (in order) from fresh counts; the folds and the cursor stay.
     pub fn rebuild(&mut self, accounts: &[AccountEntry], outcome: &SidebarOutcome) {
-        self.labels = accounts.iter().map(|a| a.label.clone()).collect();
+        self.accounts = accounts
+            .iter()
+            .map(|a| TreeAccount {
+                label: a.label.clone(),
+                address: a.address.clone(),
+            })
+            .collect();
         self.capped = capped(accounts.len(), outcome);
         self.drafts = outcome
             .counts
@@ -74,7 +81,7 @@ impl Sidebar {
         let Some(outcome) = &self.outcome else {
             return;
         };
-        let all = sidebar_tree::build(&self.labels, outcome, &self.folds);
+        let all = sidebar_tree::build(&self.accounts, outcome, &self.folds);
         let rows = sidebar_tree::visible(&all, &self.folds);
         self.cursor = sidebar_tree::refind(&self.rows, self.cursor.as_ref(), &rows);
         self.all = all;
@@ -288,5 +295,29 @@ impl MailScreen {
         };
         self.status.notify(notice, self.tick);
         self.set_scope(ScopeChoice::Account(account))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Spec §4 (B4): before the first rebuild sets it, the cursor is the first row it can
+    /// stop on, never a heading.
+    #[test]
+    fn with_no_cursor_yet_the_cursor_is_the_first_selectable_row() {
+        let folds = Folds::default();
+        let all = sidebar_tree::build(
+            &sidebar_tree::fixtures::accounts(),
+            &sidebar_tree::fixtures::two_accounts(),
+            &folds,
+        );
+        let s = Sidebar {
+            rows: sidebar_tree::visible(&all, &folds),
+            ..Sidebar::default()
+        };
+        assert_eq!(s.cursor(), 1, "All inboxes, under the UNIFIED heading");
+        assert_eq!(s.selected().map(|r| r.label.as_str()), Some("All inboxes"));
+        assert_eq!(Sidebar::default().cursor(), 0, "no rows at all");
     }
 }

@@ -5,7 +5,7 @@ use rail_core::store::drafts::{ReplyAttachment, ReplySource};
 
 use super::file::{ParseError, parse, render, write};
 use super::model::Headers;
-use super::prefill::{forward, fwd_subject, quoted, re_subject, reply, with_signature};
+use super::prefill::{forward, fwd_subject, quoted, re_subject, reply, with_links, with_signature};
 
 fn headers() -> Headers {
     Headers {
@@ -133,6 +133,7 @@ fn source() -> ReplySource {
         }],
         date: 1_760_000_000,
         body_text: Some("Shall we?\n> earlier\nYes.".into()),
+        links: vec![],
         attachments: vec![ReplyAttachment {
             part_id: "p1".into(),
             filename: "menu.pdf".into(),
@@ -647,4 +648,47 @@ fn header_values_cannot_break_out_of_their_line() {
         body.contains("\nSubject: Lunch  Bcc: a@evil.com\n"),
         "{body}"
     );
+}
+
+/// A body with two markers, the second an address Rail would not open, a third link the text
+/// never mentions, and a `[9]` that names no link.
+fn linked() -> ReplySource {
+    ReplySource {
+        body_text: Some("The photo[1] and the site[2].\nAlso [9].".into()),
+        links: vec![
+            "https://example.com/photo.jpg".into(),
+            "https://example.com/\u{202e}gpj.exe".into(),
+            "https://example.com/unused".into(),
+        ],
+        ..source()
+    }
+}
+
+#[test]
+fn a_reply_quotes_the_links_its_text_marks_after_a_blank_line() {
+    let (_, body) = reply(&linked(), false, "me@example.com", &jiff::tz::TimeZone::UTC);
+    assert_eq!(
+        body,
+        "\n\nOn Thu, 9 Oct 2025 08:53:20 +0000, Dana Reyes wrote:\n\
+         > The photo[1] and the site[2].\n> Also [9].\n>\n\
+         > [1] https://example.com/photo.jpg\n> [2] (link not included)\n"
+    );
+}
+
+#[test]
+fn a_forward_lists_the_links_after_the_original_text() {
+    let (_, body) = forward(&linked());
+    assert!(
+        body.ends_with(
+            "\n\nThe photo[1] and the site[2].\nAlso [9].\n\n\
+             [1] https://example.com/photo.jpg\n[2] (link not included)\n"
+        ),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_quote_with_markers_but_no_links_is_left_as_it_is() {
+    assert_eq!(with_links("see[1]", &[]), "see[1]");
+    assert_eq!(with_links("", &["https://a.example".into()]), "");
 }

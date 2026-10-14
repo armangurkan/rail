@@ -284,9 +284,12 @@ const IN_INBOX: &str = "EXISTS (SELECT 1 FROM messages mi
 const IN_FOLDER: &str = "EXISTS (SELECT 1 FROM messages mi
     JOIN message_folders mf ON mf.message_id = mi.id WHERE mi.thread_id = t.id AND mf.folder_id = ?)";
 
-const IN_KIND: &str = "EXISTS (SELECT 1 FROM messages mi
-    JOIN message_folders mf ON mf.message_id = mi.id JOIN folders f ON f.id = mf.folder_id
-    WHERE mi.thread_id = t.id AND f.kind = ?)";
+/// The threads with a message in a folder of the given kind of the given accounts (parameters:
+/// the kind, then the accounts as JSON): read from the folder side, `message_folders_by_folder`
+/// first, not by a probe per thread over every message.
+const IN_KIND: &str = "t.id IN (SELECT mi.thread_id FROM folders f
+    JOIN message_folders mf ON mf.folder_id = f.id JOIN messages mi ON mi.id = mf.message_id
+    WHERE f.kind = ? AND f.account_id IN (SELECT value FROM json_each(?)))";
 
 fn int(n: usize) -> Value {
     Value::Integer(i64::try_from(n).unwrap_or(i64::MAX))
@@ -371,6 +374,7 @@ fn scope_condition(scope: &Scope) -> (String, Vec<Value>) {
             vec![
                 Value::Text(ids_json(ids)),
                 Value::Text(kind.as_str().to_string()),
+                Value::Text(ids_json(ids)),
             ],
         ),
     }
@@ -708,7 +712,7 @@ fn message_view(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageView> {
 
 /// The links column, at most `MAX_LINKS`. An unreadable one (a hand-edited store) is logged
 /// by message id and read as none: the markers then show as plain text.
-fn read_links(id: i64, json: &str) -> Vec<String> {
+pub(super) fn read_links(id: i64, json: &str) -> Vec<String> {
     match serde_json::from_str::<Vec<String>>(json) {
         Ok(mut links) => {
             links.truncate(MAX_LINKS);

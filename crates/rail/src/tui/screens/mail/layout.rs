@@ -151,6 +151,7 @@ pub fn areas(area: Rect, sidebar: bool, pane: bool, hints: bool) -> Areas {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::{Color, Style};
 
     #[test]
     fn the_header_is_boxed_in_three_rows_only_when_split_and_tall_enough() {
@@ -168,5 +169,29 @@ mod tests {
             !header_boxed(Rect::new(0, 0, 3, 3)),
             "too narrow for a border"
         );
+    }
+
+    /// A8: the focused pane's box is drawn in `border_focus`, the others' in `border`.
+    #[test]
+    fn a_pane_box_takes_the_focus_border_only_when_focused() {
+        let theme = Theme {
+            border: Style::new().fg(Color::Blue),
+            border_focus: Style::new().fg(Color::Yellow),
+            ..Theme::default()
+        };
+        for (focused, color) in [(true, Color::Yellow), (false, Color::Blue)] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(4, 3)).unwrap();
+            terminal
+                .draw(|frame| {
+                    frame.render_widget(pane_block(&theme, Icons::Unicode, focused), frame.area());
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(0, 0)].symbol(), "┌");
+            for (x, y) in [(0, 0), (3, 0), (0, 2), (3, 2), (1, 0), (0, 1)] {
+                assert_eq!(buffer[(x, y)].fg, color, "focused {focused} at {x},{y}");
+            }
+        }
     }
 }

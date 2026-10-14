@@ -437,8 +437,21 @@ fn a_folder_choice_is_its_account_and_id_not_its_name() {
         account,
         folder_id,
         name: name.into(),
+        kind: rail_core::provider::FolderKind::User,
     };
     assert_eq!(folder(0, 7, "Projects"), folder(0, 7, "Clients"));
+    let sent = ScopeChoice::Folder {
+        account: 0,
+        folder_id: 7,
+        name: "Projects".into(),
+        kind: rail_core::provider::FolderKind::Sent,
+    };
+    assert_eq!(
+        sent,
+        folder(0, 7, "Projects"),
+        "the kind does not name the folder"
+    );
+    assert!(!sent.counts_unread() && folder(0, 7, "Projects").counts_unread());
     assert_ne!(folder(0, 7, "Projects"), folder(1, 7, "Projects"));
     assert_ne!(folder(0, 7, "Projects"), folder(0, 8, "Projects"));
     assert_ne!(ScopeChoice::Account(0), folder(0, 7, "Projects"));

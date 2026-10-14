@@ -19,7 +19,8 @@ use crate::tui::theme::Theme;
 
 /// What a local draft no Gmail copy has shows in the people column.
 const LOCAL_ONLY: &str = "(local)";
-/// Columns of the date column.
+/// Columns of the date column: every form `Clock::short` writes fits, `12:59 pm` (8),
+/// `Yesterday` (9), `Mon`, `Oct 03` and `2024-10-03` (10), in 24h and 12h alike.
 const DATE_COLS: usize = 10;
 
 /// The pane's rows and cursor.

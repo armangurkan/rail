@@ -149,6 +149,7 @@ fn point_at_unfolds_what_hides_the_scope_and_keeps_a_row_that_already_shows_it()
         account: 1,
         folder_id: 40,
         name: "Inbox/Infrastructure/Linode".into(),
+        kind: rail_core::provider::FolderKind::User,
     };
     s.point_at(&linode);
     assert_eq!(here(&s), Some("Linode"));
@@ -183,6 +184,7 @@ fn unread_serves_the_header_from_the_counts() {
         account: 1,
         folder_id: 40,
         name: String::new(),
+        kind: rail_core::provider::FolderKind::User,
     };
     assert_eq!(s.unread(&linode), 4, "folded away or not");
     assert_eq!(s.unread(&ScopeChoice::Sent), 0);
@@ -271,4 +273,35 @@ fn the_scroll_offset_is_clamped_when_rows_fold_away() {
         "no blank row below the last one: offset {offset}, rows {}",
         s.rows().len()
     );
+}
+
+/// Spec §4 (B5): folds and the cursor are keyed by the account's address, so a reload that
+/// reorders the accounts keeps them.
+#[test]
+fn a_reload_that_reorders_the_accounts_keeps_every_fold_and_the_cursor() {
+    let mut s = sidebar();
+    walk_to(&mut s, "More folders (7)");
+    s.toggle_fold();
+    walk_to(&mut s, "AXON");
+    s.toggle_fold();
+    let mut reordered = accounts();
+    reordered.reverse();
+    let mut outcome = two_accounts();
+    outcome.account_ids.reverse();
+    s.rebuild(&reordered, &outcome);
+    assert_eq!(here(&s), Some("AXON"), "the cursor stays on its account");
+    let row = |label: &str| {
+        s.rows()
+            .iter()
+            .find(|r| r.label == label)
+            .cloned()
+            .expect(label)
+    };
+    assert!(row("AXON").folded, "AXON stays folded");
+    assert!(!row("Personal").folded);
+    assert!(
+        !row("More folders (7)").folded,
+        "Personal's More folders stays open"
+    );
+    assert!(s.rows().iter().any(|r| r.label == "[Imap]"));
 }

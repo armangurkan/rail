@@ -28,6 +28,7 @@ fn write(account_id: i64) -> DraftWrite {
             mime: "application/pdf".into(),
             size: 10,
             listed: None,
+            modified: None,
         }],
         message_id: "<11111111-2222-4333-8444-555555555555@example.com>".into(),
         source_remote_id: None,
@@ -300,5 +301,22 @@ fn a_drafts_source_is_stored_on_create_and_replaced_on_update() -> Result<(), St
     };
     let new = store.draft_upsert(&new, 3)?.expect("created");
     assert_eq!(store.draft(new)?.expect("stored").source_remote_id, None);
+    Ok(())
+}
+
+#[test]
+fn reply_source_carries_the_links_its_body_marks() -> Result<(), StoreError> {
+    let (mut store, account_id) = store_with_account();
+    let (first, _second) = seed_two_messages(&mut store, account_id);
+    store
+        .conn()
+        .execute(
+            "UPDATE messages SET body_text = 'see[1]', links = '[\"https://a.example\"]'
+             WHERE id = ?1",
+            [first],
+        )
+        .unwrap();
+    let source = store.reply_source(first)?.expect("a message");
+    assert_eq!(source.links, ["https://a.example"]);
     Ok(())
 }

@@ -19,6 +19,7 @@ mod message;
 mod reconcile;
 mod search;
 mod send;
+mod stuck;
 mod upload;
 mod wire;
 
@@ -49,6 +50,7 @@ mod send_tests;
 #[cfg(test)]
 mod upload_tests;
 
+use std::collections::HashSet;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -64,11 +66,12 @@ pub use actions::MOVE_TARGET_GONE;
 pub use attachment::REFERENCE_ATTACHMENT;
 pub use batch::{MAX_BATCH, MAX_ITEM_RETRY_AFTER};
 pub use body::HTML_BODY;
-pub use cursor::MAX_CURSOR_BYTES;
+pub use cursor::{MAX_CURSOR_BYTES, MAX_LINK_BYTES};
 pub use delta::{GRAPH_PAGES_PER_CALL, PAGE_SIZE};
 pub use folders::{MAX_FOLDER_DEPTH, MAX_FOLDERS, SKIPPED_ROOTS, WELL_KNOWN};
 pub use reconcile::SMALL_ATTACHMENT_BYTES;
 pub use search::{MAX_GRAPH_SEARCH, MESSAGE_FIELDS};
+pub use stuck::MAX_LINK_RESETS;
 pub use upload::{UPLOAD_CHUNK, UPLOAD_TRIES};
 
 /// The API root every request is relative to; `me` is the signed-in mailbox.
@@ -89,6 +92,11 @@ pub struct GraphProvider {
     history_days: u32,
     /// What the last folder listing found: the delta's folders and their order.
     folders: Mutex<Vec<RemoteFolder>>,
+    /// The folders of `folders` whose parent's child listing answered not found in the last
+    /// listing: kept as known, not walked this pass.
+    skipped: Mutex<HashSet<RemoteId>>,
+    /// Folders whose delta links keep running over the cap, for the daemon's life.
+    stuck: Mutex<stuck::Stuck>,
 }
 
 impl GraphProvider {
@@ -97,6 +105,8 @@ impl GraphProvider {
             api,
             history_days: 0,
             folders: Mutex::new(Vec::new()),
+            skipped: Mutex::new(HashSet::new()),
+            stuck: Mutex::new(stuck::Stuck::default()),
         }
     }
 
@@ -104,6 +114,10 @@ impl GraphProvider {
     pub fn with_history_days(mut self, days: u32) -> Self {
         self.history_days = days;
         self
+    }
+
+    fn stuck(&self) -> std::sync::MutexGuard<'_, stuck::Stuck> {
+        self.stuck.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// List the folders, and remember them.
@@ -184,6 +198,16 @@ impl super::Provider for GraphProvider {
 
     fn backfills_by_delta(&self) -> bool {
         true
+    }
+
+    fn standing_error(&self) -> Option<ProviderError> {
+        self.stuck().error()
+    }
+
+    /// From the cursor itself, so it holds across a restart: false while a folder in it is
+    /// caught up with no link (set aside, given up on), or when it does not read.
+    fn walked_everything(&self, cursor: &SyncCursor) -> bool {
+        cursor::GraphCursor::decode(cursor).is_ok_and(|c| c.walked_all())
     }
 
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {

@@ -179,6 +179,7 @@ async fn the_sidebar_drawn_folded_and_unfolded() {
     use crossterm::event::KeyCode;
     for (icons, name) in [(Icons::Unicode, "unicode"), (Icons::Ascii, "ascii")] {
         let (_tmp, mut screen) = tree_screen(icons).await;
+        // A first frame records the width, so `b` toggles from the sidebar hidden at 90.
         let _ = draw(&screen, 90, 24);
         press(&mut screen, KeyCode::Char('b')).await;
         insta::assert_snapshot!(format!("sidebar_shown_{name}_90x24"), draw(&screen, 90, 24));
@@ -353,6 +354,7 @@ async fn the_list_draws_its_date_groups_in_order_with_their_times() {
 #[tokio::test]
 async fn the_sidebar_unboxed_at_120_columns() {
     let (_tmp, screen) = screen(Icons::Unicode).await;
+    // A first frame records the width the sidebar's default is read from.
     let _ = draw(&screen, 120, 30);
     assert!(screen.sidebar_visible(), "shown by default at 120 columns");
     insta::assert_snapshot!("mail_sidebar_unboxed_120x30", draw(&screen, 120, 30));
@@ -494,7 +496,7 @@ async fn the_frame_boxes_the_panes_in_split_mode_and_marks_the_focused_one() {
     assert!(
         lines[38]
             .trim_end()
-            .ends_with("● work ✓ · ● home ⟳ 1200/5000"),
+            .ends_with("● work ✓ · ● home ⟳ 1,200/5,000"),
         "{}",
         lines[38]
     );
@@ -526,7 +528,7 @@ async fn the_header_and_the_hint_bar_are_on_every_screen() {
     );
     assert!(top.contains("/ Search"), "{top}");
     assert!(
-        top.trim_end().ends_with("⟳ Backfill 1200/5000 │ 12:40"),
+        top.trim_end().ends_with("⟳ Backfill 1,200/5,000 │ 12:40"),
         "{top}"
     );
     let bottom = rows(&screen, 90, 24)[23].clone();
@@ -537,7 +539,9 @@ async fn the_header_and_the_hint_bar_are_on_every_screen() {
     );
     assert!(bottom.contains("? help"), "{bottom}");
     assert!(
-        bottom.trim_end().ends_with("● work ✓ · ● home ⟳ 1200/5000"),
+        bottom
+            .trim_end()
+            .ends_with("● work ✓ · ● home ⟳ 1,200/5,000"),
         "{bottom}"
     );
     // Stacked reader: header above, hints below.
@@ -581,7 +585,9 @@ async fn a_notice_replaces_the_hints_and_the_hints_return() {
     let bottom = rows(&screen)[23].clone();
     assert!(bottom.starts_with("xxxx"), "{bottom}");
     assert!(
-        bottom.trim_end().ends_with("● work ✓ · ● home ⟳ 1200/5000"),
+        bottom
+            .trim_end()
+            .ends_with("● work ✓ · ● home ⟳ 1,200/5,000"),
         "{bottom}"
     );
 }
@@ -591,7 +597,7 @@ async fn with_hints_off_the_bar_is_one_row_of_notices_and_account_states() {
     let (_tmp, screen) = screen_with(Icons::Unicode, false).await;
     let lines =
         crate::tui::test_util::render_lines(150, 40, |frame| screen.view(frame, &Theme::default()));
-    let states = "● work ✓ · ● home ⟳ 1200/5000";
+    let states = "● work ✓ · ● home ⟳ 1,200/5,000";
     assert_eq!(lines[39].trim(), states, "only the accounts: {}", lines[39]);
     assert!(lines[39].trim_end().ends_with(states), "{}", lines[39]);
     assert!(lines[39].starts_with(' '), "right-aligned: {}", lines[39]);
@@ -622,7 +628,7 @@ async fn with_hints_off_a_notice_shows_on_the_left_of_the_last_row() {
     assert!(
         lines[39]
             .trim_end()
-            .ends_with("● work ✓ · ● home ⟳ 1200/5000"),
+            .ends_with("● work ✓ · ● home ⟳ 1,200/5,000"),
         "{}",
         lines[39]
     );
@@ -675,10 +681,27 @@ async fn the_filter_is_typed_in_the_header_slot_and_falls_back_to_the_hint_row_w
     let top = rows(&screen, 90, 24)[0].clone();
     assert!(top.contains("is:unread"), "typed in the slot: {top}");
     assert!(
-        top.contains("unread  │ 🔍  "),
-        "after the search region's prefix: {top}"
+        top.contains("…  │ 🔍  "),
+        "the scope is cut for the typed filter's room: {top}"
     );
     assert!(top.trim_end().ends_with("│ 12:40"), "{top}");
+    // A4: the terminal cursor is inside the slot's rect.
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+    terminal
+        .draw(|frame| screen.view(frame, &Theme::default()))
+        .unwrap();
+    let slot = screen
+        .slot_rect
+        .get()
+        .expect("the slot is drawn at 90 columns");
+    let backend = terminal.backend();
+    assert!(backend.cursor_visible(), "the filter line shows the cursor");
+    let cursor = backend.cursor_position();
+    assert_eq!(cursor.y, slot.y);
+    assert!(
+        cursor.x >= slot.x && cursor.x < slot.x + slot.width,
+        "{cursor:?} inside {slot:?}"
+    );
     let boxed = rows(&screen, 150, 40);
     assert!(boxed[0].starts_with("┌─"), "the header's box: {}", boxed[0]);
     assert!(
@@ -716,8 +739,8 @@ async fn the_filter_is_typed_in_the_header_slot_and_falls_back_to_the_hint_row_w
     assert_eq!(screen.slot_text(), "/ is:unread");
     let top = rows(&screen, 90, 24)[0].clone();
     assert!(
-        top.contains("│ 🔍  / is:unre…"),
-        "active filter in the slot, cut to its room beside the clock: {top}"
+        top.contains("│ 🔍  / is:unread"),
+        "the active filter whole in the slot: the scope gives way: {top}"
     );
     let top = rows(&screen, 120, 24)[0].clone();
     assert!(

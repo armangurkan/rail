@@ -314,14 +314,19 @@ and points to `rail sync`; if the daemon cannot be reached, the header says so
 
 The thread list shows the unified inbox, newest first, in date groups: `TODAY`, `YESTERDAY`,
 `THIS WEEK` (two to six days ago) and `OLDER`, each name on its own row above its threads; the
-group of the top row stays on the first row as you scroll. A row shows a dot (`●` in the
+group of the top row stays on the first row as you scroll. `PgDn` and `PgUp` (`Ctrl-d`, `Ctrl-u`)
+move a page by the threads on screen: the next page starts with the thread after the last one
+shown, the page above ends with the thread before the first one shown, and the cursor keeps its
+row, or goes to the page's last thread when the page holds fewer. A group's name never sits alone
+on the bottom row. A row shows a dot (`●` in the
 account's colour while the thread has unread mail, a muted `·` once it is read, `▸` when it is
 selected with `Space`), the account's badge in `All inboxes`, `Starred`, `Sent` and `Trash` (its
 label's first letter on its colour), the people, `★` for starred and `📎` for attachments, the
 subject with the message count after it (`(3)`, never cut), and at the right edge the time:
 `14:05` today and yesterday, `Mon 18:20` this week, `Oct 03` earlier this year, `2024-10-03`
-before; mail dated after today is under `TODAY` with its date. With `time = "12h"` (or
-`:time`) the times read `2:05 pm` and `Mon 6:20 pm`, and the time column is two cells wider.
+before; mail dated after today is under `TODAY` with its date, and a date too far off to read
+is under `TODAY` when ahead and `OLDER` when behind. With `time = "12h"` (or `:time`) the times
+read `2:05 pm` and `Mon 6:20 pm`, and the time column is two cells wider.
 Unread threads are bold.
 With `icons = "ascii"` the dots are `*`, `.` and `>`, `★` is `+` and `📎` is `@`.
 `1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
@@ -345,27 +350,29 @@ focus the current mailbox's row is in the accent colour; the sidebar scrolls to 
 sidebar has focus, the cursor) in view.
 
 The top of the screen is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread`
-(`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), the search
-region (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`; the filter shows there once set, and
-the Drafts folder has none), and on the right one line for every account's
-sync: `● Synced 14:47` when all are caught up (the earliest account's time), else the worst
-state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
-`! work needs login`, `! work sync failed`, or the daemon's state), then the time of day at the
-right edge: `● Synced 14:47 │ 15:02` (`3:02 pm` with `time = "12h"`; `:time` changes it at once).
-`clock = false` under `[general]`, or `:clock`, hides the clock. At `split_threshold` (140
-columns by default) and wider the sidebar, the list and the reader are boxed, the focused pane in
-the accent colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and an
-unboxed header reads `|Rail | All inboxes …`. At `split_threshold` and wider, and at least 12
-rows high, the header has a box of its own too (never in the accent colour), and inside it the
-row reads `│ Rail │ All inboxes … ● Synced 14:47 │ 15:02 │`, without the `▍` bar (`| Rail | …` with
-`icons = "ascii"`). When the scope and the summary do not both fit, the summary and the clock
-stay whole and the scope is cut. Under 60 columns the clock and the search region go, and under
-40 the summary. The status bar at the bottom names the keys of the
-pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your
-`config.toml` sets) and shows each account's state on the right. Narrower than `split_threshold`
-it is one row; at `split_threshold` and wider (and at least 12 rows high) it takes three rows and
-each key is drawn in its own box, with no frame around the bar (`+`, `-` and `|` with
-`icons = "ascii"`):
+(`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes; an account's
+own Sent, Trash or Drafts shows no unread count, `work · Sent`), the search region
+(`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`; the filter shows there once set, and the
+Drafts folder has none), and on the right one line for every account's sync: `● Synced 14:47`
+when all are caught up (the earliest account's time), else the worst state (`⟳ Syncing work`,
+`⟳ Backfill 1,200/5,000`, `⟳ retrying`, `work stopped`, `! 2 failed`, `! work needs login`,
+`! work sync failed`, or the daemon's state), then the time of day at the right edge:
+`● Synced 14:47 │ 15:02` (`3:02 pm` with `time = "12h"`; `:time` changes it at once).
+`clock = false` under `[general]`, or `:clock`, hides the clock. At `split_threshold` (140 columns
+by default) and wider the sidebar, the list and the reader are boxed, the focused pane in the accent
+colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and an unboxed header
+reads `|Rail | All inboxes …`. At `split_threshold` and wider, and at least 12 rows high, the header
+has a box of its own too (never in the accent colour), and inside it the row reads
+`│ Rail │ All inboxes … ● Synced 14:47 │ 15:02 │`, without the `▍` bar (`| Rail | …` with
+`icons = "ascii"`). When the scope and the summary do not both fit, the summary and the clock stay
+whole and the scope is cut. While a filter is set or being typed, the search slot keeps at least 24
+cells (at 60 columns and wider; less only when the summary itself leaves no room): the scope is
+cut first. Under 60 columns the clock and the search region go, and under 40 the summary.
+The status bar at the bottom names the keys of the pane you are
+in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your `config.toml` sets)
+and shows each account's state on the right. Narrower than `split_threshold` it is one row; at
+`split_threshold` and wider (and at least 12 rows high) it takes three rows and each key is drawn in
+its own box, with no frame around the bar (`+`, `-` and `|` with `icons = "ascii"`):
 
 ```
 ┌───────┐      ┌─────┐      ┌─────┐         ┌───┐
@@ -382,18 +389,17 @@ the thread's title block: the subject; the newest message's sender, its time (`0
 `Thu 08:55` yesterday and this week, `Oct 03` or `2024-10-03` before) and the account's badge
 and label (`Dana Reyes  04:32   W  WORK`); its recipients by name and the thread's size
 (`To: Vito, Tom  /  4 messages`, or `/  4 messages` when it names none); then a rule. The
-newest message is open under it. The older messages follow as cards between rules, oldest
-first (`thread_order = "newest"` under `[general]` runs them newest first): a
-card is the message's number in the thread in a grey box, its sender (bold while unread, `★`
-when starred) and its time at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its
-text. When a long thread's oldest messages are not shown,
-`[5 older messages of this thread are not shown]` stands where they would be. `j`/`k` move the
-cursor, `n`/`p` jump between the newest message and each card, `Tab` (or `Enter` on a card, the
-subject or a preview) opens or closes the message under the cursor, and `Enter` on
-`[n quoted lines]` shows the quoted text. `h` shows or hides, for the session, the headers of
-every open message: `From:`, `To:` and `Cc:` with addresses, `Date: Fri 10 Oct 2025 12:40`, and
-`Subject:` when it differs from the thread's. With `icons = "ascii"` the arrows are `>` and `v`
-and the rules `-`.
+newest message is open under it. The older messages follow as cards between rules, oldest first
+(`thread_order = "newest"` under `[general]` runs them newest first): a card is the message's
+number in the thread in a grey box, its sender (bold while unread, `★` when starred) and its time
+at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its text. When a long thread's
+oldest messages are not shown, `[5 older messages of this thread are not shown]` stands where they
+would be. `j`/`k` move the cursor, `n`/`p` jump between the newest message and each card, `Tab` (or
+`Enter` on a card, the subject or a preview) opens or closes the message under the cursor, and
+`Enter` on `[n quoted lines]` shows the quoted text. `h` shows or hides, for the session, the
+headers of every open message: `From:`, `To:` and `Cc:` with addresses,
+`Date: Fri 10 Oct 2025 12:40`, and `Subject:` when it differs from the thread's. With
+`icons = "ascii"` the arrows are `>` and `v` and the rules `-`.
 
 HTML mail is shown as Rail's plain-text rendering, with each link as a numbered marker such as
 `[1]`; in terminals that support hyperlinks (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows
@@ -430,49 +436,49 @@ it is open; the blocking above cannot stop it, so close the tab if the page move
 
 Bodies of recent mail (`body_cache_days`) are already in the store. An older message shows
 **fetching…** while the daemon fetches its body from its account's server (Gmail or Microsoft 365);
-the rest of the thread stays readable,
-and the text appears when it lands. If the fetch fails the message says why.
+the rest of the thread stays readable, and the text appears when it lands. If the fetch fails the
+message says why.
 
 `/` opens the filter line in the header's search slot and filters the list as you type. The
-slot is not drawn when the terminal is narrower than 60 columns, or when fewer than 8 cells are
-left for it after the counts and the summary; the line then opens in the status bar. Plain words
-search subjects, the names and addresses of senders and recipients (To, Cc and Bcc) and stored
-bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`, `is:unread`,
-`is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
-`account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread matches
-when one of its messages matches all of them. Anything else is searched as words, and the header's
-search slot shows how Rail read your filter
-(`/ is:unread · words: form:dana`), so a typo such as
-`form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
-local store only (`rail search` also asks each account's server).
+slot is not drawn when the terminal is narrower than 60 columns, or, before a filter is set, when
+fewer than 8 cells are left for it after the counts and the summary (with a filter set, only when
+the summary itself leaves no room); the line then opens in the status bar.
+Plain words search subjects, the names and addresses of senders and recipients (To, Cc
+and Bcc) and stored bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`,
+`is:unread`, `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail
+arrived) and `account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread
+matches when one of its messages matches all of them. Anything else is searched as words, and the
+header's search slot shows how Rail read your filter (`/ is:unread · words: form:dana`), so a typo
+such as `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter
+searches the local store only (`rail search` also asks each account's server).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account,
 a label or a merged mailbox (`Mailbox: Starred`, `Mailbox: Drafts`, `Mailbox: Sent`,
 `Mailbox: Trash`: that mailbox of every account together, newest first) and press `Enter`; the
 key bound to each command is shown beside it. A label is listed as
 `Label: AXON · Inbox/Infrastructure/Linode`: the account's label and the folder's whole path,
-folded away in the sidebar or not. `:errors` lists the session's recent errors; while one of them
-is an action Gmail refused, `j`/`k` or `↓`/`↑` highlight an entry and `Enter` sends that action
-again. `:hints` turns the key hints off, or back on, and saves the choice (`hints = false` under
-`[general]`; turning them on removes the key); a save that fails says
+folded away in the sidebar or not. `:errors` lists the session's recent errors; every sync pass
+that failed for good (one a retry will not mend) is listed there once, after its account's name,
+while `:errors` still holds it. While one of them is an action Gmail refused, `j`/`k` or `↓`/`↑`
+highlight an entry and `Enter` sends that action again. `:hints` turns the key hints off
+(`hints: off`), or back on (the hints are the confirmation: no notice), and saves the choice
+(`hints = false` under `[general]`; turning them on removes the key); a save that fails says
 `Could not save the hints setting: …` and keeps the choice for this session. `:clock` hides the
 header's clock (`clock: off`), or shows it again (`clock: on`), and saves the choice
 (`clock = false` under `[general]`; showing it removes the key); a save that fails says
-`Could not save the clock setting: …` and keeps the choice for this session. `:time` switches
-every time of day on screen (the list, `● Synced 14:47`, the header's clock, the Drafts list,
-`:errors`, the reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines) between 24-hour
-and 12-hour
-(`2:47 pm`, `4:32 am`, `Date: Fri 10 Oct 2025 12:40 pm`) and saves the choice (`time = "12h"`
-under `[general]`; 24-hour removes the key); a save that fails says
-`Could not save the time setting: …` and keeps the choice for this session.
-`:thread-order` turns the reader's older messages round (newest first, or oldest first again),
-in the open thread too, says `thread order: newest` or `thread order: oldest`, and saves the
-choice (`thread_order = "newest"` under `[general]`; oldest first removes the key); a save that
-fails says `Could not save the thread order: …` and keeps the choice for this session.
-`?` shows the keys of the view you are in,
-marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.help` is bound to),
-`Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more`
-line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond the box.
+`Could not save the clock setting: …` and keeps the choice for this session. `:time` switches every
+time of day on screen (the list, `● Synced 14:47`, the header's clock, the Drafts list, `:errors`,
+the reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines) between 24-hour and 12-hour
+(`2:47 pm`, `4:32 am`, `Date: Fri 10 Oct 2025 12:40 pm`) and saves the choice (`time = "12h"` under
+`[general]`; 24-hour removes the key); a save that fails says `Could not save the time setting: …`
+and keeps the choice for this session. `:thread-order` turns the reader's older messages round
+(newest first, or oldest first again), in the open thread too, says `thread order: newest` or
+`thread order: oldest`, and saves the choice (`thread_order = "newest"` under `[general]`; oldest
+first removes the key); a save that fails says `Could not save the thread order: …` and keeps the
+choice for this session. `?` shows the keys of the view you are in, marking with `*` the ones set in
+`config.toml`; `?` again (or whatever `global.help` is bound to), `Esc` or `q` closes it. Help and
+`:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more` line (`v more` and `^ more` with
+`icons = "ascii"`) says there is more beyond the box.
 
 The status bar shows, on the right, each account's sync state (`✓` caught up, `⟳` syncing, with
 a count during the first sync, `retrying`, `stopped`, and `!` for `needs login` or
@@ -585,7 +591,9 @@ at. One message is written at a time (`Finish or close the message being written
 reply goes to the message's `Reply-To` when it has one, otherwise to its sender; `R` adds the
 other recipients except you, keeping the old `Cc` in `Cc`. A reply starts with `Re:` once and the
 quoted text under `On <date>, <name> wrote:`; a forward starts with `Fwd:`, no recipients, and the
-original under a `Forwarded message` line, with its attachments. If the message's text is not in
+original under a `Forwarded message` line, with its attachments. The links the quoted or
+forwarded text marks follow it after a blank line, one per marker: `[1] https://…`, or
+`[2] (link not included)` for an address Rail would not open. If the message's text is not in
 the store yet, Rail fetches it first (`fetching the message…`). Writing from a Microsoft 365
 account works the same way; [Microsoft 365 mail](#microsoft-365-mail) says what differs.
 
@@ -726,7 +734,8 @@ draft that was deleted elsewhere before you opened or discarded it says
 `Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
 select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`, `space`, `r`, `R`, `f`, `/`) say
 `Not available on drafts`; `Esc` does nothing there and `c` writes a new message as everywhere.
-The search slot is empty in this folder: the pane is not filtered. The pane is read again whenever sync or the outbox
+The search slot is empty in this folder: the pane is not filtered. The pane is read again whenever
+sync or the outbox
 changes something. `:drafts` (`Open a draft` in the palette) lists the same rows for the account
 in view; in the unified inbox and the merged mailboxes it merges every account's, and `Enter`
 opens one the same way.
@@ -741,11 +750,13 @@ the draft removes its files, and so does a completed send; when the daemon start
 file no draft refers to, which catches any a removal could not.
 
 **Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
-limit, kept for Microsoft 365), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger
+limit, kept for Microsoft 365), 10 MiB of text and a one-line subject. Attachments count as they are
+sent, a third larger
 than the files (so about 18 MiB of files fit); the review's total shows the files' own sizes, and
 a file that would take the message over is refused when you attach it, naming the size the
 message would have. File names are cleaned before they are sent. Attachments come from files you
-name by path; a forward carries the original's attachments along, and they count in the total. Only regular files can be attached, and
+name by path; a forward carries the original's attachments along, and they count in the total. Only
+regular files can be attached, and
 they are read when the message goes out: one that was moved or deleted in the meantime fails the
 send (`Could not send: could not read an attachment of this message`) and the review opens again.
 
@@ -883,12 +894,12 @@ MFA) can still intervene after consent; see [Microsoft sign-in errors](#microsof
 What a Microsoft 365 account does today. It syncs, reads, acts on threads and writes mail over
 Microsoft Graph.
 
-- **Folders.** Every mail folder is synced, nested ones as `Parent/Child`. Inbox, Sent Items,
-  Drafts, Archive, Deleted Items and Junk Email are the account's system folders in the sidebar,
-  under those names, and fill `Sent` and `Trash` under UNIFIED; every other folder is under
-  `More folders`, nested ones as a tree. Search folders and Conversation History, RSS Feeds, RSS
-  Subscriptions and Sync Issues are left out. Those last four are matched by their English names,
-  so a mailbox in another language may show them.
+- **Folders.** Every mail folder is synced, nested ones as `Parent/Child` (a `/` in a folder's
+  own name shows as `∕`). Inbox, Sent Items, Drafts, Archive, Deleted Items and Junk Email are the
+  account's system folders in the sidebar, under those names, and fill `Sent` and `Trash` under
+  UNIFIED; every other folder is under `More folders`, nested ones as a tree. Search folders and
+  Conversation History, RSS Feeds, RSS Subscriptions and Sync Issues are left out. Those last four
+  are matched by their English names, so a mailbox in another language may show them.
 - **Threads and stars.** A thread is an Outlook conversation, and a star is Outlook's flag.
 - **The first sync** shows `⟳` and a running count with no total, because Microsoft gives no cheap
   one. It reads folder by folder, the inbox first. New mail then arrives within one
@@ -897,7 +908,9 @@ Microsoft Graph.
   mail in a folder beyond that is not synced.
   Raising `history_days` reads every folder again. When Microsoft forgets a folder's place (after
   a long time offline), or a folder is deleted, the account reads every folder again and removes
-  what is gone.
+  what is gone, except while a folder's subfolders cannot be listed or a folder is given up on:
+  then nothing is removed until a later full read (see `a folder cannot be synced` in
+  [Troubleshooting](#troubleshooting)).
 - **Search.** `from:`, `subject:`, `to:`, `body:` and plain words work; Gmail's `label:`, `is:`
   and `has:` do not. A search returns at most 1,000 results from the server.
 - **Attachments.** A OneDrive or SharePoint link attachment is listed, and when Rail is asked for
@@ -931,13 +944,13 @@ Microsoft Graph.
   discarding the draft in Rail leaves that copy. Delete the extra one in Outlook's Drafts.
 - **Attachments.** At most 50 files and 25 MiB in all, as on Gmail (`the message is … MiB, larger
   than Microsoft 365's 25 MiB limit`). A file of 3 MiB or more goes up in 3.75 MiB pieces, and a
-  failed upload is tried again later. A forward keeps the original's attachments in Outlook
-  without downloading them; remove one in the review and it goes from the draft too. Rail matches
-  its attachments to the draft's by name and the size Outlook lists for them, so a save or send
-  uploads only a file that is new or was replaced with other bytes. Rail writes the message as
-  plain text, so pictures inside the body of a reply, a forward or an imported Outlook draft are
-  dropped from it. Attached messages and OneDrive or SharePoint links stay as Outlook has them:
-  Rail does not list them for removal and never downloads or uploads them.
+  failed upload is tried again later. A forward keeps the original's attachments in Outlook without
+  downloading them; remove one in the review and it goes from the draft too. Rail matches its
+  attachments to the draft's by name and the size Outlook lists for them, so a save or send uploads
+  only a file that is new or has changed since (other bytes, or the same length written again). Rail
+  writes the message as plain text, so pictures inside the body of a reply, a forward or an imported
+  Outlook draft are dropped from it. Attached messages and OneDrive or SharePoint links stay as
+  Outlook has them: Rail does not list them for removal and never downloads or uploads them.
 - **Never sent twice.** Before any later attempt (a retry, or a start after the daemon stopped
   mid-send), Rail asks Outlook for a sent message with the draft's `Message-ID`, and about the
   draft it saved, and counts a sent one as sent.
@@ -1319,6 +1332,9 @@ their own.
 | `this mailbox cannot be reached through Microsoft Graph (on-premises, unlicensed or inactive)` | The mailbox must be an Exchange Online mailbox with a licence. |
 | `Outlook uses folders, not labels: press m to move.` | Expected: Outlook has folders, not labels. Press `m` to move the thread to a folder. |
 | `This mailbox has no Archive folder; press m to move.` | The mailbox has no Archive folder and Rail never makes one. Press `m` to move the thread to a folder. |
+| `This mailbox has no Deleted Items folder.` | `d` found no Deleted Items folder in the last folder listing, which an Exchange Online mailbox always has; Rail put the thread back. Press `Ctrl-r` to sync, or `m` to move the thread to a folder. |
+| `Could not …: Rail holds no messages of this Microsoft 365 conversation` | The thread's messages left the store before the action was sent (another device moved or deleted them). Press `Ctrl-r`; the next sync shows where they are now. |
+| `a folder cannot be synced: its sync link is longer than 4 KiB` (in the header as `⚠ name sync failed`; `:errors` names the folder after it, as `(from outside Rail (the provider or the system): "Projects")`) | Microsoft answered three times in a row with a sync link for that folder longer than Rail keeps. Rail stops syncing that folder until the daemon restarts (`rail daemon stop`); every other folder goes on, and the mail Rail holds from it stays. Until the restart, or until the folder is deleted in Outlook, every pass counts as failed: `rail doctor`'s last-success time stops advancing and its sync check fails, and `rail sync` exits 1. Mail deleted on the server while the folder is given up on stays in Rail: a full resync (when Microsoft expires a sync link, a synced folder is deleted, or `history_days` grows) that runs while the folder is still given up on removes nothing, and a restart alone does not remove it either. It goes with the first full resync after a restart. Please report it if it comes back. |
 | `the folder for this move no longer exists in Microsoft 365` | The folder was deleted in Outlook before the move was sent; Rail put the thread back. Press `m` and pick another folder. |
 | `Microsoft 365 is busy or unavailable (HTTP 429)`, or `retrying` in `rail sync` | Microsoft is throttling the mailbox. Rail waits as long as Microsoft asks (up to two minutes at a time) and tries again. |
 | `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |
@@ -1330,6 +1346,7 @@ their own.
 | The login URL did not open in a browser | Select it on screen and open it while Rail is still running. |
 | The editor opens and Rail comes straight back with the message unchanged | A graphical editor that returns at once. Give it its wait flag in `general.editor`, e.g. `editor = "code --wait"`. |
 | `cannot run "vi"` (or your editor's name) when writing | No editor was found: `general.editor`, `$VISUAL` and `$EDITOR` are unset or name a program that is not installed, and `vi` is missing. Set `general.editor`. |
+| The editor's text is still on screen after it closes | Rail could not take the terminal back from the editor. It repaints the whole screen on the next frame and logs `could not take the terminal back from the editor` in `rail.log`. |
 | `Could not send: Gmail refused the request (HTTP 400)` | Gmail refused the message and did not say why. The review opens again: check the addresses with `t` and send again. |
 
 ### Microsoft sign-in errors

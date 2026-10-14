@@ -141,22 +141,10 @@ async fn an_ansi_terminal_keeps_the_default_theme_and_still_saves() {
 #[tokio::test]
 async fn a_failed_config_write_keeps_the_theme_and_reports() {
     let mut f = fixture(3).await;
-    write_config(&f, "[general]\n");
-    // `rename` replaces a read-only file, so the directory is what must refuse the write.
-    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
-    let writable = std::fs::metadata(&dir).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&dir, read_only).unwrap();
-    if std::fs::write(dir.join("probe"), "x").is_ok() {
-        eprintln!("skipped: this user can write a read-only directory");
-        std::fs::set_permissions(&dir, writable).unwrap();
-        return;
-    }
+    crate::tui::test_util::block_config(&f.paths);
     run_target(&mut f, Target::Theme).await;
     type_text(&mut f, "dracula").await;
     press(&mut f, KeyCode::Enter).await;
-    std::fs::set_permissions(&dir, writable).unwrap();
     assert_eq!(
         f.screen.themes.current.scheme.map(|s| s.name),
         Some("Dracula"),
@@ -326,15 +314,51 @@ async fn colon_hints_turns_the_hints_off_and_on_and_saves_the_choice() {
 
     run_hints_from_the_palette(&mut f).await;
     assert!(
-        f.screen.status_line().contains("hints: on"),
-        "{}",
+        !f.screen.status_line().contains("hints:"),
+        "on says nothing: the hints coming back are the confirmation: {}",
         f.screen.status_line()
     );
     let text = config_text(&f);
     assert!(!text.contains("hints"), "true is the default: {text}");
     assert!(text.contains("editor = \"vi\" # mine"), "{text}");
-    expire_notice(&mut f).await;
-    assert!(bottom_row(&f).contains("? help"), "{}", bottom_row(&f));
+    let bottom = bottom_row(&f);
+    assert!(
+        bottom.contains("Enter open") && bottom.contains("? help"),
+        "the next frame draws the hints, with no notice to wait out: {bottom}"
+    );
+}
+
+/// #45: `:hints` off then on inside the notice's five seconds: the `hints: off` still showing
+/// goes with it, so the hints are up at once.
+#[tokio::test]
+async fn hints_off_then_on_within_the_notice_shows_the_hints_at_once() {
+    let mut f = fixture(3).await;
+    write_config(&f, "[general]\n");
+    run_hints_from_the_palette(&mut f).await;
+    assert!(
+        f.screen.status_line().contains("hints: off"),
+        "{}",
+        f.screen.status_line()
+    );
+    let bottom = bottom_row(&f);
+    assert!(
+        bottom.contains("hints: off") && !bottom.contains("? help"),
+        "{bottom}"
+    );
+    run_hints_from_the_palette(&mut f).await;
+    assert_eq!(
+        f.screen.status.notice(),
+        None,
+        "the stale notice is dismissed"
+    );
+    let bottom = bottom_row(&f);
+    assert!(
+        bottom.starts_with("Enter open"),
+        "the hints at once: {bottom}"
+    );
+    assert!(bottom.contains("? help"), "{bottom}");
+    assert!(!bottom.contains("hints:"), "{bottom}");
+    assert!(!config_text(&f).contains("hints"), "{}", config_text(&f));
 }
 
 /// `:time` typed in the palette and run with Enter.
@@ -405,19 +429,8 @@ async fn colon_time_switches_to_am_pm_and_back_and_saves_the_choice() {
 #[tokio::test]
 async fn a_failed_time_save_keeps_the_setting_and_reports() {
     let mut f = fixture(3).await;
-    write_config(&f, "[general]\n");
-    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
-    let writable = std::fs::metadata(&dir).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&dir, read_only).unwrap();
-    if std::fs::write(dir.join("probe"), "x").is_ok() {
-        eprintln!("skipped: this user can write a read-only directory");
-        std::fs::set_permissions(&dir, writable).unwrap();
-        return;
-    }
+    crate::tui::test_util::block_config(&f.paths);
     run_target(&mut f, Target::Time).await;
-    std::fs::set_permissions(&dir, writable).unwrap();
     assert_eq!(
         f.screen.ctx.clock.format(),
         rail_core::config::TimeFormat::H12,
@@ -436,19 +449,8 @@ async fn a_failed_time_save_keeps_the_setting_and_reports() {
 #[tokio::test]
 async fn a_failed_hints_save_keeps_the_setting_and_reports() {
     let mut f = fixture(3).await;
-    write_config(&f, "[general]\n");
-    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
-    let writable = std::fs::metadata(&dir).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&dir, read_only).unwrap();
-    if std::fs::write(dir.join("probe"), "x").is_ok() {
-        eprintln!("skipped: this user can write a read-only directory");
-        std::fs::set_permissions(&dir, writable).unwrap();
-        return;
-    }
+    crate::tui::test_util::block_config(&f.paths);
     run_target(&mut f, Target::Hints).await;
-    std::fs::set_permissions(&dir, writable).unwrap();
     assert!(!f.screen.hints, "kept off for the session");
     assert!(
         f.screen
@@ -521,19 +523,8 @@ async fn the_clock_follows_colon_time_at_once() {
 #[tokio::test]
 async fn a_failed_clock_save_keeps_the_setting_and_reports() {
     let mut f = fixture(3).await;
-    write_config(&f, "[general]\n");
-    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
-    let writable = std::fs::metadata(&dir).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&dir, read_only).unwrap();
-    if std::fs::write(dir.join("probe"), "x").is_ok() {
-        eprintln!("skipped: this user can write a read-only directory");
-        std::fs::set_permissions(&dir, writable).unwrap();
-        return;
-    }
+    crate::tui::test_util::block_config(&f.paths);
     run_target(&mut f, Target::Clock).await;
-    std::fs::set_permissions(&dir, writable).unwrap();
     assert_eq!(
         f.screen.header(false).clock,
         None,

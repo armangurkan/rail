@@ -309,6 +309,53 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A Microsoft 365 folder whose sync link stayed longer than 4 KiB started over from its first page
+  on every pass, forever. After three start-overs in a row Rail stops syncing it until the daemon
+  restarts and, until then or until the folder is deleted in Outlook, says so in the header's failed
+  state and in `:errors` (`a folder cannot be synced: its sync link is longer than 4 KiB`, with the
+  folder's name after it as outside text). A resync while a folder is given up on, or while a
+  subfolder listing is skipped, no longer deletes that folder's mail. A permanent sync error is now
+  kept in `:errors` (#28).
+- A Microsoft 365 folder whose own name holds `/` showed as two levels; the `/` now shows as `∕`.
+  Once Rail has listed the folders since the daemon started, a folder whose subfolders vanished
+  while Rail listed them no longer fails the whole sync pass, and an action on a conversation whose
+  messages left the store says so instead of reporting success (#31).
+- Undoing a Microsoft 365 move that a sync had overtaken could put the message back in two
+  folders until its next sync; it goes back to the one folder it left. An undo no longer puts a
+  message into a folder that took a deleted folder's place in the store (#33).
+- `m` on a Microsoft 365 account with no synced folders said `This account has no labels to
+  choose from.`; it now says `This account has no folders to choose from.` (#34).
+- A Microsoft 365 draft's attachment overwritten in place with new bytes of the same length kept
+  the old copy in Outlook, and that copy was sent. Rail now records each file's modification time
+  and uploads a file whose time or size changed (#42).
+- A reply or forward of an HTML mail quoted its `[1]` link markers without the links. The links
+  the text marks now follow it, one line each (`[1] https://…`, or `(link not included)` for an
+  address Rail would not open) (#43).
+- When Rail could not take the terminal back from the editor, the next frame drew only what
+  changed, so the editor's text could stay on screen. It now repaints the whole screen and logs
+  the error (#23).
+- `:thread-order` with the reader's cursor on a rule or a blank line moved the cursor to
+  another message; it stays on the message it was in.
+- A reader 15 to 18 columns wide showed `…  /  4 messages` under the subject (or, at 15, lost
+  the count); it shows `/  4 messages`. A title or card line full exactly at a part's end now
+  ends in `…` when something was left off. The From:, To: and Cc: lines no longer repeat an
+  address that is also the name.
+- Page down and page up in the thread list could leave threads between two screens unseen when
+  the next screen had more group rows; a page now moves by the threads shown, the next screen
+  starts with the thread after the last one shown and the screen above ends with the thread
+  before the first one shown, whatever row the cursor is on (it goes to the new screen's last
+  thread when that screen holds fewer). A group's name is no longer drawn alone on the bottom
+  row.
+- A thread dated beyond what the clock can read was grouped under `OLDER` even when it was in
+  the future, so `OLDER` could head the list twice; it goes by its sign now.
+- The header showed an unread count on an account's own Sent, Trash or Drafts folder
+  (`work · Sent · 3 unread`); it reads `work · Sent`, as the merged mailboxes do.
+- `:hints` turning the hints back on posted `hints: on` for five seconds over the hints it had
+  just brought back; it says nothing, and a `hints: off` still showing goes with it (#45).
+- The header's and the hint bar's backfill counts have thousands separators
+  (`⟳ Backfill 1,200/5,000`, `home ⟳ 1,200/5,000`).
+- A filter being typed or set keeps at least 24 cells of the header's search slot (at 60 columns
+  and wider); the scope is cut to make the room, the summary and the clock stay whole.
 - Microsoft 365 marking read touched every stored message of a thread, and one message Graph
   refused failed the whole action. Only the messages that need the change are sent, a refused one
   is skipped and logged by id, and the action fails only when every message is refused (#30).

@@ -550,7 +550,7 @@ async fn progress_reaches_the_status_bar_and_a_lost_daemon_says_so() {
     settle(&mut f.screen, effects).await;
     let line = f.screen.status_line();
     assert!(
-        line.contains("work ✓") && line.contains("home ⟳ 1200/5000"),
+        line.contains("work ✓") && line.contains("home ⟳ 1,200/5,000"),
         "{line}"
     );
     let lost = MailEvent::Daemon(DaemonEvent::Lost(OpError::internal("gone")));

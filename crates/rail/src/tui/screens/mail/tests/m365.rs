@@ -6,7 +6,8 @@
 
 use rail_core::config::AccountKind;
 use rail_core::error::ErrorClass;
-use rail_core::ops::{AccountSyncStatus, Action as MailAction, M365_LABELS};
+use rail_core::ops::Untrusted;
+use rail_core::ops::{AccountSyncStatus, Action as MailAction, M365_LABELS, SyncErrorInfo};
 use rail_core::ops::{ActionFailed, DraftImportResponse, ErrorCode, OpError};
 use rail_core::store::drafts_folder::{DraftsRow, DraftsRowKind};
 
@@ -312,4 +313,93 @@ async fn an_outlook_draft_opens_and_is_discarded_with_outlooks_words() {
         confirm.lines()[1..],
         ["Its copy in Outlook's Drafts is deleted too."]
     );
+}
+
+#[tokio::test]
+async fn m_on_a_microsoft_365_account_with_no_folders_says_folders() {
+    let mut f = m365_store_fixture().await;
+    writer(&f)
+        .conn()
+        .execute(
+            "DELETE FROM folders WHERE account_id = (SELECT id FROM accounts WHERE name = 'home')",
+            [],
+        )
+        .unwrap();
+    press(&mut f, KeyCode::Char('m')).await;
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("This account has no folders to choose from."),
+        "{line}"
+    );
+    assert!(f.screen.modal.is_none(), "no picker");
+}
+
+#[tokio::test]
+async fn a_pick_in_the_microsoft_365_m_picker_sends_move() {
+    let mut f = m365_store_fixture().await;
+    let projects: i64 = writer(&f)
+        .conn()
+        .query_row(
+            "SELECT f.id FROM folders f JOIN accounts a ON a.id = f.account_id
+             WHERE a.name = 'home' AND f.name = 'Projects'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    press(&mut f, KeyCode::Char('m')).await;
+    for c in "proj".chars() {
+        press(&mut f, KeyCode::Char(c)).await;
+    }
+    press(&mut f, KeyCode::Enter).await;
+    let calls = applies(&f);
+    assert!(
+        matches!(
+            &calls[..],
+            [FakeCall::Apply { account, action: MailAction::Move { to }, .. }]
+                if account == "home" && *to == projects
+        ),
+        "{calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn trash_notes_for_an_account_it_does_not_know_add_none() {
+    let f = m365_fixture().await;
+    let unknown = crate::tui::screens::mail::selection::Picked {
+        account_id: 9_999,
+        starred: false,
+        unread: false,
+    };
+    assert!(f.screen.trash_notes(&[(1, unknown)]).is_empty());
+}
+
+#[tokio::test]
+async fn a_folder_microsoft_365_cannot_sync_is_kept_in_errors_once() {
+    let mut f = m365_fixture().await;
+    let mut home = AccountSyncStatus::new("home", "h@example.com", AccountKind::M365);
+    home.last_pass_failed = true;
+    home.last_success_at = Some(1);
+    home.last_error = Some(SyncErrorInfo {
+        code: "permanent".into(),
+        class: Some(ErrorClass::Permanent),
+        message: "a folder cannot be synced: its sync link is longer than 4 KiB".into(),
+        at: 1,
+        detail: Some(Untrusted::new("Pro\u{1b}jects".to_string())),
+    });
+    for _ in 0..2 {
+        let event = MailEvent::Daemon(DaemonEvent::Progress(Box::new(home.clone())));
+        let effects = f.screen.update(Msg::Task(TaskResult::Mail(event)));
+        settle(&mut f.screen, effects).await;
+    }
+    let kept: Vec<&str> = f.screen.status.errors().map(|e| e.text.as_str()).collect();
+    assert_eq!(
+        kept,
+        [
+            "home: a folder cannot be synced: its sync link is longer than 4 KiB (from outside \
+             Rail (the provider or the system): \"Pro\\u{1b}jects\")"
+        ],
+        "the folder is named, escaped as outside text"
+    );
+    let summary = f.screen.header_summary();
+    assert!(summary.contains("home sync failed"), "{summary}");
 }

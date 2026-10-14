@@ -8,17 +8,15 @@ use crate::provider::{Change, FolderKind, TargetMessage};
 /// The user's own mail: never archived, trashed or moved, and never the newest received.
 const OWN_MAIL: [FolderKind; 2] = [FolderKind::Sent, FolderKind::Drafts];
 
+/// What trash leaves where it is: the user's own mail, and what is in Deleted Items already.
+const KEPT_BY_TRASH: [FolderKind; 3] = [FolderKind::Sent, FolderKind::Drafts, FolderKind::Trash];
+
 /// The indices of `messages` that `change` touches, ascending. `Labels` never reaches a
 /// one-folder mailbox (it is refused first) and touches nothing.
 pub fn touched(change: &Change, messages: &[TargetMessage]) -> Vec<usize> {
     match change {
         Change::Archive => matching(messages, |m| m.folder == Some(FolderKind::Inbox)),
-        Change::Trash => matching(messages, |m| {
-            !in_kinds(
-                m,
-                &[FolderKind::Sent, FolderKind::Drafts, FolderKind::Trash],
-            )
-        }),
+        Change::Trash => matching(messages, |m| !in_kinds(m, &KEPT_BY_TRASH)),
         Change::Move { to } => matching(messages, |m| {
             !in_kinds(m, &OWN_MAIL) && m.folder_remote.as_ref() != Some(to)
         }),

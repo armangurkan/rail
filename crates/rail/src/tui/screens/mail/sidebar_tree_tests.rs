@@ -1,9 +1,10 @@
 //! The sidebar's tree model: the default folds, the `More folders` tree, folded sums, deep
 //! paths, row scopes and keys, and where the cursor goes after a rebuild.
 
-use super::sidebar_tree::fixtures::{folder, labels, two_accounts};
+use super::sidebar_tree::fixtures::{accounts, folder, two_accounts};
 use super::sidebar_tree::{Folds, RowKey, RowKind, SidebarRow, build, refind, visible};
 use crate::tui::data::{ScopeChoice, SidebarOutcome};
+use rail_core::provider::FolderKind;
 
 /// Each row as `{indent}{fold} {label} ({count})`: two spaces per depth, `>` folded, `v`
 /// unfolded, `-` not foldable.
@@ -25,7 +26,7 @@ fn shape(rows: &[SidebarRow]) -> Vec<String> {
 }
 
 fn shown(outcome: &SidebarOutcome, folds: &Folds) -> Vec<String> {
-    shape(&visible(&build(&labels(), outcome, folds), folds))
+    shape(&visible(&build(&accounts(), outcome, folds), folds))
 }
 
 fn unfolded(keys: &[RowKey]) -> Folds {
@@ -42,9 +43,14 @@ fn from<'a>(rows: &'a [String], first: &str, n: usize) -> &'a [String] {
     &rows[at..at + n]
 }
 
+/// Account `i`'s address, its rows' key.
+fn acct(i: usize) -> String {
+    accounts()[i].address.clone()
+}
+
 fn prefix(account: usize, path: &str) -> RowKey {
     RowKey::Prefix {
-        account,
+        account: acct(account),
         path: path.into(),
     }
 }
@@ -87,7 +93,7 @@ fn by_default_accounts_show_their_system_folders_and_fold_the_rest() {
 fn more_folders_holds_the_rest_as_a_sorted_tree_with_folded_parents_summed() {
     let rows = shown(
         &two_accounts(),
-        &unfolded(&[RowKey::More(0), RowKey::More(1)]),
+        &unfolded(&[RowKey::More(acct(0)), RowKey::More(acct(1))]),
     );
     assert_eq!(
         from(&rows, "  v More folders (7)", 5),
@@ -114,14 +120,14 @@ fn more_folders_holds_the_rest_as_a_sorted_tree_with_folded_parents_summed() {
 /// Both `More folders` open with their top parents, `Infrastructure` (folder 38) left folded.
 fn both_trees_open() -> Folds {
     unfolded(&[
-        RowKey::More(0),
+        RowKey::More(acct(0)),
         prefix(0, "[Imap]"),
         prefix(0, "Categories"),
         RowKey::Folder {
-            account: 0,
+            account: acct(0),
             folder_id: 16,
         },
-        RowKey::More(1),
+        RowKey::More(acct(1)),
         prefix(1, "Inbox"),
     ])
 }
@@ -159,7 +165,7 @@ fn unfolded_parents_show_their_own_count_and_their_children() {
     let mut open = folds.clone();
     open.set(
         &RowKey::Folder {
-            account: 1,
+            account: acct(1),
             folder_id: 38,
         },
         false,
@@ -182,14 +188,14 @@ fn a_path_deeper_than_six_segments_is_joined_at_the_sixth() {
         .counts
         .folders
         .push(folder(1, 50, "a/b/c/d/e/f/g", "user", 1));
-    let mut keys = vec![RowKey::More(0)];
+    let mut keys = vec![RowKey::More(acct(0))];
     keys.extend(
         ["a", "a/b", "a/b/c", "a/b/c/d", "a/b/c/d/e"]
             .iter()
             .map(|p| prefix(0, p)),
     );
     let folds = unfolded(&keys);
-    let rows = visible(&build(&labels(), &outcome, &folds), &folds);
+    let rows = visible(&build(&accounts(), &outcome, &folds), &folds);
     let deep: Vec<(&str, u8)> = rows
         .iter()
         .skip_while(|r| r.label != "a")
@@ -204,8 +210,8 @@ fn a_path_deeper_than_six_segments_is_joined_at_the_sixth() {
 
 #[test]
 fn rows_open_their_scopes_and_keep_their_keys() {
-    let folds = unfolded(&[RowKey::More(0)]);
-    let rows = visible(&build(&labels(), &two_accounts(), &folds), &folds);
+    let folds = unfolded(&[RowKey::More(acct(0))]);
+    let rows = visible(&build(&accounts(), &two_accounts(), &folds), &folds);
     let find = |label: &str| rows.iter().find(|r| r.label == label).expect(label);
     assert_eq!(find("Personal").scope(), Some(ScopeChoice::Account(0)));
     let inbox = rows
@@ -216,6 +222,20 @@ fn rows_open_their_scopes_and_keep_their_keys() {
         inbox.scope(),
         Some(ScopeChoice::Account(0)),
         "the Inbox row opens the account's inbox"
+    );
+    let sent = rows
+        .iter()
+        .find(|r| r.label == "Sent" && r.account() == Some(0))
+        .unwrap();
+    assert!(
+        matches!(
+            sent.scope(),
+            Some(ScopeChoice::Folder {
+                kind: FolderKind::Sent,
+                ..
+            })
+        ),
+        "a folder row's scope carries its kind"
     );
     assert_eq!(find("Starred").scope(), Some(ScopeChoice::Starred));
     assert_eq!(find("Starred").key, RowKey::Unified("Starred"));
@@ -233,13 +253,13 @@ fn rows_open_their_scopes_and_keep_their_keys() {
     assert_eq!(
         shopping.key,
         RowKey::Folder {
-            account: 0,
+            account: acct(0),
             folder_id: 16
         }
     );
     assert_eq!(
         shopping.parents,
-        [RowKey::Account(0), RowKey::More(0)],
+        [RowKey::Account(acct(0)), RowKey::More(acct(0))],
         "what must be unfolded for it to show"
     );
     assert!(!find("ACCOUNTS").selectable() && find("Personal").selectable());
@@ -253,12 +273,12 @@ fn rows_open_their_scopes_and_keep_their_keys() {
 #[test]
 fn a_folded_account_hides_everything_under_it() {
     let mut folds = Folds::default();
-    assert!(!folds.is_folded(&RowKey::Account(1)) && folds.is_folded(&RowKey::More(1)));
-    folds.set(&RowKey::Account(1), true);
+    assert!(!folds.is_folded(&RowKey::Account(acct(1))) && folds.is_folded(&RowKey::More(acct(1))));
+    folds.set(&RowKey::Account(acct(1)), true);
     let rows = shown(&two_accounts(), &folds);
     assert_eq!(rows.last().map(String::as_str), Some("> AXON (10)"));
-    folds.set(&RowKey::Account(1), false);
-    assert!(!folds.is_folded(&RowKey::Account(1)));
+    folds.set(&RowKey::Account(acct(1)), false);
+    assert!(!folds.is_folded(&RowKey::Account(acct(1))));
 }
 
 #[test]
@@ -283,29 +303,29 @@ fn an_account_with_only_system_folders_has_no_rule_and_no_more_folders() {
 #[test]
 fn the_cursor_stays_on_its_row_or_moves_to_the_nearest_one_above() {
     let shopping = RowKey::Folder {
-        account: 0,
+        account: acct(0),
         folder_id: 16,
     };
     let dhgate = RowKey::Folder {
-        account: 0,
+        account: acct(0),
         folder_id: 17,
     };
-    let folds = unfolded(&[RowKey::More(0), shopping.clone()]);
-    let old = visible(&build(&labels(), &two_accounts(), &folds), &folds);
+    let folds = unfolded(&[RowKey::More(acct(0)), shopping.clone()]);
+    let old = visible(&build(&accounts(), &two_accounts(), &folds), &folds);
     assert_eq!(refind(&old, Some(&dhgate), &old), Some(dhgate.clone()));
     let mut outcome = two_accounts();
     outcome.counts.folders.retain(|f| f.folder_id != 17);
-    let new = visible(&build(&labels(), &outcome, &folds), &folds);
+    let new = visible(&build(&accounts(), &outcome, &folds), &folds);
     assert_eq!(
         refind(&old, Some(&dhgate), &new),
         Some(shopping),
         "gone: Shopping, just above it"
     );
     let folded = Folds::default();
-    let hidden = visible(&build(&labels(), &two_accounts(), &folded), &folded);
+    let hidden = visible(&build(&accounts(), &two_accounts(), &folded), &folded);
     assert_eq!(
         refind(&old, Some(&dhgate), &hidden),
-        Some(RowKey::More(0)),
+        Some(RowKey::More(acct(0))),
         "folded away: the nearest shown row above"
     );
     assert_eq!(

@@ -1,5 +1,6 @@
 //! Graph's `DateTimeOffset` values, which it always writes in UTC (`2026-10-12T08:30:15Z`, with
-//! up to seven fraction digits), to and from Unix milliseconds. Anything else is not a date.
+//! up to seven fraction digits), to and from Unix milliseconds. Anything else, a day its month
+//! does not have included, is not a date.
 
 /// `text` as Unix milliseconds: `YYYY-MM-DDTHH:MM:SS`, an optional `.` and digits, then `Z`.
 pub(crate) fn parse_ms(text: &str) -> Option<i64> {
@@ -10,7 +11,11 @@ pub(crate) fn parse_ms(text: &str) -> Option<i64> {
         digits(ymd.next()?, 2)?,
         digits(ymd.next()?, 2)?,
     );
-    let (clock, fraction) = time.split_once('.').unwrap_or((time, ""));
+    let (clock, fraction) = match time.split_once('.') {
+        Some((_, "")) => return None,
+        Some(split) => split,
+        None => (time, ""),
+    };
     let mut hms = clock.splitn(3, ':');
     let (hour, minute, second) = (
         digits(hms.next()?, 2)?,
@@ -18,7 +23,7 @@ pub(crate) fn parse_ms(text: &str) -> Option<i64> {
         digits(hms.next()?, 2)?,
     );
     let valid = (1..=12).contains(&month)
-        && (1..=31).contains(&day)
+        && (1..=days_in_month(year, month)).contains(&day)
         && hour < 24
         && minute < 60
         && second <= 60
@@ -37,6 +42,16 @@ fn digits(text: &str, len: usize) -> Option<i64> {
     (text.len() == len && text.bytes().all(|b| b.is_ascii_digit()))
         .then(|| text.parse().ok())
         .flatten()
+}
+
+/// The days of `month` (1 to 12) in `year`, leap years by the Gregorian rule.
+fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 /// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
@@ -98,6 +113,7 @@ mod tests {
             Some(1_791_793_815_123)
         );
         assert_eq!(parse_ms("2000-02-29T23:59:59Z"), Some(951_868_799_000));
+        assert!(parse_ms("2024-02-29T00:00:00Z").is_some(), "a leap day");
         for bad in [
             "",
             "2026-10-12T08:30:15",
@@ -107,6 +123,11 @@ mod tests {
             "2026-10-12T08:30:15+01:00",
             "26-10-12T08:30:15Z",
             "2026-10-12T08:30:15.x1Z",
+            "2026-02-31T00:00:00Z",
+            "2026-02-29T00:00:00Z",
+            "2100-02-29T00:00:00Z",
+            "2026-04-31T00:00:00Z",
+            "2026-10-12T08:30:15.Z",
         ] {
             assert_eq!(parse_ms(bad), None, "{bad:?}");
         }

@@ -274,6 +274,7 @@ fn file(path: &str, size: i64) -> Attachment {
         mime: "text/plain".into(),
         size,
         listed: None,
+        modified: None,
     }
 }
 

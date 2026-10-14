@@ -97,6 +97,12 @@ pub enum Attachment {
         /// imported it: Graph lists a file larger than its bytes. `None` until then.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         listed: Option<i64>,
+        /// The file's modification time (nanoseconds since the Unix epoch) when Rail last
+        /// checked it: a file whose time or size differs from its entry's is uploaded again,
+        /// so one overwritten at the same length does not keep the provider's old copy. `None`
+        /// in an entry written before Rail kept it, which therefore goes up once more.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        modified: Option<i64>,
     },
     Part {
         message: i64,
@@ -125,6 +131,17 @@ impl Attachment {
             Self::File { size, .. } | Self::Part { size, .. } => *size,
         }
     }
+}
+
+/// `meta`'s modification time in nanoseconds since the Unix epoch, as an attachment entry
+/// records it; `None` where the system gives none.
+pub fn modified_ns(meta: &std::fs::Metadata) -> Option<i64> {
+    let since = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    i64::try_from(since.as_nanos()).ok()
 }
 
 impl std::fmt::Debug for Attachment {
@@ -276,6 +293,9 @@ pub struct ReplySource {
     pub date: i64,
     /// `None` until the body is fetched.
     pub body_text: Option<String>,
+    /// The addresses `body_text`'s `[n]` markers stand for (link n is `links[n - 1]`), at most
+    /// `MAX_LINKS`; empty when none are stored.
+    pub links: Vec<String>,
     pub attachments: Vec<ReplyAttachment>,
 }
 
@@ -285,6 +305,7 @@ impl std::fmt::Debug for ReplySource {
             .field("message", &self.message)
             .field("thread_id", &self.thread_id)
             .field("has_body", &self.body_text.is_some())
+            .field("links", &self.links.len())
             .field("attachments", &self.attachments.len())
             .finish_non_exhaustive()
     }
@@ -334,9 +355,11 @@ fn read_draft(r: &Row<'_>) -> rusqlite::Result<Draft> {
 /// JSON array the sync writer stores.
 fn read_reply_head(r: &Row<'_>) -> rusqlite::Result<ReplySource> {
     let text = |i: usize| -> rusqlite::Result<String> { r.get(i) };
+    let message: i64 = r.get(0)?;
     let references: Option<String> = r.get(6)?;
+    let links: Option<String> = r.get(14)?;
     Ok(ReplySource {
-        message: r.get(0)?,
+        message,
         account_id: r.get(1)?,
         thread_id: r.get(2)?,
         remote_thread_id: text(3)?,
@@ -350,6 +373,9 @@ fn read_reply_head(r: &Row<'_>) -> rusqlite::Result<ReplySource> {
         cc: parsed(&text(11)?),
         date: r.get(12)?,
         body_text: r.get(13)?,
+        links: links
+            .map(|json| super::view::read_links(message, &json))
+            .unwrap_or_default(),
         attachments: Vec::new(),
     })
 }
@@ -602,7 +628,7 @@ impl Store {
             .query_row(
                 "SELECT m.id, t.account_id, m.thread_id, t.remote_id, m.remote_id, m.message_id,
                         m.references_ids, m.subject, m.from_json, m.reply_to_json, m.to_json,
-                        m.cc_json, m.date, m.body_text
+                        m.cc_json, m.date, m.body_text, m.links
                  FROM messages m JOIN threads t ON t.id = m.thread_id WHERE m.id = ?1",
                 [message],
                 read_reply_head,

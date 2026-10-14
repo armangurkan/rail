@@ -7,6 +7,7 @@ use rail_core::error::ErrorClass;
 use rail_core::ops::{AccountSyncStatus, ErrorCode, OpError, SyncPhase};
 
 use super::AccountEntry;
+use super::header::thousands;
 use super::view::Glyphs;
 use crate::tui::clock::Clock;
 use crate::tui::keys::{Action, Keymap};
@@ -150,6 +151,13 @@ impl StatusBar {
         self.notice = Some((text.into(), tick + ticks, false));
     }
 
+    /// Drop the notice when it reads `text`; any other notice stays.
+    pub fn dismiss(&mut self, text: &str) {
+        if self.notice() == Some(text) {
+            self.notice = None;
+        }
+    }
+
     /// `error`, kept in `:errors` with the outbox row `Enter` retries.
     pub fn error_with_retry(
         &mut self,
@@ -282,10 +290,7 @@ impl StatusBar {
     pub fn line(&self, accounts: &[AccountEntry], glyphs: &Glyphs) -> String {
         let mut parts: Vec<String> = self.notice().map(str::to_string).into_iter().collect();
         for account in accounts {
-            let status = self
-                .statuses
-                .iter()
-                .find(|s| s.address.eq_ignore_ascii_case(&account.address));
+            let status = self.status_of(account);
             parts.push(account_part(&escape(&account.label), status, glyphs));
         }
         parts.join("  ·  ")
@@ -329,8 +334,8 @@ fn rank(name: &str, s: Option<&AccountSyncStatus>, glyphs: &Glyphs) -> (u8, Stri
         SyncPhase::Retrying => (RANK_RETRYING, format!("{} retrying", glyphs.syncing)),
         SyncPhase::Backfill => {
             let count = match s.backfill_estimate {
-                Some(total) => format!("{}/{total}", s.backfill_fetched),
-                None => s.backfill_fetched.to_string(),
+                Some(total) => format!("{}/{}", thousands(s.backfill_fetched), thousands(total)),
+                None => thousands(s.backfill_fetched),
             };
             (RANK_BUSY, format!("{} Backfill {count}", glyphs.syncing))
         }
@@ -372,8 +377,17 @@ fn sync_part(name: &str, s: &AccountSyncStatus, glyphs: &Glyphs) -> String {
     match s.phase {
         SyncPhase::Unsupported => format!("{name} - no sync yet"),
         SyncPhase::Backfill => match s.backfill_estimate {
-            Some(total) => format!("{name} {} {}/{total}", glyphs.syncing, s.backfill_fetched),
-            None => format!("{name} {} {}", glyphs.syncing, s.backfill_fetched),
+            Some(total) => format!(
+                "{name} {} {}/{}",
+                glyphs.syncing,
+                thousands(s.backfill_fetched),
+                thousands(total)
+            ),
+            None => format!(
+                "{name} {} {}",
+                glyphs.syncing,
+                thousands(s.backfill_fetched)
+            ),
         },
         SyncPhase::Labels | SyncPhase::Delta | SyncPhase::Bodies | SyncPhase::Prune => {
             format!("{name} {}", glyphs.syncing)
@@ -450,7 +464,7 @@ mod tests {
             status("work", "w@example.com", SyncPhase::Idle),
             home,
         ]));
-        assert_eq!(s.text, "⟳ Backfill 1200/5000");
+        assert_eq!(s.text, "⟳ Backfill 1,200/5,000");
         let mut work = status("work", "w@example.com", SyncPhase::Idle);
         work.last_pass_failed = true;
         let s = summary_of(&bar(vec![
@@ -459,6 +473,26 @@ mod tests {
         ]));
         assert_eq!(s.text, "! work sync failed");
         assert!(s.error);
+    }
+
+    #[test]
+    fn backfill_counts_carry_thousands_separators_in_the_summary_and_the_bar() {
+        let mut home = status("home", "h@example.com", SyncPhase::Backfill);
+        home.backfill_fetched = 1_200;
+        home.backfill_estimate = Some(5_000);
+        let glyphs = Glyphs::of(Icons::Unicode);
+        assert_eq!(
+            account_part("home", Some(&home), &glyphs),
+            "home ⟳ 1,200/5,000"
+        );
+        home.backfill_fetched = 22_853;
+        home.backfill_estimate = None;
+        assert_eq!(account_part("home", Some(&home), &glyphs), "home ⟳ 22,853");
+        let s = summary_of(&bar(vec![
+            status("work", "w@example.com", SyncPhase::Idle),
+            home,
+        ]));
+        assert_eq!(s.text, "⟳ Backfill 22,853");
     }
 
     #[test]

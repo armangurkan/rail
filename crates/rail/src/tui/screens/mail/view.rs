@@ -14,7 +14,6 @@ use super::layout::{self, areas};
 use super::list_view::{ListLine, frame_lines, list_lines};
 use super::{Focus, MailScreen, StoreState};
 use super::{header, hints};
-use crate::tui::clock::Group;
 use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
 use crate::tui::modals::Modal;
@@ -257,8 +256,8 @@ impl MailScreen {
         }
     }
 
-    /// The thread rows in their date groups. The rows a page moves by are the pane's rows
-    /// less the group rows drawn, kept in `size` for the keys.
+    /// The thread rows in their date groups. The threads drawn are what a page moves by, kept in
+    /// `size` for the keys.
     fn render_list(&self, frame: &mut Frame, area: Rect, theme: &Theme, glyphs: &Glyphs) {
         if self.in_drafts() {
             self.render_drafts(frame, area, theme, glyphs);
@@ -269,23 +268,19 @@ impl MailScreen {
             return;
         }
         let height = usize::from(area.height);
-        let groups: Vec<Group> = self
-            .list
-            .rows()
-            .iter()
-            .map(|row| self.ctx.clock.group(row.key.last_date))
-            .collect();
+        self.list_rows.set(height);
+        let groups = self.list_groups.groups(&self.list, &self.ctx.clock);
         let shown = frame_lines(
             &list_lines(&groups),
             self.list.offset(),
             self.list.selected_index(),
             height,
         );
-        let group_rows = shown
+        let threads = shown
             .iter()
-            .filter(|line| matches!(line, ListLine::Group(_)))
+            .filter(|line| matches!(line, ListLine::Thread(_)))
             .count();
-        let fits = u16::try_from(height.saturating_sub(group_rows).max(1)).unwrap_or(u16::MAX);
+        let fits = u16::try_from(threads.max(1)).unwrap_or(u16::MAX);
         self.size.set((fits, self.size.get().1));
         self.drawn_top.set(shown.iter().find_map(|line| match line {
             ListLine::Thread(index) => Some(*index),

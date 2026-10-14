@@ -36,6 +36,8 @@ use crate::tui::theme::Theme;
 
 /// Columns assumed before the first frame.
 const FALLBACK_WIDTH: u16 = 80;
+/// Rows assumed before the first frame.
+const FALLBACK_HEIGHT: u16 = 24;
 
 /// The lines built for one width and one generation of the reader's state.
 type CachedLines = (u16, u64, Rc<Vec<ReaderLine>>);
@@ -64,11 +66,11 @@ pub struct ReaderAccount {
 }
 
 impl ReaderAccount {
-    /// An account that is no longer configured: no badge or label, the terminal's colour.
+    /// An account that is no longer configured: no badge, no label, so no colour.
     pub fn unknown() -> Self {
         Self {
             index: 0,
-            color: Some(Color::Reset),
+            color: None,
             badge: String::new(),
             label: String::new(),
         }
@@ -203,17 +205,39 @@ impl Reader {
     }
 
     /// The older messages run in `order` from now on (`:thread-order`); the cursor goes to the
-    /// start of the message it was in.
+    /// start of the message it was in (a rule, a note or a gap belongs to the message above).
     pub fn set_order(&mut self, order: ThreadOrder) {
         if order == self.order {
             return;
         }
-        let message = self.cursor_line().and_then(|l| l.kind.message());
+        let message = self.message_near();
         self.order = order;
         self.changed();
         self.land(message);
-        let page = usize::from(self.size.get().1.max(1));
-        self.scroll = crate::tui::screens::mail::visible_offset(self.scroll, self.cursor, page);
+        self.scroll =
+            crate::tui::screens::mail::visible_offset(self.scroll, self.cursor, self.page());
+    }
+
+    /// The message the cursor is in: its line's, or, on a rule, a note or a gap, that of the
+    /// nearest message start above it.
+    fn message_near(&self) -> Option<usize> {
+        let lines = self.current();
+        let at = self.cursor.min(lines.len().saturating_sub(1));
+        lines.get(at).and_then(|l| l.kind.message()).or_else(|| {
+            starts(&lines)
+                .into_iter()
+                .rev()
+                .find(|&i| i <= at)
+                .and_then(|i| lines[i].kind.message())
+        })
+    }
+
+    /// The rows a page moves by: the last frame's, `FALLBACK_HEIGHT` before the first.
+    fn page(&self) -> usize {
+        usize::from(match self.size.get().1 {
+            0 => FALLBACK_HEIGHT,
+            rows => rows,
+        })
     }
 
     /// The thread read again: each message keeps its expansion (new ones get the default),
@@ -439,7 +463,7 @@ impl Reader {
         }
         let numbers = match line.kind {
             LineKind::Body { .. } | LineKind::Quote { .. } => {
-                markers(&line.text, message.links.len())
+                markers(line.text(), message.links.len())
                     .into_iter()
                     .map(|m| m.number)
                     .collect()
@@ -452,7 +476,7 @@ impl Reader {
     pub fn act(&mut self, action: Action) -> ReaderOutcome {
         let lines = self.current();
         let last = lines.len().saturating_sub(1);
-        let page = usize::from(self.size.get().1.max(1));
+        let page = self.page();
         match action {
             Action::ReaderDown => self.cursor = (self.cursor + 1).min(last),
             Action::ReaderUp => self.cursor = self.cursor.saturating_sub(1),

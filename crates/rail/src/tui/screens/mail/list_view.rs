@@ -50,7 +50,7 @@ pub(super) fn list_lines(groups: &[Group]) -> Vec<ListLine> {
 /// line above the offset thread, moves just enough to show the cursor, never past the last
 /// full screen, one line higher when the group row would cover the cursor, and one line lower
 /// when the kept group row would head no thread on screen. One row shows the cursor's thread
-/// alone.
+/// alone. A group row that would end the pane is left off.
 pub(super) fn frame_lines(
     lines: &[ListLine],
     offset: usize,
@@ -89,10 +89,29 @@ pub(super) fn frame_lines(
         ListLine::Group(group) => Some(ListLine::Group(*group)),
         ListLine::Thread(_) => None,
     });
-    group
+    let mut out: Vec<ListLine> = group
         .into_iter()
         .chain(lines[start + 1..].iter().copied().take(height - 1))
-        .collect()
+        .collect();
+    // A group's name alone on the bottom row heads nothing on screen: the row stays blank and
+    // the name heads the next page.
+    if out.len() > 1 && matches!(out.last(), Some(ListLine::Group(_))) {
+        out.pop();
+    }
+    out
+}
+
+/// The last thread a pane `height` rows tall draws when it starts at thread `top` with the
+/// cursor on it: how far a page from `top` reaches.
+pub(super) fn last_thread_from(lines: &[ListLine], top: usize, height: usize) -> usize {
+    frame_lines(lines, top, top, height)
+        .iter()
+        .rev()
+        .find_map(|line| match line {
+            ListLine::Thread(index) => Some(*index),
+            ListLine::Group(_) => None,
+        })
+        .unwrap_or(top)
 }
 
 impl MailScreen {
@@ -583,26 +602,18 @@ mod tests {
     fn at_the_width_where_the_subjects_room_is_zero_the_row_is_the_count_alone() {
         let (theme, glyphs) = (Theme::default(), Glyphs::of(Icons::Unicode));
         let row = thread("Q4 roadmap", 12, 1);
-        let shown = text(&thread_line(
+        let line = thread_line(
             &row,
             &context(Some("W"), "11:54"),
             NO_ROOM_COLS,
             &theme,
             &glyphs,
-        ));
+        );
+        let shown = text(&line);
         assert_eq!(width(&shown), usize::from(NO_ROOM_COLS), "{shown}");
         assert!(!shown.contains("Q4") && !shown.contains('…'), "{shown}");
         assert!(shown.contains(" (12)"), "the count whole: {shown}");
-        let _ = drawn(
-            thread_line(
-                &row,
-                &context(Some("W"), "11:54"),
-                NO_ROOM_COLS,
-                &theme,
-                &glyphs,
-            ),
-            NO_ROOM_COLS,
-        );
+        let _ = drawn(line, NO_ROOM_COLS);
     }
 
     #[test]
@@ -684,6 +695,38 @@ mod tests {
             "a thread dated after today joins TODAY: no group repeats"
         );
         assert!(list_lines(&[]).is_empty());
+    }
+
+    /// Spec §5 (C3): a date the clock cannot place groups by its sign; OLDER heads the list
+    /// once.
+    #[test]
+    fn dates_beyond_the_clocks_range_group_by_their_sign() {
+        let now = crate::tui::test_util::NOW;
+        let clock = crate::tui::clock::Clock::fixed(now, jiff::tz::TimeZone::UTC);
+        let newest_first = [i64::MAX, now, now - 30 * 86_400, i64::MIN].map(|s| clock.group(s));
+        let groups: Vec<ListLine> = list_lines(&newest_first)
+            .into_iter()
+            .filter(|l| matches!(l, ListLine::Group(_)))
+            .collect();
+        assert_eq!(groups, [G(Today), G(Older)], "OLDER heads the list once");
+    }
+
+    /// Spec §5 (C2): a group row never sits alone on the bottom row; it heads the next page.
+    #[test]
+    fn a_group_row_is_never_alone_on_the_bottom_row() {
+        // [G(Today), T0, T1, T2, G(Yesterday), T3, T4]: five rows from the top would end on
+        // YESTERDAY's row.
+        let lines = list_lines(&[Today, Today, Today, Yesterday, Yesterday]);
+        assert_eq!(
+            frame_lines(&lines, 0, 0, 5),
+            [G(Today), T(0), T(1), T(2)],
+            "the row is left blank"
+        );
+        assert_eq!(
+            frame_lines(&lines, 0, 0, 6),
+            [G(Today), T(0), T(1), T(2), G(Yesterday), T(3)],
+            "with a thread under it the heading stays"
+        );
     }
 
     /// Review Focus 4.

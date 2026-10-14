@@ -1,11 +1,16 @@
 //! Answers from the store and the daemon: the debounced re-read after a change, the list and
-//! sidebar answers, the daemon's status events, and a job that panicked.
+//! sidebar answers, the daemon's status events (a permanent sync error kept in `:errors`), and a
+//! job that panicked.
+
+use rail_core::error::ErrorClass;
+use rail_core::ops::AccountSyncStatus;
 
 use crate::tui::app::Effect;
 use crate::tui::data::{
     DaemonEvent, ListOutcome, MailEvent, REQUERY_DEBOUNCE, ReadError, Timer, timer,
 };
 use crate::tui::screens::reader::Reader;
+use crate::tui::text::{escape, outside};
 
 use super::{MailScreen, Place, StoreState, error_line};
 
@@ -137,6 +142,7 @@ impl MailScreen {
                 self.dirty()
             }
             DaemonEvent::Progress(status) => {
+                self.keep_standing_error(&status);
                 self.status.progress(*status);
                 self.dirty()
             }
@@ -162,15 +168,34 @@ impl MailScreen {
         }
     }
 
+    /// A failed pass's permanent error joins `:errors` once while `:errors` still holds it
+    /// (the header already ranks the failed pass), with its outside detail labelled and escaped
+    /// as `error_line` writes it; a Microsoft 365 folder Rail gave up on is one, named there.
+    /// Transient failures stay out: the next pass retries them.
+    fn keep_standing_error(&mut self, status: &AccountSyncStatus) {
+        let Some(error) = status
+            .last_error
+            .as_ref()
+            .filter(|e| status.last_pass_failed && e.class == Some(ErrorClass::Permanent))
+        else {
+            return;
+        };
+        let mut text = format!("{}: {}", escape(&status.name), escape(&error.message));
+        if let Some(detail) = &error.detail {
+            text.push_str(&format!(" ({})", outside(detail.get())));
+        }
+        if self.status.errors().any(|e| e.text == text) {
+            return;
+        }
+        self.status.error(text, self.ctx.clock.now(), self.tick);
+    }
+
     /// A job panicked: the status bar shows the message escaped; the log gets only its length,
     /// since a panic message can quote mail text. A refresh is ended by its own
     /// `RefreshEnded`, which its job sends even when it panics.
     pub(super) fn job_panicked(&mut self, message: &str) -> Vec<Effect> {
         tracing::error!(message_bytes = message.len(), "a mail screen job panicked");
-        let text = format!(
-            "internal error: {}; see rail.log",
-            crate::tui::text::escape(message)
-        );
+        let text = format!("internal error: {}; see rail.log", escape(message));
         self.status.error(text, self.ctx.clock.now(), self.tick);
         Vec::new()
     }

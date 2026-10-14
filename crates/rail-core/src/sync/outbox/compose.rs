@@ -5,7 +5,7 @@
 use crate::provider::{
     Carried, DraftIds, Mailbox, Outgoing, OutgoingAttachment, OutgoingMail, Provider, ProviderError,
 };
-use crate::store::drafts::{Attachment, Draft, DraftKind, ListedFile, Recipient};
+use crate::store::drafts::{Attachment, Draft, DraftKind, ListedFile, Recipient, modified_ns};
 use crate::store::{Store, StoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +13,9 @@ pub(super) struct FileRef {
     pub path: String,
     pub name: String,
     pub mime: String,
+    /// The entry's size in bytes and modification time: what the listed size was recorded for.
+    pub size: i64,
+    pub modified: Option<i64>,
     /// The size the provider listed for its copy, when recorded.
     pub listed: Option<i64>,
 }
@@ -62,12 +65,15 @@ fn listed(
                 path,
                 name,
                 mime,
+                size,
                 listed,
-                ..
+                modified,
             } => files.push(FileRef {
                 path: path.clone(),
                 name: name.clone(),
                 mime: mime.clone(),
+                size: *size,
+                modified: *modified,
                 listed: *listed,
             }),
             Attachment::Part {
@@ -151,23 +157,35 @@ pub(super) fn outgoing_for(
     })
 }
 
-/// One file, read on the blocking pool. The error leaves the name out: it is text from
+/// One file, read on the blocking pool. The listed size goes with it only while the file is
+/// the one it was recorded for (same size, same modification time); otherwise the provider's
+/// copy is stale and the file goes up again. The error leaves the name out: it is text from
 /// outside Rail, shown without the label that marks such text.
 async fn read_file(file: FileRef) -> Result<OutgoingAttachment, ProviderError> {
     let path = file.path.clone();
-    let bytes = tokio::task::spawn_blocking(move || std::fs::read(&path))
-        .await
-        .map_err(|_| ProviderError::transient("could not read an attachment"))?
-        .map_err(|e| {
-            ProviderError::permanent("could not read an attachment of this message")
-                .with_detail(e.to_string())
-        })?;
+    let (bytes, modified) = tokio::task::spawn_blocking(move || {
+        let bytes = std::fs::read(&path)?;
+        let modified = std::fs::metadata(&path).ok().as_ref().and_then(modified_ns);
+        Ok::<_, std::io::Error>((bytes, modified))
+    })
+    .await
+    .map_err(|_| ProviderError::transient("could not read an attachment"))?
+    .map_err(|e| {
+        ProviderError::permanent("could not read an attachment of this message")
+            .with_detail(e.to_string())
+    })?;
+    let unchanged = file.modified.is_some()
+        && modified == file.modified
+        && i64::try_from(bytes.len()).ok() == Some(file.size);
     Ok(OutgoingAttachment {
         name: file.name,
         mime: file.mime,
         bytes,
         carried: None,
-        listed: file.listed.and_then(|l| usize::try_from(l).ok()),
+        listed: file
+            .listed
+            .filter(|_| unchanged)
+            .and_then(|l| usize::try_from(l).ok()),
     })
 }
 

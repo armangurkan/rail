@@ -48,6 +48,7 @@ fn entries() -> Vec<PaletteEntry> {
                 account: 0,
                 folder_id: 3,
                 name: "Projects".into(),
+                kind: rail_core::provider::FolderKind::User,
             }),
         ),
     ]

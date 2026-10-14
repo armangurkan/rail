@@ -3,9 +3,12 @@
 //! folders is a removal in one and an add in the other, in this call or another: an add wins
 //! over a removal of the same id, and a removal left unpaired is checked (`envelopes_of`)
 //! before it is reported deleted, so a message Graph still has, in a folder Rail syncs, is
-//! upserted where it is now. Bodies never come through the delta.
+//! upserted where it is now. Bodies never come through the delta. A folder whose link stays over
+//! the cap is given up on after three start-overs in a row (`stuck`); a folder of a skipped
+//! subtree is set aside for the call (`GraphCursor::set_aside`).
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::PoisonError;
 
 use serde_json::Value;
 
@@ -14,6 +17,7 @@ use super::dates::iso;
 use super::errors::on_delta;
 use super::message::{Item, item};
 use super::search::MESSAGE_FIELDS;
+use super::stuck::name_of;
 use super::wire::Page;
 use super::{COST_REQUEST, GraphProvider};
 use crate::provider::{
@@ -97,11 +101,25 @@ impl GraphProvider {
     pub(crate) async fn delta(&self, raw: &SyncCursor) -> Result<ChangeSet, ProviderError> {
         let mut cursor = GraphCursor::decode(raw)?;
         let folders = self.known_folders().await?;
+        self.stuck().keep_only(&folders);
         cursor.follow(&folders)?;
         cursor.begin_round();
         let mut net = Net::default();
         let mut pages = 0;
+        let skipped = self
+            .skipped
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         'folders: for id in cursor.order(&folders) {
+            if skipped.contains(&id) {
+                cursor.set_aside(&id);
+                continue;
+            }
+            if self.stuck().given_up(&id) {
+                cursor.park(&id);
+                continue;
+            }
             while let Some(folder) = cursor
                 .folders
                 .get(&id)
@@ -117,7 +135,10 @@ impl GraphProvider {
                     .await
                     .map_err(on_delta)?;
                 net.page(&id, page.value);
-                cursor.advance(&id, page.next_link, page.delta_link)?;
+                let step = cursor.advance(&id, page.next_link, page.delta_link)?;
+                if self.stuck().count(&id, step, &name_of(&folders, &id)) {
+                    cursor.park(&id);
+                }
             }
         }
         self.finish(net, cursor).await

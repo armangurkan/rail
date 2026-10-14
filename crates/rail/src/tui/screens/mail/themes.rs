@@ -225,11 +225,27 @@ impl MailScreen {
         }
     }
 
-    /// The config write answered: a failure keeps the choice for the session and says so.
-    pub(super) fn theme_saved(&mut self, result: Result<(), String>) -> Vec<Effect> {
+    /// Say `notice` (when there is one) and write `value` as `key`: the shape every toggle
+    /// shares; `done` names the event the write answers with.
+    pub(super) fn flip_and_save(
+        &mut self,
+        notice: Option<String>,
+        key: &'static str,
+        value: Saved,
+        done: fn(Result<(), String>) -> MailEvent,
+    ) -> Vec<Effect> {
+        if let Some(text) = notice {
+            self.status.notify(text, self.tick);
+        }
+        vec![self.save_general(key, value, done)]
+    }
+
+    /// A config write answered: a failure keeps `what` (`theme`, `hints setting`, `clock
+    /// setting`, `time setting`, `thread order`) for the session and says so.
+    pub(super) fn setting_saved(&mut self, what: &str, result: Result<(), String>) -> Vec<Effect> {
         if let Err(reason) = result {
-            tracing::warn!("could not save the theme to config.toml");
-            let text = format!("Could not save the theme: {}", escape(&reason));
+            tracing::warn!("could not save the {what} to config.toml");
+            let text = format!("Could not save the {what}: {}", escape(&reason));
             self.status.error(text, self.ctx.clock.now(), self.tick);
         }
         Vec::new()

@@ -2,9 +2,11 @@
 //! folder with `childFolderCount > 0`), hidden ones included, every page followed. Search
 //! folders and the non-mail folders at the root are left out, with their children. The six
 //! well-known folders are looked up by name and matched on id; every other folder is `User`.
-//! Names are `Parent/Child`, as Gmail's nested labels are.
+//! Names are `Parent/Child`, as Gmail's nested labels are; a `/` in a folder's own name is
+//! written `∕` (U+2215). A cap that cuts the listing is logged.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::PoisonError;
 
 use super::wire::{FolderWire, IdOnly, Page};
 use super::{COST_REQUEST, GraphProvider, graph_id};
@@ -35,6 +37,8 @@ const SEARCH_FOLDER: &str = "#microsoft.graph.mailSearchFolder";
 const MAX_FOLDER_PAGES: usize = 50;
 const MAX_FOLDER_NAME_CHARS: usize = 255;
 const FOLDER_PAGE: &str = "100";
+/// What a `/` in a folder's own name is written as, so `Parent/Child` keeps one meaning.
+pub const PATH_SLASH: char = '\u{2215}';
 
 /// A folder whose children are still to be listed.
 struct Pending {
@@ -43,10 +47,14 @@ struct Pending {
     depth: usize,
 }
 
-/// A display name on one line, cut.
+/// A display name on one line, cut, its own `/` written `PATH_SLASH`.
 fn clean(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| match c {
+            '/' => PATH_SLASH,
+            c if c.is_control() => ' ',
+            c => c,
+        })
         .take(MAX_FOLDER_NAME_CHARS)
         .collect()
 }
@@ -77,12 +85,20 @@ fn keep(
         None => own,
     };
     let depth = parent.map_or(0, |p| p.depth + 1);
-    if wire.child_folder_count.unwrap_or(0) > 0 && depth < MAX_FOLDER_DEPTH {
-        pending.push(Pending {
-            id: wire.id.clone(),
-            name: name.clone(),
-            depth,
-        });
+    if wire.child_folder_count.unwrap_or(0) > 0 {
+        if depth < MAX_FOLDER_DEPTH {
+            pending.push(Pending {
+                id: wire.id.clone(),
+                name: name.clone(),
+                depth,
+            });
+        } else {
+            tracing::warn!(
+                folder = %wire.id,
+                cap = MAX_FOLDER_DEPTH,
+                "a Microsoft 365 folder's subfolders are nested deeper than Rail lists; left out"
+            );
+        }
     }
     found.push(RemoteFolder {
         kind: kinds.get(&wire.id).copied().unwrap_or(FolderKind::User),
@@ -92,27 +108,98 @@ fn keep(
     });
 }
 
+/// The folders of `previous` below `root`, at any depth.
+fn under(previous: &[RemoteFolder], root: &str) -> Vec<RemoteFolder> {
+    let parents: HashMap<&str, Option<&str>> = previous
+        .iter()
+        .map(|f| (f.remote_id.as_str(), f.parent.as_deref()))
+        .collect();
+    let below = |start: &RemoteFolder| {
+        let mut at = start.parent.as_deref();
+        for _ in 0..=MAX_FOLDER_DEPTH {
+            match at {
+                Some(id) if id == root => return true,
+                Some(id) => at = parents.get(id).copied().flatten(),
+                None => return false,
+            }
+        }
+        false
+    };
+    previous.iter().filter(|f| below(f)).cloned().collect()
+}
+
+/// A folder's children answered not found: the subfolders the last listing knew stay in `found`
+/// and are noted in `skipped`.
+fn skip_subtree(
+    parent: &str,
+    previous: &[RemoteFolder],
+    found: &mut Vec<RemoteFolder>,
+    skipped: &mut HashSet<RemoteId>,
+) {
+    tracing::info!(
+        folder = %parent,
+        "a Microsoft 365 folder's subfolders answered not found; skipped this pass"
+    );
+    for old in under(previous, parent) {
+        skipped.insert(old.remote_id.clone());
+        found.push(old);
+    }
+}
+
 impl GraphProvider {
-    /// Every folder Rail syncs, sorted by name.
+    /// Every folder Rail syncs, sorted by name. A cap that cuts the listing is logged once, with
+    /// the folder it stopped at. A folder whose children answer not found (deleted mid-listing,
+    /// or not yet propagated) keeps its place and loses its subtree for this pass: the
+    /// subfolders the last listing knew stay in the result and are remembered in `skipped`, so
+    /// the cursor neither counts them gone nor walks them. A real deletion shows on a later pass.
+    /// A cold provider has no last listing, so it fails the pass instead; a warm one skips the
+    /// subtree.
     pub(crate) async fn list_folders(&self) -> Result<Vec<RemoteFolder>, ProviderError> {
         let kinds = self.well_known().await?;
-        let (mut found, mut pending) = (Vec::new(), Vec::new());
+        let previous = self
+            .folders
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let (mut found, mut pending, mut skipped) = (Vec::new(), Vec::new(), HashSet::new());
         for wire in self.folder_pages("me/mailFolders").await? {
             if !skipped_root(&wire) {
                 keep(wire, None, &kinds, &mut found, &mut pending);
             }
         }
+        let mut capped = false;
         while let Some(parent) = pending.pop() {
             if found.len() >= MAX_FOLDERS {
+                tracing::warn!(
+                    folder = %parent.id,
+                    cap = MAX_FOLDERS,
+                    "the Microsoft 365 folder listing reached its cap; the rest is left out"
+                );
+                capped = true;
                 break;
             }
             let path = format!("me/mailFolders/{}/childFolders", parent.id);
-            for wire in self.folder_pages(&path).await? {
+            let children = match self.folder_pages(&path).await {
+                Ok(children) => children,
+                Err(ProviderError::NotFound) if !previous.is_empty() => {
+                    skip_subtree(&parent.id, &previous, &mut found, &mut skipped);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            for wire in children {
                 keep(wire, Some(&parent), &kinds, &mut found, &mut pending);
             }
         }
+        if !capped && found.len() > MAX_FOLDERS {
+            tracing::warn!(
+                cap = MAX_FOLDERS,
+                "the Microsoft 365 folder listing reached its cap; the rest is left out"
+            );
+        }
         found.truncate(MAX_FOLDERS);
         found.sort_by(|a, b| a.name.cmp(&b.name));
+        *self.skipped.lock().unwrap_or_else(PoisonError::into_inner) = skipped;
         Ok(found)
     }
 
@@ -130,6 +217,13 @@ impl GraphProvider {
             };
             page = self.api.get_json(&next, &[], COST_REQUEST).await?;
             all.append(&mut page.value);
+        }
+        if page.next_link.is_some() {
+            tracing::warn!(
+                path,
+                cap = MAX_FOLDER_PAGES,
+                "a Microsoft 365 folder listing has more pages than Rail reads; the rest is left out"
+            );
         }
         Ok(all)
     }

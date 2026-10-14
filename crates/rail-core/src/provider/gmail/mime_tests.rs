@@ -354,3 +354,93 @@ fn the_size_refusal_names_the_provider() {
         "the message is 27.6 MiB, larger than Microsoft 365's 25 MiB limit"
     );
 }
+
+/// The transfer encoding a one-part message names, and its body as written.
+fn encoded_body(raw: &[u8]) -> (String, Vec<u8>) {
+    let text = String::from_utf8(raw.to_vec()).expect("an encoded message is ASCII");
+    let (head, body) = text.split_once("\r\n\r\n").expect("a body");
+    let encoding = head
+        .lines()
+        .find_map(|l| l.strip_prefix("Content-Transfer-Encoding: "))
+        .unwrap_or("7bit")
+        .trim()
+        .to_ascii_lowercase();
+    (encoding, body.as_bytes().to_vec())
+}
+
+/// Quoted-printable decoded: soft breaks dropped, `=XX` read as a byte.
+fn qp_decoded(body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < body.len() {
+        if body[at] == b'=' && body[at + 1..].starts_with(b"\r\n") {
+            at += 3;
+        } else if body[at] == b'=' {
+            let hex = std::str::from_utf8(&body[at + 1..at + 3]).unwrap();
+            out.push(u8::from_str_radix(hex, 16).unwrap());
+            at += 3;
+        } else {
+            out.push(body[at]);
+            at += 1;
+        }
+    }
+    out
+}
+
+fn decoded(encoding: &str, body: &[u8]) -> Vec<u8> {
+    use base64::Engine as _;
+    match encoding {
+        "base64" => {
+            let packed: String = String::from_utf8_lossy(body)
+                .split_ascii_whitespace()
+                .collect();
+            base64::engine::general_purpose::STANDARD
+                .decode(packed)
+                .unwrap()
+        }
+        "quoted-printable" => qp_decoded(body),
+        _ => body.to_vec(),
+    }
+}
+
+/// Every LF follows a CR, and no CR doubles.
+fn crlf_only(bytes: &[u8]) -> bool {
+    let lone_lf = bytes
+        .iter()
+        .enumerate()
+        .any(|(i, &b)| b == b'\n' && (i == 0 || bytes[i - 1] != b'\r'));
+    !lone_lf && !bytes.windows(2).any(|w| w == b"\r\r")
+}
+
+#[test]
+fn an_encoded_text_body_decodes_to_crlf_line_ends() {
+    let cases = [
+        ("日本語の本文です。\n二行目\n".repeat(20), "base64"),
+        (
+            "café au lait\nsecond line\n".to_string(),
+            "quoted-printable",
+        ),
+        ("café\r\nsecond\n".to_string(), "quoted-printable"),
+        ("plain\nascii\n".to_string(), "7bit"),
+    ];
+    for (body, expected) in cases {
+        let message = Outgoing {
+            body: body.clone(),
+            attachments: vec![],
+            ..outgoing()
+        };
+        let (encoding, written) = encoded_body(&build(&message).unwrap());
+        assert_eq!(encoding, expected, "{body:?}");
+        let text = decoded(&encoding, &written);
+        assert!(
+            crlf_only(&text),
+            "{encoding}: {:?}",
+            String::from_utf8_lossy(&text)
+        );
+        let first = body.lines().next().unwrap();
+        assert!(
+            String::from_utf8_lossy(&text).starts_with(&format!("{first}\r\n")),
+            "{encoding}"
+        );
+    }
+}

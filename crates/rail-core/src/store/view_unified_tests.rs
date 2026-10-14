@@ -161,6 +161,34 @@ fn sent_and_trash_match_by_kind_whatever_the_provider_calls_them() {
     );
 }
 
+/// Spec §4 (B2): a kind scope is read from the folder side through
+/// `message_folders_by_folder`, not by a probe per thread over every message.
+#[test]
+fn a_kind_scope_reads_from_the_folder_side() {
+    let store = two_kinds();
+    let q = query(kind(vec![1, 2], FolderKind::Trash), "");
+    let (base, params) = where_clause(&q);
+    let (sql, values) = rows_statement(&base, &params, None, true);
+    let mut stmt = store
+        .conn()
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .unwrap();
+    let plan: Vec<String> = stmt
+        .query_map(rusqlite::params_from_iter(values.iter()), |r| r.get(3))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert!(
+        plan.iter()
+            .any(|step| step.contains("message_folders_by_folder")),
+        "{plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|step| step.starts_with("SCAN mi")),
+        "no walk over messages: {plan:?}"
+    );
+}
+
 #[test]
 fn starred_and_kind_scopes_page_both_ways_without_gaps() {
     let mut store = two_kinds();

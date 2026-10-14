@@ -22,7 +22,7 @@ fn card_text(reader: &Reader, message: usize) -> String {
         .lines(80)
         .iter()
         .find(|l| l.kind == LineKind::Card { message })
-        .map(|l| l.text.clone())
+        .map(|l| l.text().to_string())
         .expect("the message's card")
 }
 
@@ -37,7 +37,7 @@ fn the_cursor_starts_on_the_subject_line() {
     let reader = reader_of(four(0), ThreadOrder::Oldest);
     assert_eq!(reader.cursor, 0);
     assert_eq!(at(&reader), LineKind::Title { message: 3 });
-    assert_eq!(reader.cursor_line().unwrap().text, "Q4 roadmap review");
+    assert_eq!(reader.cursor_line().unwrap().text(), "Q4 roadmap review");
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn tab_on_the_newest_closes_it_to_its_preview_and_lands_on_the_subject() {
     assert_eq!(reader.cursor, 0);
     let lines = reader.lines(80);
     assert_eq!(lines[4].kind, LineKind::Preview { message: 3 });
-    assert_eq!(lines[4].text, "Thursday works.");
+    assert_eq!(lines[4].text(), "Thursday works.");
     assert_eq!(lines[5].kind, LineKind::Rule);
     act(&mut reader, &[Action::ReaderDown; 4]);
     assert_eq!(at(&reader), LineKind::Preview { message: 3 });
@@ -207,7 +207,11 @@ fn a_reread_keeps_each_cards_expansion_by_id_and_a_new_message_takes_the_default
     later.messages.push(sam);
     reader.refresh(later);
     let lines = reader.lines(80);
-    assert!(lines[1].text.starts_with("Sam  09:53"), "{}", lines[1].text);
+    assert!(
+        lines[1].text().starts_with("Sam  09:53"),
+        "{}",
+        lines[1].text()
+    );
     assert_eq!(
         lines[5].kind,
         LineKind::Body { message: 4 },
@@ -255,11 +259,11 @@ fn a_failed_reread_shows_on_the_subject_line_until_a_read_succeeds() {
     let _ = reader.lines(80);
     reader.read_failed("The thread could not be read: busy".into());
     let lines = reader.lines(80);
-    assert_eq!(lines[0].text, "The thread could not be read: busy");
-    assert_eq!(lines[0].segments[0].1, Tone::Error);
+    assert_eq!(lines[0].text(), "The thread could not be read: busy");
+    assert_eq!(lines[0].segments()[0].1, Tone::Error);
     reader.refresh(four(0));
     assert_eq!(
-        reader.lines(80)[0].text,
+        reader.lines(80)[0].text(),
         "Q4 roadmap review",
         "the same thread read again clears it"
     );
@@ -288,7 +292,7 @@ fn h_shows_and_hides_every_open_messages_headers_and_keeps_the_cursor_on_its_mes
     let fields: Vec<&str> = lines
         .iter()
         .filter(|l| matches!(l.kind, LineKind::Field { .. }))
-        .map(|l| l.text.as_str())
+        .map(|l| l.text())
         .collect();
     assert_eq!(
         fields,
@@ -388,9 +392,44 @@ fn a_reread_that_grows_the_newest_body_keeps_the_cursor_on_its_card() {
         reader
             .cursor_line()
             .unwrap()
-            .text
+            .text()
             .starts_with("▸   2   Tom"),
         "{}",
-        reader.cursor_line().unwrap().text
+        reader.cursor_line().unwrap().text()
     );
+}
+
+/// Spec §6 (D5): before the first frame a page is `FALLBACK_HEIGHT` rows, not one.
+#[test]
+fn before_the_first_frame_a_page_is_the_fallback_height() {
+    let mut detail = four(0);
+    let text: Vec<String> = (1..=60).map(|n| format!("line {n}")).collect();
+    detail.messages[3].body = BodyState::Text {
+        text: text.join("\n"),
+        cut: false,
+    };
+    let mut reader = reader_of(detail, ThreadOrder::Oldest);
+    reader.act(Action::ReaderPageDown);
+    assert_eq!(reader.cursor, 24);
+    reader.act(Action::ReaderPageUp);
+    assert_eq!(reader.cursor, 0);
+}
+
+/// Spec §6 (D6): `:thread-order` from a rule, a note or a gap lands on the message above it.
+#[test]
+fn set_order_from_a_rule_or_a_gap_lands_on_the_message_above_it() {
+    let mut reader = reader_of(four(0), ThreadOrder::Oldest);
+    act(&mut reader, &[Action::ReaderDown; 13]);
+    assert_eq!(at(&reader), LineKind::Rule, "the rule under Tom's card");
+    reader.set_order(ThreadOrder::Newest);
+    assert_eq!(
+        at(&reader),
+        LineKind::Card { message: 1 },
+        "Tom's card, wherever it is now"
+    );
+    act(&mut reader, &[Action::ReaderTop]);
+    act(&mut reader, &[Action::ReaderDown; 4]);
+    assert_eq!(at(&reader), LineKind::Gap, "the gap above the newest body");
+    reader.set_order(ThreadOrder::Oldest);
+    assert_eq!(reader.cursor, 0, "the newest message's start: its subject");
 }

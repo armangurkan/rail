@@ -3,13 +3,14 @@
 //! and across calls, an expired link, folders added and gone, corrupt and oversized cursors,
 //! every folder polled past the page budget, the history cutoff, the profile, and envelopes in
 //! folders Rail does not sync; a partial update after a full one, a refused check, and a
-//! cursor resumed mid-folder.
+//! cursor resumed mid-folder; a folder given up on, then deleted.
 
 use serde_json::{Map, Value, json};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
-use super::cursor::{GraphCursor, MAX_CURSOR_BYTES, State};
+use super::GraphProvider;
+use super::cursor::{GraphCursor, MAX_CURSOR_BYTES, MAX_LINK_BYTES, State};
 use super::dates::iso;
 use super::fixtures::{Graph, ROOT, folder, message, removed};
 use crate::provider::{ChangeSet, Provider, ProviderError, Relabel, SyncCursor, Window};
@@ -529,4 +530,204 @@ async fn a_cursor_saved_mid_folder_follows_its_next_link_and_finishes_the_folder
     let after = GraphCursor::decode(&set.cursor).unwrap();
     assert_eq!(after.folders["f-inbox"].link, Some(g.link_to("d-f-inbox")));
     assert_eq!(after.folders["f-inbox"].state, State::CaughtUp);
+}
+
+/// Inbox and Projects at the root, with Projects' one subfolder `f-sub` when `children`.
+async fn projects_mailbox(g: &Graph, children: bool) {
+    g.mount_root(json!([
+        folder("f-inbox", "Inbox", 0),
+        folder("f-proj", "Projects", 1),
+    ]))
+    .await;
+    if children {
+        g.mount_children("f-proj", json!([folder("f-sub", "Sub", 0)]))
+            .await;
+    }
+    g.mount_well_known(&[("inbox", "f-inbox")]).await;
+}
+
+#[tokio::test]
+async fn a_child_listing_not_found_does_not_expire_a_cursor_that_knows_the_subfolder() {
+    let g = Graph::start().await;
+    projects_mailbox(&g, true).await;
+    let provider = g.provider();
+    provider.folders().await.unwrap();
+    let known = cursor(
+        &g,
+        &[
+            ("f-inbox", Some("d-f-inbox"), "caught_up"),
+            ("f-proj", Some("d-f-proj"), "caught_up"),
+            ("f-sub", Some("d-f-sub"), "caught_up"),
+        ],
+    );
+
+    // The next listing: Projects' children answer 404. f-sub is not walked (nothing is
+    // mounted for its link) and not counted gone.
+    g.reset().await;
+    projects_mailbox(&g, false).await;
+    quiet(&g, &["f-inbox", "f-proj"]).await;
+    provider.folders().await.unwrap();
+    let set = provider.changes(&known).await.unwrap();
+    let sub = &GraphCursor::decode(&set.cursor).unwrap().folders["f-sub"];
+    assert_eq!(
+        (sub.state, sub.link.clone()),
+        (State::CaughtUp, Some(g.link_to("d-f-sub"))),
+        "kept, not walked: set aside with its link"
+    );
+    assert!(!set.more, "the call ends; the other folders' rounds go on");
+
+    // The listing is back: f-sub is walked again.
+    g.reset().await;
+    projects_mailbox(&g, true).await;
+    quiet(&g, &["f-inbox", "f-proj", "f-sub"]).await;
+    provider.folders().await.unwrap();
+    let set = provider.changes(&set.cursor).await.unwrap();
+    assert_eq!(state_of(&set, "f-sub"), State::CaughtUp);
+    assert_eq!(link_requests(&g, "d-f-sub").await, 1, "from its kept link");
+}
+
+#[tokio::test]
+async fn a_cold_provider_with_a_missing_subtree_fails_instead_of_expiring_the_cursor() {
+    let g = Graph::start().await;
+    projects_mailbox(&g, false).await;
+    let known = cursor(
+        &g,
+        &[
+            ("f-inbox", Some("d-f-inbox"), "caught_up"),
+            ("f-proj", Some("d-f-proj"), "caught_up"),
+            ("f-sub", Some("d-f-sub"), "caught_up"),
+        ],
+    );
+    let provider = g.provider();
+    assert_eq!(
+        provider.folders().await.unwrap_err(),
+        ProviderError::NotFound
+    );
+    let error = provider.changes(&known).await.unwrap_err();
+    assert_eq!(error, ProviderError::NotFound);
+}
+
+/// How many initial delta requests `folder` got.
+async fn initial_requests(g: &Graph, folder: &str) -> usize {
+    let at = format!("{ROOT}/me/mailFolders/{folder}/messages/delta");
+    g.server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == at)
+        .count()
+}
+
+#[tokio::test]
+async fn a_folder_whose_link_stays_over_the_cap_stops_after_three_restarts() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    quiet(&g, &["f-inbox", "f-arch"]).await;
+    let long = "l".repeat(MAX_LINK_BYTES);
+    g.mount_link("d-f-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    g.mount_initial("f-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    let provider = g.provider();
+    let first = provider.changes(&caught_up(&g)).await.unwrap();
+    assert_eq!(
+        initial_requests(&g, "f-proj").await,
+        2,
+        "its link, then two starts over: the third start-over gives up"
+    );
+    assert_eq!(link_requests(&g, "d-f-inbox").await, 1);
+    let second = provider.changes(&first.cursor).await.unwrap();
+    assert_eq!(initial_requests(&g, "f-proj").await, 2, "then it stops");
+    assert_eq!(
+        link_requests(&g, "d-f-inbox").await,
+        2,
+        "the other folders go on"
+    );
+    assert!(!second.more, "the other folders are caught up");
+    assert_given_up(&provider, &second.cursor, "Projects");
+}
+
+/// How many requests the link `name` got.
+async fn link_requests(g: &Graph, name: &str) -> usize {
+    let at = format!("{ROOT}/links/{name}");
+    g.server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == at)
+        .count()
+}
+
+/// `provider` stands failed on the folder `name`, named only as outside text.
+fn assert_given_up(provider: &GraphProvider, cursor: &SyncCursor, name: &str) {
+    let error = provider.standing_error().expect("a standing error");
+    assert_eq!(
+        error.to_string(),
+        "a folder cannot be synced: its sync link is longer than 4 KiB"
+    );
+    assert_eq!(error.detail(), Some(name));
+    assert!(!provider.walked_everything(cursor), "parked: not walked");
+}
+
+#[tokio::test]
+async fn a_two_page_folder_whose_last_link_stays_over_the_cap_is_given_up_too() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    quiet(&g, &["f-inbox", "f-arch"]).await;
+    let long = "l".repeat(MAX_LINK_BYTES);
+    g.mount_link("d-f-proj", g.page(vec![], Some("p-proj"), None))
+        .await;
+    g.mount_initial("f-proj", g.page(vec![], Some("p-proj"), None))
+        .await;
+    g.mount_link("p-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    let provider = g.provider();
+    let first = provider.changes(&caught_up(&g)).await.unwrap();
+    assert_eq!(
+        link_requests(&g, "p-proj").await,
+        3,
+        "a page that walks on does not clear the count"
+    );
+    assert_eq!(initial_requests(&g, "f-proj").await, 2);
+    assert!(!first.more);
+    assert_given_up(&provider, &first.cursor, "Projects");
+}
+
+#[tokio::test]
+async fn a_given_up_folder_deleted_in_outlook_clears_the_standing_error() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    quiet(&g, &["f-inbox", "f-arch"]).await;
+    let long = "l".repeat(MAX_LINK_BYTES);
+    g.mount_link("d-f-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    g.mount_initial("f-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    let provider = g.provider();
+    provider.folders().await.unwrap();
+    let first = provider.changes(&caught_up(&g)).await.unwrap();
+    assert_given_up(&provider, &first.cursor, "Projects");
+
+    // Projects is deleted: the next listing no longer has it.
+    g.reset().await;
+    g.mount_root(json!([
+        folder("f-inbox", "Inbox", 0),
+        folder("f-arch", "Archive", 0),
+    ]))
+    .await;
+    g.mount_well_known(&[("inbox", "f-inbox"), ("archive", "f-arch")])
+        .await;
+    quiet(&g, &["f-inbox", "f-arch"]).await;
+    provider.folders().await.unwrap();
+    assert_eq!(
+        provider.changes(&first.cursor).await.unwrap_err(),
+        ProviderError::CursorExpired,
+        "a folder gone: the resync"
+    );
+    assert!(
+        provider.standing_error().is_none(),
+        "the folder given up on is gone, and so is its error"
+    );
 }

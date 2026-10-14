@@ -3,13 +3,13 @@
 //! row's provider call sees those facts as they were before the row's own optimistic change,
 //! which the store already shows.
 
-use crate::config::FolderModel;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::accounts::folder_model_in;
 use super::apply_local::Prior;
 use super::outbox::OutboxRow;
 use super::{Store, StoreError};
+use crate::config::FolderModel;
 use crate::provider::{FolderKind, TargetMessage, ThreadTarget};
 
 /// One thread of a target listing: its local id, its target, and the local id of each of the
