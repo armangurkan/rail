@@ -8,6 +8,10 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- `:thread-order` in the palette turns the reader's older messages round for the session
+  (`thread order: newest`, `thread order: oldest`), in the open thread too, and saves the
+  choice as `thread_order` under `[general]`; a save that fails says
+  `Could not save the thread order: …` and keeps the choice.
 - `time = "12h"` under `[general]` writes every time of day on screen with am/pm (`2:05 pm`,
   `Mon 6:20 pm`, `Fri 10 Oct 2025 12:40 pm`, `● Synced 2:47 pm`); `"24h"` is the default.
   `:time` in the palette switches for the session and saves the choice.

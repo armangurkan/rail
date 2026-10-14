@@ -561,6 +561,7 @@ impl MailScreen {
             Target::Accent => self.open_accent_picker(),
             Target::Hints => self.toggle_hints(),
             Target::Time => self.toggle_time(),
+            Target::ThreadOrder => self.toggle_thread_order(),
             Target::Scope(scope) => {
                 let mut effects = self.close_reader();
                 effects.extend(self.set_scope(scope));

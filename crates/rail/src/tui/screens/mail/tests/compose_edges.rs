@@ -11,6 +11,7 @@ use rail_core::ops::{DraftSaveResponse, ErrorCode};
 use super::compose::{compose_fixture, composing, editor_appends, saves, type_text};
 use super::*;
 use crate::tui::screens::compose::RowKind;
+use crate::tui::screens::reader::LineKind;
 
 /// Answers each save as the daemon would about the message a reply names: refused when it
 /// is no longer in the store. `requests` records every request.
@@ -425,4 +426,65 @@ async fn a_file_that_cannot_be_read_back_is_kept() {
         f.screen.status_line()
     );
     assert_eq!(std::fs::read(file).unwrap(), b"To: a@b.c\n\ncaf\xe9\n");
+}
+
+/// `compose_fixture`'s newest thread (`wt2`: Sender at 08:55, its body stored) with an older
+/// message from Tom, open in the reader.
+async fn open_two_message_thread(f: &mut Fixture) {
+    let mut tom = mail_envelope("wm2a", "wt2", BASE_MS + 60_000);
+    tom.from = vec![rail_core::provider::Mailbox {
+        name: Some("Tom".into()),
+        address: "tom@example.com".into(),
+    }];
+    tom.is_read = true;
+    writer(f)
+        .apply(
+            &Batch {
+                upserts: vec![tom],
+                ..Batch::new(1)
+            },
+            BASE_MS / 1000,
+        )
+        .unwrap();
+    store_changed(f).await;
+    press(f, KeyCode::Enter).await;
+    let reader = f.screen.reader().expect("the thread opened");
+    assert_eq!(reader.detail().messages.len(), 2);
+}
+
+/// `r` in the reader answered Sender (the newest message), not Tom.
+fn answers_the_newest(f: &Fixture) {
+    let to = &composing(f).headers.to;
+    assert!(
+        to.iter().any(|t| t.contains("sender@example.com")),
+        "{to:?}"
+    );
+    assert!(!to.iter().any(|t| t.contains("tom@example.com")), "{to:?}");
+}
+
+#[tokio::test]
+async fn r_on_the_readers_subject_line_answers_the_newest_message() {
+    let mut f = compose_fixture().await;
+    editor_appends(&f, "");
+    open_two_message_thread(&mut f).await;
+    let line = f.screen.reader().unwrap().cursor_line().unwrap();
+    assert_eq!(
+        line.kind,
+        LineKind::Title { message: 1 },
+        "the subject line"
+    );
+    press(&mut f, KeyCode::Char('r')).await;
+    answers_the_newest(&f);
+}
+
+#[tokio::test]
+async fn r_on_an_older_card_still_answers_the_newest_message() {
+    let mut f = compose_fixture().await;
+    editor_appends(&f, "");
+    open_two_message_thread(&mut f).await;
+    press(&mut f, KeyCode::Char('n')).await;
+    let line = f.screen.reader().unwrap().cursor_line().unwrap();
+    assert_eq!(line.kind, LineKind::Card { message: 0 }, "Tom's card");
+    press(&mut f, KeyCode::Char('r')).await;
+    answers_the_newest(&f);
 }

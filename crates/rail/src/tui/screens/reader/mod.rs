@@ -180,6 +180,20 @@ impl Reader {
         self.changed();
     }
 
+    /// The older messages run in `order` from now on (`:thread-order`); the cursor goes to the
+    /// start of the message it was in.
+    pub fn set_order(&mut self, order: ThreadOrder) {
+        if order == self.order {
+            return;
+        }
+        let message = self.cursor_line().and_then(|l| l.kind.message());
+        self.order = order;
+        self.changed();
+        self.land(message);
+        let page = usize::from(self.size.get().1.max(1));
+        self.scroll = crate::tui::screens::mail::visible_offset(self.scroll, self.cursor, page);
+    }
+
     /// The thread read again: each message keeps its expansion (new ones get the default),
     /// errors stay only on bodies still missing, folds stay open.
     /// An unchanged thread leaves everything as it is, unless a body it waited for did not

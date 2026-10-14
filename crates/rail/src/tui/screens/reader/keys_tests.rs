@@ -309,3 +309,55 @@ fn h_shows_and_hides_every_open_messages_headers_and_keeps_the_cursor_on_its_mes
     );
     assert_eq!(at(&reader), LineKind::Card { message: 0 });
 }
+
+/// Review Focus 4.
+#[test]
+fn set_order_turns_the_cards_round_and_keeps_the_cursor_on_its_message() {
+    let mut reader = reader_of(four(0), ThreadOrder::Oldest);
+    reader.act(Action::ReaderNext);
+    let first = reader.cursor;
+    assert_eq!(
+        at(&reader),
+        LineKind::Card { message: 0 },
+        "Priya's, the first card"
+    );
+    reader.set_order(ThreadOrder::Newest);
+    assert_eq!(
+        at(&reader),
+        LineKind::Card { message: 0 },
+        "still on Priya's card"
+    );
+    assert!(reader.cursor > first, "which is the last card now");
+    let cards: Vec<LineKind> = reader
+        .lines(80)
+        .iter()
+        .map(|l| l.kind)
+        .filter(|k| matches!(k, LineKind::Card { .. }))
+        .collect();
+    assert_eq!(
+        cards,
+        [
+            LineKind::Card { message: 2 },
+            LineKind::Card { message: 1 },
+            LineKind::Card { message: 0 }
+        ]
+    );
+    act(
+        &mut reader,
+        &[Action::ReaderExpand, Action::ReaderDown, Action::ReaderDown],
+    );
+    assert_eq!(at(&reader), LineKind::Body { message: 0 });
+    reader.set_order(ThreadOrder::Oldest);
+    assert_eq!(reader.cursor, first, "from inside its body: on its card");
+    act(&mut reader, &[Action::ReaderTop]);
+    act(&mut reader, &[Action::ReaderDown; 5]);
+    assert_eq!(at(&reader), LineKind::Body { message: 3 });
+    reader.set_order(ThreadOrder::Newest);
+    assert_eq!(reader.cursor, 0, "from the newest's body: on the subject");
+    let before = reader.lines(80);
+    reader.set_order(ThreadOrder::Newest);
+    assert!(
+        Rc::ptr_eq(&before, &reader.lines(80)),
+        "the same order rebuilds nothing"
+    );
+}

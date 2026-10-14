@@ -33,6 +33,7 @@ mod status;
 #[cfg(test)]
 mod tests;
 mod themes;
+mod thread_order_toggle;
 mod time_toggle;
 mod view;
 #[cfg(test)]
