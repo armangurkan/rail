@@ -691,8 +691,9 @@ async fn a_standing_provider_error_fails_a_pass_that_went_through() {
     let mock = MockProvider::new();
     seed_days(&mock, &[("m1", 1)]);
     let engine = engine(&h, &mock, 0);
-    let text = "folder \"Projects\" cannot be synced: its sync link is longer than 4 KiB";
-    mock.with(|m| m.standing_error = Some(ProviderError::permanent(text)));
+    let text = "a folder cannot be synced: its sync link is longer than 4 KiB";
+    let standing = ProviderError::permanent(text).with_detail("Projects".into());
+    mock.with(|m| m.standing_error = Some(standing));
     let pass = engine.pass().await;
     assert!(pass.is_ok(), "the pass itself went through");
     engine.record(pass).await;
@@ -702,6 +703,12 @@ async fn a_standing_provider_error_fails_a_pass_that_went_through() {
     assert_eq!(
         (error.code.as_str(), error.message.as_str()),
         ("permanent", text)
+    );
+    let detail = error.detail.as_ref().map(|d| d.get().as_str());
+    assert_eq!(
+        detail,
+        Some("Projects"),
+        "the folder's name, as outside text"
     );
     assert_eq!(
         (status.messages, status.threads),

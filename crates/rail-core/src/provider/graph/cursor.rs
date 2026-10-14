@@ -40,8 +40,10 @@ pub(crate) enum State {
 /// What `advance` did with a folder's page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Step {
-    /// The folder walks on, or is caught up.
-    Walked,
+    /// A next link: the folder walks on.
+    Walking,
+    /// A delta link (or a page with neither link): the folder is caught up for this round.
+    CaughtUp,
     /// Its link was over `MAX_LINK_BYTES`: it starts over from its first page.
     StartedOver,
 }
@@ -155,7 +157,7 @@ impl GraphCursor {
 
     /// Where folder `id` goes on after a page: a next link keeps it walking, a delta link ends
     /// its round. A page with neither ends its walk for this pass; the next round goes on from
-    /// the link it had.
+    /// the link it had. Answers which of these it was (`Step`).
     pub(crate) fn advance(
         &mut self,
         id: &str,
@@ -176,27 +178,19 @@ impl GraphCursor {
             *folder = Folder::unstarted();
             return Ok(Step::StartedOver);
         }
-        *folder = match (next, delta) {
-            (Some(next), _) => Folder {
-                link: Some(next),
-                state: State::Running,
-            },
-            (None, Some(delta)) => Folder {
-                link: Some(delta),
-                state: State::CaughtUp,
-            },
+        let (link, state, step) = match (next, delta) {
+            (Some(next), _) => (Some(next), State::Running, Step::Walking),
+            (None, Some(delta)) => (Some(delta), State::CaughtUp, Step::CaughtUp),
             (None, None) => {
                 tracing::warn!(
                     folder = %id,
                     "Microsoft 365's delta page had neither a next nor a delta link; the folder counts as caught up for this pass"
                 );
-                Folder {
-                    link: folder.link.take(),
-                    state: State::CaughtUp,
-                }
+                (folder.link.take(), State::CaughtUp, Step::CaughtUp)
             }
         };
-        Ok(Step::Walked)
+        *folder = Folder { link, state };
+        Ok(step)
     }
 
     /// Set folder `id` aside for this pass: caught up, with no link, so a round that asks it
@@ -344,7 +338,7 @@ mod tests {
             cursor
                 .advance("f-1", None, Some("l".repeat(MAX_LINK_BYTES)))
                 .unwrap(),
-            Step::Walked
+            Step::CaughtUp
         );
         assert_eq!(cursor.folders["f-1"].state, State::CaughtUp);
         cursor.park("f-1");

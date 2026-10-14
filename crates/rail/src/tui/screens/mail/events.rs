@@ -10,7 +10,7 @@ use crate::tui::data::{
     DaemonEvent, ListOutcome, MailEvent, REQUERY_DEBOUNCE, ReadError, Timer, timer,
 };
 use crate::tui::screens::reader::Reader;
-use crate::tui::text::escape;
+use crate::tui::text::{escape, outside};
 
 use super::{MailScreen, Place, StoreState, error_line};
 
@@ -169,8 +169,8 @@ impl MailScreen {
     }
 
     /// A failed pass's permanent error joins `:errors` once while `:errors` still holds it
-    /// (the header already ranks the failed pass); a Microsoft 365 folder Rail gave up on is
-    /// one. Transient failures stay out: the next pass retries them.
+    /// (the header already ranks the failed pass), with its outside detail labelled and escaped
+    /// as `error_line` writes it; a Microsoft 365 folder Rail gave up on is one, named there. Transient failures stay out: the next pass retries them.
     fn keep_standing_error(&mut self, status: &AccountSyncStatus) {
         let Some(error) = status
             .last_error
@@ -179,7 +179,10 @@ impl MailScreen {
         else {
             return;
         };
-        let text = format!("{}: {}", escape(&status.name), escape(&error.message));
+        let mut text = format!("{}: {}", escape(&status.name), escape(&error.message));
+        if let Some(detail) = &error.detail {
+            text.push_str(&format!(" ({})", outside(detail.get())));
+        }
         if self.status.errors().any(|e| e.text == text) {
             return;
         }

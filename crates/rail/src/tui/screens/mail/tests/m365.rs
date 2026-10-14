@@ -6,6 +6,7 @@
 
 use rail_core::config::AccountKind;
 use rail_core::error::ErrorClass;
+use rail_core::ops::Untrusted;
 use rail_core::ops::{AccountSyncStatus, Action as MailAction, M365_LABELS, SyncErrorInfo};
 use rail_core::ops::{ActionFailed, DraftImportResponse, ErrorCode, OpError};
 use rail_core::store::drafts_folder::{DraftsRow, DraftsRowKind};
@@ -381,9 +382,9 @@ async fn a_folder_microsoft_365_cannot_sync_is_kept_in_errors_once() {
     home.last_error = Some(SyncErrorInfo {
         code: "permanent".into(),
         class: Some(ErrorClass::Permanent),
-        message: "folder \"Projects\" cannot be synced: its sync link is longer than 4 KiB".into(),
+        message: "a folder cannot be synced: its sync link is longer than 4 KiB".into(),
         at: 1,
-        detail: None,
+        detail: Some(Untrusted::new("Pro\u{1b}jects".to_string())),
     });
     for _ in 0..2 {
         let event = MailEvent::Daemon(DaemonEvent::Progress(Box::new(home.clone())));
@@ -393,7 +394,11 @@ async fn a_folder_microsoft_365_cannot_sync_is_kept_in_errors_once() {
     let kept: Vec<&str> = f.screen.status.errors().map(|e| e.text.as_str()).collect();
     assert_eq!(
         kept,
-        ["home: folder \"Projects\" cannot be synced: its sync link is longer than 4 KiB"]
+        [
+            "home: a folder cannot be synced: its sync link is longer than 4 KiB (from outside \
+             Rail (the provider or the system): \"Pro\\u{1b}jects\")"
+        ],
+        "the folder is named, escaped as outside text"
     );
     let summary = f.screen.header_summary();
     assert!(summary.contains("home sync failed"), "{summary}");

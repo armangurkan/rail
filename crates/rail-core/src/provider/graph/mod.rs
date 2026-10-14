@@ -66,11 +66,12 @@ pub use actions::MOVE_TARGET_GONE;
 pub use attachment::REFERENCE_ATTACHMENT;
 pub use batch::{MAX_BATCH, MAX_ITEM_RETRY_AFTER};
 pub use body::HTML_BODY;
-pub use cursor::MAX_CURSOR_BYTES;
+pub use cursor::{MAX_CURSOR_BYTES, MAX_LINK_BYTES};
 pub use delta::{GRAPH_PAGES_PER_CALL, PAGE_SIZE};
 pub use folders::{MAX_FOLDER_DEPTH, MAX_FOLDERS, SKIPPED_ROOTS, WELL_KNOWN};
 pub use reconcile::SMALL_ATTACHMENT_BYTES;
 pub use search::{MAX_GRAPH_SEARCH, MESSAGE_FIELDS};
+pub use stuck::MAX_LINK_RESETS;
 pub use upload::{UPLOAD_CHUNK, UPLOAD_TRIES};
 
 /// The API root every request is relative to; `me` is the signed-in mailbox.
@@ -201,6 +202,12 @@ impl super::Provider for GraphProvider {
 
     fn standing_error(&self) -> Option<ProviderError> {
         self.stuck().error()
+    }
+
+    /// False while a folder is given up on, or the last listing skipped a subtree.
+    fn walked_everything(&self) -> bool {
+        let skipped = self.skipped.lock().unwrap_or_else(PoisonError::into_inner);
+        skipped.is_empty() && !self.stuck().any()
     }
 
     async fn changes(&self, cursor: &SyncCursor) -> Result<ChangeSet, ProviderError> {

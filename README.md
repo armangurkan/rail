@@ -457,10 +457,12 @@ a label or a merged mailbox (`Mailbox: Starred`, `Mailbox: Drafts`, `Mailbox: Se
 `Mailbox: Trash`: that mailbox of every account together, newest first) and press `Enter`; the
 key bound to each command is shown beside it. A label is listed as
 `Label: AXON · Inbox/Infrastructure/Linode`: the account's label and the folder's whole path,
-folded away in the sidebar or not. `:errors` lists the session's recent errors; while one of them
-is an action Gmail refused, `j`/`k` or `↓`/`↑` highlight an entry and `Enter` sends that action
-again. `:hints` turns the key hints off (`hints: off`), or back on (the hints are the
-confirmation: no notice), and saves the choice (`hints = false` under `[general]`; turning them on
+folded away in the sidebar or not. `:errors` lists the session's recent errors; every sync pass
+that failed for good (one a retry will not mend) is listed there once, after its account's name,
+while `:errors` still holds it. While one of them is an action Gmail refused, `j`/`k` or `↓`/`↑`
+highlight an entry and `Enter` sends that action again. `:hints` turns the key hints off
+(`hints: off`), or back on (the hints are the confirmation: no notice), and saves the choice
+(`hints = false` under `[general]`; turning them on
 removes the key); a save that fails says `Could not save the hints setting: …` and keeps the
 choice for this session. `:clock` hides the header's clock (`clock: off`), or shows it again
 (`clock: on`), and saves the choice (`clock = false` under `[general]`; showing it removes the key);
@@ -1332,7 +1334,7 @@ their own.
 | `This mailbox has no Archive folder; press m to move.` | The mailbox has no Archive folder and Rail never makes one. Press `m` to move the thread to a folder. |
 | `This mailbox has no Deleted Items folder.` | `d` found no Deleted Items folder in the last folder listing, which an Exchange Online mailbox always has; Rail put the thread back. Press `Ctrl-r` to sync, or `m` to move the thread to a folder. |
 | `Could not … : Rail holds no messages of this Microsoft 365 conversation` | The thread's messages left the store before the action was sent (another device moved or deleted them). Press `Ctrl-r`; the next sync shows where they are now. |
-| `folder "…" cannot be synced: its sync link is longer than 4 KiB` (in the header as `⚠ name sync failed`, and in `:errors`) | Microsoft answered three times in a row with a sync link for that folder longer than Rail keeps. Rail stops syncing that folder until the daemon restarts (`rail daemon stop`); every other folder goes on. Please report it if it comes back. |
+| `a folder cannot be synced: its sync link is longer than 4 KiB` (in the header as `⚠ name sync failed`; `:errors` names the folder after it, as `(from outside Rail (the provider or the system): "Projects")`) | Microsoft answered three times in a row with a sync link for that folder longer than Rail keeps. Rail stops syncing that folder until the daemon restarts (`rail daemon stop`); every other folder goes on, and the mail Rail holds from it stays. Until then every pass counts as failed: `rail doctor`'s last-success time stops advancing and its sync check fails, and `rail sync` exits 1. Please report it if it comes back. |
 | `the folder for this move no longer exists in Microsoft 365` | The folder was deleted in Outlook before the move was sent; Rail put the thread back. Press `m` and pick another folder. |
 | `Microsoft 365 is busy or unavailable (HTTP 429)`, or `retrying` in `rail sync` | Microsoft is throttling the mailbox. Rail waits as long as Microsoft asks (up to two minutes at a time) and tries again. |
 | `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |

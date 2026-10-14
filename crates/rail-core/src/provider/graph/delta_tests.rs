@@ -9,6 +9,7 @@ use serde_json::{Map, Value, json};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
+use super::GraphProvider;
 use super::cursor::{GraphCursor, MAX_CURSOR_BYTES, MAX_LINK_BYTES, State};
 use super::dates::iso;
 use super::fixtures::{Graph, ROOT, folder, message, removed};
@@ -628,12 +629,61 @@ async fn a_folder_whose_link_stays_over_the_cap_stops_after_three_restarts() {
         2,
         "its link, then two starts over: the third start-over gives up"
     );
+    assert_eq!(link_requests(&g, "d-f-inbox").await, 1);
     let second = provider.changes(&first.cursor).await.unwrap();
     assert_eq!(initial_requests(&g, "f-proj").await, 2, "then it stops");
+    assert_eq!(
+        link_requests(&g, "d-f-inbox").await,
+        2,
+        "the other folders go on"
+    );
     assert!(!second.more, "the other folders are caught up");
+    assert_given_up(&provider, "Projects");
+}
+
+/// How many requests the link `name` got.
+async fn link_requests(g: &Graph, name: &str) -> usize {
+    let at = format!("{ROOT}/links/{name}");
+    g.server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == at)
+        .count()
+}
+
+/// `provider` stands failed on the folder `name`, named only as outside text.
+fn assert_given_up(provider: &GraphProvider, name: &str) {
     let error = provider.standing_error().expect("a standing error");
     assert_eq!(
         error.to_string(),
-        "folder \"Projects\" cannot be synced: its sync link is longer than 4 KiB"
+        "a folder cannot be synced: its sync link is longer than 4 KiB"
     );
+    assert_eq!(error.detail(), Some(name));
+    assert!(!provider.walked_everything());
+}
+
+#[tokio::test]
+async fn a_two_page_folder_whose_last_link_stays_over_the_cap_is_given_up_too() {
+    let g = Graph::start().await;
+    mailbox(&g).await;
+    quiet(&g, &["f-inbox", "f-arch"]).await;
+    let long = "l".repeat(MAX_LINK_BYTES);
+    g.mount_link("d-f-proj", g.page(vec![], Some("p-proj"), None))
+        .await;
+    g.mount_initial("f-proj", g.page(vec![], Some("p-proj"), None))
+        .await;
+    g.mount_link("p-proj", g.page(vec![], None, Some(&long)))
+        .await;
+    let provider = g.provider();
+    let first = provider.changes(&caught_up(&g)).await.unwrap();
+    assert_eq!(
+        link_requests(&g, "p-proj").await,
+        3,
+        "a page that walks on does not clear the count"
+    );
+    assert_eq!(initial_requests(&g, "f-proj").await, 2);
+    assert!(!first.more);
+    assert_given_up(&provider, "Projects");
 }
