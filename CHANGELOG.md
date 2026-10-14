@@ -309,6 +309,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- `:hints` turning the hints back on posted `hints: on` for five seconds over the hints it had
+  just brought back; it says nothing, and a `hints: off` still showing goes with it (#45).
 - The header's and the hint bar's backfill counts have thousands separators
   (`⟳ Backfill 1,200/5,000`, `home ⟳ 1,200/5,000`).
 - A filter being typed or set keeps at least 24 cells of the header's search slot (at 60 columns

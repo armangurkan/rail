@@ -7,16 +7,18 @@ use crate::tui::data::MailEvent;
 use crate::tui::text::escape;
 
 impl MailScreen {
-    /// Flip the hints, say so, and save: `hints = false` when off; on removes the key, since
-    /// on is the default.
+    /// Flip the hints and save: `hints = false` when off (`hints: off`); on removes the key,
+    /// since on is the default, and says nothing: the hints coming back are the confirmation,
+    /// so a `hints: off` still showing goes too.
     pub(super) fn toggle_hints(&mut self) -> Vec<Effect> {
         self.hints = !self.hints;
-        let (notice, value) = if self.hints {
-            ("hints: on", None)
+        let value = if self.hints {
+            self.status.dismiss("hints: off");
+            None
         } else {
-            ("hints: off", Some(false))
+            self.status.notify("hints: off", self.tick);
+            Some(false)
         };
-        self.status.notify(notice, self.tick);
         vec![self.save_general("hints", Saved::Bool(value), |result| {
             MailEvent::HintsSaved { result }
         })]

@@ -326,15 +326,51 @@ async fn colon_hints_turns_the_hints_off_and_on_and_saves_the_choice() {
 
     run_hints_from_the_palette(&mut f).await;
     assert!(
-        f.screen.status_line().contains("hints: on"),
-        "{}",
+        !f.screen.status_line().contains("hints:"),
+        "on says nothing: the hints coming back are the confirmation: {}",
         f.screen.status_line()
     );
     let text = config_text(&f);
     assert!(!text.contains("hints"), "true is the default: {text}");
     assert!(text.contains("editor = \"vi\" # mine"), "{text}");
-    expire_notice(&mut f).await;
-    assert!(bottom_row(&f).contains("? help"), "{}", bottom_row(&f));
+    let bottom = bottom_row(&f);
+    assert!(
+        bottom.contains("Enter open") && bottom.contains("? help"),
+        "the next frame draws the hints, with no notice to wait out: {bottom}"
+    );
+}
+
+/// #45: `:hints` off then on inside the notice's five seconds: the `hints: off` still showing
+/// goes with it, so the hints are up at once.
+#[tokio::test]
+async fn hints_off_then_on_within_the_notice_shows_the_hints_at_once() {
+    let mut f = fixture(3).await;
+    write_config(&f, "[general]\n");
+    run_hints_from_the_palette(&mut f).await;
+    assert!(
+        f.screen.status_line().contains("hints: off"),
+        "{}",
+        f.screen.status_line()
+    );
+    let bottom = bottom_row(&f);
+    assert!(
+        bottom.contains("hints: off") && !bottom.contains("? help"),
+        "{bottom}"
+    );
+    run_hints_from_the_palette(&mut f).await;
+    assert_eq!(
+        f.screen.status.notice(),
+        None,
+        "the stale notice is dismissed"
+    );
+    let bottom = bottom_row(&f);
+    assert!(
+        bottom.starts_with("Enter open"),
+        "the hints at once: {bottom}"
+    );
+    assert!(bottom.contains("? help"), "{bottom}");
+    assert!(!bottom.contains("hints:"), "{bottom}");
+    assert!(!config_text(&f).contains("hints"), "{}", config_text(&f));
 }
 
 /// `:time` typed in the palette and run with Enter.

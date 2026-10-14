@@ -455,9 +455,10 @@ key bound to each command is shown beside it. A label is listed as
 `Label: AXON · Inbox/Infrastructure/Linode`: the account's label and the folder's whole path,
 folded away in the sidebar or not. `:errors` lists the session's recent errors; while one of them
 is an action Gmail refused, `j`/`k` or `↓`/`↑` highlight an entry and `Enter` sends that action
-again. `:hints` turns the key hints off, or back on, and saves the choice (`hints = false` under
-`[general]`; turning them on removes the key); a save that fails says
-`Could not save the hints setting: …` and keeps the choice for this session. `:clock` hides the
+again. `:hints` turns the key hints off (`hints: off`), or back on (the hints are the
+confirmation: no notice), and saves the choice (`hints = false` under `[general]`; turning them on
+removes the key); a save that fails says `Could not save the hints setting: …` and keeps the
+choice for this session. `:clock` hides the
 header's clock (`clock: off`), or shows it again (`clock: on`), and saves the choice
 (`clock = false` under `[general]`; showing it removes the key); a save that fails says
 `Could not save the clock setting: …` and keeps the choice for this session. `:time` switches

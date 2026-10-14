@@ -151,6 +151,13 @@ impl StatusBar {
         self.notice = Some((text.into(), tick + ticks, false));
     }
 
+    /// Drop the notice when it reads `text`; any other notice stays.
+    pub fn dismiss(&mut self, text: &str) {
+        if self.notice() == Some(text) {
+            self.notice = None;
+        }
+    }
+
     /// `error`, kept in `:errors` with the outbox row `Enter` retries.
     pub fn error_with_retry(
         &mut self,
