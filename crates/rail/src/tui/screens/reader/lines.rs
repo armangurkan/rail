@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use rail_core::provider::Mailbox;
 use rail_core::store::view::{BodyState, MessageView, ThreadDetail};
 
+use super::ReaderAccount;
 use crate::tui::clock::Clock;
 use crate::tui::screens::mail::Glyphs;
 use crate::tui::text::{Block, blocks, escape, expand_tabs, fit, fold_label, wrap};
@@ -15,13 +16,38 @@ use crate::tui::text::{Block, blocks, escape, expand_tabs, fit, fold_label, wrap
 /// What a line belongs to, for the cursor's keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
+    /// A thread-wide note: the left-out count, or an empty thread's subject.
     Note,
-    Header { message: usize },
-    Field { message: usize },
-    Body { message: usize },
-    Fold { message: usize, block: usize },
-    Quote { message: usize, block: usize },
-    Status { message: usize },
+    Header {
+        message: usize,
+    },
+    /// The title block's subject, sender and recipients lines, on the newest message.
+    Title {
+        message: usize,
+    },
+    /// A collapsed message's preview.
+    Preview {
+        message: usize,
+    },
+    Field {
+        message: usize,
+    },
+    Body {
+        message: usize,
+    },
+    Fold {
+        message: usize,
+        block: usize,
+    },
+    Quote {
+        message: usize,
+        block: usize,
+    },
+    Status {
+        message: usize,
+    },
+    /// A rule between the title block, the newest message and the cards.
+    Rule,
     Gap,
 }
 
@@ -29,12 +55,14 @@ impl LineKind {
     pub fn message(self) -> Option<usize> {
         match self {
             Self::Header { message }
+            | Self::Title { message }
+            | Self::Preview { message }
             | Self::Field { message }
             | Self::Body { message }
             | Self::Fold { message, .. }
             | Self::Quote { message, .. }
             | Self::Status { message } => Some(message),
-            Self::Note | Self::Gap => None,
+            Self::Note | Self::Rule | Self::Gap => None,
         }
     }
 }
@@ -94,6 +122,20 @@ impl ReaderLine {
             text,
         }
     }
+
+    /// A line of segments, the empty ones dropped; `text` is their concatenation.
+    pub fn of(kind: LineKind, segments: Vec<(String, Tone)>) -> Self {
+        let segments: Vec<(String, Tone)> = segments
+            .into_iter()
+            .filter(|(text, _)| !text.is_empty())
+            .collect();
+        let text = segments.iter().map(|(text, _)| text.as_str()).collect();
+        Self {
+            kind,
+            text,
+            segments,
+        }
+    }
 }
 
 impl std::fmt::Debug for ReaderLine {
@@ -114,6 +156,12 @@ pub(super) struct State<'a> {
     pub errors: &'a HashMap<i64, String>,
     pub clock: &'a Clock,
     pub glyphs: &'a Glyphs,
+    /// The thread's account, for the title block's badge and label.
+    pub account: &'a ReaderAccount,
+    /// `h`: every open message shows its header fields.
+    pub headers: bool,
+    /// A failed re-read's error (escaped), drawn in place of the subject.
+    pub read_error: Option<&'a str>,
 }
 
 fn line(kind: LineKind, text: String, tone: Tone) -> ReaderLine {
@@ -132,7 +180,7 @@ fn mailboxes(people: &[Mailbox]) -> String {
         .join(", ")
 }
 
-fn sender(message: &MessageView) -> String {
+pub(super) fn sender(message: &MessageView) -> String {
     match message.from.first() {
         Some(Mailbox {
             name: Some(name), ..
@@ -198,6 +246,20 @@ fn expanded(
     state: &State<'_>,
     width: usize,
 ) {
+    fields(out, index, m, detail, state, width);
+    content(out, index, m, state, width);
+}
+
+/// An open message's header fields: `From:`, `To:` and `Cc:` (each when not empty), `Date:`,
+/// and `Subject:` when it differs from the thread's; muted, cut to the width.
+pub(super) fn fields(
+    out: &mut Vec<ReaderLine>,
+    index: usize,
+    m: &MessageView,
+    detail: &ThreadDetail,
+    state: &State<'_>,
+    width: usize,
+) {
     let field = |text: String| {
         line(
             LineKind::Field { message: index },
@@ -214,6 +276,16 @@ fn expanded(
     if m.subject != detail.subject {
         out.push(field(format!("Subject: {}", m.subject)));
     }
+}
+
+/// An open message's text: a gap, the body, the attachments line, a gap.
+pub(super) fn content(
+    out: &mut Vec<ReaderLine>,
+    index: usize,
+    m: &MessageView,
+    state: &State<'_>,
+    width: usize,
+) {
     out.push(line(LineKind::Gap, String::new(), Tone::Plain));
     body(out, index, m, state, width);
     if !m.attachments.is_empty() {

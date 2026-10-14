@@ -3,7 +3,12 @@
 //! numbered links, "fetching…" for bodies the store does not hold yet. One component, drawn in
 //! the split layout's pane or as a full-screen view; the mail screen decides which.
 
+mod cards;
 mod lines;
+#[cfg(test)]
+mod lines_tests;
+#[cfg(test)]
+mod test_threads;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -84,6 +89,8 @@ pub struct Reader {
         expect(dead_code, reason = "read by the lines from Task 4 on; remove then")
     )]
     order: ThreadOrder,
+    /// `h`: open messages show their header fields, for this session.
+    headers: bool,
     expanded: Vec<bool>,
     unfolded: HashSet<(usize, usize)>,
     /// Message ids with a `body.fetch` in flight.
@@ -130,6 +137,7 @@ impl Reader {
             glyphs,
             account,
             order,
+            headers: false,
             unfolded: HashSet::new(),
             fetching: HashSet::new(),
             asked: HashSet::new(),
@@ -329,6 +337,9 @@ impl Reader {
             errors: &self.errors,
             clock: &self.clock,
             glyphs: &self.glyphs,
+            account: &self.account,
+            headers: self.headers,
+            read_error: self.read_error.as_deref(),
         };
         let built = Rc::new(lines::build(
             &self.detail,
