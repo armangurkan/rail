@@ -310,7 +310,7 @@ and their counts on the right with thousands separators. With `icons = "ascii"` 
 focus the current mailbox's row is in the accent colour; the sidebar scrolls to keep it (or, while the
 sidebar has focus, the cursor) in view.
 
-The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread`
+The top of the screen is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread`
 (`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), the search
 region (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`; the filter shows there once set, and
 the Drafts folder has none), and on the right one line for every account's
@@ -320,10 +320,13 @@ state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopp
 right edge: `● Synced 14:47 │ 15:02` (`3:02 pm` with `time = "12h"`; `:time` changes it at once).
 `clock = false` under `[general]`, or `:clock`, hides the clock. At `split_threshold` (140
 columns by default) and wider the sidebar, the list and the reader are boxed, the focused pane in
-the accent colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and the
-header reads `|Rail | All inboxes …`. When the scope and the summary do not both fit, the
-summary and the clock stay whole and the scope is cut. Under 60 columns the clock and the search
-region go, and under 40 the summary. The status bar at the bottom names the keys of the
+the accent colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and an
+unboxed header reads `|Rail | All inboxes …`. At `split_threshold` and wider, and at least 12 rows high,
+the header has a box of its own too (never in the accent colour), and inside it the row reads
+`│ Rail │ All inboxes … ● Synced 14:47 │ 15:02 │`, without the `▍` bar (`| Rail | …` with
+`icons = "ascii"`). When the scope and the summary do not both fit, the summary and the clock
+stay whole and the scope is cut. Under 60 columns the clock and the search region go, and under
+40 the summary. The status bar at the bottom names the keys of the
 pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your
 `config.toml` sets) and shows each account's state on the right. Narrower than `split_threshold`
 it is one row; at `split_threshold` and wider (and at least 12 rows high) it takes three rows and

@@ -407,14 +407,14 @@ fn layout_pins_the_split_threshold_and_the_sidebar_rule() {
     assert!(!layout::bordered(139, 140), "borders only in split mode");
     let area = ratatui::layout::Rect::new(0, 0, 150, 40);
     let areas = layout::areas(area, true, true, true);
-    assert_eq!(areas.header.height, 1);
+    assert_eq!(areas.header.height, layout::HEADER_ROWS_BOXED);
     assert_eq!(areas.hints.height, layout::HINT_ROWS_BOXED);
     assert_eq!(
         areas.hints.height, 3,
         "split mode boxes each key on three rows"
     );
-    assert_eq!(areas.body.height, 36);
-    assert_eq!(areas.body.y, 1);
+    assert_eq!(areas.body.height, 34);
+    assert_eq!(areas.body.y, 3);
     assert_eq!(areas.sidebar.unwrap().width, layout::SIDEBAR_WIDTH);
     assert!(areas.reader.unwrap().width > areas.list.width);
     let narrow = layout::areas(ratatui::layout::Rect::new(0, 0, 90, 24), false, false, true);
@@ -439,7 +439,7 @@ fn layout_pins_the_split_threshold_and_the_sidebar_rule() {
     assert_eq!(just.hints.height, 3);
     let off = layout::areas(area, true, true, false);
     assert_eq!(off.hints.height, 1, "hints off: one row in split mode too");
-    assert_eq!(off.body.height, 38, "the boxes' rows go to the panes");
+    assert_eq!(off.body.height, 36, "the boxes' rows go to the panes");
     assert!(layout::fits_border(ratatui::layout::Rect::new(0, 0, 4, 3)));
     assert!(!layout::fits_border(ratatui::layout::Rect::new(0, 0, 3, 3)));
     assert!(!layout::fits_border(ratatui::layout::Rect::new(0, 0, 4, 2)));
@@ -471,14 +471,14 @@ async fn the_frame_boxes_the_panes_in_split_mode_and_marks_the_focused_one() {
     // List focused: its top-left corner is at column 26 (after the 26-column sidebar).
     let buffer = buffer_of(&screen);
     assert_eq!(
-        buffer[(0, 1)].symbol(),
+        buffer[(0, 3)].symbol(),
         "┌",
-        "the sidebar's box starts under the header"
+        "the sidebar's box starts under the header's box"
     );
-    assert_eq!(buffer[(0, 1)].fg, theme.border.fg.unwrap());
-    assert_eq!(buffer[(26, 1)].symbol(), "┌");
+    assert_eq!(buffer[(0, 3)].fg, theme.border.fg.unwrap());
+    assert_eq!(buffer[(26, 3)].symbol(), "┌");
     assert_eq!(
-        buffer[(26, 1)].fg,
+        buffer[(26, 3)].fg,
         theme.border_focus.fg.unwrap(),
         "the list has focus"
     );
@@ -509,8 +509,8 @@ async fn the_frame_boxes_the_panes_in_split_mode_and_marks_the_focused_one() {
     )));
     settle(&mut screen, effects).await;
     let buffer = buffer_of(&screen);
-    assert_eq!(buffer[(0, 1)].fg, theme.border_focus.fg.unwrap());
-    assert_eq!(buffer[(26, 1)].fg, theme.border.fg.unwrap());
+    assert_eq!(buffer[(0, 3)].fg, theme.border_focus.fg.unwrap());
+    assert_eq!(buffer[(26, 3)].fg, theme.border.fg.unwrap());
 }
 
 #[tokio::test]
@@ -679,6 +679,13 @@ async fn the_filter_is_typed_in_the_header_slot_and_falls_back_to_the_hint_row_w
         "after the search region's prefix: {top}"
     );
     assert!(top.trim_end().ends_with("│ 12:40"), "{top}");
+    let boxed = rows(&screen, 150, 40);
+    assert!(boxed[0].starts_with("┌─"), "the header's box: {}", boxed[0]);
+    assert!(
+        boxed[1].starts_with("│ Rail │ All inboxes") && boxed[1].contains("│ 🔍  /is:unread"),
+        "typed in the slot inside the box: {}",
+        boxed[1]
+    );
     let bottom = rows(&screen, 90, 24)[23].clone();
     assert!(
         bottom.starts_with("Enter open"),

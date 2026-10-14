@@ -471,7 +471,7 @@ async fn run_clock_from_the_palette(f: &mut Fixture) {
 async fn colon_clock_hides_the_clock_and_shows_it_again_and_saves_the_choice() {
     let mut f = fixture(3).await;
     write_config(&f, "[general]\neditor = \"vi\" # mine\n");
-    assert_eq!(f.screen.header().clock.as_deref(), Some("12:40"));
+    assert_eq!(f.screen.header(false).clock.as_deref(), Some("12:40"));
     run_clock_from_the_palette(&mut f).await;
     assert!(f.screen.modal.is_none());
     assert!(
@@ -479,7 +479,7 @@ async fn colon_clock_hides_the_clock_and_shows_it_again_and_saves_the_choice() {
         "{}",
         f.screen.status_line()
     );
-    assert_eq!(f.screen.header().clock, None, "the clock is hidden");
+    assert_eq!(f.screen.header(false).clock, None, "the clock is hidden");
     let text = config_text(&f);
     assert!(text.contains("editor = \"vi\" # mine"), "{text}");
     let config = rail_core::config::parse(&text, &f.paths.config_file()).unwrap();
@@ -498,7 +498,7 @@ async fn colon_clock_hides_the_clock_and_shows_it_again_and_saves_the_choice() {
         "{}",
         f.screen.status_line()
     );
-    assert_eq!(f.screen.header().clock.as_deref(), Some("12:40"));
+    assert_eq!(f.screen.header(false).clock.as_deref(), Some("12:40"));
     let text = config_text(&f);
     assert!(!text.contains("clock"), "true is the default: {text}");
     assert!(text.contains("editor = \"vi\" # mine"), "{text}");
@@ -515,7 +515,7 @@ async fn the_clock_follows_colon_time_at_once() {
     let mut f = fixture(3).await;
     write_config(&f, "[general]\n");
     run_target(&mut f, Target::Time).await;
-    assert_eq!(f.screen.header().clock.as_deref(), Some("12:40 pm"));
+    assert_eq!(f.screen.header(false).clock.as_deref(), Some("12:40 pm"));
 }
 
 #[tokio::test]
@@ -534,7 +534,11 @@ async fn a_failed_clock_save_keeps_the_setting_and_reports() {
     }
     run_target(&mut f, Target::Clock).await;
     std::fs::set_permissions(&dir, writable).unwrap();
-    assert_eq!(f.screen.header().clock, None, "kept hidden for the session");
+    assert_eq!(
+        f.screen.header(false).clock,
+        None,
+        "kept hidden for the session"
+    );
     assert!(
         f.screen
             .status_line()
@@ -553,7 +557,7 @@ fn clock_false_in_the_config_starts_with_the_clock_hidden() {
         ..mail_ctx(&Paths::all_in(tmp.path()), Arc::new(FakeDaemon::default()))
     };
     let screen = MailScreen::new(ctx, work_and_home());
-    assert_eq!(screen.header().clock, None);
+    assert_eq!(screen.header(false).clock, None);
     let entries = screen.palette_entries();
     let clock = entries
         .iter()

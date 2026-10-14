@@ -90,7 +90,8 @@ async fn a_selected_label_renamed_then_deleted_keeps_then_moves_the_cursor_safel
         Some("Clients"),
         "the cursor stayed on the label"
     );
-    let header = draw(&f).remove(0);
+    // Row 1: the header inside its box.
+    let header = draw(&f).remove(1);
     assert!(header.contains("work · Clients · 1 unread"), "{header}");
     assert_eq!(selected(&f).as_deref(), Some("subject wl"));
 
@@ -194,10 +195,11 @@ async fn a_failed_reread_of_the_open_thread_shows_in_the_reader_not_the_list() {
     assert_eq!(f.screen.store_state, StoreState::Ready, "the list stays");
     assert_eq!(f.screen.list.rows().len(), 5);
     assert!(f.screen.reader.is_some(), "the reader stays open");
-    // Row 2 holds the list's first row and the subject line, inside their boxes.
+    // Row 4 holds the list's first row and the subject line, inside their boxes (under the
+    // header's box).
     let rows = draw(&f);
     assert!(
-        rows[2].contains("The thread could not be read: disk I/O error"),
+        rows[4].contains("The thread could not be read: disk I/O error"),
         "{rows:#?}"
     );
     assert!(

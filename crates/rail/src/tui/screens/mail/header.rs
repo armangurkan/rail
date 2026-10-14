@@ -8,6 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use super::layout;
 use super::view::Glyphs;
 use super::{MailScreen, Summary};
 use crate::tui::keys::Action;
@@ -164,15 +165,36 @@ fn slot_spans(
     Some((spans, rect, at + width(text)))
 }
 
-/// Draw `header` in `area` (one row); the slot's rect when it is drawn, for the filter line.
+/// Draw `header` in `area`: one row, or with three rows a box around it (in `theme.border`)
+/// and the row inside with a cell of padding on each side. The slot's rect when it is drawn,
+/// for the filter line.
 pub(super) fn render_header(
     frame: &mut Frame,
     area: Rect,
     theme: &Theme,
     header: &Header,
 ) -> Option<Rect> {
-    let cols = usize::from(area.width);
-    let cells = header_cells(header, cols);
+    let row = if area.height >= layout::HEADER_ROWS_BOXED && layout::fits_border(area) {
+        boxed_row(frame, area, theme, header.icons)
+    } else {
+        area
+    };
+    let (spans, slot_rect) = header_spans(row, theme, header);
+    frame.render_widget(Paragraph::new(Line::from(spans)), row);
+    slot_rect
+}
+
+/// Draw the header's box; the row inside it, less a cell of padding on each side.
+fn boxed_row(frame: &mut Frame, area: Rect, theme: &Theme, icons: Icons) -> Rect {
+    let block = layout::pane_block(theme, icons, false);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), 1)
+}
+
+/// The row's spans (the scope, the slot, the right unit) and the slot's rect.
+fn header_spans(row: Rect, theme: &Theme, header: &Header) -> (Vec<Span<'static>>, Option<Rect>) {
+    let cells = header_cells(header, usize::from(row.width));
     // The scope part is accent; whatever follows it (the selection count, or the `…` of a cut)
     // is plain text.
     let cut = cells.left != header.joined();
@@ -186,34 +208,54 @@ pub(super) fn render_header(
     }
     let mut used = width(&cells.left);
     let mut slot_rect = None;
-    if let Some((slot, rect, end)) = slot_spans(area, &cells, &header.slot, theme, used) {
+    if let Some((slot, rect, end)) = slot_spans(row, &cells, &header.slot, theme, used) {
         spans.extend(slot);
         slot_rect = Some(rect);
         used = end;
     }
-    if let Some(right) = &cells.right {
-        spans.push(Span::raw(
-            " ".repeat(cols.saturating_sub(used + right_width(&cells))),
-        ));
-        let style = if header.right.error {
-            theme.error
-        } else {
-            theme.muted
-        };
-        spans.push(Span::styled(right.clone(), style));
-        if let Some(clock) = &cells.clock {
-            spans.push(Span::styled(clock.clone(), theme.muted));
-        }
+    spans.extend(right_spans(
+        &cells,
+        header,
+        theme,
+        usize::from(row.width),
+        used,
+    ));
+    (spans, slot_rect)
+}
+
+/// The summary at the right edge, in the error style when it is one, and the clock after it,
+/// always muted; nothing when the summary is not drawn.
+fn right_spans(
+    cells: &HeaderCells,
+    header: &Header,
+    theme: &Theme,
+    cols: usize,
+    used: usize,
+) -> Vec<Span<'static>> {
+    let Some(right) = &cells.right else {
+        return Vec::new();
+    };
+    let style = if header.right.error {
+        theme.error
+    } else {
+        theme.muted
+    };
+    let mut spans = vec![
+        Span::raw(" ".repeat(cols.saturating_sub(used + right_width(cells)))),
+        Span::styled(right.clone(), style),
+    ];
+    if let Some(clock) = &cells.clock {
+        spans.push(Span::styled(clock.clone(), theme.muted));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    slot_rect
+    spans
 }
 
 impl MailScreen {
-    /// The header's three parts from the screen's state.
-    pub(super) fn header(&self) -> Header {
+    /// The header's parts from the screen's state; `boxed` (the header drawn in its box) leaves
+    /// out the bar before `Rail`.
+    pub(super) fn header(&self, boxed: bool) -> Header {
         Header {
-            left: self.scope_left(),
+            left: self.scope_left(!boxed),
             selected: self.selected_count(),
             slot: self.slot(),
             right: self.status.summary(
@@ -233,7 +275,7 @@ impl MailScreen {
     #[cfg(test)]
     pub(crate) fn header_left(&self) -> String {
         Header {
-            left: self.scope_left(),
+            left: self.scope_left(true),
             selected: self.selected_count(),
             slot: Slot::None,
             right: Summary {
@@ -246,12 +288,12 @@ impl MailScreen {
         .joined()
     }
 
-    /// The scope, its account count and its unread count.
-    fn scope_left(&self) -> String {
+    /// The scope, its account count and its unread count; `bar` puts the bar before `Rail`.
+    fn scope_left(&self, bar: bool) -> String {
         let glyphs = Glyphs::of(self.ctx.icons);
         let mut left = format!(
             "{}Rail {} {}",
-            glyphs.bar,
+            if bar { glyphs.bar } else { "" },
             glyphs.separator,
             self.scope_title()
         );
@@ -276,7 +318,7 @@ impl MailScreen {
     /// The summary's text, for tests.
     #[cfg(test)]
     pub(crate) fn header_summary(&self) -> String {
-        self.header().right.text
+        self.header(false).right.text
     }
 
     /// The slot's text, for tests (empty in the Drafts pane).

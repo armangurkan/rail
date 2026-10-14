@@ -13,7 +13,9 @@ All notable changes to Rail are recorded here. The format follows
   that fails says `Could not save the clock setting: …` and keeps the choice.
 - The header's right edge has the time of day after the sync summary
   (`● Synced 14:47 │ 15:02`, `3:02 pm` with `time = "12h"`), and a search region before the
-  slot (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`). Under 60 columns both go.
+  slot (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`). Under 60 columns both go. At
+  `split_threshold` and wider, and at least 12 rows high, the header is boxed like the panes
+  (`│ Rail │ All inboxes …`, without the `▍` bar).
 - `:thread-order` in the palette turns the reader's older messages round for the session
   (`thread order: newest`, `thread order: oldest`), in the open thread too, and saves the
   choice as `thread_order` under `[general]`; a save that fails says

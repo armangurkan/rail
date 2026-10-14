@@ -177,7 +177,7 @@ fn the_screen_builds_its_header_from_its_state() {
     );
     assert_eq!(screen.header_summary(), "connecting to the daemon…");
     assert_eq!(screen.slot_text(), "/ Search");
-    assert_eq!(screen.header().slot, Slot::Idle("/ Search".into()));
+    assert_eq!(screen.header(false).slot, Slot::Idle("/ Search".into()));
 }
 
 #[test]
@@ -449,4 +449,73 @@ fn the_clock_is_drawn_muted_after_an_error_summary() {
     );
     let slot = slot.unwrap();
     assert_eq!(column_of(&buffer, 0, "/"), Some(slot.x));
+}
+
+#[test]
+fn three_rows_box_the_header_without_the_bar() {
+    let h = clocked(
+        "Rail │ All inboxes",
+        Slot::Idle("/ Search".into()),
+        "● Synced 11:40",
+    );
+    let theme = Theme {
+        border: Style::new().fg(Color::Blue),
+        border_focus: Style::new().fg(Color::Yellow),
+        ..Theme::default()
+    };
+    let lines = render_lines(80, 3, |frame| {
+        render_header(frame, frame.area(), &theme, &h);
+    });
+    assert!(lines[0].starts_with("┌──"), "{:?}", lines[0]);
+    assert!(lines[2].starts_with("└──"), "{:?}", lines[2]);
+    assert!(
+        lines[1].starts_with("│ Rail │ All inboxes  │ 🔍  / Search"),
+        "{:?}",
+        lines[1]
+    );
+    assert!(
+        lines[1].ends_with("● Synced 11:40 │ 12:39 │"),
+        "one cell of padding before the box's side: {:?}",
+        lines[1]
+    );
+    let (buffer, slot) = drawn(80, 3, &theme, &h);
+    for (x, y) in [(0, 0), (79, 0), (0, 2), (79, 2)] {
+        assert_eq!(
+            buffer[(x, y)].fg,
+            Color::Blue,
+            "the border style at {x},{y}"
+        );
+    }
+    let slot = slot.expect("the slot is drawn in the box");
+    assert_eq!(slot.y, 1);
+    assert_eq!(Some(slot.x), column_of(&buffer, 1, "/"));
+    let ascii = Header {
+        icons: Icons::Ascii,
+        ..clocked(
+            "Rail | All inboxes",
+            Slot::Idle("/ Search".into()),
+            "ok Synced 11:40",
+        )
+    };
+    let lines = render_lines(80, 3, |frame| {
+        render_header(frame, frame.area(), &theme, &ascii);
+    });
+    assert!(lines[0].starts_with("+--"), "{:?}", lines[0]);
+    assert!(
+        lines[1].starts_with("| Rail | All inboxes  | / Search"),
+        "{:?}",
+        lines[1]
+    );
+    assert!(
+        lines[1].ends_with("ok Synced 11:40 | 12:39 |"),
+        "{:?}",
+        lines[1]
+    );
+}
+
+#[test]
+fn a_boxed_header_leaves_out_the_bar() {
+    let (_tmp, screen) = bare_screen();
+    assert!(screen.header(true).left.starts_with("Rail │ All inboxes"));
+    assert!(screen.header(false).left.starts_with("▍Rail │ All inboxes"));
 }

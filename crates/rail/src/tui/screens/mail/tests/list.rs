@@ -189,14 +189,14 @@ async fn space_selects_across_a_group_row_and_enter_opens_the_thread_under_the_c
     assert_eq!(reader.thread_id(), ids[2], "the thread under the cursor");
     let rows = lines(&f, 150, 40);
     assert!(
-        rows[2].contains("│TODAY"),
+        rows[4].contains("│TODAY"),
         "the list beside the reader: {}",
-        rows[2]
+        rows[4]
     );
     assert!(
-        rows[2].contains("subject ym1"),
+        rows[4].contains("subject ym1"),
         "the reader's title: {}",
-        rows[2]
+        rows[4]
     );
 }
 

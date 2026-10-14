@@ -161,7 +161,8 @@ impl MailScreen {
         // An OSC 8 cell claims the cells after it, so the diff skips them; a modal drawn over
         // them could lose its border. While a modal is open the markers are plain `[n]`.
         let hyperlinks = self.ctx.hyperlinks && self.modal.is_none();
-        let slot = header::render_header(frame, parts.header, theme, &self.header());
+        let header_parts = self.header(parts.header.height >= layout::HEADER_ROWS_BOXED);
+        let slot = header::render_header(frame, parts.header, theme, &header_parts);
         self.slot_rect.set(slot);
         if let Some(composer) = &self.compose {
             composer.render(frame, parts.body, theme, &glyphs);
