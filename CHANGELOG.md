@@ -191,6 +191,13 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Changed
 
+- The sidebar has two sections. UNIFIED: `All inboxes`, `Starred`, `Drafts`, `Sent` and `Trash`
+  across accounts. ACCOUNTS: each account with only its system folders; every other folder or
+  label is under `More folders (N)` as a tree of its path, Gmail's categories under
+  `Categories`. `Space`, `←` or `→` folds an account, `More folders` or a path, for the session;
+  `Enter` on `More folders` or on a path with no folder of its own unfolds it. Counts are unread
+  threads, drafts on `Drafts`, none on `Sent` and `Trash`. The palette lists labels by their
+  whole path (`Label: AXON · Inbox/Infrastructure/Linode`).
 - The filter is typed in the header's search slot, and the compose review's key row is the last
   row's hints, so the review has one more row for its content. While a `t` or `a` prompt is open
   the row shows `Enter accept  Tab complete  Esc cancel`.

@@ -134,9 +134,9 @@ async fn drafts_fixture() -> Fixture {
 fn drafts_item(f: &Fixture) -> usize {
     f.screen
         .sidebar
-        .items()
+        .rows()
         .iter()
-        .position(|i| i.label == "Drafts" && i.account == Some(0))
+        .position(|i| i.label == "Drafts" && i.account() == Some(0))
         .expect("work's Drafts folder is in the sidebar")
 }
 
@@ -616,7 +616,9 @@ async fn entering_the_folder_closes_the_reader_of_the_old_scope() {
     let _ = drawn(&f, 150, 30); // the split layout
     press(&mut f, KeyCode::Enter).await;
     assert!(f.screen.reader.is_some(), "a thread is open in the pane");
-    let scope = f.screen.sidebar.items()[drafts_item(&f)].scope.clone();
+    let scope = f.screen.sidebar.rows()[drafts_item(&f)]
+        .scope()
+        .expect("a folder row opens a scope");
     let effects = f.screen.set_scope(scope);
     settle(&mut f.screen, effects).await;
     assert!(f.screen.in_drafts());

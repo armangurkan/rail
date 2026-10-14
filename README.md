@@ -224,6 +224,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `sidebar.down` | sidebar | `j` `down` | Next mailbox. |
 | `sidebar.up` | sidebar | `k` `up` | Previous mailbox. |
 | `sidebar.open` | sidebar | `enter` | Show this mailbox. |
+| `sidebar.fold` | sidebar | `space` `left` `right` | Fold or unfold this account or folder. |
 | `reader.next` | reader | `n` | Next message. |
 | `reader.prev` | reader | `p` | Previous message. |
 | `reader.expand` | reader | `tab` | Expand or collapse the message. |
@@ -277,8 +278,17 @@ and points to `rail sync`; if the daemon cannot be reached, the header says so
 The thread list shows the unified inbox: the account's colour dot, the date, the people, the
 message count, `★` for starred and `📎` for attachments, and the subject; unread threads are bold.
 `1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
-and wider; `b` toggles it, `Tab` moves into it) lists every account and its labels (up to 500
-per account) with their unread counts; `Enter` opens one.
+and wider; `b` toggles it, `Tab` moves into it) has two sections. UNIFIED holds `All inboxes`,
+`Starred`, `Drafts`, `Sent` and `Trash`, each with every account's mail. ACCOUNTS holds each
+account (by its `label`) with its system folders under the provider's names (Inbox, Sent,
+Drafts, Spam and Trash on Gmail; Inbox, Sent Items, Drafts, Archive, Junk Email and Deleted Items
+on Microsoft 365); every other folder or label (up to 500 per account) is under
+`More folders (N)`, as a tree of its `/`-separated path (`Inbox/Infrastructure/Linode`), with
+Gmail's categories under `Categories`. `Enter` opens the mailbox under the cursor (an account
+opens its inbox; `More folders` and a path that is not a folder itself unfold instead).
+`Space`, `←` or `→` folds or unfolds an account, `More folders` or a path; accounts start
+unfolded and the rest folded, for the session. Counts are unread threads (on a folded path,
+everything under it), drafts on `Drafts`, and none on `Sent` and `Trash`.
 
 The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread` (`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), a search slot
 (`/ Search`; the filter shows there once set), and on the right one line for every account's
@@ -362,7 +372,7 @@ local store only (`rail search` also asks each account's server).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account,
 a label or a merged mailbox (`Mailbox: Starred`, `Mailbox: Drafts`, `Mailbox: Sent`,
-`Mailbox: Trash`: that mailbox of every account together, newest first) and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
+`Mailbox: Trash`: that mailbox of every account together, newest first) and press `Enter`; the key bound to each command is shown beside it. A label is listed as `Label: AXON · Inbox/Infrastructure/Linode`: the account's label and the folder's whole path, folded away in the sidebar or not. `:errors` lists
 the session's recent errors; while one of them is an action Gmail refused, `j`/`k` or `↓`/`↑`
 highlight an entry and `Enter` sends that action again. `:hints` turns the key hints off, or back
 on, and saves the choice (`hints = false` under `[general]`; turning them on removes the key); a
@@ -605,7 +615,7 @@ that attempt may have reached Gmail but its answer was lost, the retry later can
 copy of the draft in Gmail's Drafts. Delete the extra one there; updating a draft, deleting it
 and listing drafts are retried freely and cannot do this.
 
-**The Drafts folder.** Each account's `Drafts` in the sidebar lists its drafts in one pane, newest
+**The Drafts folder.** Each account's `Drafts` in the sidebar lists its drafts in one pane (`Drafts` under UNIFIED lists every account's), newest
 first, up to 500: the drafts saved on this computer and the Gmail drafts written elsewhere (on
 your phone, in the browser). A row shows the date, the recipients and the subject, like a thread;
 a draft kept only on this computer says `(local)` where the recipients go and has `✎` (`*` with

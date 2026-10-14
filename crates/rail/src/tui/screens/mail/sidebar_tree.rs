@@ -1,10 +1,6 @@
 //! The sidebar's rows, built from the store's counts: the merged mailboxes under UNIFIED, then
 //! under ACCOUNTS each account with its system folders and, under `More folders (N)`, every
 //! other folder as a tree of its `/`-separated path. Pure: the fold state comes in, rows go out.
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used from the wiring task on; remove then")
-)]
 
 use std::collections::HashSet;
 

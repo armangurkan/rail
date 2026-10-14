@@ -10,6 +10,7 @@ use rail_core::store::view::HtmlBody;
 use rail_core::store::view::MAX_SIDEBAR_FOLDERS;
 use rail_core::sync::Batch;
 
+use super::sidebar::open_projects;
 use super::{Fixture, feed, fixture, press, press_n, run_job, selected, store_changed, writer};
 use crate::tui::app::{Msg, TaskResult};
 use crate::tui::data::{DaemonEvent, FakeCall, MailEvent, ReadError, ScopeChoice};
@@ -27,7 +28,7 @@ fn draw(f: &Fixture) -> Vec<String> {
 
 /// Account 1's folder list as a labels step sends it: Inbox, Sent and these user labels
 /// (remote id, name).
-fn labels(user: &[(&str, &str)]) -> Batch {
+pub(super) fn labels(user: &[(&str, &str)]) -> Batch {
     let mut folders = vec![
         RemoteFolder {
             parent: None,
@@ -71,10 +72,7 @@ async fn a_selected_label_renamed_then_deleted_keeps_then_moves_the_cursor_safel
         )
         .unwrap();
     store_changed(&mut f).await;
-    // Sidebar: All inboxes, work, Sent, Projects, home, Sent, Projects.
-    press(&mut f, KeyCode::Tab).await;
-    press_n(&mut f, KeyCode::Char('j'), 3).await;
-    press(&mut f, KeyCode::Enter).await;
+    open_projects(&mut f).await;
     assert_eq!(selected(&f).as_deref(), Some("subject wl"));
 
     // Renamed in Gmail: the same label id under a new name.
@@ -88,13 +86,9 @@ async fn a_selected_label_renamed_then_deleted_keeps_then_moves_the_cursor_safel
         f.screen.scope
     );
     assert_eq!(
-        f.screen.sidebar.cursor(),
-        3,
+        f.screen.sidebar.selected().map(|r| r.label.as_str()),
+        Some("Clients"),
         "the cursor stayed on the label"
-    );
-    assert_eq!(
-        f.screen.sidebar.selected().map(|i| i.label.as_str()),
-        Some("Clients")
     );
     let header = draw(&f).remove(0);
     assert!(header.contains("work · Clients · 1 unread"), "{header}");
@@ -104,18 +98,15 @@ async fn a_selected_label_renamed_then_deleted_keeps_then_moves_the_cursor_safel
     store.apply(&labels(&[]), BASE_MS / 1000).unwrap();
     store_changed(&mut f).await;
     assert_eq!(f.screen.scope, ScopeChoice::Account(0));
-    assert_eq!(f.screen.sidebar.cursor(), 1);
     assert_eq!(
-        f.screen.sidebar.selected().map(|i| i.label.as_str()),
-        Some("work")
-    );
-    assert!(
         f.screen
             .sidebar
-            .items()
-            .iter()
-            .all(|i| i.label != "Clients")
+            .selected()
+            .map(|r| (r.label.as_str(), r.account())),
+        Some(("Inbox", Some(0))),
+        "the cursor follows the scope to work's Inbox"
     );
+    assert!(f.screen.sidebar.rows().iter().all(|r| r.label != "Clients"));
     assert_eq!(f.screen.list.rows().len(), 3, "work's inbox");
     assert_eq!(selected(&f).as_deref(), Some("subject wm2"));
     assert!(
@@ -132,10 +123,7 @@ async fn a_selected_label_renamed_then_deleted_keeps_then_moves_the_cursor_safel
 async fn a_label_pushed_past_the_sidebar_cap_is_not_called_deleted() {
     let mut f = fixture(3).await;
     let mut store = writer(&f);
-    // Sidebar: All inboxes, work, Sent, Projects, home, Sent, Projects.
-    press(&mut f, KeyCode::Tab).await;
-    press_n(&mut f, KeyCode::Char('j'), 3).await;
-    press(&mut f, KeyCode::Enter).await;
+    open_projects(&mut f).await;
     assert!(matches!(
         f.screen.scope,
         ScopeChoice::Folder { account: 0, .. }

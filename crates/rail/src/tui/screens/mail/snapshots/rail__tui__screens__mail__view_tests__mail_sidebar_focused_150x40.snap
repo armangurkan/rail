@@ -4,24 +4,24 @@ expression: "draw(&screen, 150, 40)"
 ---
 ▍Rail │ All inboxes · 2 accounts · 5 unread  / Search                                                                             ⟳ Backfill 1200/5000
 ┌────────────────────────┐┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────────────────┐
-│  All inboxes          5││●      11:54  Dana Reyes, …  (3) ★   Q4 roadmap revie…││Open a thread with Enter; it shows here.                          │
-│● work                 4││●      09:53  GitLab              📎  Pipeline failed:…││                                                                  │
-│    Sent                ││●  Yesterday  Sender                 subject h1       ││                                                                  │
-│    Projects            ││●        Wed  Priya Nair             Re: offsite logi…││                                                                  │
-│● home                 1││●     Sep 09  Evil\u{7}Corp          pay\u{202e}fdp.e…││                                                                  │
-│    Sent                ││● 2024-09-04  Sender                 A very long subj…││                                                                  │
-│    Projects            ││                                                      ││                                                                  │
+│UNIFIED                 ││●      11:54  Dana Reyes, …  (3) ★   Q4 roadmap revie…││Open a thread with Enter; it shows here.                          │
+│All inboxes            5││●      09:53  GitLab              📎  Pipeline failed:…││                                                                  │
+│Starred                1││●  Yesterday  Sender                 subject h1       ││                                                                  │
+│Drafts                  ││●        Wed  Priya Nair             Re: offsite logi…││                                                                  │
+│Sent                    ││●     Sep 09  Evil\u{7}Corp          pay\u{202e}fdp.e…││                                                                  │
+│Trash                   ││● 2024-09-04  Sender                 A very long subj…││                                                                  │
 │                        ││                                                      ││                                                                  │
+│ACCOUNTS                ││                                                      ││                                                                  │
+│● work                 4││                                                      ││                                                                  │
+│  Inbox                4││                                                      ││                                                                  │
+│  Sent                  ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
+│  More folders (1)      ││                                                      ││                                                                  │
+│● home                 1││                                                      ││                                                                  │
+│  Inbox                1││                                                      ││                                                                  │
+│  Sent                  ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
+│  More folders (1)      ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
@@ -39,6 +39,6 @@ expression: "draw(&screen, 150, 40)"
 │                        ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
 └────────────────────────┘└──────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────┘
-┌───────┐      ┌─────┐      ┌─────┐      ┌───┐
-│ Enter │ show │ j/k │ move │ Tab │ list │ ? │ help                                                                      ● work ✓ · ● home ⟳ 1200/5000
-└───────┘      └─────┘      └─────┘      └───┘
+┌───────┐      ┌───────┐      ┌─────┐      ┌─────┐      ┌───┐
+│ Enter │ open │ Space │ fold │ j/k │ move │ Tab │ list │ ? │ help                                                       ● work ✓ · ● home ⟳ 1200/5000
+└───────┘      └───────┘      └─────┘      └─────┘      └───┘

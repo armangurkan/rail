@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::layout::{self, areas};
-use super::sidebar::SidebarItem;
+use super::sidebar_tree::{RowKind, SidebarRow};
 use super::{Focus, MailScreen, StoreState};
 use super::{header, hints};
 use crate::tui::data::ScopeChoice;
@@ -245,10 +245,10 @@ impl MailScreen {
         let cols = usize::from(inner.width);
         let items: Vec<Line> = self
             .sidebar
-            .items()
+            .rows()
             .iter()
             .enumerate()
-            .map(|(index, item)| self.sidebar_line(index, item, cols, theme, glyphs))
+            .map(|(index, row)| self.sidebar_line(index, row, cols, theme, glyphs))
             .collect();
         let note = self
             .sidebar
@@ -258,36 +258,35 @@ impl MailScreen {
         frame.render_widget(Paragraph::new(lines), inner);
     }
 
-    /// One sidebar row: the account dot, the indented label, the unread count.
+    /// One sidebar row: the account dot, the label indented by depth, the count. Replaced by
+    /// `sidebar_view.rs` in the next task.
     fn sidebar_line(
         &self,
         index: usize,
-        item: &SidebarItem,
+        row: &SidebarRow,
         cols: usize,
         theme: &Theme,
         glyphs: &Glyphs,
     ) -> Line<'static> {
         let selected = index == self.sidebar.cursor() && self.focus == super::Focus::Sidebar;
         let style = if selected { theme.selected } else { theme.text };
-        let count = if item.unread > 0 {
-            item.unread.to_string()
-        } else {
-            String::new()
-        };
-        let indent = if item.depth > 0 { "    " } else { "" };
-        let dot = match item.account {
-            Some(_) if item.depth == 0 => format!("{} ", glyphs.account),
-            _ if item.depth == 0 => "  ".to_string(),
+        let count = row
+            .count
+            .filter(|&n| n > 0)
+            .map_or_else(String::new, |n| n.to_string());
+        let indent = "  ".repeat(usize::from(row.depth));
+        let dot = match row.kind {
+            RowKind::Account { .. } => format!("{} ", glyphs.account),
             _ => String::new(),
         };
-        let color = item
-            .account
+        let color = row
+            .account()
             .map_or(Color::Reset, |i| self.account_color(i, theme));
         let label_cols = cols.saturating_sub(width(&dot) + indent.len() + count.len() + 1);
         Line::from(vec![
             Span::styled(dot, style.fg(color)),
             Span::styled(
-                format!("{indent}{} {count}", pad(&item.label, label_cols)),
+                format!("{indent}{} {count}", pad(&row.label, label_cols)),
                 style,
             ),
         ])

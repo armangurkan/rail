@@ -3,25 +3,25 @@ source: crates/rail/src/tui/screens/mail/tests/drafts_folder.rs
 expression: shot
 ---
 ▍Rail │ work · Drafts · 2 unread                                            ⟳ Syncing work
-  All inboxes           5│●  Yesterday  Pat Doe             Pushed note
-● work                  3│●  Yesterday  Gail                Written on the phone
-    Sent                 │●  Yesterday  (local)           ✎ Local plan
-    Drafts              2│
-    Projects             │
+UNIFIED                  │●  Yesterday  Pat Doe             Pushed note
+All inboxes             5│●  Yesterday  Gail                Written on the phone
+Starred                  │●  Yesterday  (local)           ✎ Local plan
+Drafts                  3│
+Sent                     │
+Trash                    │
+                         │
+ACCOUNTS                 │
+● work                  3│
+  Inbox                 3│
+  Sent                   │
+  Drafts                3│
+                         │
+  More folders (1)       │
 ● home                  2│
-    Sent                 │
-    Projects             │
+  Inbox                 2│
+  Sent                   │
                          │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
+  More folders (1)       │
                          │
                          │
                          │

@@ -83,22 +83,21 @@ impl MailScreen {
     }
 
     fn label_entries(&self) -> impl Iterator<Item = PaletteEntry> + '_ {
-        self.sidebar
-            .items()
-            .iter()
-            .filter(|i| i.depth > 0)
-            .map(|item| {
-                let account = item
-                    .account
-                    .and_then(|i| self.accounts.get(i))
-                    .map_or("", |a| a.label.as_str());
-                PaletteEntry {
-                    text: format!("Label: {account} · {}", item.label),
-                    search: format!("label {account} {}", item.label),
-                    key: String::new(),
-                    target: Target::Scope(item.scope.clone()),
-                }
+        self.sidebar.all_rows().iter().filter_map(|row| {
+            let scope = row.scope()?;
+            let ScopeChoice::Folder { account, name, .. } = &scope else {
+                return None;
+            };
+            let entry = self.accounts.get(*account);
+            let label = entry.map_or("", |a| a.label.as_str());
+            let id = entry.map_or("", |a| a.name.as_str());
+            Some(PaletteEntry {
+                text: format!("Label: {label} · {name}"),
+                search: format!("label {label} {id} {name}"),
+                key: String::new(),
+                target: Target::Scope(scope.clone()),
             })
+        })
     }
 }
 

@@ -31,6 +31,7 @@ mod drafts_folder;
 mod m365;
 mod pickers;
 mod replaced;
+mod sidebar;
 mod state;
 mod themes;
 mod unified;
@@ -498,24 +499,34 @@ async fn the_sidebar_toggles_focuses_and_opens_a_label() {
     let labels: Vec<String> = f
         .screen
         .sidebar
-        .items()
+        .rows()
         .iter()
-        .map(|i| i.label.clone())
+        .map(|r| r.label.clone())
         .collect();
     assert_eq!(
         labels,
         [
+            "UNIFIED",
             "All inboxes",
+            "Starred",
+            "Drafts",
+            "Sent",
+            "Trash",
+            "",
+            "ACCOUNTS",
             "work",
+            "Inbox",
             "Sent",
-            "Projects",
+            "",
+            "More folders (1)",
             "home",
+            "Inbox",
             "Sent",
-            "Projects"
+            "",
+            "More folders (1)"
         ]
     );
-    press_n(&mut f, KeyCode::Char('j'), 3).await;
-    press(&mut f, KeyCode::Enter).await;
+    sidebar::open_projects(&mut f).await;
     assert!(
         matches!(&f.screen.scope, ScopeChoice::Folder { account: 0, name, .. } if name == "Projects")
     );

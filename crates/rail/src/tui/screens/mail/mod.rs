@@ -22,6 +22,8 @@ mod palette;
 mod reading;
 mod selection;
 mod sidebar;
+#[cfg(test)]
+mod sidebar_tests;
 mod sidebar_tree;
 #[cfg(test)]
 mod sidebar_tree_tests;
@@ -478,9 +480,9 @@ impl MailScreen {
         match action {
             Action::SidebarDown => self.sidebar.down(),
             Action::SidebarUp => self.sidebar.up(),
+            Action::SidebarFold => self.sidebar.toggle_fold(),
             Action::SidebarOpen => {
-                if let Some(item) = self.sidebar.selected() {
-                    let scope = item.scope.clone();
+                if let Some(scope) = self.sidebar.open() {
                     self.focus = Focus::List;
                     return self.set_scope(scope);
                 }
