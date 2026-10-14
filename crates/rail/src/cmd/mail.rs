@@ -78,7 +78,7 @@ fn context(
         store: StoreReader::new(paths.db_file()),
         link: DaemonLink::new(daemon_link::connector(paths)),
         opener,
-        clock: Clock::system(),
+        clock: Clock::system(config.general.time),
         icons: config.general.icons,
         split_threshold: config.general.split_threshold,
         hints: config.general.hints,
