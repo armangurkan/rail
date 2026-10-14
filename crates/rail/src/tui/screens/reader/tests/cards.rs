@@ -1,5 +1,5 @@
-//! The title block and the cards through the mail screen: `h` and `?`, `e` on a card,
-//! `:thread-order` and its save.
+//! The reader's keys and commands through the mail screen: `h` (and `?` listing it), `e` on
+//! a card, and `:thread-order` with its save and its failed save.
 
 use crossterm::event::KeyCode;
 use rail_core::config::ThreadOrder;
