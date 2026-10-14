@@ -774,3 +774,5 @@ fn the_star_takes_the_senders_tone() {
     let lines = setup.lines(&detail, 90);
     assert_eq!(card_of(&lines, 2).segments()[4].1, Tone::Plain);
 }
+
+mod edges;

@@ -273,11 +273,14 @@ fn segments_width(segments: &[(String, Tone)]) -> usize {
 /// `segments` cut at `width` columns: the one that crosses the edge is cut with `…`, the rest
 /// are dropped; when the row is full exactly at a segment's end and more follow, that last kept
 /// segment shows the `…`.
-fn cut(segments: Vec<(String, Tone)>, width: usize) -> Vec<(String, Tone)> {
+pub(super) fn cut(segments: Vec<(String, Tone)>, width: usize) -> Vec<(String, Tone)> {
     let mut out: Vec<(String, Tone)> = Vec::new();
     let mut used = 0;
     for (text, tone) in segments {
         let w = cells(&text);
+        if w == 0 && used == width {
+            continue;
+        }
         if used + w <= width {
             used += w;
             out.push((text, tone));
