@@ -17,7 +17,7 @@ use crate::paths::Paths;
 use crate::provider::mock::{Call, MockDraft, MockProvider, envelope};
 use crate::provider::{AttachmentMeta, Body, Envelope, Mailbox, ProviderError};
 use crate::store::Store;
-use crate::store::drafts::{Attachment, DraftKind, DraftWrite, Recipient};
+use crate::store::drafts::{Attachment, DraftKind, DraftWrite, Recipient, modified_ns};
 use crate::store::outbox::OutboxState;
 
 /// The bytes of d1's attachment `p1` at Gmail.
@@ -309,6 +309,7 @@ async fn an_import_with_its_body_stored_makes_a_draft_with_its_gmail_identity() 
             mime: "application/pdf".into(),
             size: i64::try_from(PLAN.len()).unwrap(),
             listed: Some(1234),
+            modified: std::fs::metadata(&path).ok().as_ref().and_then(modified_ns),
         }]
     );
     assert_eq!(d.thread_id, Some(source.thread_id));

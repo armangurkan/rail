@@ -97,6 +97,12 @@ pub enum Attachment {
         /// imported it: Graph lists a file larger than its bytes. `None` until then.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         listed: Option<i64>,
+        /// The file's modification time (nanoseconds since the Unix epoch) when Rail last
+        /// checked it: a file whose time or size differs from its entry's is uploaded again,
+        /// so one overwritten at the same length does not keep the provider's old copy. `None`
+        /// in an entry written before Rail kept it, which therefore goes up once more.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        modified: Option<i64>,
     },
     Part {
         message: i64,
@@ -125,6 +131,17 @@ impl Attachment {
             Self::File { size, .. } | Self::Part { size, .. } => *size,
         }
     }
+}
+
+/// `meta`'s modification time in nanoseconds since the Unix epoch, as an attachment entry
+/// records it; `None` where the system gives none.
+pub fn modified_ns(meta: &std::fs::Metadata) -> Option<i64> {
+    let since = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    i64::try_from(since.as_nanos()).ok()
 }
 
 impl std::fmt::Debug for Attachment {

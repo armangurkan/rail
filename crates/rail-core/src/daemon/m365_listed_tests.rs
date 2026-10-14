@@ -250,3 +250,49 @@ async fn an_imported_outlook_drafts_saves_upload_nothing_for_its_files() {
     c.pushed(draft, "p-2").await;
     assert_eq!(attachment_writes(&c).await, Vec::<String>::new(), "an edit");
 }
+
+#[tokio::test]
+async fn a_file_overwritten_at_the_same_length_is_uploaded_again() {
+    use base64::Engine as _;
+    let c = corp().await;
+    new_draft_at_outlook(&c, note_listing("att-1", NOTE_LISTED)).await;
+    let files = tempfile::tempdir().unwrap();
+    let note = files.path().join("note.txt");
+    std::fs::write(&note, NOTE).unwrap();
+    let first = with_file(save(DraftKind::New, None, "s-1"), &note);
+    let draft = c.client.call::<DraftSave>(&first).await.unwrap().draft;
+    c.pushed(draft, "p-1").await;
+    let same_length = b"A NOTE OF FORTY-ONE BYTES FOR THE TEST..\n";
+    assert_eq!(same_length.len(), NOTE.len());
+    std::fs::write(&note, same_length).unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+    std::fs::File::options()
+        .write(true)
+        .open(&note)
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    let mut overwritten = with_file(save(DraftKind::New, None, "s-2"), &note);
+    overwritten.draft = Some(draft);
+    c.client.call::<DraftSave>(&overwritten).await.unwrap();
+    c.pushed(draft, "p-2").await;
+    assert_eq!(
+        attachment_writes(&c).await,
+        [
+            upload(),
+            format!("DELETE {ROOT}/me/messages/g-n1/attachments/att-1"),
+            upload()
+        ],
+        "same size, newer time: the old copy goes and the new bytes go up"
+    );
+    let seen = c.g.server.received_requests().await.unwrap();
+    let last_upload = seen
+        .iter()
+        .rfind(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/attachments"))
+        .unwrap();
+    let body: Value = serde_json::from_slice(&last_upload.body).unwrap();
+    let sent = base64::engine::general_purpose::STANDARD
+        .decode(body["contentBytes"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(sent, same_length, "the new bytes");
+}

@@ -23,7 +23,7 @@ use crate::paths::Paths;
 use crate::provider::gmail::mime::valid_message_id_inner;
 use crate::store::Store;
 use crate::store::drafts::{
-    Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite, ReplyAttachment,
+    Attachment, Draft, DraftKind, DraftSaved, DraftState, DraftWrite, ReplyAttachment, modified_ns,
 };
 use crate::store::outbox::{DraftDeleteOutcome, NewAction, OutboxOutcome, OutboxWrite};
 use crate::sync::Wants;
@@ -90,6 +90,7 @@ fn file_attachment(path: String) -> Result<Attachment, OpError> {
         path,
         size: i64::try_from(meta.len()).unwrap_or(i64::MAX),
         listed: None,
+        modified: modified_ns(&meta),
     })
 }
 
@@ -305,8 +306,9 @@ fn kept_parts(
 }
 
 /// The files to write, each taking the size the provider listed for the draft's entry with the
-/// same path and size in bytes: the same file, saved again. A file replaced since (other bytes)
-/// takes none, so the next save uploads it again.
+/// same path, size in bytes and modification time: the same file, saved again. A file replaced
+/// since (other bytes, or the same length written later) takes none, so the next save uploads
+/// it again.
 fn with_recorded(files: Vec<Attachment>, existing: Option<&Draft>) -> Vec<Attachment> {
     let stored = existing.map_or(&[][..], |d| d.attachments.as_slice());
     files
@@ -318,14 +320,16 @@ fn with_recorded(files: Vec<Attachment>, existing: Option<&Draft>) -> Vec<Attach
                 mime,
                 size,
                 listed: None,
+                modified,
             } => {
                 let listed = stored.iter().find_map(|a| match a {
                     Attachment::File {
                         path: p,
                         size: s,
                         listed,
+                        modified: m,
                         ..
-                    } if *p == path && *s == size => *listed,
+                    } if *p == path && *s == size && m.is_some() && *m == modified => *listed,
                     _ => None,
                 });
                 Attachment::File {
@@ -334,6 +338,7 @@ fn with_recorded(files: Vec<Attachment>, existing: Option<&Draft>) -> Vec<Attach
                     mime,
                     size,
                     listed,
+                    modified,
                 }
             }
             other => other,

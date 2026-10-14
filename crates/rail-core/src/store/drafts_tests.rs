@@ -28,6 +28,7 @@ fn write(account_id: i64) -> DraftWrite {
             mime: "application/pdf".into(),
             size: 10,
             listed: None,
+            modified: None,
         }],
         message_id: "<11111111-2222-4333-8444-555555555555@example.com>".into(),
         source_remote_id: None,

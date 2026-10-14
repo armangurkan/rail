@@ -126,6 +126,7 @@ async fn discarding_an_imported_draft_removes_its_files() {
         mime: "application/pdf".into(),
         size: 1,
         listed: None,
+        modified: None,
     });
     Store::open(&h.paths.db_file())
         .unwrap()

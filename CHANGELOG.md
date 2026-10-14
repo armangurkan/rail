@@ -309,6 +309,9 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A Microsoft 365 draft's attachment overwritten in place with new bytes of the same length kept
+  the old copy in Outlook, and that copy was sent. Rail now records each file's modification time
+  and uploads a file whose time or size changed (#42).
 - A reply or forward of an HTML mail quoted its `[1]` link markers without the links. The links
   the text marks now follow it, one line each (`[1] https://…`, or `(link not included)` for an
   address Rail would not open) (#43).

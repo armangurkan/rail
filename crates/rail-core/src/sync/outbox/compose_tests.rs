@@ -5,7 +5,7 @@ use super::compose::{FileRef, PartRef, attach, outgoing_for};
 use crate::provider::mock::MockProvider;
 use crate::provider::{Mailbox, ProviderError};
 use crate::store::Store;
-use crate::store::drafts::{Attachment, Draft, DraftKind, DraftWrite, Recipient};
+use crate::store::drafts::{Attachment, Draft, DraftKind, DraftWrite, Recipient, modified_ns};
 use crate::test_support::{seed_two_messages, store_with_account};
 
 fn draft(store: &mut Store, account: i64, attachments: Vec<Attachment>) -> Draft {
@@ -86,6 +86,7 @@ fn files_and_parts_are_listed_with_the_parts_message_at_gmail() {
                 mime: "text/plain".into(),
                 size: 1,
                 listed: None,
+                modified: None,
             },
             Attachment::Part {
                 message: m1,
@@ -103,6 +104,8 @@ fn files_and_parts_are_listed_with_the_parts_message_at_gmail() {
             path: "/tmp/a.txt".into(),
             name: "a.txt".into(),
             mime: "text/plain".into(),
+            size: 1,
+            modified: None,
             listed: None,
         }]
     );
@@ -170,6 +173,7 @@ async fn an_unreadable_file_is_a_permanent_error_without_its_name() {
             mime: "text/plain".into(),
             size: 1,
             listed: None,
+            modified: None,
         }],
     );
     let assembly = outgoing_for(&store, &d, "me@example.com", None).unwrap();
@@ -324,5 +328,66 @@ async fn a_forwarded_part_gone_names_the_accounts_provider() {
             "permanent",
             "an attachment of this message is no longer in Microsoft 365"
         )
+    );
+}
+
+/// `note.txt` in `dir` holding `bytes`, written `secs` after the epoch; its path and time.
+fn note_at(dir: &std::path::Path, bytes: &[u8], secs: u64) -> (String, Option<i64>) {
+    let path = dir.join("note.txt");
+    std::fs::write(&path, bytes).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+        .unwrap();
+    let modified = modified_ns(&std::fs::metadata(&path).unwrap());
+    (path.to_str().unwrap().to_string(), modified)
+}
+
+fn note_entry(path: &str, modified: Option<i64>) -> Attachment {
+    Attachment::File {
+        path: path.into(),
+        name: "note.txt".into(),
+        mime: "text/plain".into(),
+        size: 9,
+        listed: Some(239),
+        modified,
+    }
+}
+
+async fn listed_on_send(store: &Store, d: &Draft) -> Option<usize> {
+    let assembly = outgoing_for(store, d, "me@example.com", None).unwrap();
+    let mail = attach(assembly, &MockProvider::new(), "Microsoft 365")
+        .await
+        .unwrap();
+    mail.outgoing.attachments[0].listed
+}
+
+#[tokio::test]
+async fn a_send_keeps_the_listed_size_only_for_the_file_it_was_recorded_for() {
+    let (mut store, account) = store_with_account();
+    let dir = tempfile::tempdir().unwrap();
+    let (path, modified) = note_at(dir.path(), b"old bytes", 1_000_000);
+    let d = draft(&mut store, account, vec![note_entry(&path, modified)]);
+    assert_eq!(listed_on_send(&store, &d).await, Some(239), "the same file");
+    note_at(dir.path(), b"new bytes", 2_000_000);
+    assert_eq!(
+        listed_on_send(&store, &d).await,
+        None,
+        "same length, newer time: uploaded again"
+    );
+}
+
+#[tokio::test]
+async fn a_record_without_a_time_loses_its_listed_size() {
+    let (mut store, account) = store_with_account();
+    let dir = tempfile::tempdir().unwrap();
+    let (path, _) = note_at(dir.path(), b"old bytes", 1_000_000);
+    let d = draft(&mut store, account, vec![note_entry(&path, None)]);
+    assert_eq!(
+        listed_on_send(&store, &d).await,
+        None,
+        "an entry from before Rail kept the time goes up once more"
     );
 }
