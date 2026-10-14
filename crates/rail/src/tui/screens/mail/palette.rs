@@ -1,6 +1,8 @@
 //! The `:` palette's entries: the active view's key actions and the global ones, Rail's own
 //! commands, each account, merged mailbox and label.
 
+use rail_core::config::TimeFormat;
+
 use super::MailScreen;
 use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
@@ -8,7 +10,7 @@ use crate::tui::modals::{PaletteEntry, Target};
 
 impl MailScreen {
     /// Every palette entry: each key action of the active view and the global ones with its
-    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, each account, merged
+    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, `time`, each account, merged
     /// mailbox and label.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let key = |a: Action| self.ctx.keymap.label(a);
@@ -40,13 +42,18 @@ impl MailScreen {
         entries
     }
 
-    /// Rail's own commands; `compose` carries the key of `c`, `hints` says what it will do.
+    /// Rail's own commands; `compose` carries the key of `c`, `hints` and `time` say what they
+    /// will do.
     fn command_entries(&self) -> Vec<PaletteEntry> {
         let compose = self.ctx.keymap.label(Action::ListCompose);
         let hints = if self.hints {
             "Turn the key hints off"
         } else {
             "Turn the key hints on"
+        };
+        let time = match self.ctx.clock.format() {
+            TimeFormat::H24 => "Show times as 12-hour (am/pm)",
+            TimeFormat::H12 => "Show times as 24-hour",
         };
         let commands = [
             ("Write a new message", "compose", compose, Target::Compose),
@@ -70,6 +77,7 @@ impl MailScreen {
                 Target::Accent,
             ),
             (hints, "hints", String::new(), Target::Hints),
+            (time, "time", String::new(), Target::Time),
         ];
         commands
             .into_iter()

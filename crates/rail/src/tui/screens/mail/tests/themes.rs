@@ -1,5 +1,5 @@
 //! `:theme` and `:accent`: preview on every move, Esc restores, Enter keeps and writes config,
-//! the non-truecolor path, a failed write; `:hints` and its save.
+//! the non-truecolor path, a failed write; `:hints` and `:time` and their saves.
 
 use ratatui::style::Color;
 
@@ -335,6 +335,99 @@ async fn colon_hints_turns_the_hints_off_and_on_and_saves_the_choice() {
     assert!(text.contains("editor = \"vi\" # mine"), "{text}");
     expire_notice(&mut f).await;
     assert!(bottom_row(&f).contains("? help"), "{}", bottom_row(&f));
+}
+
+/// `:time` typed in the palette and run with Enter.
+async fn run_time_from_the_palette(f: &mut Fixture) {
+    press(f, KeyCode::Char(':')).await;
+    type_text(f, "time").await;
+    press(f, KeyCode::Enter).await;
+}
+
+#[tokio::test]
+async fn colon_time_switches_to_am_pm_and_back_and_saves_the_choice() {
+    let mut f = fixture(3).await;
+    write_config(&f, "[general]\neditor = \"vi\" # mine\n");
+    let before = drawn(&f);
+    assert!(before.contains("Synced 12:39"), "{before}");
+    assert!(before.contains("08:55"), "a row's time: {before}");
+    assert!(
+        f.screen
+            .palette_entries()
+            .iter()
+            .any(|e| e.target == Target::Time && e.text == "Show times as 12-hour (am/pm)")
+    );
+
+    run_time_from_the_palette(&mut f).await;
+    assert!(f.screen.modal.is_none());
+    assert!(
+        f.screen.status_line().contains("time: 12h"),
+        "{}",
+        f.screen.status_line()
+    );
+    let text = config_text(&f);
+    assert!(text.contains("editor = \"vi\" # mine"), "{text}");
+    assert!(text.contains("time = \"12h\""), "{text}");
+    let config = rail_core::config::parse(&text, &f.paths.config_file()).unwrap();
+    assert_eq!(config.general.time, rail_core::config::TimeFormat::H12);
+    let after = drawn(&f);
+    assert!(after.contains("Synced 12:39 pm"), "{after}");
+    assert!(after.contains("8:55 am"), "a row's time: {after}");
+    assert!(
+        f.screen
+            .palette_entries()
+            .iter()
+            .any(|e| e.target == Target::Time && e.text == "Show times as 24-hour")
+    );
+
+    press(&mut f, KeyCode::Enter).await;
+    let reader = drawn(&f);
+    assert!(reader.contains("Oct 2025 8:55 am"), "the reader: {reader}");
+    run_time_from_the_palette(&mut f).await;
+    assert!(
+        f.screen.status_line().contains("time: 24h"),
+        "{}",
+        f.screen.status_line()
+    );
+    let reader = drawn(&f);
+    assert!(
+        reader.contains("Oct 2025 08:55") && !reader.contains("8:55 am"),
+        "the open reader follows: {reader}"
+    );
+    let text = config_text(&f);
+    assert!(!text.contains("time"), "24h is the default: {text}");
+    assert!(text.contains("editor = \"vi\" # mine"), "{text}");
+}
+
+#[tokio::test]
+async fn a_failed_time_save_keeps_the_setting_and_reports() {
+    let mut f = fixture(3).await;
+    write_config(&f, "[general]\n");
+    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
+    let writable = std::fs::metadata(&dir).unwrap().permissions();
+    let mut read_only = writable.clone();
+    read_only.set_readonly(true);
+    std::fs::set_permissions(&dir, read_only).unwrap();
+    if std::fs::write(dir.join("probe"), "x").is_ok() {
+        eprintln!("skipped: this user can write a read-only directory");
+        std::fs::set_permissions(&dir, writable).unwrap();
+        return;
+    }
+    run_target(&mut f, Target::Time).await;
+    std::fs::set_permissions(&dir, writable).unwrap();
+    assert_eq!(
+        f.screen.ctx.clock.format(),
+        rail_core::config::TimeFormat::H12,
+        "kept for the session"
+    );
+    assert!(
+        f.screen
+            .status_line()
+            .contains("Could not save the time setting"),
+        "{}",
+        f.screen.status_line()
+    );
+    assert_eq!(f.screen.error_count(), 1);
 }
 
 #[tokio::test]
