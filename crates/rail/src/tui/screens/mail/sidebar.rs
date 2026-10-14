@@ -2,6 +2,7 @@
 //! folders under `More folders`, folding for the session, and a cursor kept on its row across
 //! re-reads. The rows come from `sidebar_tree`.
 
+use std::cell::Cell;
 use std::collections::HashSet;
 
 use rail_core::store::view::MAX_SIDEBAR_FOLDERS;
@@ -28,6 +29,8 @@ pub struct Sidebar {
     capped: Vec<usize>,
     /// The folders that are an account's Drafts.
     drafts: HashSet<i64>,
+    /// The first row drawn, from the last frame.
+    offset: Cell<usize>,
 }
 
 impl Sidebar {
@@ -76,6 +79,21 @@ impl Sidebar {
         self.cursor = sidebar_tree::refind(&self.rows, self.cursor.as_ref(), &rows);
         self.all = all;
         self.rows = rows;
+    }
+
+    /// The shown row drawn as `scope`'s: the last one with it (an account's Inbox row while the
+    /// account is unfolded, its account row while folded).
+    pub fn current(&self, scope: &ScopeChoice) -> Option<usize> {
+        self.rows
+            .iter()
+            .rposition(|r| r.scope().as_ref() == Some(scope))
+    }
+
+    /// The first row to draw so row `target` shows in `height` rows; kept for the next frame.
+    pub fn scroll(&self, target: usize, height: usize) -> usize {
+        let offset = super::visible_offset(self.offset.get(), target, height);
+        self.offset.set(offset);
+        offset
     }
 
     /// The last read failed: keep the rows and say so.

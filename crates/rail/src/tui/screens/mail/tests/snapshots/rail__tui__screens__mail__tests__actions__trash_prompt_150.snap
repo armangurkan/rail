@@ -5,23 +5,23 @@ expression: shot
 ▍Rail │ All inboxes · 2 accounts · 5 unread  / Search                                                                                   ● Synced 12:39
 ┌────────────────────────┐┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────────────────┐
 │UNIFIED                 ││●  Yesterday  Sender                 subject wm2      ││Open a thread with Enter; it shows here.                          │
-│All inboxes            5││●  Yesterday  Sender                 subject hm1      ││                                                                  │
-│Starred                 ││●  Yesterday  Sender                 subject wm1      ││                                                                  │
-│Drafts                  ││●  Yesterday  Sender                 subject hm0      ││                                                                  │
-│Sent                    ││●  Yesterday  Sender                 subject wm0      ││                                                                  │
-│Trash                   ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
+│✉  All inboxes         5││●  Yesterday  Sender                 subject hm1      ││                                                                  │
+│★  Starred              ││●  Yesterday  Sender                 subject wm1      ││                                                                  │
+│✎  Drafts               ││●  Yesterday  Sender                 subject hm0      ││                                                                  │
+│➤  Sent                 ││●  Yesterday  Sender                 subject wm0      ││                                                                  │
+│🗑  Trash                ││                                                      ││                                                                  │
+│────────────────────────││                                                      ││                                                                  │
 │ACCOUNTS                ││            ┌ Trash? ──────────────────────────────────────────────────────────────┐                                      │
-│● work                 3││            │Trash "subject wm2"?                                                  │                                      │
-│  Inbox                3││            │Gmail keeps trashed mail in its Trash for 30 days.                    │                                      │
-│  Sent                  ││            │                                                                      │                                      │
-│                        ││            │y yes · n or Esc no                                                   │                                      │
-│  More folders (1)      ││            └──────────────────────────────────────────────────────────────────────┘                                      │
-│● home                 2││                                                      ││                                                                  │
-│  Inbox                2││                                                      ││                                                                  │
-│  Sent                  ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
-│  More folders (1)      ││                                                      ││                                                                  │
+│▾  W  work             3││            │Trash "subject wm2"?                                                  │                                      │
+│  ✉  Inbox             3││            │Gmail keeps trashed mail in its Trash for 30 days.                    │                                      │
+│  ➤  Sent               ││            │                                                                      │                                      │
+│────────────────────────││            │y yes · n or Esc no                                                   │                                      │
+│▸ 📁  More folders (… ···││            └──────────────────────────────────────────────────────────────────────┘                                      │
+│▾  H  home             2││                                                      ││                                                                  │
+│  ✉  Inbox             2││                                                      ││                                                                  │
+│  ➤  Sent               ││                                                      ││                                                                  │
+│────────────────────────││                                                      ││                                                                  │
+│▸ 📁  More folders (… ···││                                                      ││                                                                  │
 └────────────────────────┘└──────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────┘
 ┌───────┐      ┌─────┐      ┌─────┐         ┌───┐       ┌───┐         ┌───┐         ┌───┐       ┌───┐        ┌───┐
 │ Enter │ open │ j/k │ move │ Tab │ sidebar │ r │ reply │ c │ compose │ e │ archive │ d │ trash │ / │ filter │ ? │ help            ● work ✓ · ● home ✓

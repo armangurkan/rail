@@ -289,6 +289,13 @@ opens its inbox; `More folders` and a path that is not a folder itself unfold in
 `Space`, `←` or `→` folds or unfolds an account, `More folders` or a path; accounts start
 unfolded and the rest folded, for the session. Counts are unread threads (on a folded path,
 everything under it), drafts on `Drafts`, and none on `Sent` and `Trash`.
+Each account row has its fold arrow (`▾` unfolded, `▸` folded) and a badge, its label's first
+letter on the account's colour. Mailboxes have icons (`✉` inbox, `★` Starred, `✎` Drafts, `➤`
+Sent, `🗑` Trash, `▣` Archive, `⊘` Spam, `📁` `More folders` and a path with folders under it)
+and their counts on the right with thousands separators; a folded `More folders` shows `···`.
+With `icons = "ascii"` the arrows are `v` and `>` and the icons `i`, `*`, `d`, `>`, `x`, `a`, `s`
+and `/`. While the list has focus the current mailbox's row is in the accent colour; the sidebar
+scrolls to keep it (or, while the sidebar has focus, the cursor) in view.
 
 The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread` (`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), a search slot
 (`/ Search`; the filter shows there once set), and on the right one line for every account's
@@ -790,8 +797,9 @@ What a Microsoft 365 account does today. It syncs, reads, acts on threads and wr
 Microsoft Graph.
 
 - **Folders.** Every mail folder is synced, nested ones as `Parent/Child`. Inbox, Sent Items,
-  Drafts, Archive, Deleted Items and Junk Email take the Inbox, Sent, Drafts, Archive, Trash and
-  Spam places in the sidebar. Search folders and Conversation History, RSS Feeds, RSS
+  Drafts, Archive, Deleted Items and Junk Email are the account's system folders in the sidebar,
+  under those names, and fill `Sent` and `Trash` under UNIFIED; every other folder is under
+  `More folders`, nested ones as a tree. Search folders and Conversation History, RSS Feeds, RSS
   Subscriptions and Sync Issues are left out. Those last four are matched by their English names,
   so a mailbox in another language may show them.
 - **Threads and stars.** A thread is an Outlook conversation, and a star is Outlook's flag.

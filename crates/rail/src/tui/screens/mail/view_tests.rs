@@ -122,6 +122,173 @@ fn draw(screen: &MailScreen, width: u16, height: u16) -> String {
     snapshot(width, height, |frame| screen.view(frame, &Theme::default()))
 }
 
+async fn press(screen: &mut MailScreen, code: crossterm::event::KeyCode) {
+    let effects = screen.update(crate::tui::app::Msg::Key(crate::tui::test_util::key(code)));
+    settle(screen, effects).await;
+}
+
+/// Move the sidebar's cursor down to the first row labelled `label`.
+async fn sidebar_to(screen: &mut MailScreen, label: &str) {
+    for _ in 0..screen.sidebar.rows().len() {
+        if screen.sidebar.selected().is_some_and(|r| r.label == label) {
+            return;
+        }
+        press(screen, crossterm::event::KeyCode::Char('j')).await;
+    }
+    panic!("no sidebar row {label:?}");
+}
+
+/// `screen` with `work`'s folders as a tree: Trash, Projects, `Clients` with `Clients/Acme` (one
+/// unread thread), a Gmail category and a folder with a hostile name.
+async fn tree_screen(icons: Icons) -> (tempfile::TempDir, MailScreen) {
+    use rail_core::provider::{FolderKind, RemoteFolder};
+    let (tmp, mut screen) = screen(icons).await;
+    let folder = |id: &str, name: &str, kind: FolderKind| RemoteFolder {
+        parent: None,
+        remote_id: id.into(),
+        name: name.into(),
+        kind,
+    };
+    let folders = vec![
+        folder("INBOX", "Inbox", FolderKind::Inbox),
+        folder("SENT", "Sent", FolderKind::Sent),
+        folder("TRASH", "Trash", FolderKind::Trash),
+        folder("Label_1", "Projects", FolderKind::User),
+        folder("Label_2", "Clients", FolderKind::User),
+        folder("Label_3", "Clients/Acme", FolderKind::User),
+        folder("CATEGORY_SOCIAL", "Category: Social", FolderKind::Label),
+        folder("Label_4", "Ev\u{1b}[2Jil", FolderKind::User),
+    ];
+    let mut acme = mail_envelope("wc", "wtc", BASE_MS + 3_600_000);
+    acme.folders = vec!["Label_3".into()];
+    let batch = Batch {
+        folders: Some(folders),
+        upserts: vec![acme],
+        ..Batch::new(1)
+    };
+    let db = Paths::all_in(tmp.path()).db_file();
+    let mut store = rail_core::store::Store::open(&db).unwrap();
+    store.apply(&batch, BASE_MS / 1000).unwrap();
+    let effect = screen.read_sidebar();
+    settle(&mut screen, vec![effect]).await;
+    (tmp, screen)
+}
+
+#[tokio::test]
+async fn the_sidebar_drawn_folded_and_unfolded() {
+    use crossterm::event::KeyCode;
+    for (icons, name) in [(Icons::Unicode, "unicode"), (Icons::Ascii, "ascii")] {
+        let (_tmp, mut screen) = tree_screen(icons).await;
+        let _ = draw(&screen, 90, 24);
+        press(&mut screen, KeyCode::Char('b')).await;
+        insta::assert_snapshot!(format!("sidebar_shown_{name}_90x24"), draw(&screen, 90, 24));
+        press(&mut screen, KeyCode::Tab).await;
+        sidebar_to(&mut screen, "More folders (5)").await;
+        press(&mut screen, KeyCode::Char(' ')).await;
+        sidebar_to(&mut screen, "Clients").await;
+        press(&mut screen, KeyCode::Char(' ')).await;
+        press(&mut screen, KeyCode::Tab).await;
+        insta::assert_snapshot!(
+            format!("sidebar_unfolded_{name}_150x40"),
+            draw(&screen, 150, 40)
+        );
+    }
+}
+
+/// Review Focus 1 (the folder half, on screen).
+#[tokio::test]
+async fn a_hostile_folder_name_is_escaped_in_the_sidebar() {
+    use crossterm::event::KeyCode;
+    let (_tmp, mut screen) = tree_screen(Icons::Unicode).await;
+    press(&mut screen, KeyCode::Tab).await;
+    sidebar_to(&mut screen, "More folders (5)").await;
+    press(&mut screen, KeyCode::Char(' ')).await;
+    let lines =
+        crate::tui::test_util::render_lines(150, 40, |frame| screen.view(frame, &Theme::default()));
+    assert!(lines.iter().all(|l| !l.contains('\u{1b}')));
+    assert!(
+        lines.iter().any(|l| l.contains("Ev\\u{1b}[2Jil")),
+        "{lines:#?}"
+    );
+}
+
+/// Review Focus 5 (the drawn half).
+#[tokio::test]
+async fn the_badge_takes_the_account_colour_and_the_current_scope_row_the_accent() {
+    use ratatui::style::Color;
+    let (_tmp, mut screen) = screen(Icons::Unicode).await;
+    press(&mut screen, crossterm::event::KeyCode::Char('1')).await;
+    let theme = Theme::default();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(150, 40)).unwrap();
+    terminal.draw(|frame| screen.view(frame, &theme)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let side = |y: u16| {
+        (1..25u16)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>()
+    };
+    let work = (0..40u16)
+        .find(|&y| side(y).contains(" W  work"))
+        .expect("work's account row");
+    let x = (1..25u16)
+        .find(|&x| buffer[(x, work)].symbol() == "W")
+        .unwrap();
+    assert_eq!(buffer[(x, work)].bg, Color::Cyan, "work's colour");
+    assert_eq!(buffer[(x, work)].fg, Color::Black);
+    assert_eq!(
+        buffer[(x - 1, work)].bg,
+        Color::Cyan,
+        "one cell of padding each side"
+    );
+    assert_eq!(buffer[(x + 1, work)].bg, Color::Cyan);
+    let inbox = work + 1;
+    assert!(side(inbox).contains("Inbox"), "{}", side(inbox));
+    let accent = theme.accent.fg.unwrap();
+    assert_eq!(
+        buffer[(8, inbox)].fg,
+        accent,
+        "work's Inbox is the current row"
+    );
+    assert_ne!(buffer[(20, work)].fg, accent, "its account row is not");
+}
+
+/// The sidebar fits in a 40-row terminal with `More folders` folded and scrolls otherwise: the
+/// cursor stays in view while the sidebar has focus, the current scope's row while it has not.
+#[tokio::test]
+async fn the_sidebar_scrolls_to_keep_the_cursor_or_the_current_row_in_view() {
+    let (_tmp, mut screen) = screen(Icons::Unicode).await;
+    press(&mut screen, crossterm::event::KeyCode::Tab).await;
+    for _ in 0..30 {
+        press(&mut screen, crossterm::event::KeyCode::Char('j')).await;
+    }
+    let lines =
+        crate::tui::test_util::render_lines(150, 14, |frame| screen.view(frame, &Theme::default()));
+    let side: Vec<String> = lines.iter().map(|l| l.chars().take(26).collect()).collect();
+    // At 24 columns `More folders (1)` is cut to make room for its `···`.
+    let home = side
+        .iter()
+        .position(|l| l.contains(" H  home"))
+        .unwrap_or_else(|| panic!("home's account row: {side:#?}"));
+    assert!(
+        side[home..].iter().any(|l| l.contains("More folders (")),
+        "the last row is in view: {side:#?}"
+    );
+    assert!(
+        !side.iter().any(|l| l.contains("UNIFIED")),
+        "the top scrolled away: {side:#?}"
+    );
+    // The list takes the keys; the scope is still All inboxes, at the top: it scrolls back.
+    press(&mut screen, crossterm::event::KeyCode::Tab).await;
+    assert_eq!(screen.focus, Focus::List);
+    let lines =
+        crate::tui::test_util::render_lines(150, 14, |frame| screen.view(frame, &Theme::default()));
+    let side: Vec<String> = lines.iter().map(|l| l.chars().take(26).collect()).collect();
+    assert!(
+        side.iter().any(|l| l.contains("All inboxes")),
+        "the current scope's row is in view without focus: {side:#?}"
+    );
+}
+
 #[tokio::test]
 async fn mail_screen_snapshots() {
     for (icons, name) in [(Icons::Unicode, "unicode"), (Icons::Ascii, "ascii")] {

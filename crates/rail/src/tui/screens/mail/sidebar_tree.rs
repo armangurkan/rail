@@ -112,6 +112,7 @@ impl SidebarRow {
     }
 
     /// The account the row belongs to.
+    #[cfg(test)]
     pub fn account(&self) -> Option<usize> {
         match &self.kind {
             RowKind::Account { index } => Some(*index),
