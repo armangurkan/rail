@@ -95,6 +95,17 @@ pub(super) const GMAIL: &str = "SELECT m.id, f.account_id, m.to_json, m.subject,
                        WHERE d.account_id = f.account_id AND d.remote_message_id = m.remote_id)
      ORDER BY m.date DESC, m.id DESC LIMIT ?2";
 
+/// `LOCAL` and `GMAIL` counted, without their order and limit.
+const LOCAL_COUNT: &str =
+    "SELECT count(*) FROM drafts WHERE account_id IN (SELECT value FROM json_each(?1))";
+const REMOTE_COUNT: &str = "SELECT count(*) FROM folders f
+     CROSS JOIN message_folders mf ON mf.folder_id = f.id
+     CROSS JOIN messages m ON m.id = mf.message_id
+     WHERE f.kind = 'drafts' AND f.account_id IN (SELECT value FROM json_each(?1))
+       AND m.is_draft = 1
+       AND NOT EXISTS (SELECT 1 FROM drafts d
+                       WHERE d.account_id = f.account_id AND d.remote_message_id = m.remote_id)";
+
 fn read_local(r: &Row<'_>) -> rusqlite::Result<DraftsRow> {
     Ok(DraftsRow {
         kind: DraftsRowKind::Local {
@@ -168,6 +179,19 @@ impl Store {
         rows.sort_by_key(|row| std::cmp::Reverse(order_key(row)));
         rows.truncate(MAX_DRAFTS_ROWS);
         Ok(rows)
+    }
+
+    /// How many rows `drafts_folder` lists for `accounts`, without its cap: the sidebar's
+    /// Drafts count.
+    pub fn drafts_count(&self, accounts: &[i64]) -> Result<u64, StoreError> {
+        let ids = serde_json::to_string(accounts).unwrap_or_else(|_| "[]".into());
+        let local: i64 = self
+            .conn
+            .query_row(LOCAL_COUNT, params![ids], |r| r.get(0))?;
+        let remote: i64 = self
+            .conn
+            .query_row(REMOTE_COUNT, params![ids], |r| r.get(0))?;
+        Ok(u64::try_from(local + remote).unwrap_or(0))
     }
 
     /// The account's local draft whose Gmail copy is `remote_message_id`.

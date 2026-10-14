@@ -15,11 +15,11 @@ never let a secret reach a log or the terminal.
 crates/rail-core/        Library: paths, config, store, auth, onboarding, operations, daemon, sync. No terminal dependency.
   src/config/            TOML model, loading with line-numbered errors, comment-preserving edits
   src/store/             SQLite open, migrations, repositories
-    store/view.rs        Read-only queries the mail screen runs: thread pages, the sidebar, one thread, a message's HTML
+    store/view.rs        Read-only queries the mail screen runs: thread pages (an inbox, a folder, Starred, Sent and Trash across accounts), the sidebar's counts, one thread, a message's HTML
     store/filter.rs      The filter line's syntax as SQL conditions
     store/outbox.rs      The outbox queue the action operations and the worker share
     store/drafts.rs      Local drafts, their recipients and attachments
-    store/drafts_folder.rs The Drafts folder's rows (local and provider) and the import's source query
+    store/drafts_folder.rs The Drafts folder's rows (local and provider), their count, and the import's source query
     store/outbox_drafts.rs The outbox rows that save a draft to the provider and delete its provider copy
     store/addresses.rs   The addresses mail has taught the store, for `To:` completion
     store/apply_local.rs Local changes of actions and their exact reverse, and the conflict rule

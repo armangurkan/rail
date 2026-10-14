@@ -40,6 +40,8 @@ mod view_labels;
 mod view_sidebar_tests;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod view_unified_tests;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

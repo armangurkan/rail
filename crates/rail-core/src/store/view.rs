@@ -11,8 +11,8 @@ use rusqlite::{OptionalExtension, params, params_from_iter};
 
 use super::filter::Filter;
 use super::{Store, StoreError};
-use crate::provider::Mailbox;
 use crate::provider::links::MAX_LINKS;
+use crate::provider::{FolderKind, Mailbox};
 use crate::sync::UNREADABLE_BODY;
 
 pub use super::view_labels::{LabelChoices, LabelOption};
@@ -35,6 +35,14 @@ pub enum Scope {
     Inbox { account_id: i64 },
     /// One folder (Gmail label) of one account.
     Folder { account_id: i64, folder_id: i64 },
+    /// Threads with a starred message in any of these accounts, in any folder.
+    Starred { accounts: Vec<i64> },
+    /// Threads with a message in a folder of `kind` in any of these accounts (Sent, Trash),
+    /// whatever the provider calls the folder.
+    Kind {
+        accounts: Vec<i64>,
+        kind: FolderKind,
+    },
 }
 
 /// The filter's `account:`, resolved by the caller.
@@ -243,6 +251,19 @@ pub struct FolderCount {
     pub unread: u64,
 }
 
+/// The merged mailboxes' numbers. Sent and Trash show none, so none is counted.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnifiedCounts {
+    /// Threads with a starred message and an unread one.
+    pub starred_unread: u64,
+    /// Drafts as the Drafts folder lists them (local and provider), without its cap: the sum
+    /// of `drafts_by_account`.
+    pub drafts: u64,
+    /// `(store account id, drafts)` for each account asked, in that order: what the Drafts
+    /// pane lists for that account (its local drafts and the provider drafts none of them owns).
+    pub drafts_by_account: Vec<(i64, u64)>,
+}
+
 /// The sidebar's numbers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SidebarCounts {
@@ -251,6 +272,8 @@ pub struct SidebarCounts {
     /// By account, then inbox, sent, drafts, archive, spam, trash, the user's labels, the
     /// provider's other labels; by name within each.
     pub folders: Vec<FolderCount>,
+    /// Starred and Drafts under UNIFIED.
+    pub unified: UnifiedCounts,
 }
 
 const THREAD_COLUMNS: &str = "t.id, t.last_date, t.account_id, t.subject, t.participants,
@@ -260,6 +283,10 @@ const IN_INBOX: &str = "EXISTS (SELECT 1 FROM messages mi
     WHERE mi.thread_id = t.id AND f.kind = 'inbox')";
 const IN_FOLDER: &str = "EXISTS (SELECT 1 FROM messages mi
     JOIN message_folders mf ON mf.message_id = mi.id WHERE mi.thread_id = t.id AND mf.folder_id = ?)";
+
+const IN_KIND: &str = "EXISTS (SELECT 1 FROM messages mi
+    JOIN message_folders mf ON mf.message_id = mi.id JOIN folders f ON f.id = mf.folder_id
+    WHERE mi.thread_id = t.id AND f.kind = ?)";
 
 fn int(n: usize) -> Value {
     Value::Integer(i64::try_from(n).unwrap_or(i64::MAX))
@@ -298,27 +325,8 @@ fn thread_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadRow> {
 
 /// The scope, account and filter conditions over threads `t`, with their parameters in order.
 pub(super) fn where_clause(query: &ListQuery) -> (String, Vec<Value>) {
-    let mut conds = Vec::new();
-    let mut params = Vec::new();
-    match &query.scope {
-        Scope::Unified { accounts } => {
-            conds.push(format!(
-                "+t.account_id IN (SELECT value FROM json_each(?)) AND {IN_INBOX}"
-            ));
-            params.push(Value::Text(ids_json(accounts)));
-        }
-        Scope::Inbox { account_id } => {
-            conds.push(format!("t.account_id = ? AND {IN_INBOX}"));
-            params.push(Value::Integer(*account_id));
-        }
-        Scope::Folder {
-            account_id,
-            folder_id,
-        } => {
-            conds.push(format!("t.account_id = ? AND {IN_FOLDER}"));
-            params.extend([Value::Integer(*account_id), Value::Integer(*folder_id)]);
-        }
-    }
+    let (scope, mut params) = scope_condition(&query.scope);
+    let mut conds = vec![scope];
     if let AccountFilter::Only(id) = query.account {
         conds.push("t.account_id = ?".to_string());
         params.push(Value::Integer(id));
@@ -328,6 +336,44 @@ pub(super) fn where_clause(query: &ListQuery) -> (String, Vec<Value>) {
         params.extend(values);
     }
     (conds.join(" AND "), params)
+}
+
+/// A scope's condition over threads `t` and its parameters. The merged scopes write
+/// `+t.account_id` so SQLite walks the date index rather than the account's.
+fn scope_condition(scope: &Scope) -> (String, Vec<Value>) {
+    let accounts = "+t.account_id IN (SELECT value FROM json_each(?))";
+    match scope {
+        Scope::Unified { accounts: ids } => (
+            format!("{accounts} AND {IN_INBOX}"),
+            vec![Value::Text(ids_json(ids))],
+        ),
+        Scope::Inbox { account_id } => (
+            format!("t.account_id = ? AND {IN_INBOX}"),
+            vec![Value::Integer(*account_id)],
+        ),
+        Scope::Folder {
+            account_id,
+            folder_id,
+        } => (
+            format!("t.account_id = ? AND {IN_FOLDER}"),
+            vec![Value::Integer(*account_id), Value::Integer(*folder_id)],
+        ),
+        // `threads.is_starred` is the roll-up of "a message is starred" (rollup.rs).
+        Scope::Starred { accounts: ids } => (
+            format!("{accounts} AND t.is_starred = 1"),
+            vec![Value::Text(ids_json(ids))],
+        ),
+        Scope::Kind {
+            accounts: ids,
+            kind,
+        } => (
+            format!("{accounts} AND {IN_KIND}"),
+            vec![
+                Value::Text(ids_json(ids)),
+                Value::Text(kind.as_str().to_string()),
+            ],
+        ),
+    }
 }
 
 /// How a `PageAt` reads: the keyset condition, its key, and the direction.
@@ -534,9 +580,15 @@ impl Store {
         }))
     }
 
-    /// Inbox counts for each of `accounts` (in that order), and every folder's counts.
+    /// Inbox counts for each of `accounts` (in that order), every folder's counts, and the merged
+    /// mailboxes' counts.
     pub fn sidebar_counts(&self, accounts: &[i64]) -> Result<SidebarCounts, StoreError> {
         let ids = ids_json(accounts);
+        let drafts_by_account = accounts
+            .iter()
+            .map(|&id| Ok((id, self.drafts_count(&[id])?)))
+            .collect::<Result<Vec<(i64, u64)>, StoreError>>()?;
+        let drafts = drafts_by_account.iter().map(|(_, n)| n).sum();
         let sql = format!(
             "SELECT t.account_id, count(*), sum(t.unread_count > 0) FROM threads t
              WHERE t.account_id IN (SELECT value FROM json_each(?1)) AND {IN_INBOX}
@@ -562,7 +614,24 @@ impl Store {
         Ok(SidebarCounts {
             accounts,
             folders: self.folder_counts(&ids)?,
+            unified: UnifiedCounts {
+                starred_unread: self.starred_unread(&ids)?,
+                drafts,
+                drafts_by_account,
+            },
         })
+    }
+
+    /// Threads of these accounts (a JSON id list) with a starred message and an unread one.
+    fn starred_unread(&self, ids: &str) -> Result<u64, StoreError> {
+        let n: i64 = self.conn.query_row(
+            "SELECT count(*) FROM threads t
+             WHERE t.account_id IN (SELECT value FROM json_each(?1))
+               AND t.is_starred = 1 AND t.unread_count > 0",
+            params![ids],
+            |r| r.get(0),
+        )?;
+        Ok(count(n))
     }
 
     /// Every account's folders, at most `MAX_SIDEBAR_FOLDERS` of each: the inbox and the
