@@ -92,6 +92,9 @@ pub struct Reader {
     /// `h`: open messages show their header fields, for this session.
     headers: bool,
     expanded: Vec<bool>,
+    /// Message ids unread when the thread was opened (opening marks them read): their cards'
+    /// senders stay bold for as long as the reader is open, re-reads included.
+    unread_at_open: HashSet<i64>,
     unfolded: HashSet<(usize, usize)>,
     /// Message ids with a `body.fetch` in flight.
     fetching: HashSet<i64>,
@@ -109,6 +112,17 @@ pub struct Reader {
     cache: RefCell<Option<CachedLines>>,
     /// The text area's size from the last frame.
     size: Cell<(u16, u16)>,
+}
+
+/// The ids of `detail`'s unread messages: what the screen hands the reader (`with_unread`)
+/// before it marks the thread read.
+pub fn unread_ids(detail: &ThreadDetail) -> HashSet<i64> {
+    detail
+        .messages
+        .iter()
+        .filter(|m| !m.is_read)
+        .map(|m| m.id)
+        .collect()
 }
 
 /// The newest message starts open, the older ones collapsed.
@@ -133,6 +147,7 @@ impl Reader {
             account,
             order,
             headers: false,
+            unread_at_open: HashSet::new(),
             unfolded: HashSet::new(),
             fetching: HashSet::new(),
             asked: HashSet::new(),
@@ -144,6 +159,13 @@ impl Reader {
             cache: RefCell::new(None),
             size: Cell::new((0, 0)),
         }
+    }
+
+    /// The reader with `ids` (`unread_ids` of the thread before it was marked read) drawn as
+    /// unread.
+    pub fn with_unread(mut self, ids: HashSet<i64>) -> Self {
+        self.unread_at_open = ids;
+        self
     }
 
     pub fn thread_id(&self) -> i64 {
@@ -348,6 +370,7 @@ impl Reader {
             unfolded: &self.unfolded,
             fetching: &self.fetching,
             errors: &self.errors,
+            unread: &self.unread_at_open,
             clock: &self.clock,
             glyphs: &self.glyphs,
             account: &self.account,

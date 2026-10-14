@@ -6,10 +6,10 @@ use std::collections::{HashMap, HashSet};
 use rail_core::config::{Icons, ThreadOrder};
 use rail_core::store::view::ThreadDetail;
 
-use super::ReaderAccount;
 use super::cards;
 use super::lines::{LineKind, ReaderLine, State, Tone};
 use super::test_threads::{SUBJECT, axon, clock, four, person};
+use super::{ReaderAccount, unread_ids};
 use crate::tui::screens::mail::Glyphs;
 use crate::tui::text::width;
 
@@ -18,6 +18,8 @@ const TITLE: LineKind = LineKind::Title { message: 3 };
 /// What the lines are built with besides the thread.
 struct Setup {
     expanded: Vec<bool>,
+    /// The ids unread at open.
+    unread: HashSet<i64>,
     headers: bool,
     order: ThreadOrder,
     read_error: Option<String>,
@@ -26,11 +28,13 @@ struct Setup {
 }
 
 impl Setup {
-    /// The newest message open and the others collapsed, no headers, Unicode, AXON.
+    /// The newest message open and the others collapsed, the fixture's unread messages unread
+    /// at open, no headers, Unicode, AXON.
     fn of(detail: &ThreadDetail) -> Self {
         let last = detail.messages.len().saturating_sub(1);
         Self {
             expanded: (0..detail.messages.len()).map(|i| i == last).collect(),
+            unread: unread_ids(detail),
             headers: false,
             order: ThreadOrder::Oldest,
             read_error: None,
@@ -47,6 +51,7 @@ impl Setup {
             unfolded: &unfolded,
             fetching: &fetching,
             errors: &errors,
+            unread: &self.unread,
             clock: &clock,
             glyphs: &glyphs,
             account: &self.account,

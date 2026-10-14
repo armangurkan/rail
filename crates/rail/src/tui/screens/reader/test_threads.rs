@@ -7,7 +7,7 @@ use rail_core::provider::Mailbox;
 use rail_core::store::view::{BodyState, MessageView, ThreadDetail};
 use ratatui::style::Color;
 
-use super::{Reader, ReaderAccount};
+use super::{Reader, ReaderAccount, unread_ids};
 use crate::tui::clock::Clock;
 use crate::tui::screens::mail::Glyphs;
 use crate::tui::test_util::NOW;
@@ -91,6 +91,8 @@ pub fn clock() -> Clock {
 
 /// A reader of `detail` in `order` on the fixed clock, Unicode glyphs, AXON. No frame is drawn,
 /// so it works at 80 columns.
+/// The fixture's unread messages are the ones unread at open, as the screen hands them over.
 pub fn reader_of(detail: ThreadDetail, order: ThreadOrder) -> Reader {
-    Reader::new(detail, clock(), Glyphs::of(Icons::Unicode), axon(), order)
+    let unread = unread_ids(&detail);
+    Reader::new(detail, clock(), Glyphs::of(Icons::Unicode), axon(), order).with_unread(unread)
 }

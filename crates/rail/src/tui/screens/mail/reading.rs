@@ -12,7 +12,7 @@ use crate::tui::modals::{
     AttachmentList, AttachmentRow, Command, Confirm, ErrorList, ErrorRow, LinkPrompt, Modal,
     ModalOutcome, Target,
 };
-use crate::tui::screens::reader::{Reader, ReaderAccount, ReaderOutcome};
+use crate::tui::screens::reader::{Reader, ReaderAccount, ReaderOutcome, unread_ids};
 use crate::tui::text::{escape, fit, link_lines, safe_link};
 
 /// How much of a refused address the status bar repeats.
@@ -65,14 +65,17 @@ impl MailScreen {
                     None => {
                         let glyphs = Glyphs::of(self.ctx.icons);
                         let account = self.reader_account(detail.account_id);
+                        // Kept before the mark-read, so the cards show what was unread.
+                        let unread = unread_ids(&detail);
                         marked = self.mark_read_on_open(&mut detail);
-                        self.reader = Some(Reader::new(
+                        let reader = Reader::new(
                             detail,
                             self.ctx.clock.clone(),
                             glyphs,
                             account,
                             self.ctx.thread_order,
-                        ));
+                        );
+                        self.reader = Some(reader.with_unread(unread));
                         // A read landing under an open composer leaves it the keys.
                         if self.compose.is_none() {
                             self.focus = Focus::Reader;

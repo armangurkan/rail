@@ -3,11 +3,20 @@
 
 use crossterm::event::KeyCode;
 use rail_core::config::ThreadOrder;
+use rail_core::store::Store;
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::style::Modifier;
 
-use super::{Fixture, all_text, draw, fixture, keys, open_toms_card, press, store_bodies_on_fetch};
+use super::{
+    Fixture, all_text, draw, fixture, keys, open_toms_card, press, store_bodies_on_fetch,
+    write_bodies,
+};
 use crate::tui::data::FakeCall;
 use crate::tui::modals::Target;
+use crate::tui::screen::Screen;
 use crate::tui::screens::reader::LineKind;
+use crate::tui::theme::Theme;
 
 #[tokio::test]
 async fn h_shows_and_hides_the_headers_and_help_lists_it() {
@@ -37,6 +46,60 @@ async fn h_shows_and_hides_the_headers_and_help_lists_it() {
     keys(&mut f, "?").await;
     let help = draw(&f, 150, 40);
     assert!(help.contains("Show or hide the headers"), "{help}");
+}
+
+/// Whether the first cell of `name` on the drawn row holding `card` is bold.
+fn drawn_bold(f: &Fixture, card: &str, name: &str) -> bool {
+    let (width, height) = (120, 40);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| f.screen.view(frame, &Theme::default()))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    for y in 0..height {
+        let row: Vec<&str> = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
+        let text = row.concat();
+        if let Some(at) = text
+            .find(card)
+            .and_then(|c| text[c..].find(name).map(|n| c + n))
+        {
+            let x = u16::try_from(text[..at].chars().count()).unwrap();
+            return buffer[(x, y)].modifier.contains(Modifier::BOLD);
+        }
+    }
+    panic!("{card:?} is not drawn");
+}
+
+/// Spec §2.3: a card's sender is bold while the message was unread when the thread opened,
+/// though opening marks it read and the re-read after the bodies land sees it read.
+#[tokio::test]
+async fn an_older_message_unread_at_open_draws_its_sender_bold_after_the_reread() {
+    let mut f = fixture(false).await;
+    let set_read = |paths: &rail_core::paths::Paths, sql: &str| {
+        let store = Store::open(&paths.db_file()).unwrap();
+        store.conn().execute(sql, []).unwrap();
+    };
+    set_read(
+        &f.paths,
+        "UPDATE messages SET is_read = 0 WHERE remote_id = 'm1'",
+    );
+    // The daemon has marked the thread read by the time it stores the bodies.
+    let paths = f.paths.clone();
+    *f.fake.on_fetch.lock().unwrap() = Some(Box::new(move |ids: &[String]| {
+        set_read(&paths, "UPDATE messages SET is_read = 1");
+        write_bodies(&paths, ids);
+    }));
+    press(&mut f, KeyCode::Enter).await;
+    assert!(
+        all_text(&f).contains("body of m3"),
+        "the re-read after the fetch settled: {}",
+        all_text(&f)
+    );
+    assert!(
+        drawn_bold(&f, "1   Tom", "Tom"),
+        "Tom's card was unread at open"
+    );
+    assert!(!drawn_bold(&f, "2   Sender", "Sender"), "m2 was read");
 }
 
 /// Write `config.toml` as the user would have it.

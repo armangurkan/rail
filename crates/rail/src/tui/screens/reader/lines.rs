@@ -135,6 +135,8 @@ pub(super) struct State<'a> {
     pub unfolded: &'a HashSet<(usize, usize)>,
     pub fetching: &'a HashSet<i64>,
     pub errors: &'a HashMap<i64, String>,
+    /// Message ids unread when the thread was opened: their cards' senders are bold.
+    pub unread: &'a HashSet<i64>,
     pub clock: &'a Clock,
     pub glyphs: &'a Glyphs,
     /// The thread's account, for the title block's badge and label.

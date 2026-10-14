@@ -237,7 +237,12 @@ fn card_line(
     } else {
         String::new()
     };
-    let tone = if m.is_read { Tone::Plain } else { Tone::Strong };
+    // Opening the thread marks it read, so the sender is bold by what was unread at open.
+    let tone = if state.unread.contains(&m.id) {
+        Tone::Strong
+    } else {
+        Tone::Plain
+    };
     let time = time(m, state);
     let used = segments_width(&segments);
     let room = width
