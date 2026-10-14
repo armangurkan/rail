@@ -382,7 +382,10 @@ async fn colon_time_switches_to_am_pm_and_back_and_saves_the_choice() {
 
     press(&mut f, KeyCode::Enter).await;
     let reader = drawn(&f);
-    assert!(reader.contains("Oct 2025 8:55 am"), "the reader: {reader}");
+    assert!(
+        reader.contains("Sender  Thu 8:55 am   W  WORK"),
+        "the reader: {reader}"
+    );
     run_time_from_the_palette(&mut f).await;
     assert!(
         f.screen.status_line().contains("time: 24h"),
@@ -391,7 +394,7 @@ async fn colon_time_switches_to_am_pm_and_back_and_saves_the_choice() {
     );
     let reader = drawn(&f);
     assert!(
-        reader.contains("Oct 2025 08:55") && !reader.contains("8:55 am"),
+        reader.contains("Sender  Thu 08:55   W  WORK") && !reader.contains("8:55 am"),
         "the open reader follows: {reader}"
     );
     let text = config_text(&f);

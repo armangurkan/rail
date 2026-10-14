@@ -241,8 +241,8 @@ fn slot_name(n: u8) -> &'static str {
     SLOT_NAMES[usize::from(n) % SLOT_NAMES.len()]
 }
 
-/// What is saved: `theme` and `time` are text, `accent` a number, `hints` a boolean; `None`
-/// removes the key.
+/// What is saved: `theme`, `time` and `thread_order` are text, `accent` a number, `hints` a
+/// boolean; `None` removes the key.
 pub(super) enum Saved {
     Text(Option<String>),
     Number(Option<i64>),

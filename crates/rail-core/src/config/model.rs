@@ -60,6 +60,9 @@ pub struct General {
     pub hints: bool,
     /// `general.time`: how a time of day is written on screen. `:time` toggles it.
     pub time: TimeFormat,
+    /// `general.thread_order`: how the reader runs a thread's older messages.
+    /// `:thread-order` toggles it.
+    pub thread_order: ThreadOrder,
 }
 
 impl Default for General {
@@ -77,6 +80,7 @@ impl Default for General {
             accent: None,
             hints: true,
             time: TimeFormat::H24,
+            thread_order: ThreadOrder::Oldest,
         }
     }
 }
@@ -147,6 +151,27 @@ impl TimeFormat {
         match self {
             Self::H24 => "24h",
             Self::H12 => "12h",
+        }
+    }
+}
+
+/// `general.thread_order`: how the reader runs a thread's older messages under the newest one.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadOrder {
+    /// The oldest first, as the conversation went.
+    #[default]
+    Oldest,
+    /// The most recent first, right under the newest message.
+    Newest,
+}
+
+impl ThreadOrder {
+    /// The config value: `oldest` or `newest`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Oldest => "oldest",
+            Self::Newest => "newest",
         }
     }
 }

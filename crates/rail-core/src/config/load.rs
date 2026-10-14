@@ -281,6 +281,28 @@ archive = "e"
     }
 
     #[test]
+    fn thread_order_defaults_to_oldest_takes_newest_and_refuses_the_rest_at_its_line() {
+        use crate::config::ThreadOrder;
+        assert_eq!(p("").unwrap().general.thread_order, ThreadOrder::Oldest);
+        let newest = p("[general]\nthread_order = \"newest\"\n").unwrap();
+        assert_eq!(newest.general.thread_order, ThreadOrder::Newest);
+        assert_eq!(
+            p("[general]\nthread_order = \"oldest\"\n")
+                .unwrap()
+                .general
+                .thread_order,
+            ThreadOrder::Oldest
+        );
+        assert_eq!(ThreadOrder::Newest.as_str(), "newest");
+        assert_eq!(ThreadOrder::Oldest.as_str(), "oldest");
+        let err = p("[general]\nthread_order = \"sideways\"\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(":2:"), "{err}");
+        assert!(err.contains("sideways") && err.contains("oldest"), "{err}");
+    }
+
+    #[test]
     fn icons_default_to_unicode_and_take_ascii() {
         assert_eq!(p("").unwrap().general.icons, crate::config::Icons::Unicode);
         let ascii = p("[general]\nicons = \"ascii\"\n").unwrap();

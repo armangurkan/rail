@@ -4,30 +4,30 @@ expression: "draw(&f, width, height)"
 ---
 ▍Rail │ All inboxes · 1 account · 1 unread  / Search                                                                                    ● Synced 12:39
 ┌────────────────────────┐┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────────────────┐
-│UNIFIED                 ││YESTERDAY                                             ││Q4 plan  (3 messages)                                             │
-│✉  All inboxes         1││●  W  Tom, Sender     📎  Q4 plan (3)             08:55││▾ Tom  Thu 09 Oct 2025 08:53                                      │
-│★  Starred              ││                                                      ││From: Tom <tom@example.com>                                       │
-│✎  Drafts               ││                                                      ││To: Dana Reyes <dana@example.com>                                 │
-│➤  Sent                 ││                                                      ││Date: Thu 09 Oct 2025 08:53                                       │
-│✕  Trash                ││                                                      ││                                                                  │
-│────────────────────────││                                                      ││Hi Dana,                                                          │
-│ACCOUNTS                ││                                                      ││                                                                  │
-│▾  W  work             1││                                                      ││The plan is in the doc[1]; notes are on the wiki[2].              │
-│  ✉  Inbox             1││                                                      ││                                                                  │
-│  ➤  Sent               ││                                                      ││[5 quoted lines]                                                  │
+│UNIFIED                 ││YESTERDAY                                             ││Q4 plan                                                           │
+│✉  All inboxes         1││●  W  Tom, Sender     📎  Q4 plan (3)             08:55││Sender  Thu 08:55   W  WORK                                       │
+│★  Starred              ││                                                      ││/  3 messages                                                     │
+│✎  Drafts               ││                                                      ││──────────────────────────────────────────────────────────────────│
+│➤  Sent                 ││                                                      ││                                                                  │
+│✕  Trash                ││                                                      ││body of m3                                                        │
 │────────────────────────││                                                      ││                                                                  │
-│▸ 📁  More folders (1)   ││                                                      ││Thanks,                                                           │
+│ACCOUNTS                ││                                                      ││──────────────────────────────────────────────────────────────────│
+│▾  W  work             1││                                                      ││▾   1   Tom                                              Thu 08:53│
+│  ✉  Inbox             1││                                                      ││                                                                  │
+│  ➤  Sent               ││                                                      ││Hi Dana,                                                          │
+│────────────────────────││                                                      ││                                                                  │
+│▸ 📁  More folders (1)   ││                                                      ││The plan is in the doc[1]; notes are on the wiki[2].              │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││[5 quoted lines]                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││Thanks,                                                           │
 │                        ││                                                      ││Tom                                                               │
 │                        ││                                                      ││📎  plan.pdf                                                       │
 │                        ││                                                      ││                                                                  │
-│                        ││                                                      ││▸ Sender  Thu 09 Oct 2025 08:54  snippet m2                       │
-│                        ││                                                      ││▾ Sender  Thu 09 Oct 2025 08:55                                   │
-│                        ││                                                      ││From: Sender <sender@example.com>                                 │
-│                        ││                                                      ││Date: Thu 09 Oct 2025 08:55                                       │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││body of m3                                                        │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││──────────────────────────────────────────────────────────────────│
+│                        ││                                                      ││▸   2   Sender                                           Thu 08:54│
+│                        ││                                                      ││        snippet m2                                                │
+│                        ││                                                      ││──────────────────────────────────────────────────────────────────│
 │                        ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
@@ -39,6 +39,6 @@ expression: "draw(&f, width, height)"
 │                        ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
 └────────────────────────┘└──────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────┘
-┌─────┐         ┌─────┐      ┌───┐       ┌───┐         ┌───┐      ┌───┐
-│ n/p │ message │ Tab │ fold │ r │ reply │ e │ archive │ q │ back │ ? │ help                                                                  ● work ✓
-└─────┘         └─────┘      └───┘       └───┘         └───┘      └───┘
+┌─────┐         ┌─────┐      ┌───┐         ┌───┐       ┌───┐         ┌───┐      ┌───┐
+│ n/p │ message │ Tab │ fold │ h │ headers │ r │ reply │ e │ archive │ q │ back │ ? │ help                                                    ● work ✓
+└─────┘         └─────┘      └───┘         └───┘       └───┘         └───┘      └───┘

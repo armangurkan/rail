@@ -1,7 +1,7 @@
 //! The `:` palette's entries: the active view's key actions and the global ones, Rail's own
 //! commands, each account, merged mailbox and label.
 
-use rail_core::config::TimeFormat;
+use rail_core::config::{ThreadOrder, TimeFormat};
 
 use super::MailScreen;
 use crate::tui::data::ScopeChoice;
@@ -10,8 +10,8 @@ use crate::tui::modals::{PaletteEntry, Target};
 
 impl MailScreen {
     /// Every palette entry: each key action of the active view and the global ones with its
-    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, `time`, each account, merged
-    /// mailbox and label.
+    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, `time`, `thread-order`,
+    /// each account, merged mailbox and label.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let key = |a: Action| self.ctx.keymap.label(a);
         let views = self.views();
@@ -42,20 +42,11 @@ impl MailScreen {
         entries
     }
 
-    /// Rail's own commands; `compose` carries the key of `c`, `hints` and `time` say what they
-    /// will do.
+    /// Rail's own commands; `compose` carries the key of `c`, and `hints`, `time` and
+    /// `thread-order` say what they will do.
     fn command_entries(&self) -> Vec<PaletteEntry> {
         let compose = self.ctx.keymap.label(Action::ListCompose);
-        let hints = if self.hints {
-            "Turn the key hints off"
-        } else {
-            "Turn the key hints on"
-        };
-        let time = match self.ctx.clock.format() {
-            TimeFormat::H24 => "Show times as 12-hour (am/pm)",
-            TimeFormat::H12 => "Show times as 24-hour",
-        };
-        let commands = [
+        let mut commands = vec![
             ("Write a new message", "compose", compose, Target::Compose),
             ("Open a draft", "drafts", String::new(), Target::Drafts),
             (
@@ -76,9 +67,11 @@ impl MailScreen {
                 String::new(),
                 Target::Accent,
             ),
-            (hints, "hints", String::new(), Target::Hints),
-            (time, "time", String::new(), Target::Time),
         ];
+        commands.extend(
+            self.toggles()
+                .map(|(text, id, target)| (text, id, String::new(), target)),
+        );
         commands
             .into_iter()
             .map(|(text, id, key, target)| PaletteEntry {
@@ -88,6 +81,28 @@ impl MailScreen {
                 target,
             })
             .collect()
+    }
+
+    /// `hints`, `time` and `thread-order`, each saying what it will do.
+    fn toggles(&self) -> [(&'static str, &'static str, Target); 3] {
+        let hints = if self.hints {
+            "Turn the key hints off"
+        } else {
+            "Turn the key hints on"
+        };
+        let time = match self.ctx.clock.format() {
+            TimeFormat::H24 => "Show times as 12-hour (am/pm)",
+            TimeFormat::H12 => "Show times as 24-hour",
+        };
+        let order = match self.ctx.thread_order {
+            ThreadOrder::Oldest => "Show older messages newest first",
+            ThreadOrder::Newest => "Show older messages oldest first",
+        };
+        [
+            (hints, "hints", Target::Hints),
+            (time, "time", Target::Time),
+            (order, "thread-order", Target::ThreadOrder),
+        ]
     }
 
     fn label_entries(&self) -> impl Iterator<Item = PaletteEntry> + '_ {

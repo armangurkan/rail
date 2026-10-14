@@ -3,11 +3,15 @@ source: crates/rail/src/tui/screens/reader/tests.rs
 expression: "draw(&f, width, height)"
 ---
 ▍Rail │ All inboxes · 1 account · 1 unread  / Search                        ● Synced 12:39
-Q4 plan  (3 messages)
-▾ Tom  Thu 09 Oct 2025 08:53
-From: Tom <tom@example.com>
-To: Dana Reyes <dana@example.com>
-Date: Thu 09 Oct 2025 08:53
+Q4 plan
+Sender  Thu 08:55   W  WORK
+/  3 messages
+──────────────────────────────────────────────────────────────────────────────────────────
+
+body of m3
+
+──────────────────────────────────────────────────────────────────────────────────────────
+▾   1   Tom                                                                      Thu 08:53
 
 Hi Dana,
 
@@ -19,10 +23,6 @@ Thanks,
 Tom
 📎  plan.pdf
 
-▸ Sender  Thu 09 Oct 2025 08:54  snippet m2
-▾ Sender  Thu 09 Oct 2025 08:55
-From: Sender <sender@example.com>
-Date: Thu 09 Oct 2025 08:55
-
-body of m3
-n/p message  Tab fold  r reply  e archive  q back  ? help                         ● work ✓
+──────────────────────────────────────────────────────────────────────────────────────────
+▸   2   Sender                                                                   Thu 08:54
+n/p message  Tab fold  h headers  r reply  e archive  q back  ? help              ● work ✓

@@ -474,6 +474,7 @@ impl MailScreen {
             MailEvent::ThemeSaved { result } => self.theme_saved(result),
             MailEvent::HintsSaved { result } => self.hints_saved(result),
             MailEvent::TimeSaved { result } => self.time_saved(result),
+            MailEvent::ThreadOrderSaved { result } => self.thread_order_saved(result),
             other => self.compose_event(other),
         }
     }

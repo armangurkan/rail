@@ -34,6 +34,8 @@ pub enum Target {
     Hints,
     /// `:time`: 24-hour or 12-hour times.
     Time,
+    /// `:thread-order`: the reader's older messages oldest or newest first.
+    ThreadOrder,
     Scope(ScopeChoice),
     /// Write a new message (`c`).
     Compose,

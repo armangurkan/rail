@@ -82,6 +82,7 @@ fn context(
         icons: config.general.icons,
         split_threshold: config.general.split_threshold,
         hints: config.general.hints,
+        thread_order: config.general.thread_order,
         hyperlinks: hyperlinks_supported(|name| std::env::var(name).ok()),
         depth,
         theme_choice,

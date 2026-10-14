@@ -1,9 +1,18 @@
-//! The thread reader: one thread's messages oldest first, collapsed to a header line except
-//! unread ones and the latest, bodies wrapped at the pane's width with folded quotes and
+//! The thread reader: a title block for the thread (the subject, the newest message's sender,
+//! time and account, its recipients and the count), the newest message open under it, and the
+//! older messages as cards (number, sender, time, then a preview or the message itself) in the
+//! order `thread_order` says; bodies wrapped at the pane's width with folded quotes and
 //! numbered links, "fetching…" for bodies the store does not hold yet. One component, drawn in
 //! the split layout's pane or as a full-screen view; the mail screen decides which.
 
+mod cards;
+#[cfg(test)]
+mod keys_tests;
 mod lines;
+#[cfg(test)]
+mod lines_tests;
+#[cfg(test)]
+mod test_threads;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -12,8 +21,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use rail_core::config::ThreadOrder;
 use rail_core::ops::{BodyFetchResponse, BodyOutcome, OpError};
 use rail_core::store::view::{BodyState, MessageView, ThreadDetail};
+use ratatui::style::Color;
 
 pub use lines::{LineKind, ReaderLine, Tone};
 
@@ -21,6 +32,7 @@ use crate::tui::clock::Clock;
 use crate::tui::keys::Action;
 use crate::tui::screens::mail::{Glyphs, error_line};
 use crate::tui::text::markers;
+use crate::tui::theme::Theme;
 
 /// Columns assumed before the first frame.
 const FALLBACK_WIDTH: u16 = 80;
@@ -38,11 +50,51 @@ pub enum ReaderOutcome {
     Attachments,
 }
 
+/// The thread's account as the title block shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReaderAccount {
+    /// Its place in `config.toml`'s order: the theme's colour when it has none of its own.
+    pub index: usize,
+    /// Its own colour (`color` in `[[accounts]]`).
+    pub color: Option<Color>,
+    /// `AccountEntry::badge`: one escaped cell.
+    pub badge: String,
+    /// What the screen calls the account: outside text, escaped when drawn.
+    pub label: String,
+}
+
+impl ReaderAccount {
+    /// An account that is no longer configured: no badge or label, the terminal's colour.
+    pub fn unknown() -> Self {
+        Self {
+            index: 0,
+            color: Some(Color::Reset),
+            badge: String::new(),
+            label: String::new(),
+        }
+    }
+
+    /// The badge's colour: the account's own, else the theme's by place.
+    pub fn color(&self, theme: &Theme) -> Color {
+        self.color
+            .unwrap_or_else(|| theme.account_color(self.index))
+    }
+}
+
 pub struct Reader {
     detail: ThreadDetail,
     clock: Clock,
     glyphs: Glyphs,
+    /// The thread's account, for the title block's badge.
+    account: ReaderAccount,
+    /// How the older messages run (`thread_order`, `:thread-order`).
+    order: ThreadOrder,
+    /// `h`: open messages show their header fields, for this session.
+    headers: bool,
     expanded: Vec<bool>,
+    /// Message ids unread when the thread was opened (opening marks them read): their cards'
+    /// senders stay bold for as long as the reader is open, re-reads included.
+    unread_at_open: HashSet<i64>,
     unfolded: HashSet<(usize, usize)>,
     /// Message ids with a `body.fetch` in flight.
     fetching: HashSet<i64>,
@@ -51,7 +103,7 @@ pub struct Reader {
     asked: HashSet<i64>,
     /// Escaped error text per message id.
     errors: HashMap<i64, String>,
-    /// The last re-read failed: the title row shows this (escaped) until a read succeeds.
+    /// The last re-read failed: the subject line shows this (escaped) until a read succeeds.
     read_error: Option<String>,
     cursor: usize,
     scroll: usize,
@@ -62,24 +114,40 @@ pub struct Reader {
     size: Cell<(u16, u16)>,
 }
 
-/// Unread messages and the latest start expanded.
-fn default_expanded(detail: &ThreadDetail) -> Vec<bool> {
-    let last = detail.messages.len().saturating_sub(1);
+/// The ids of `detail`'s unread messages: what the screen hands the reader (`with_unread`)
+/// before it marks the thread read.
+pub fn unread_ids(detail: &ThreadDetail) -> HashSet<i64> {
     detail
         .messages
         .iter()
-        .enumerate()
-        .map(|(i, m)| !m.is_read || i == last)
+        .filter(|m| !m.is_read)
+        .map(|m| m.id)
         .collect()
 }
 
+/// The newest message starts open, the older ones collapsed.
+fn default_expanded(detail: &ThreadDetail) -> Vec<bool> {
+    let last = detail.messages.len().saturating_sub(1);
+    (0..detail.messages.len()).map(|i| i == last).collect()
+}
+
 impl Reader {
-    pub fn new(detail: ThreadDetail, clock: Clock, glyphs: Glyphs) -> Self {
+    pub fn new(
+        detail: ThreadDetail,
+        clock: Clock,
+        glyphs: Glyphs,
+        account: ReaderAccount,
+        order: ThreadOrder,
+    ) -> Self {
         Self {
             expanded: default_expanded(&detail),
             detail,
             clock,
             glyphs,
+            account,
+            order,
+            headers: false,
+            unread_at_open: HashSet::new(),
             unfolded: HashSet::new(),
             fetching: HashSet::new(),
             asked: HashSet::new(),
@@ -91,6 +159,13 @@ impl Reader {
             cache: RefCell::new(None),
             size: Cell::new((0, 0)),
         }
+    }
+
+    /// The reader with `ids` (`unread_ids` of the thread before it was marked read) drawn as
+    /// unread.
+    pub fn with_unread(mut self, ids: HashSet<i64>) -> Self {
+        self.unread_at_open = ids;
+        self
     }
 
     pub fn thread_id(&self) -> i64 {
@@ -105,6 +180,18 @@ impl Reader {
         &self.detail
     }
 
+    /// The thread's account (tests).
+    #[cfg(test)]
+    pub fn account(&self) -> &ReaderAccount {
+        &self.account
+    }
+
+    /// How the older messages run (tests).
+    #[cfg(test)]
+    pub fn order(&self) -> ThreadOrder {
+        self.order
+    }
+
     fn changed(&self) {
         self.generation.set(self.generation.get() + 1);
     }
@@ -115,15 +202,33 @@ impl Reader {
         self.changed();
     }
 
+    /// The older messages run in `order` from now on (`:thread-order`); the cursor goes to the
+    /// start of the message it was in.
+    pub fn set_order(&mut self, order: ThreadOrder) {
+        if order == self.order {
+            return;
+        }
+        let message = self.cursor_line().and_then(|l| l.kind.message());
+        self.order = order;
+        self.changed();
+        self.land(message);
+        let page = usize::from(self.size.get().1.max(1));
+        self.scroll = crate::tui::screens::mail::visible_offset(self.scroll, self.cursor, page);
+    }
+
     /// The thread read again: each message keeps its expansion (new ones get the default),
     /// errors stay only on bodies still missing, folds stay open.
     /// An unchanged thread leaves everything as it is, unless a body it waited for did not
     /// arrive (that message gets its note).
     pub fn refresh(&mut self, detail: ThreadDetail) {
-        self.read_error = None;
+        // A failed re-read's error is the subject line's until a read works.
+        if self.read_error.take().is_some() {
+            self.changed();
+        }
         if detail == self.detail && !self.missed_a_body() {
             return;
         }
+        let anchor = self.anchor();
         let defaults = default_expanded(&detail);
         let before: HashMap<i64, bool> = self
             .detail
@@ -159,14 +264,40 @@ impl Reader {
         }
         self.detail = detail;
         self.changed();
-        // The cursor stays on its line, or on the last one when the thread got shorter.
-        let last = self.current().len().saturating_sub(1);
-        self.cursor = self.cursor.min(last);
+        self.restore(anchor);
+    }
+
+    /// The id of the message under the cursor and the cursor's offset from its first line.
+    fn anchor(&self) -> Option<(i64, usize)> {
+        let lines = self.current();
+        let message = lines.get(self.cursor)?.kind.message()?;
+        let start = start_of(&lines, message)?;
+        let id = self.detail.messages.get(message)?.id;
+        Some((id, self.cursor.saturating_sub(start)))
+    }
+
+    /// After a re-read the cursor goes back to its message (`anchor`) at the same offset, kept
+    /// inside that message's lines; when the message went, it stays on its line, or on the last
+    /// one when the thread got shorter.
+    fn restore(&mut self, anchor: Option<(i64, usize)>) {
+        let lines = self.current();
+        let last = lines.len().saturating_sub(1);
+        let found = anchor.and_then(|(id, offset)| {
+            let message = self.detail.messages.iter().position(|m| m.id == id)?;
+            let start = start_of(&lines, message)?;
+            let end = starts(&lines)
+                .into_iter()
+                .find(|&i| i > start)
+                .map_or(last, |next| next - 1);
+            Some((start + offset).min(end))
+        });
+        self.cursor = found.unwrap_or(self.cursor.min(last));
     }
 
     /// A re-read of this thread failed with `text` (escaped).
     pub fn read_failed(&mut self, text: String) {
         self.read_error = Some(text);
+        self.changed();
     }
 
     /// A body asked for and answered is still missing, with no note yet.
@@ -265,10 +396,15 @@ impl Reader {
             unfolded: &self.unfolded,
             fetching: &self.fetching,
             errors: &self.errors,
+            unread: &self.unread_at_open,
             clock: &self.clock,
             glyphs: &self.glyphs,
+            account: &self.account,
+            headers: self.headers,
+            order: self.order,
+            read_error: self.read_error.as_deref(),
         };
-        let built = Rc::new(lines::build(
+        let built = Rc::new(cards::build(
             &self.detail,
             &state,
             usize::from(width.max(1)),
@@ -328,6 +464,7 @@ impl Reader {
             Action::ReaderPrev => self.jump(&lines, false),
             Action::ReaderExpand => self.toggle_message(&lines),
             Action::ReaderUnfold => self.toggle_fold(&lines),
+            Action::ReaderHeaders => self.toggle_headers(&lines),
             Action::ReaderBack => return ReaderOutcome::Back,
             Action::ReaderFollowLink => return ReaderOutcome::FollowLink,
             Action::ReaderOpenBrowser => return ReaderOutcome::OpenBrowser,
@@ -339,22 +476,13 @@ impl Reader {
     }
 
     fn jump(&mut self, lines: &[ReaderLine], forward: bool) {
-        let is_header = |l: &ReaderLine| matches!(l.kind, LineKind::Header { .. });
+        let starts = starts(lines);
         let found = if forward {
-            lines
-                .iter()
-                .enumerate()
-                .skip(self.cursor + 1)
-                .find(|(_, l)| is_header(l))
+            starts.into_iter().find(|&i| i > self.cursor)
         } else {
-            lines
-                .iter()
-                .enumerate()
-                .take(self.cursor)
-                .rev()
-                .find(|(_, l)| is_header(l))
+            starts.into_iter().rev().find(|&i| i < self.cursor)
         };
-        if let Some((index, _)) = found {
+        if let Some(index) = found {
             self.cursor = index;
         }
     }
@@ -367,11 +495,26 @@ impl Reader {
             *open = !*open;
         }
         self.changed();
+        self.land(Some(message));
+    }
+
+    /// `h`: every open message's header fields shown or hidden, for the session; the cursor
+    /// goes to the start of the message it was in.
+    fn toggle_headers(&mut self, lines: &[ReaderLine]) {
+        let message = lines.get(self.cursor).and_then(|l| l.kind.message());
+        self.headers = !self.headers;
+        self.changed();
+        self.land(message);
+    }
+
+    /// The cursor on `message`'s first line as the lines are now; where it was (clamped) when
+    /// it is on no message's line.
+    fn land(&mut self, message: Option<usize>) {
         let fresh = self.current();
-        self.cursor = fresh
-            .iter()
-            .position(|l| l.kind == LineKind::Header { message })
-            .unwrap_or(0);
+        let last = fresh.len().saturating_sub(1);
+        self.cursor = message
+            .and_then(|m| start_of(&fresh, m))
+            .unwrap_or(self.cursor.min(last));
     }
 
     fn toggle_fold(&mut self, lines: &[ReaderLine]) {
@@ -379,7 +522,9 @@ impl Reader {
             Some(LineKind::Fold { message, block } | LineKind::Quote { message, block }) => {
                 (message, block)
             }
-            Some(LineKind::Header { .. }) => return self.toggle_message(lines),
+            Some(LineKind::Card { .. } | LineKind::Title { .. } | LineKind::Preview { .. }) => {
+                return self.toggle_message(lines);
+            }
             _ => return,
         };
         if !self.unfolded.remove(&target) {
@@ -394,4 +539,28 @@ impl Reader {
             })
             .unwrap_or(self.cursor.min(fresh.len().saturating_sub(1)));
     }
+}
+
+/// Where each message starts, in drawn order: the subject line for the newest, the card line
+/// for each older one.
+fn starts(lines: &[ReaderLine]) -> Vec<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .filter(|&(i, line)| match line.kind {
+            LineKind::Card { .. } => true,
+            LineKind::Title { .. } => {
+                i == 0 || !matches!(lines[i - 1].kind, LineKind::Title { .. })
+            }
+            _ => false,
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The line `message` starts on.
+fn start_of(lines: &[ReaderLine], message: usize) -> Option<usize> {
+    starts(lines)
+        .into_iter()
+        .find(|&i| lines[i].kind.message() == Some(message))
 }
