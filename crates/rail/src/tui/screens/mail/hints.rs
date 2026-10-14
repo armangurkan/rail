@@ -114,6 +114,7 @@ pub(super) fn hints(pane: Pane, keymap: &Keymap, sidebar_shown: bool, provider: 
                 "message",
             ),
             hint(l(Action::ReaderExpand), "fold"),
+            hint(l(Action::ReaderHeaders), "headers"),
             hint(l(Action::ListReply), "reply"),
             hint(l(Action::ListArchive), "archive"),
             hint(l(Action::ReaderBack), "back"),
@@ -427,6 +428,7 @@ mod tests {
             [
                 "n/p message",
                 "Tab fold",
+                "h headers",
                 "r reply",
                 "e archive",
                 "q back",

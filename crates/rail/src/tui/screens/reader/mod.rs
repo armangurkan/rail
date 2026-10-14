@@ -401,6 +401,7 @@ impl Reader {
             Action::ReaderPrev => self.jump(&lines, false),
             Action::ReaderExpand => self.toggle_message(&lines),
             Action::ReaderUnfold => self.toggle_fold(&lines),
+            Action::ReaderHeaders => self.toggle_headers(&lines),
             Action::ReaderBack => return ReaderOutcome::Back,
             Action::ReaderFollowLink => return ReaderOutcome::FollowLink,
             Action::ReaderOpenBrowser => return ReaderOutcome::OpenBrowser,
@@ -432,6 +433,15 @@ impl Reader {
         }
         self.changed();
         self.land(Some(message));
+    }
+
+    /// `h`: every open message's header fields shown or hidden, for the session; the cursor
+    /// goes to the start of the message it was in.
+    fn toggle_headers(&mut self, lines: &[ReaderLine]) {
+        let message = lines.get(self.cursor).and_then(|l| l.kind.message());
+        self.headers = !self.headers;
+        self.changed();
+        self.land(message);
     }
 
     /// The cursor on `message`'s first line as the lines are now; where it was (clamped) when

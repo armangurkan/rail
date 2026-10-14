@@ -231,6 +231,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `reader.prev` | reader | `p` | Previous message. |
 | `reader.expand` | reader | `tab` | Expand or collapse the message. |
 | `reader.unfold` | reader | `enter` | Show or hide the quoted lines. |
+| `reader.headers` | reader | `h` | Show or hide the headers. |
 | `reader.open_browser` | reader | `o` | Open the message in the browser. |
 | `reader.attachments` | reader | `a` | List the attachments. |
 | `reader.follow_link` | reader | `g x` | Open a link. |
@@ -347,8 +348,10 @@ text. When a long thread's oldest messages are not shown,
 `[5 older messages of this thread are not shown]` stands where they would be. `j`/`k` move the
 cursor, `n`/`p` jump between the newest message and each card, `Tab` (or `Enter` on a card, the
 subject or a preview) opens or closes the message under the cursor, and `Enter` on
-`[n quoted lines]` shows the quoted text. With `icons = "ascii"` the arrows are `>` and `v` and
-the rules `-`.
+`[n quoted lines]` shows the quoted text. `h` shows or hides, for the session, the headers of
+every open message: `From:`, `To:` and `Cc:` with addresses, `Date: Fri 10 Oct 2025 12:40`, and
+`Subject:` when it differs from the thread's. With `icons = "ascii"` the arrows are `>` and `v`
+and the rules `-`.
 
 HTML mail is shown as Rail's plain-text rendering, with each link as a numbered marker such as
 `[1]`; in terminals that support hyperlinks (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows
@@ -412,8 +415,8 @@ again. `:hints` turns the key hints off, or back on, and saves the choice (`hint
 `[general]`; turning them on removes the key); a save that fails says
 `Could not save the hints setting: …` and keeps the choice for this session. `:time` switches
 every time of day on screen (the list, `● Synced 14:47`, the Drafts list, `:errors`, the
-reader's `04:32`)
-between 24-hour and 12-hour (`2:47 pm`, `4:32 am`) and saves the choice
+reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines)
+between 24-hour and 12-hour (`2:47 pm`, `4:32 am`, `Date: Fri 10 Oct 2025 12:40 pm`) and saves the choice
 (`time = "12h"` under `[general]`; 24-hour removes the key); a save that fails says
 `Could not save the time setting: …` and keeps the choice for this session.
 `?` shows the keys of the view you are in,

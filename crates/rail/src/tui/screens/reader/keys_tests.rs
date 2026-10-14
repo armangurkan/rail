@@ -263,3 +263,49 @@ fn a_failed_reread_shows_on_the_subject_line_until_a_read_succeeds() {
         "the same thread read again clears it"
     );
 }
+
+#[test]
+fn h_shows_and_hides_every_open_messages_headers_and_keeps_the_cursor_on_its_message() {
+    let mut reader = reader_of(four(0), ThreadOrder::Oldest);
+    act(
+        &mut reader,
+        &[
+            Action::ReaderNext,
+            Action::ReaderExpand,
+            Action::ReaderDown,
+            Action::ReaderDown,
+        ],
+    );
+    assert_eq!(
+        at(&reader),
+        LineKind::Body { message: 0 },
+        "in Priya's open card"
+    );
+    reader.act(Action::ReaderHeaders);
+    assert_eq!(at(&reader), LineKind::Card { message: 0 }, "on its card");
+    let lines = reader.lines(80);
+    let fields: Vec<&str> = lines
+        .iter()
+        .filter(|l| matches!(l.kind, LineKind::Field { .. }))
+        .map(|l| l.text.as_str())
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            "From: David Hallas <david@example.com>",
+            "To: Vito <vito@example.com>, dana@example.com",
+            "Date: Fri 10 Oct 2025 04:32",
+            "From: Priya Nair <priya@example.com>",
+            "Date: Fri 03 Oct 2025 09:15",
+        ],
+        "the newest and the open card; the collapsed cards show none"
+    );
+    reader.act(Action::ReaderHeaders);
+    assert!(
+        reader
+            .lines(80)
+            .iter()
+            .all(|l| !matches!(l.kind, LineKind::Field { .. }))
+    );
+    assert_eq!(at(&reader), LineKind::Card { message: 0 });
+}
