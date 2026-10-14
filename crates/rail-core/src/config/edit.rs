@@ -133,6 +133,16 @@ pub fn set_general_number(
     set_general(text, path, key, value.map(Into::into))
 }
 
+/// `set_general` for a boolean value.
+pub fn set_general_bool(
+    text: &str,
+    path: &Path,
+    key: &str,
+    value: Option<bool>,
+) -> Result<String, ConfigError> {
+    set_general(text, path, key, value.map(Into::into))
+}
+
 /// Return `text` with a new `[[accounts]]` table appended. Validates the result.
 pub fn append_account(
     text: &str,
@@ -489,6 +499,21 @@ mod tests {
             set_general_number(&out, path, "accent", None).unwrap(),
             "[general]\n"
         );
+    }
+
+    #[test]
+    fn set_general_bool_writes_false_keeps_the_rest_and_none_removes_it() {
+        let text =
+            "# my rail config\n[general]\neditor = \"nvim\" # the good one\nicons = \"ascii\"\n";
+        let path = Path::new("c.toml");
+        let out = set_general_bool(text, path, "hints", Some(false)).unwrap();
+        assert_eq!(out, format!("{text}hints = false\n"));
+        let config = parse(&out, path).unwrap();
+        assert!(!config.general.hints);
+        assert_eq!(config.general.editor.as_deref(), Some("nvim"));
+        let removed = set_general_bool(&out, path, "hints", None).unwrap();
+        assert_eq!(removed, text, "the key goes and every comment stays");
+        assert!(parse(&removed, path).unwrap().general.hints);
     }
 
     #[test]

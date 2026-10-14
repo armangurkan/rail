@@ -17,6 +17,7 @@ All notable changes to Rail are recorded here. The format follows
   own drawn box at `split_threshold` and wider.
   Notices (`archived 3 · z undoes`) show in place of the hints. `3 selected` and the daemon's
   state moved from the status bar to the header.
+- `hints = false` under `[general]`, and `:hints` in the palette, turn the key hints off and give their rows back to the panes.
 - Writing Microsoft 365 mail over Microsoft Graph: `c`, `r`, `R` and `f` write from a Microsoft
   365 account and `y` sends with the ten second `z` undo; `s` saves to Outlook's Drafts
   (`saved to Microsoft 365 · z undoes`) and later saves update the same draft, or make it again

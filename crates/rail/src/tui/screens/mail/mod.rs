@@ -12,6 +12,7 @@ mod drafts_pane;
 mod events;
 mod header;
 mod hints;
+mod hints_toggle;
 mod layout;
 mod list;
 mod m365;
@@ -82,6 +83,8 @@ pub struct MailContext {
     pub clock: Clock,
     pub icons: Icons,
     pub split_threshold: u16,
+    /// `general.hints`: the key hints in the bottom bar.
+    pub hints: bool,
     /// The terminal shows OSC 8 hyperlinks.
     pub hyperlinks: bool,
     /// What the terminal can show; the theme picker needs it to preview.
@@ -175,6 +178,8 @@ pub struct MailScreen {
     pub(crate) actions: actions::ActionState,
     /// The theme kept and, while `:theme` or `:accent` is open, the one to restore.
     pub(crate) themes: themes::ThemeState,
+    /// The key hints are shown: from the config, then whatever `:hints` chose this session.
+    hints: bool,
     /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
     open_files: OpenFiles,
     /// The browser confirmation was answered yes this session.
@@ -215,6 +220,7 @@ impl MailScreen {
     pub fn new(ctx: MailContext, accounts: Vec<AccountEntry>) -> Self {
         let open_files = OpenFiles::new(&ctx.paths.cache_dir);
         let themes = themes::ThemeState::new(ctx.theme_choice);
+        let hints = ctx.hints;
         Self {
             ctx,
             account_ids: vec![None; accounts.len()],
@@ -237,6 +243,7 @@ impl MailScreen {
             modal: None,
             actions: actions::ActionState::default(),
             themes,
+            hints,
             open_files,
             html_confirmed: false,
             pending_open: None,

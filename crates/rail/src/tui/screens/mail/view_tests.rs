@@ -21,6 +21,11 @@ use crate::tui::theme::Theme;
 /// A small mailbox with every kind of row: unread and read, starred, with an attachment, a
 /// three-message thread, a long subject, a hostile one, and mail for both accounts.
 async fn screen(icons: Icons) -> (tempfile::TempDir, MailScreen) {
+    screen_with(icons, true).await
+}
+
+/// `screen` with `hints = false` when `hints` is false.
+async fn screen_with(icons: Icons, hints: bool) -> (tempfile::TempDir, MailScreen) {
     let tmp = tempfile::tempdir().unwrap();
     let paths = Paths::all_in(tmp.path());
     let hour = 3_600_000;
@@ -106,6 +111,7 @@ async fn screen(icons: Icons) -> (tempfile::TempDir, MailScreen) {
         vec![status("work", "w@example.com", SyncPhase::Idle), backfill];
     let mut ctx = mail_ctx(&paths, fake);
     ctx.icons = icons;
+    ctx.hints = hints;
     let mut screen = MailScreen::new(ctx, work_and_home());
     let effects = screen.start();
     settle(&mut screen, effects).await;
@@ -177,7 +183,7 @@ fn layout_pins_the_split_threshold_and_the_sidebar_rule() {
     assert_eq!(layout::bordered(140, 140), layout::is_split(140, 140));
     assert!(!layout::bordered(139, 140), "borders only in split mode");
     let area = ratatui::layout::Rect::new(0, 0, 150, 40);
-    let areas = layout::areas(area, true, true);
+    let areas = layout::areas(area, true, true, true);
     assert_eq!(areas.header.height, 1);
     assert_eq!(areas.hints.height, layout::HINT_ROWS_BOXED);
     assert_eq!(
@@ -188,14 +194,15 @@ fn layout_pins_the_split_threshold_and_the_sidebar_rule() {
     assert_eq!(areas.body.y, 1);
     assert_eq!(areas.sidebar.unwrap().width, layout::SIDEBAR_WIDTH);
     assert!(areas.reader.unwrap().width > areas.list.width);
-    let narrow = layout::areas(ratatui::layout::Rect::new(0, 0, 90, 24), false, false);
+    let narrow = layout::areas(ratatui::layout::Rect::new(0, 0, 90, 24), false, false, true);
     assert!(narrow.sidebar.is_none() && narrow.reader.is_none());
     assert_eq!(narrow.list.width, 90);
     assert_eq!(narrow.hints.height, 1, "stacked mode keeps the one-row bar");
-    let short = layout::areas(ratatui::layout::Rect::new(0, 0, 150, 10), true, true);
+    let short = layout::areas(ratatui::layout::Rect::new(0, 0, 150, 10), true, true, true);
     assert_eq!(short.hints.height, 1, "too short for key boxes");
     let under = layout::areas(
         ratatui::layout::Rect::new(0, 0, 150, layout::MIN_ROWS_FOR_KEY_BOXES - 1),
+        true,
         true,
         true,
     );
@@ -204,8 +211,12 @@ fn layout_pins_the_split_threshold_and_the_sidebar_rule() {
         ratatui::layout::Rect::new(0, 0, 150, layout::MIN_ROWS_FOR_KEY_BOXES),
         true,
         true,
+        true,
     );
     assert_eq!(just.hints.height, 3);
+    let off = layout::areas(area, true, true, false);
+    assert_eq!(off.hints.height, 1, "hints off: one row in split mode too");
+    assert_eq!(off.body.height, 38, "the boxes' rows go to the panes");
     assert!(layout::fits_border(ratatui::layout::Rect::new(0, 0, 4, 3)));
     assert!(!layout::fits_border(ratatui::layout::Rect::new(0, 0, 3, 3)));
     assert!(!layout::fits_border(ratatui::layout::Rect::new(0, 0, 4, 2)));
@@ -344,6 +355,48 @@ async fn a_notice_replaces_the_hints_and_the_hints_return() {
     assert!(
         bottom.trim_end().ends_with("● work ✓ · ● home ⟳ 1200/5000"),
         "{bottom}"
+    );
+}
+
+#[tokio::test]
+async fn with_hints_off_the_bar_is_one_row_of_notices_and_account_states() {
+    let (_tmp, screen) = screen_with(Icons::Unicode, false).await;
+    let lines =
+        crate::tui::test_util::render_lines(150, 40, |frame| screen.view(frame, &Theme::default()));
+    let states = "● work ✓ · ● home ⟳ 1200/5000";
+    assert_eq!(lines[39].trim(), states, "only the accounts: {}", lines[39]);
+    assert!(lines[39].trim_end().ends_with(states), "{}", lines[39]);
+    assert!(lines[39].starts_with(' '), "right-aligned: {}", lines[39]);
+    assert!(!lines.iter().any(|l| l.contains("? help")), "no hints");
+    for row in [37, 38] {
+        assert!(
+            !lines[row].contains("Enter"),
+            "no key boxes: {}",
+            lines[row]
+        );
+    }
+    assert!(lines[37].starts_with('│'), "a pane row: {}", lines[37]);
+    assert!(
+        lines[38].starts_with('└'),
+        "the sidebar's box ends just above the bar: {}",
+        lines[38]
+    );
+    insta::assert_snapshot!("mail_list_hints_off_150x40", draw(&screen, 150, 40));
+}
+
+#[tokio::test]
+async fn with_hints_off_a_notice_shows_on_the_left_of_the_last_row() {
+    let (_tmp, mut screen) = screen_with(Icons::Unicode, false).await;
+    screen.status.notify("draft kept", screen.tick);
+    let lines =
+        crate::tui::test_util::render_lines(150, 40, |frame| screen.view(frame, &Theme::default()));
+    assert!(lines[39].starts_with("draft kept"), "{}", lines[39]);
+    assert!(
+        lines[39]
+            .trim_end()
+            .ends_with("● work ✓ · ● home ⟳ 1200/5000"),
+        "{}",
+        lines[39]
     );
 }
 

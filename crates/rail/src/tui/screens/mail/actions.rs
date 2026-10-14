@@ -472,6 +472,7 @@ impl MailScreen {
             MailEvent::ActionFailed(failure) => self.action_failed(*failure),
             MailEvent::Labels { seq, result } => self.labels_read(seq, result),
             MailEvent::ThemeSaved { result } => self.theme_saved(result),
+            MailEvent::HintsSaved { result } => self.hints_saved(result),
             other => self.compose_event(other),
         }
     }

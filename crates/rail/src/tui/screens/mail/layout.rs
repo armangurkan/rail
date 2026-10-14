@@ -1,6 +1,7 @@
 //! Where things go: a header row, the body (the sidebar when shown, the list, the reader pane
 //! when split) and the hint bar. In split mode every pane is boxed, the focused one's border in
-//! the theme's focus style, and the hint bar takes three rows so each key sits in its own box.
+//! the theme's focus style, and the hint bar takes three rows so each key sits in its own box,
+//! unless the hints are off.
 
 use rail_core::config::Icons;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -83,21 +84,23 @@ pub fn pane_block(theme: &Theme, icons: Icons, focused: bool) -> Block<'static> 
         .border_style(style)
 }
 
-/// The hint bar's rows: three (a box around each key) in split mode when the screen has
-/// `MIN_ROWS_FOR_KEY_BOXES` rows, else one.
-fn hint_rows(area: Rect, pane: bool) -> u16 {
-    if pane && area.height >= MIN_ROWS_FOR_KEY_BOXES {
+/// The hint bar's rows: three (a box around each key) in split mode with the hints on when the
+/// screen has `MIN_ROWS_FOR_KEY_BOXES` rows, else one.
+fn hint_rows(area: Rect, pane: bool, hints: bool) -> u16 {
+    if pane && hints && area.height >= MIN_ROWS_FOR_KEY_BOXES {
         HINT_ROWS_BOXED
     } else {
         1
     }
 }
 
-pub fn areas(area: Rect, sidebar: bool, pane: bool) -> Areas {
+/// The frame's areas; `hints` is whether the key hints are shown (`hints = false` keeps the bar
+/// to one row).
+pub fn areas(area: Rect, sidebar: bool, pane: bool, hints: bool) -> Areas {
     let [header, body, hints] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
-        Constraint::Length(hint_rows(area, pane)),
+        Constraint::Length(hint_rows(area, pane, hints)),
     ])
     .areas(area);
     let (side, rest) = if sidebar {

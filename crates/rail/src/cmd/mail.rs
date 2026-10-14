@@ -81,6 +81,7 @@ fn context(
         clock: Clock::system(),
         icons: config.general.icons,
         split_threshold: config.general.split_threshold,
+        hints: config.general.hints,
         hyperlinks: hyperlinks_supported(|name| std::env::var(name).ok()),
         depth,
         theme_choice,

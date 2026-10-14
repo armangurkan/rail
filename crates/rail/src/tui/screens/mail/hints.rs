@@ -1,6 +1,7 @@
 //! The hint bar: key hints for the focused pane, built from the keymap, a notice in their
 //! place while one shows, and each account's state on the right. One row when stacked; in split
-//! mode three, each key in its own box with the words and the accounts on the middle row.
+//! mode three, each key in its own box with the words and the accounts on the middle row. With
+//! the hints off (`hints = false`, `:hints`) one row of the notice and the accounts.
 
 use rail_core::config::Icons;
 use ratatui::Frame;
@@ -170,6 +171,8 @@ pub(super) fn fit_hints(hints: &[Hint], boxed: bool, room: usize) -> Vec<Hint> {
 /// What the bar draws.
 pub(super) struct Bar<'a> {
     pub hints: Vec<Hint>,
+    /// `hints = false` (or `:hints`): the left part keeps only the notice.
+    pub show_hints: bool,
     /// A notice in place of the hints, and whether it is an error.
     pub notice: Option<(&'a str, bool)>,
     /// The glyph before each account's state.
@@ -210,11 +213,14 @@ fn right_spans(bar: &Bar<'_>, theme: &Theme, room: usize) -> Vec<Span<'static>> 
     spans
 }
 
-/// The left part: the notice, or the hints that fit in `room`.
+/// The left part: the notice, or the hints that fit in `room` (nothing with the hints off).
 fn left_spans(bar: &Bar<'_>, theme: &Theme, room: usize) -> Vec<Span<'static>> {
     if let Some((text, error)) = bar.notice {
         let style = if error { theme.error } else { theme.muted };
         return vec![Span::styled(fit(text, room), style)];
+    }
+    if !bar.show_hints {
+        return Vec::new();
     }
     let mut spans = Vec::new();
     for (i, h) in fit_hints(&bar.hints, false, room).iter().enumerate() {
@@ -229,7 +235,8 @@ fn left_spans(bar: &Bar<'_>, theme: &Theme, room: usize) -> Vec<Span<'static>> {
 
 /// Draw the bar: the left part, then the accounts at the right edge. The accounts give way
 /// first, down to what leaves room for `? help`.
-/// With three rows or more, each key is drawn in its own box (`icons` picks the lines).
+/// With three rows or more, each key is drawn in its own box (`icons` picks the lines). With
+/// the hints off nothing is kept for `? help`, and no box is drawn.
 pub(super) fn render_hints(
     frame: &mut Frame,
     area: Rect,
@@ -237,9 +244,12 @@ pub(super) fn render_hints(
     bar: &Bar<'_>,
     icons: Icons,
 ) {
-    let boxed = area.height >= HINT_ROWS_BOXED;
+    let boxed = bar.show_hints && area.height >= HINT_ROWS_BOXED;
     let cols = usize::from(area.width);
-    let help_w = bar.hints.last().map_or(0, |h| one_width(h, boxed));
+    let help_w = match bar.hints.last() {
+        Some(h) if bar.show_hints => one_width(h, boxed),
+        _ => 0,
+    };
     let right_room = cols.saturating_sub(help_w + width(SEP));
     let right = right_spans(bar, theme, width(&bar.right_text()).min(right_room));
     let right_w = spans_width(&right);
@@ -370,6 +380,7 @@ impl MailScreen {
         };
         Bar {
             hints,
+            show_hints: self.hints,
             notice,
             dot: glyphs.account,
             right,
@@ -505,6 +516,7 @@ mod tests {
     fn sample_bar(notice: Option<(&'static str, bool)>) -> Bar<'static> {
         Bar {
             hints: hints(Pane::List, &keymap(), true, "Gmail"),
+            show_hints: true,
             notice,
             dot: "●",
             right: vec![
@@ -616,6 +628,7 @@ mod tests {
                 hint("Tab".to_string(), "pane"),
                 hint("Enter".to_string(), "open"),
             ],
+            show_hints: true,
             notice: None,
             dot: "●",
             right: Vec::new(),

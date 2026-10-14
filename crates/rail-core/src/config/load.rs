@@ -257,6 +257,26 @@ archive = "e"
     }
 
     #[test]
+    fn hints_default_on_take_false_and_refuse_a_string_at_its_line() {
+        assert!(p("").unwrap().general.hints);
+        assert!(!p("[general]\nhints = false\n").unwrap().general.hints);
+        // Like every typed key, the error points at the value's line and column.
+        let err = p("[general]\nhints = \"no\"\n").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Parse {
+                    line: 2,
+                    col: 9,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        assert!(err.to_string().contains("expected a boolean"), "{err}");
+    }
+
+    #[test]
     fn unknown_key_reports_line_number() {
         let text = "[general]\neditor = \"vi\"\nbogus = 1\n";
         let err = p(text).unwrap_err();

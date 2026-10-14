@@ -1,9 +1,11 @@
-//! `:theme` and `:accent`: the pickers, the preview, the save.
+//! `:theme` and `:accent`: the pickers, the preview, the save (which `:hints` shares).
 
 use std::path::Path;
 use std::sync::Mutex;
 
-use rail_core::config::{load_text_or_empty, set_general_number, set_general_text};
+use rail_core::config::{
+    load_text_or_empty, set_general_bool, set_general_number, set_general_text,
+};
 use rail_core::paths::{create_private_dir, replace_private_atomic};
 use ratatui::style::Color;
 
@@ -185,16 +187,26 @@ impl MailScreen {
         self.themes.before = None;
         self.themes.current = choice;
         self.status.notify(escape(notice), self.tick);
-        let path = self.ctx.paths.config_file();
         vec![
             Effect::Theme(self.theme_for(choice)),
-            job(move |sink| async move {
-                let result = tokio::task::spawn_blocking(move || write_general(&path, key, value))
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()));
-                send(&sink, MailEvent::ThemeSaved { result });
-            }),
+            self.save_general(key, value, |result| MailEvent::ThemeSaved { result }),
         ]
+    }
+
+    /// A job that writes `value` as `key` to config and answers with `done`'s event.
+    pub(super) fn save_general(
+        &self,
+        key: &'static str,
+        value: Saved,
+        done: fn(Result<(), String>) -> MailEvent,
+    ) -> Effect {
+        let path = self.ctx.paths.config_file();
+        job(move |sink| async move {
+            let result = tokio::task::spawn_blocking(move || write_general(&path, key, value))
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+            send(&sink, done(result));
+        })
     }
 
     /// The choice the theme picker's item `index` stands for, with the accent in force.
@@ -229,10 +241,11 @@ fn slot_name(n: u8) -> &'static str {
     SLOT_NAMES[usize::from(n) % SLOT_NAMES.len()]
 }
 
-/// What a picker saves: `theme` is text, `accent` a number; `None` removes the key.
+/// What is saved: `theme` is text, `accent` a number, `hints` a boolean; `None` removes the key.
 pub(super) enum Saved {
     Text(Option<String>),
     Number(Option<i64>),
+    Bool(Option<bool>),
 }
 
 /// Held across a read-edit-rename so two saves never share the temporary file.
@@ -254,6 +267,7 @@ pub(super) fn write_general(path: &Path, key: &str, value: Saved) -> Result<(), 
     let out = match value {
         Saved::Text(v) => set_general_text(&text, path, key, v.as_deref()),
         Saved::Number(v) => set_general_number(&text, path, key, v),
+        Saved::Bool(v) => set_general_bool(&text, path, key, v),
     }
     .map_err(|e| e.to_string())?;
     if let Some(dir) = path

@@ -8,7 +8,7 @@ use crate::tui::modals::{PaletteEntry, Target};
 
 impl MailScreen {
     /// Every palette entry: each key action of the active view and the global ones with its
-    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, each account and label.
+    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, each account and label.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let key = |a: Action| self.ctx.keymap.label(a);
         let views = self.views();
@@ -35,9 +35,14 @@ impl MailScreen {
         entries
     }
 
-    /// Rail's own commands; `compose` carries the key of `c`.
+    /// Rail's own commands; `compose` carries the key of `c`, `hints` says what it will do.
     fn command_entries(&self) -> Vec<PaletteEntry> {
         let compose = self.ctx.keymap.label(Action::ListCompose);
+        let hints = if self.hints {
+            "Turn the key hints off"
+        } else {
+            "Turn the key hints on"
+        };
         let commands = [
             ("Write a new message", "compose", compose, Target::Compose),
             ("Open a draft", "drafts", String::new(), Target::Drafts),
@@ -59,6 +64,7 @@ impl MailScreen {
                 String::new(),
                 Target::Accent,
             ),
+            (hints, "hints", String::new(), Target::Hints),
         ];
         commands
             .into_iter()

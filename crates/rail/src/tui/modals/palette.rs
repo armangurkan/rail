@@ -30,6 +30,8 @@ pub enum Target {
     Theme,
     /// `:accent`: the accent slot picker.
     Accent,
+    /// `:hints`: turn the key hints off or on.
+    Hints,
     Scope(ScopeChoice),
     /// Write a new message (`c`).
     Compose,

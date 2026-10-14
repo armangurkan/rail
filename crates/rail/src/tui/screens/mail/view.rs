@@ -122,7 +122,7 @@ impl MailScreen {
             .unwrap_or_else(|| layout::sidebar_by_default(area.width));
         let split = layout::is_split(area.width, self.ctx.split_threshold);
         let boxed = layout::bordered(area.width, self.ctx.split_threshold);
-        let parts = areas(area, sidebar, split);
+        let parts = areas(area, sidebar, split, self.hints);
         self.size.set((Self::list_rows(&parts, boxed), area.width));
         // An OSC 8 cell claims the cells after it, so the diff skips them; a modal drawn over
         // them could lose its border. While a modal is open the markers are plain `[n]`.

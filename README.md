@@ -301,6 +301,9 @@ each key is drawn in its own box, with no frame around the bar (`+`, `-` and `|`
 └───────┘      └─────┘      └─────┘         └───┘
 ```
 
+`:hints` (or `hints = false` under `[general]`) turns the hints off: the bar is one row of notices
+and account states at every width, and `?` still lists the keys.
+
 `Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
 beside the list; narrower, it covers the screen. `q` or `Esc` closes it. Messages are oldest
 first; unread ones and the latest are expanded. `j`/`k` move the cursor, `n`/`p` jump between
@@ -360,7 +363,10 @@ local store only (`rail search` also asks each account's server).
 `:` opens the command palette: type a few letters of a key action for the current view, an account
 or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
 the session's recent errors; while one of them is an action Gmail refused, `j`/`k` or `↓`/`↑`
-highlight an entry and `Enter` sends that action again. `?` shows the keys of the view you are in,
+highlight an entry and `Enter` sends that action again. `:hints` turns the key hints off, or back
+on, and saves the choice (`hints = false` under `[general]`; turning them on removes the key); a
+save that fails says `Could not save the hints setting: …` and keeps the choice for this session.
+`?` shows the keys of the view you are in,
 marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.help` is bound to),
 `Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more`
 line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond the box.
@@ -1001,6 +1007,7 @@ running syncs carry on unchanged.
 | `theme` | unset | A scheme name as `:theme` lists it (case does not matter; names may contain spaces). Checked when the mail screen starts; a misspelling names the nearest scheme. |
 | `accent` | unset | The accent colour: a palette slot `0` to `15` of the scheme (a number, or a string such as `"5"`), a colour name such as `"blue"`, or `"#rrggbb"`. Without truecolor a `"#rrggbb"` accent is not applied. |
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
+| `hints` | `true` | `false` turns the key hints off: the bottom row keeps only notices and each account's state, and the key boxes' rows go to the panes. `:hints` in the palette toggles it and saves it. |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 
