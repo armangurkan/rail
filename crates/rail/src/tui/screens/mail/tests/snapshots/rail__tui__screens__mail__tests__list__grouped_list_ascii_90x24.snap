@@ -2,7 +2,7 @@
 source: crates/rail/src/tui/screens/mail/tests/list.rs
 expression: "crate::tui::test_util::snapshot(90, 24, |frame|\n{ f.screen.view(frame, &Theme::default()) })"
 ---
-|Rail | All inboxes · 2 accounts · 3 unread  / Search                       * Synced 12:39
+|Rail | All inboxes · 2 accounts · 3 unread  | / Search             * Synced 12:39 | 12:40
 TODAY
 *  W  Sender                      subject dm1                                        10:54
 *  W  Sender                      subject dm0                                        10:53

@@ -332,6 +332,25 @@ archive = "e"
     }
 
     #[test]
+    fn clock_defaults_on_takes_false_and_refuses_a_string_at_its_line() {
+        assert!(p("").unwrap().general.clock);
+        assert!(!p("[general]\nclock = false\n").unwrap().general.clock);
+        let err = p("[general]\nclock = \"no\"\n").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Parse {
+                    line: 2,
+                    col: 9,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        assert!(err.to_string().contains("expected a boolean"), "{err}");
+    }
+
+    #[test]
     fn unknown_key_reports_line_number() {
         let text = "[general]\neditor = \"vi\"\nbogus = 1\n";
         let err = p(text).unwrap_err();

@@ -477,6 +477,7 @@ pub fn mail_ctx(paths: &Paths, fake: Arc<FakeDaemon>) -> MailContext {
         icons: Icons::Unicode,
         split_threshold: 140,
         hints: true,
+        show_clock: true,
         thread_order: ThreadOrder::Oldest,
         hyperlinks: false,
         depth: ColorDepth::TrueColor,

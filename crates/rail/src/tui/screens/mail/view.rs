@@ -44,6 +44,9 @@ pub struct Glyphs {
     pub draft: &'static str,
     /// Between `Rail` and the scope in the header.
     pub separator: &'static str,
+    /// Before the header's search slot: the separator, a space, the magnifier (two cells
+    /// wide), a space; `| ` in ASCII.
+    pub search: &'static str,
     /// The sidebar's mailbox icons, each padded to two cells when drawn.
     pub icon_inbox: &'static str,
     pub icon_starred: &'static str,
@@ -75,6 +78,7 @@ impl Glyphs {
                 closed: "▸",
                 draft: "✎",
                 separator: "│",
+                search: "│ 🔍 ",
                 icon_inbox: "✉",
                 icon_starred: "★",
                 icon_drafts: "✎",
@@ -99,6 +103,7 @@ impl Glyphs {
                 closed: ">",
                 draft: "*",
                 separator: "|",
+                search: "| ",
                 icon_inbox: "i",
                 icon_starred: "*",
                 icon_drafts: "d",
@@ -156,7 +161,8 @@ impl MailScreen {
         // An OSC 8 cell claims the cells after it, so the diff skips them; a modal drawn over
         // them could lose its border. While a modal is open the markers are plain `[n]`.
         let hyperlinks = self.ctx.hyperlinks && self.modal.is_none();
-        let slot = header::render_header(frame, parts.header, theme, &self.header());
+        let header_parts = self.header(layout::header_boxed(parts.header));
+        let slot = header::render_header(frame, parts.header, theme, &header_parts);
         self.slot_rect.set(slot);
         if let Some(composer) = &self.compose {
             composer.render(frame, parts.body, theme, &glyphs);

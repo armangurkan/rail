@@ -2,7 +2,9 @@
 source: crates/rail/src/tui/screens/mail/tests/compose_gmail.rs
 expression: shot
 ---
-▍Rail │ All inboxes · 2 accounts · 5 unread  / Search                                                                                   ● Synced 12:39
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Rail │ All inboxes · 2 accounts · 5 unread  │ 🔍  / Search                                                                   ● Synced 12:39 │ 12:40 │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 Reply · w@example.com
 
 From: w@example.com
@@ -18,8 +20,6 @@ On Thu, 9 Oct 2025 08:55:20 +0000, Sender wrote:
 --
 work sig
 x
-
-
 
 
 

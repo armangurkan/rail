@@ -2,7 +2,7 @@
 source: crates/rail/src/tui/screens/reader/tests.rs
 expression: "draw(&f, 90, 24)"
 ---
-|Rail | All inboxes · 1 account · 1 unread  / Search                        * Synced 12:39
+|Rail | All inboxes · 1 account · 1 unread  | / Search              * Synced 12:39 | 12:40
 Q4 plan
 Sender  Thu 08:55   W  WORK
 /  3 messages
