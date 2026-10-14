@@ -4,26 +4,22 @@
 
 use rail_core::config::Icons;
 use rail_core::provider::Mailbox;
-use rail_core::store::view::ThreadRow;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier};
-use ratatui::text::{Line, Span};
+use ratatui::style::Modifier;
+use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::layout::{self, areas};
+use super::list_view::{ListLine, frame_lines, list_lines};
 use super::{Focus, MailScreen, StoreState};
 use super::{header, hints};
+use crate::tui::clock::Group;
 use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
 use crate::tui::modals::Modal;
-use crate::tui::text::{escape, fit, outside, pad, pad_left};
+use crate::tui::text::{escape, outside};
 use crate::tui::theme::Theme;
-
-/// Columns of the date column.
-pub(super) const DATE_COLS: usize = 10;
-/// Columns of the message count (`(12)`).
-const COUNT_COLS: usize = 5;
 
 /// The glyphs of one `general.icons` choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,6 +251,8 @@ impl MailScreen {
         }
     }
 
+    /// The thread rows in their date groups. The rows a page moves by are the pane's rows
+    /// less the group rows drawn, kept in `size` for the keys.
     fn render_list(&self, frame: &mut Frame, area: Rect, theme: &Theme, glyphs: &Glyphs) {
         if self.in_drafts() {
             self.render_drafts(frame, area, theme, glyphs);
@@ -265,16 +263,33 @@ impl MailScreen {
             return;
         }
         let height = usize::from(area.height);
-        let selected = self.list.selected_index();
-        let offset = visible_offset(self.list.offset(), selected, height);
-        let rows: Vec<Line> = self
+        let groups: Vec<Group> = self
             .list
             .rows()
             .iter()
-            .enumerate()
-            .skip(offset)
-            .take(height)
-            .map(|(index, row)| self.row_line(row, index == selected, area.width, theme, glyphs))
+            .map(|row| self.ctx.clock.group(row.key.last_date))
+            .collect();
+        let shown = frame_lines(
+            &list_lines(&groups),
+            self.list.offset(),
+            self.list.selected_index(),
+            height,
+        );
+        let group_rows = shown
+            .iter()
+            .filter(|line| matches!(line, ListLine::Group(_)))
+            .count();
+        let fits = u16::try_from(height.saturating_sub(group_rows).max(1)).unwrap_or(u16::MAX);
+        self.size.set((fits, self.size.get().1));
+        let heading = theme.muted.add_modifier(Modifier::BOLD);
+        let rows: Vec<Line> = shown
+            .iter()
+            .map(|line| match *line {
+                ListLine::Group(group) => Line::styled(group.name(), heading),
+                ListLine::Thread(index) => {
+                    self.thread_row(index, groups[index], area.width, theme, glyphs)
+                }
+            })
             .collect();
         frame.render_widget(Paragraph::new(rows), area);
     }
@@ -313,65 +328,6 @@ impl MailScreen {
             StoreState::Ready => return None,
         };
         Some(lines)
-    }
-
-    fn row_line(
-        &self,
-        row: &ThreadRow,
-        selected: bool,
-        cols: u16,
-        theme: &Theme,
-        glyphs: &Glyphs,
-    ) -> Line<'static> {
-        let color = self
-            .account_index(row.account_id)
-            .map_or(Color::Reset, |i| self.account_color(i, theme));
-        let base = if selected && self.focus != Focus::Sidebar {
-            theme.selected
-        } else {
-            theme.text
-        };
-        let style = if row.unread_count > 0 {
-            base.add_modifier(Modifier::BOLD)
-        } else {
-            base
-        };
-        let people_cols = people_cols(cols);
-        let date = pad_left(&self.ctx.clock.short(row.key.last_date), DATE_COLS);
-        let people = pad(&participants(&row.participants), people_cols);
-        let count = if row.message_count > 1 {
-            pad_left(&format!("({})", row.message_count), COUNT_COLS)
-        } else {
-            " ".repeat(COUNT_COLS)
-        };
-        let star = if row.starred { glyphs.star } else { " " };
-        let clip = if row.has_attachments {
-            glyphs.attachment
-        } else {
-            "  "
-        };
-        let used = 2 + DATE_COLS + 2 + people_cols + COUNT_COLS + 1 + 1 + 2 + 1;
-        let room = usize::from(cols).saturating_sub(used);
-        let (subject, subject_style) = match self.actions.failures.get(&row.key.thread_id) {
-            Some((_, text)) => (fit(text, room), theme.error),
-            None => (fit(&row.subject, room), style),
-        };
-        let lead = if self.actions.selection.contains(row.key.thread_id) {
-            glyphs.marked
-        } else {
-            glyphs.account
-        };
-        Line::from(vec![
-            Span::styled(format!("{lead} "), style.fg(color)),
-            Span::styled(format!("{date}  {people}{count} {star}{clip} "), style),
-            Span::styled(subject, subject_style),
-        ])
-    }
-
-    fn account_index(&self, account_id: i64) -> Option<usize> {
-        self.account_ids
-            .iter()
-            .position(|id| *id == Some(account_id))
     }
 
     /// The split layout's pane before a thread is open.

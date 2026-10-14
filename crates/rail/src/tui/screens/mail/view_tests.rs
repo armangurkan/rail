@@ -297,6 +297,57 @@ async fn mail_screen_snapshots() {
     }
 }
 
+#[tokio::test]
+async fn the_list_draws_its_date_groups_in_order_with_their_times() {
+    let (_tmp, screen) = screen(Icons::Unicode).await;
+    let theme = Theme::default();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+    terminal.draw(|frame| screen.view(frame, &theme)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let line = |y: u16| {
+        (0..90u16)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>()
+    };
+    let expected = [
+        ("TODAY", ""),
+        ("Q4 roadmap", "11:54"),
+        ("Pipeline failed", "09:53"),
+        ("YESTERDAY", ""),
+        ("subject h1", "10:53"),
+        ("THIS WEEK", ""),
+        ("offsite", "Wed 12:53"),
+        ("OLDER", ""),
+        ("pay", "Sep 09"),
+        ("A very long", "2024-09-04"),
+    ];
+    for (y, (text, time)) in (1u16..).zip(expected) {
+        let row = line(y);
+        assert!(row.contains(text), "row {y}: {row}");
+        assert!(row.trim_end().ends_with(time), "row {y}: {row}");
+    }
+    for (y, name) in [
+        (1, "TODAY"),
+        (4, "YESTERDAY"),
+        (6, "THIS WEEK"),
+        (8, "OLDER"),
+    ] {
+        assert_eq!(line(y).trim_end(), name, "a group row holds its name alone");
+        assert_eq!(buffer[(0, y)].fg, theme.muted.fg.unwrap());
+        assert!(buffer[(0, y)].modifier.contains(Modifier::BOLD));
+    }
+    assert!(
+        line(5).starts_with("●  H  Sender"),
+        "home's badge: {}",
+        line(5)
+    );
+    assert!(
+        line(7).starts_with("·  W  Priya Nair"),
+        "the read thread's dot: {}",
+        line(7)
+    );
+}
+
 /// At 120 columns the sidebar shows by default and, below the split, sits unboxed beside its
 /// right rule.
 #[tokio::test]
@@ -586,10 +637,11 @@ async fn a_two_row_body_in_split_mode_has_no_borders() {
         crate::tui::test_util::render_lines(150, 4, |frame| screen.view(frame, &Theme::default()));
     assert!(!lines[1].contains('┌'), "{}", lines[1]);
     assert!(
-        lines[1].contains("All inboxes") || lines[1].contains("Q4 roadmap"),
-        "{}",
+        lines[1].contains("TODAY"),
+        "the group row first: {}",
         lines[1]
     );
+    assert!(lines[2].contains("Q4 roadmap"), "{}", lines[2]);
 }
 
 #[tokio::test]

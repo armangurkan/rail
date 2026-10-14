@@ -276,8 +276,16 @@ daemon (starting it if needed) for sync progress. If the store is not set up yet
 and points to `rail sync`; if the daemon cannot be reached, the header says so
 (`daemon unreachable (Ctrl-r retries)`) and `Ctrl-r` retries.
 
-The thread list shows the unified inbox: the account's colour dot, the date, the people, the
-message count, `★` for starred and `📎` for attachments, and the subject; unread threads are bold.
+The thread list shows the unified inbox, newest first, in date groups: `TODAY`, `YESTERDAY`,
+`THIS WEEK` (two to six days ago) and `OLDER`, each name on its own row above its threads; the
+group of the top row stays on the first row as you scroll. A row shows a dot (`●` in the
+account's colour while the thread has unread mail, a muted `·` once it is read, `▸` when it is
+selected with `Space`), the account's badge in `All inboxes`, `Starred`, `Sent` and `Trash` (its
+label's first letter on its colour), the people, `★` for starred and `📎` for attachments, the
+subject with the message count after it (`(3)`, never cut), and at the right edge the time:
+`14:05` today and yesterday, `Mon 18:20` this week, `Oct 03` earlier this year, `2024-10-03`
+before; mail dated after today is under `TODAY` with its date. Unread threads are bold. With `icons = "ascii"` the dots are `*`, `.` and `>`, `★` is `+`
+and `📎` is `@`.
 `1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
 and wider; `b` toggles it, `Tab` moves into it) has two sections. UNIFIED holds `All inboxes`,
 `Starred`, `Drafts`, `Sent` and `Trash`, each with every account's mail. ACCOUNTS holds each

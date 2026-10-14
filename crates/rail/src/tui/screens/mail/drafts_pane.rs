@@ -12,13 +12,15 @@ use ratatui::style::Color;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::view::{DATE_COLS, Glyphs, participants, people_cols, visible_offset};
+use super::view::{Glyphs, participants, people_cols, visible_offset};
 use super::{Focus, MailScreen};
 use crate::tui::text::{fit, pad, pad_left};
 use crate::tui::theme::Theme;
 
 /// What a local draft no Gmail copy has shows in the people column.
 const LOCAL_ONLY: &str = "(local)";
+/// Columns of the date column.
+const DATE_COLS: usize = 10;
 
 /// The pane's rows and cursor.
 #[derive(Debug, Default)]

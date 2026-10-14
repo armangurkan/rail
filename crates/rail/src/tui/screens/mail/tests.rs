@@ -28,6 +28,7 @@ mod compose;
 mod compose_edges;
 mod compose_gmail;
 mod drafts_folder;
+mod list;
 mod m365;
 mod pickers;
 mod replaced;

@@ -4,16 +4,16 @@ expression: "draw(&screen, 150, 40)"
 ---
 ▍Rail │ All inboxes · 2 accounts · 5 unread  / Search                                                                             ⟳ Backfill 1200/5000
 ┌────────────────────────┐┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────────────────┐
-│UNIFIED                 ││●      11:54  Dana Reyes, …  (3) ★   Q4 roadmap revie…││Open a thread with Enter; it shows here.                          │
-│✉  All inboxes         5││●      09:53  GitLab              📎  Pipeline failed:…││                                                                  │
-│★  Starred             1││●  Yesterday  Sender                 subject h1       ││                                                                  │
-│✎  Drafts               ││●        Wed  Priya Nair             Re: offsite logi…││                                                                  │
-│➤  Sent                 ││●     Sep 09  Evil\u{7}Corp          pay\u{202e}fdp.e…││                                                                  │
-│✕  Trash                ││● 2024-09-04  Sender                 A very long subj…││                                                                  │
-│────────────────────────││                                                      ││                                                                  │
-│ACCOUNTS                ││                                                      ││                                                                  │
-│▾  W  work             4││                                                      ││                                                                  │
-│  ✉  Inbox             4││                                                      ││                                                                  │
+│UNIFIED                 ││TODAY                                                 ││Open a thread with Enter; it shows here.                          │
+│✉  All inboxes         5││●  W  Dana Reyes, …  ★   Q4 roadmap r… (3)       11:54││                                                                  │
+│★  Starred             1││●  W  GitLab          📎  Pipeline failed:…       09:53││                                                                  │
+│✎  Drafts               ││YESTERDAY                                             ││                                                                  │
+│➤  Sent                 ││●  H  Sender             subject h1              10:53││                                                                  │
+│✕  Trash                ││THIS WEEK                                             ││                                                                  │
+│────────────────────────││·  W  Priya Nair         Re: offsite logi…   Wed 12:53││                                                                  │
+│ACCOUNTS                ││OLDER                                                 ││                                                                  │
+│▾  W  work             4││●  W  Evil\u{7}Corp      pay\u{202e}fdp.e…      Sep 09││                                                                  │
+│  ✉  Inbox             4││●  W  Sender             A very long subj…  2024-09-04││                                                                  │
 │  ➤  Sent               ││                                                      ││                                                                  │
 │  ✕  Trash              ││                                                      ││                                                                  │
 │────────────────────────││                                                      ││                                                                  │

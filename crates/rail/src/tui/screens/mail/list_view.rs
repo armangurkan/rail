@@ -1,16 +1,17 @@
-//! The thread list's rows: the dot, the account's badge (merged mailboxes only), the people,
-//! `★` and `📎`, the subject with its count after it, and the time right-aligned at the edge.
-//! People, subjects and a failed action's text are outside text: `pad` and `fit` escape them.
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used from the wiring task on; remove then")
-)]
+//! The thread list's rows and date groups. A row reads the dot, the account's badge (merged
+//! mailboxes only), the people, `★` and `📎`, the subject with its count after it, and the
+//! time right-aligned at the edge; a group row (`TODAY`, `YESTERDAY`, `THIS WEEK`, `OLDER`)
+//! heads each run of threads in one group, and the group of what is on screen is always on the
+//! first row. People, subjects and a failed action's text are outside text: `pad` and `fit`
+//! escape them.
 
 use rail_core::store::view::ThreadRow;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::view::{Glyphs, participants, people_cols};
+use super::view::{Glyphs, participants, people_cols, visible_offset};
+use super::{AccountEntry, Focus, MailScreen};
+use crate::tui::clock::Group;
 use crate::tui::text::{fit, pad, pad_left, width};
 use crate::tui::theme::Theme;
 
@@ -22,6 +23,107 @@ const DOT_COLS: usize = 2;
 const GAP_COLS: usize = 2;
 /// `★` (or a space), `📎` (two cells, or two spaces) and a space.
 const MARKS_COLS: usize = 4;
+
+/// One drawn row of the thread list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ListLine {
+    /// A group's name.
+    Group(Group),
+    /// The window's thread at this index.
+    Thread(usize),
+}
+
+/// The window's threads (each one's group, in the window's order) with a group row wherever
+/// the group changes from the thread before.
+pub(super) fn list_lines(groups: &[Group]) -> Vec<ListLine> {
+    let mut lines = Vec::with_capacity(groups.len() + 4);
+    for (index, group) in groups.iter().enumerate() {
+        if index == 0 || groups[index - 1] != *group {
+            lines.push(ListLine::Group(*group));
+        }
+        lines.push(ListLine::Thread(index));
+    }
+    lines
+}
+
+/// The lines drawn in a pane `height` rows tall, the cursor on thread `selected` and the
+/// remembered first thread `offset` (thread indices). The first row is the group row of the
+/// line the pane starts at, drawn over that line when it is a thread. The pane starts one
+/// line above the offset thread, moves just enough to show the cursor, never past the last
+/// full screen, and one line higher when the group row would cover the cursor. One row shows
+/// the cursor's thread alone.
+pub(super) fn frame_lines(
+    lines: &[ListLine],
+    offset: usize,
+    selected: usize,
+    height: usize,
+) -> Vec<ListLine> {
+    let line_of = |thread: usize| {
+        lines
+            .iter()
+            .position(|l| *l == ListLine::Thread(thread))
+            .unwrap_or(0)
+    };
+    let cursor = line_of(selected);
+    if lines.is_empty() || height < 2 {
+        return lines
+            .get(cursor)
+            .copied()
+            .into_iter()
+            .take(height)
+            .collect();
+    }
+    let top = line_of(offset).saturating_sub(1);
+    let last_screen = lines.len().saturating_sub(height);
+    let mut start = visible_offset(top, cursor, height).min(last_screen);
+    if start == cursor && matches!(lines[start], ListLine::Thread(_)) {
+        start = start.saturating_sub(1);
+    }
+    let group = lines[..=start].iter().rev().find_map(|line| match line {
+        ListLine::Group(group) => Some(ListLine::Group(*group)),
+        ListLine::Thread(_) => None,
+    });
+    group
+        .into_iter()
+        .chain(lines[start + 1..].iter().copied().take(height - 1))
+        .collect()
+}
+
+impl MailScreen {
+    /// The window's thread `index` as a row in a list `cols` wide, its time by `group`: the
+    /// cursor, the multi-selection, a failed action, the badge in a merged mailbox.
+    pub(super) fn thread_row(
+        &self,
+        index: usize,
+        group: Group,
+        cols: u16,
+        theme: &Theme,
+        glyphs: &Glyphs,
+    ) -> Line<'static> {
+        let Some(row) = self.list.rows().get(index) else {
+            return Line::default();
+        };
+        let account = self.account_index_of(row.account_id);
+        let badge = self.scope.is_unified().then(|| {
+            account
+                .and_then(|i| self.accounts.get(i))
+                .map_or_else(|| " ".to_string(), AccountEntry::badge)
+        });
+        let ctx = RowContext {
+            selected: index == self.list.selected_index() && self.focus != Focus::Sidebar,
+            marked: self.actions.selection.contains(row.key.thread_id),
+            failed: self
+                .actions
+                .failures
+                .get(&row.key.thread_id)
+                .map(|(_, text)| text.as_str()),
+            badge,
+            color: account.map_or(Color::Reset, |i| self.account_color(i, theme)),
+            time: self.ctx.clock.time_in_group(row.key.last_date, group),
+        };
+        thread_line(row, &ctx, cols, theme, glyphs)
+    }
+}
 
 /// What a thread row needs besides the thread.
 pub(super) struct RowContext<'a> {
@@ -146,7 +248,9 @@ mod tests {
     use rail_core::store::view::ThreadKey;
     use ratatui::buffer::Buffer;
 
+    use super::ListLine::{Group as G, Thread as T};
     use super::*;
+    use crate::tui::clock::Group::{Older, ThisWeek, Today, Yesterday};
 
     const DANA: &str = "Dana Reyes";
 
@@ -434,5 +538,74 @@ mod tests {
             assert!(text(&line).contains(" (12)"), "the count is still drawn");
             let _ = drawn(line, cols.max(1));
         }
+    }
+
+    #[test]
+    fn a_group_row_heads_each_run_of_threads_in_one_group() {
+        let lines = list_lines(&[Today, Today, Yesterday, ThisWeek, Older, Older]);
+        assert_eq!(
+            lines,
+            [
+                G(Today),
+                T(0),
+                T(1),
+                G(Yesterday),
+                T(2),
+                G(ThisWeek),
+                T(3),
+                G(Older),
+                T(4),
+                T(5)
+            ]
+        );
+        let clock =
+            crate::tui::clock::Clock::fixed(crate::tui::test_util::NOW, jiff::tz::TimeZone::UTC);
+        let newest_first = [86_400, 0, -86_400, -3 * 86_400, -30 * 86_400]
+            .map(|ago: i64| clock.group(crate::tui::test_util::NOW + ago));
+        let groups: Vec<ListLine> = list_lines(&newest_first)
+            .into_iter()
+            .filter(|l| matches!(l, ListLine::Group(_)))
+            .collect();
+        assert_eq!(
+            groups,
+            [G(Today), G(Yesterday), G(ThisWeek), G(Older)],
+            "a thread dated after today joins TODAY: no group repeats"
+        );
+        assert!(list_lines(&[]).is_empty());
+    }
+
+    /// Review Focus 4.
+    #[test]
+    fn frame_lines_keep_the_cursor_in_view_with_group_rows_counted() {
+        // [G(Today), T0, T1, T2, G(Yesterday), T3, T4, T5]
+        let lines = list_lines(&[Today, Today, Today, Yesterday, Yesterday, Yesterday]);
+        assert_eq!(frame_lines(&lines, 0, 0, 8), lines, "everything fits");
+        assert_eq!(
+            frame_lines(&lines, 0, 3, 4),
+            [G(Today), T(2), G(Yesterday), T(3)],
+            "down onto YESTERDAY: group rows at the top and in the middle, the cursor last"
+        );
+        assert_eq!(
+            frame_lines(&lines, 4, 3, 4),
+            [G(Yesterday), T(3), T(4), T(5)],
+            "never past the last full screen"
+        );
+        assert_eq!(
+            frame_lines(&lines, 2, 1, 3),
+            [G(Today), T(1), T(2)],
+            "the group row on top never covers the cursor"
+        );
+        assert_eq!(
+            frame_lines(&lines, 4, 4, 3),
+            [G(Yesterday), T(4), T(5)],
+            "scrolled inside a group, its row stays on top"
+        );
+        assert_eq!(
+            frame_lines(&lines, 0, 4, 1),
+            [T(4)],
+            "one row: the cursor's thread"
+        );
+        assert!(frame_lines(&lines, 0, 0, 0).is_empty());
+        assert!(frame_lines(&[], 0, 0, 5).is_empty());
     }
 }

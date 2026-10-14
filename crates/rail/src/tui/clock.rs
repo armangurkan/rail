@@ -62,10 +62,6 @@ impl Clock {
     }
 
     /// The thread list's group for `secs`: by calendar day in the clock's zone.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used from the wiring task on; remove then")
-    )]
     pub fn group(&self, secs: i64) -> Group {
         match self.days_back(secs).map(|(_, _, days)| days) {
             // A later day sorts first in the newest-first list: it joins the newest group.
@@ -79,10 +75,6 @@ impl Clock {
     /// The time a list row shows at its right edge, by its group: `14:05` today and
     /// yesterday, `Mon 18:20` this week, `Oct 03` this year or `2024-10-03` before, and a later
     /// day's date (in `TODAY`); `?` for a time out of range.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used from the wiring task on; remove then")
-    )]
     pub fn time_in_group(&self, secs: i64, group: Group) -> String {
         let Some((when, now, days)) = self.days_back(secs) else {
             return "?".to_string();
@@ -124,10 +116,6 @@ fn date(when: &Zoned, now: &Zoned) -> String {
 }
 
 /// The thread list's date groups, newest first.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used from the wiring task on; remove then")
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
     /// The same calendar day as now, or a later day.
@@ -142,10 +130,6 @@ pub enum Group {
 
 impl Group {
     /// The group row's text.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used from the wiring task on; remove then")
-    )]
     pub fn name(self) -> &'static str {
         match self {
             Self::Today => "TODAY",

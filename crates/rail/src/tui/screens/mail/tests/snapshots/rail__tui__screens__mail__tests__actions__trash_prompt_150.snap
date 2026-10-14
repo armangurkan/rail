@@ -4,12 +4,12 @@ expression: shot
 ---
 ▍Rail │ All inboxes · 2 accounts · 5 unread  / Search                                                                                   ● Synced 12:39
 ┌────────────────────────┐┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────────────────┐
-│UNIFIED                 ││●  Yesterday  Sender                 subject wm2      ││Open a thread with Enter; it shows here.                          │
-│✉  All inboxes         5││●  Yesterday  Sender                 subject hm1      ││                                                                  │
-│★  Starred              ││●  Yesterday  Sender                 subject wm1      ││                                                                  │
-│✎  Drafts               ││●  Yesterday  Sender                 subject hm0      ││                                                                  │
-│➤  Sent                 ││●  Yesterday  Sender                 subject wm0      ││                                                                  │
-│✕  Trash                ││                                                      ││                                                                  │
+│UNIFIED                 ││YESTERDAY                                             ││Open a thread with Enter; it shows here.                          │
+│✉  All inboxes         5││●  W  Sender             subject wm2             08:55││                                                                  │
+│★  Starred              ││●  H  Sender             subject hm1             08:54││                                                                  │
+│✎  Drafts               ││●  W  Sender             subject wm1             08:54││                                                                  │
+│➤  Sent                 ││●  H  Sender             subject hm0             08:53││                                                                  │
+│✕  Trash                ││●  W  Sender             subject wm0             08:53││                                                                  │
 │────────────────────────││                                                      ││                                                                  │
 │ACCOUNTS                ││            ┌ Trash? ──────────────────────────────────────────────────────────────┐                                      │
 │▾  W  work             3││            │Trash "subject wm2"?                                                  │                                      │
