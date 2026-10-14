@@ -224,3 +224,29 @@ fn a_rebuild_keeps_the_folds_and_the_cursor_or_the_nearest_row_above() {
     s.rebuild(&accounts(), &outcome);
     assert_eq!(here(&s), Some("aliexpress"), "gone: the nearest row above");
 }
+
+#[test]
+fn a_folded_account_stays_folded_when_its_scope_is_pointed_at() {
+    let mut s = sidebar();
+    walk_to(&mut s, "AXON");
+    s.toggle_fold();
+    assert!(
+        !s.rows()
+            .iter()
+            .any(|r| r.label == "Inbox" && r.account() == Some(1))
+    );
+    s.up();
+    s.point_at(&ScopeChoice::Account(1));
+    assert_eq!(
+        here(&s),
+        Some("AXON"),
+        "the cursor lands on the account row"
+    );
+    assert!(
+        !s.rows()
+            .iter()
+            .any(|r| r.label == "Inbox" && r.account() == Some(1)),
+        "the account stays folded"
+    );
+    assert_eq!(s.current(&ScopeChoice::Account(1)), Some(s.cursor()));
+}

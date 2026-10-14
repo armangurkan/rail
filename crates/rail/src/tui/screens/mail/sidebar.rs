@@ -91,7 +91,11 @@ impl Sidebar {
 
     /// The first row to draw so row `target` shows in `height` rows; kept for the next frame.
     pub fn scroll(&self, target: usize, height: usize) -> usize {
-        let offset = super::visible_offset(self.offset.get(), target, height);
+        let kept = self
+            .offset
+            .get()
+            .min(self.rows.len().saturating_sub(height));
+        let offset = super::visible_offset(kept, target, height);
         self.offset.set(offset);
         offset
     }
@@ -157,11 +161,16 @@ impl Sidebar {
         None
     }
 
-    /// Put the cursor on `scope`'s row, unfolding what hides it. It stays where it is when its
-    /// row already shows `scope` (an account row and its Inbox row both do); else it goes to
-    /// the last row with that scope (the Inbox row rather than the account row).
+    /// Put the cursor on `scope`'s row. It stays where it is when its row already shows
+    /// `scope` (an account row and its Inbox row both do); else it goes to the last shown row
+    /// with that scope (a folded account's row, not its hidden Inbox). Only when no shown row
+    /// has it does it unfold what hides the row.
     pub fn point_at(&mut self, scope: &ScopeChoice) {
         if self.selected().and_then(SidebarRow::scope).as_ref() == Some(scope) {
+            return;
+        }
+        if let Some(shown) = self.current(scope) {
+            self.cursor = Some(self.rows[shown].key.clone());
             return;
         }
         let Some(row) = self
