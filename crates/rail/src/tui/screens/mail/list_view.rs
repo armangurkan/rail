@@ -15,8 +15,6 @@ use crate::tui::clock::Group;
 use crate::tui::text::{fit, pad, pad_left, width};
 use crate::tui::theme::Theme;
 
-/// Columns of the time at the right edge (`2024-10-03`).
-pub(super) const TIME_COLS: usize = 10;
 /// The dot and its space.
 const DOT_COLS: usize = 2;
 /// The two spaces after the people, and the two before the time.
@@ -128,6 +126,7 @@ impl MailScreen {
             badge,
             color: account.map_or(Color::Reset, |i| self.account_color(i, theme)),
             time: self.ctx.clock.time_in_group(row.key.last_date, group),
+            time_cols: self.ctx.clock.time_cols(),
         };
         thread_line(row, &ctx, cols, theme, glyphs)
     }
@@ -148,6 +147,8 @@ pub(super) struct RowContext<'a> {
     pub color: Color,
     /// The time for the thread's group (`Clock::time_in_group`).
     pub time: String,
+    /// The time column's width (`Clock::time_cols`).
+    pub time_cols: usize,
 }
 
 /// One thread's row in a list `cols` wide: the subject is cut to the room the other columns
@@ -175,7 +176,7 @@ pub(super) fn thread_line(
         + MARKS_COLS
         + width(&count)
         + GAP_COLS
-        + TIME_COLS;
+        + ctx.time_cols;
     let room = usize::from(cols).saturating_sub(used);
     let (text, text_style) = match ctx.failed {
         Some(text) => (text, theme.error),
@@ -199,7 +200,7 @@ pub(super) fn thread_line(
         style,
     ));
     spans.push(Span::styled(subject, paint(text_style)));
-    let time = pad_left(&ctx.time, TIME_COLS);
+    let time = pad_left(&ctx.time, ctx.time_cols);
     spans.push(Span::styled(format!("{count}{filler}{time}"), style));
     Line::from(spans)
 }
@@ -291,6 +292,7 @@ mod tests {
             badge: badge.map(str::to_string),
             color: Color::Cyan,
             time: time.into(),
+            time_cols: 10,
         }
     }
 
@@ -339,6 +341,31 @@ mod tests {
             assert_eq!(cells[(6, 0)].symbol(), "D", "the people from column 6");
             assert!(cells[(6, 0)].modifier.contains(Modifier::BOLD));
         }
+    }
+
+    /// `time = "12h"`: the column is two cells wider, the subject two cells narrower.
+    #[test]
+    fn a_twelve_hour_time_widens_the_column_and_the_subject_gives_the_cells() {
+        let (theme, glyphs) = (Theme::default(), Glyphs::of(Icons::Unicode));
+        let row = thread("Q4 roadmap review", 3, 1);
+        let ctx = RowContext {
+            time_cols: 12,
+            ..context(Some("W"), "Wed 12:53 pm")
+        };
+        let line = thread_line(&row, &ctx, 90, &theme, &glyphs);
+        let expected = format!(
+            "●  W  {DANA:<22}  ★📎 Q4 roadmap review (3){}  Wed 12:53 pm",
+            " ".repeat(21)
+        );
+        assert_eq!(text(&line), expected);
+        assert_eq!(width(&text(&line)), 90);
+        let short = RowContext {
+            time_cols: 12,
+            ..context(Some("W"), "9:53 am")
+        };
+        let line = thread_line(&row, &short, 90, &theme, &glyphs);
+        assert!(text(&line).ends_with("       9:53 am"), "{}", text(&line));
+        assert_eq!(width(&text(&line)), 90);
     }
 
     #[test]
