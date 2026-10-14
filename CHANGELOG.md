@@ -8,6 +8,9 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- `time = "12h"` under `[general]` writes every time of day on screen with am/pm (`2:05 pm`,
+  `Mon 6:20 pm`, `Fri 10 Oct 2025 12:40 pm`, `● Synced 2:47 pm`); `"24h"` is the default.
+  `:time` in the palette switches for the session and saves the choice.
 - `label` in an account's `[[accounts]]` table names the account on screen: the sidebar, the
   header (`Personal · Inbox`), `Write from`, the account states and the palette; `name` stays
   what commands, `--account` and `account:` use. At most 40 characters; `rail doctor` warns
