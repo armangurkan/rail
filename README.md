@@ -366,8 +366,9 @@ has a box of its own too (never in the accent colour), and inside it the row rea
 `│ Rail │ All inboxes … ● Synced 14:47 │ 15:02 │`, without the `▍` bar (`| Rail | …` with
 `icons = "ascii"`). When the scope and the summary do not both fit, the summary and the clock stay
 whole and the scope is cut. While a filter is set or being typed, the search slot keeps at least 24
-cells (at 60 columns and wider): the scope is cut first. Under 60 columns the clock and the search
-region go, and under 40 the summary. The status bar at the bottom names the keys of the pane you are
+cells (at 60 columns and wider; less only when the summary itself leaves no room): the scope is
+cut first. Under 60 columns the clock and the search region go, and under 40 the summary.
+The status bar at the bottom names the keys of the pane you are
 in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your `config.toml` sets)
 and shows each account's state on the right. Narrower than `split_threshold` it is one row; at
 `split_threshold` and wider (and at least 12 rows high) it takes three rows and each key is drawn in
@@ -441,8 +442,9 @@ and the text appears when it lands. If the fetch fails the message says why.
 
 `/` opens the filter line in the header's search slot and filters the list as you type. The
 slot is not drawn when the terminal is narrower than 60 columns, or, before a filter is set, when
-fewer than 8 cells are left for it after the counts and the summary; the line then opens in the
-status bar. Plain words search subjects, the names and addresses of senders and recipients (To, Cc
+fewer than 8 cells are left for it after the counts and the summary (with a filter set, only when
+the summary itself leaves no room); the line then opens in the status bar.
+Plain words search subjects, the names and addresses of senders and recipients (To, Cc
 and Bcc) and stored bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`,
 `is:unread`, `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail
 arrived) and `account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread
