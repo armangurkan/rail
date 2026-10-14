@@ -563,6 +563,14 @@ fn a_long_sender_is_cut_so_the_time_stays_whole_at_the_edge() {
     let card = card_of(&lines, 1);
     assert_eq!(card.text, "▸   2   Bartholomew Alexande…  Mon 22:11");
     assert_eq!(width(&card.text), 40);
+    detail.messages[1].is_starred = true;
+    let lines = Setup::of(&detail).lines(&detail, 40);
+    let card = card_of(&lines, 1);
+    assert_eq!(
+        card.text, "▸   2   Bartholomew Alexan… ★  Mon 22:11",
+        "the name is cut, the star kept whole"
+    );
+    assert_eq!(width(&card.text), 40);
 }
 
 /// Review Focus 3.

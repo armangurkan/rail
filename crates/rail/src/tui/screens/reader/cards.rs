@@ -255,7 +255,9 @@ fn card_line(
     let room = width
         .saturating_sub(used + TIME_GAP + cells(&time))
         .max(MIN_SENDER);
-    let name = fit(&format!("{}{star}", sender(m)), room);
+    // The name is cut, the star kept whole.
+    let name_room = room.saturating_sub(cells(&star)).max(1);
+    let name = format!("{}{star}", fit(&sender(m), name_room));
     let pad = width
         .saturating_sub(used + cells(&name) + cells(&time))
         .max(1);
