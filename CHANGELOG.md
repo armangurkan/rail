@@ -309,6 +309,10 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A Microsoft 365 folder whose own name holds `/` showed as two levels; the `/` now shows as
+  `∕`. A folder whose subfolders vanished while Rail listed them no longer fails the whole sync
+  pass, and an action on a conversation whose messages left the store says so instead of
+  reporting success (#31).
 - Undoing a Microsoft 365 move that a sync had overtaken could put the message back in two
   folders until its next sync; it goes back to the one folder it left. An undo no longer puts a
   message into a folder that took a deleted folder's place in the store (#33).

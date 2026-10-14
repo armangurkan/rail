@@ -154,3 +154,31 @@ async fn a_failing_well_known_lookup_fails_the_listing() {
         "{error:?}"
     );
 }
+
+#[tokio::test]
+async fn a_slash_in_a_folders_own_name_is_not_read_as_a_level() {
+    let g = Graph::start().await;
+    g.mount_root(json!([folder("f-io", "In/Out", 1)])).await;
+    g.mount_children("f-io", json!([folder("f-2026", "2026", 0)]))
+        .await;
+    g.mount_well_known(&[]).await;
+    let found = g.provider().folders().await.unwrap();
+    let names: Vec<&str> = found.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, ["In\u{2215}Out", "In\u{2215}Out/2026"]);
+}
+
+#[tokio::test]
+async fn a_child_listing_not_found_skips_that_subtree_only() {
+    let g = Graph::start().await;
+    g.mount_root(json!([
+        folder("f-gone", "Gone", 1),
+        folder("f-proj", "Projects", 1),
+    ]))
+    .await;
+    // f-gone's childFolders is not mounted: fake Graph answers 404.
+    g.mount_children("f-proj", json!([folder("f-2026", "2026", 0)]))
+        .await;
+    g.mount_well_known(&[]).await;
+    let found = g.provider().folders().await.unwrap();
+    assert_eq!(ids(&found), ["f-gone", "f-proj", "f-2026"]);
+}

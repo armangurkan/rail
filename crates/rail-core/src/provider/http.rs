@@ -19,6 +19,7 @@ use url::Url;
 
 use super::ProviderError;
 use super::graph::errors::{Refusal, refusal};
+use super::limits::MAX_ERROR_TEXT;
 use super::tokens::{AccessTokens, RefreshFlight};
 
 /// The largest answer Rail reads; a `format=full` message of Gmail's 25 MB limit in base64
@@ -28,8 +29,6 @@ pub const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 pub const QUOTA_PER_MINUTE: u32 = 5_000;
 /// Units an account may spend at once before the pacing starts.
 pub const QUOTA_BURST: u32 = 250;
-/// The longest Gmail's own error text is kept.
-const MAX_ERROR_TEXT: usize = 500;
 /// The most of an error answer (non-2xx) Rail reads; the rest is never read.
 const MAX_ERROR_BODY: usize = 64 * 1024;
 

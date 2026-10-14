@@ -217,11 +217,23 @@ async fn nothing_to_touch_sends_nothing() {
         to: "f-proj".into(),
     };
     provider.apply(&[filed], &to).await.unwrap();
-    provider
+    assert_eq!(g.batch.posts(), 0, "no batch and no folder listing");
+    assert!(g.server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_conversation_with_no_stored_messages_is_refused_naming_it() {
+    let g = Graph::start().await;
+    let error = g
+        .provider()
         .apply(&[ThreadTarget::from("c-empty")], &Change::Archive)
         .await
-        .unwrap();
-    assert_eq!(g.batch.posts(), 0, "no batch and no folder listing");
+        .unwrap_err();
+    assert!(
+        matches!(error, ProviderError::Permanent { .. }),
+        "{error:?}"
+    );
+    assert_eq!(error.detail(), Some("c-empty"));
     assert!(g.server.received_requests().await.unwrap().is_empty());
 }
 

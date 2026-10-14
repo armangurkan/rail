@@ -144,8 +144,9 @@ impl GraphCursor {
         self.folders.values().any(|f| f.state != State::CaughtUp)
     }
 
-    /// Where folder `id` goes on after a page: a next link keeps it walking, a delta link
-    /// ends its round. A page with neither is not one Rail can go on from.
+    /// Where folder `id` goes on after a page: a next link keeps it walking, a delta link ends
+    /// its round. A page with neither ends its walk for this pass; the next round goes on from
+    /// the link it had.
     pub(crate) fn advance(
         &mut self,
         id: &str,
@@ -176,9 +177,14 @@ impl GraphCursor {
                 state: State::CaughtUp,
             },
             (None, None) => {
-                return Err(ProviderError::permanent(
-                    "Microsoft 365's delta page had neither a next nor a delta link",
-                ));
+                tracing::warn!(
+                    folder = %id,
+                    "Microsoft 365's delta page had neither a next nor a delta link; the folder counts as caught up for this pass"
+                );
+                Folder {
+                    link: folder.link.take(),
+                    state: State::CaughtUp,
+                }
             }
         };
         Ok(())
@@ -242,7 +248,22 @@ mod tests {
         assert!(!cursor.more());
         cursor.begin_round();
         assert!(cursor.folders.values().all(|f| f.state == State::Due));
-        assert!(cursor.advance("f-1", None, None).is_err());
+    }
+
+    #[test]
+    fn a_page_with_neither_link_counts_its_folder_as_caught_up_for_the_pass() {
+        let mut cursor = GraphCursor::start(&[folder("f-1", "One", FolderKind::User)], None);
+        cursor.advance("f-1", Some("n1".into()), None).unwrap();
+        cursor.advance("f-1", None, None).unwrap();
+        assert_eq!(
+            cursor.folders["f-1"],
+            Folder {
+                link: Some("n1".into()),
+                state: State::CaughtUp,
+            },
+            "the next round goes on from the link it had"
+        );
+        assert!(!cursor.more());
     }
 
     #[test]

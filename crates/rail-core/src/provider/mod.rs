@@ -8,6 +8,7 @@ pub(crate) mod html;
 #[cfg(test)]
 mod html_tests;
 pub mod http;
+pub(crate) mod limits;
 pub mod links;
 #[cfg(test)]
 mod links_tests;

@@ -7,9 +7,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::provider::ProviderError;
-
-/// The longest code, and the longest message, a detail keeps.
-const MAX_ERROR_TEXT: usize = 500;
+use crate::provider::limits::MAX_ERROR_TEXT;
 
 /// A 403 that names access or consent.
 pub const CONSENT_MESSAGE: &str = "Microsoft 365 refused access: an administrator may need to grant consent (see \"Work or school accounts and admin consent\" in the README)";

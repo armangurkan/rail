@@ -2,7 +2,8 @@
 //! folder with `childFolderCount > 0`), hidden ones included, every page followed. Search
 //! folders and the non-mail folders at the root are left out, with their children. The six
 //! well-known folders are looked up by name and matched on id; every other folder is `User`.
-//! Names are `Parent/Child`, as Gmail's nested labels are.
+//! Names are `Parent/Child`, as Gmail's nested labels are; a `/` in a folder's own name is
+//! written `∕` (U+2215). A cap that cuts the listing is logged.
 
 use std::collections::HashMap;
 
@@ -35,6 +36,8 @@ const SEARCH_FOLDER: &str = "#microsoft.graph.mailSearchFolder";
 const MAX_FOLDER_PAGES: usize = 50;
 const MAX_FOLDER_NAME_CHARS: usize = 255;
 const FOLDER_PAGE: &str = "100";
+/// What a `/` in a folder's own name is written as, so `Parent/Child` keeps one meaning.
+pub const PATH_SLASH: char = '\u{2215}';
 
 /// A folder whose children are still to be listed.
 struct Pending {
@@ -43,10 +46,14 @@ struct Pending {
     depth: usize,
 }
 
-/// A display name on one line, cut.
+/// A display name on one line, cut, its own `/` written `PATH_SLASH`.
 fn clean(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| match c {
+            '/' => PATH_SLASH,
+            c if c.is_control() => ' ',
+            c => c,
+        })
         .take(MAX_FOLDER_NAME_CHARS)
         .collect()
 }
@@ -77,12 +84,20 @@ fn keep(
         None => own,
     };
     let depth = parent.map_or(0, |p| p.depth + 1);
-    if wire.child_folder_count.unwrap_or(0) > 0 && depth < MAX_FOLDER_DEPTH {
-        pending.push(Pending {
-            id: wire.id.clone(),
-            name: name.clone(),
-            depth,
-        });
+    if wire.child_folder_count.unwrap_or(0) > 0 {
+        if depth < MAX_FOLDER_DEPTH {
+            pending.push(Pending {
+                id: wire.id.clone(),
+                name: name.clone(),
+                depth,
+            });
+        } else {
+            tracing::warn!(
+                folder = %wire.id,
+                cap = MAX_FOLDER_DEPTH,
+                "a Microsoft 365 folder's subfolders are nested deeper than Rail lists; left out"
+            );
+        }
     }
     found.push(RemoteFolder {
         kind: kinds.get(&wire.id).copied().unwrap_or(FolderKind::User),
@@ -93,7 +108,9 @@ fn keep(
 }
 
 impl GraphProvider {
-    /// Every folder Rail syncs, sorted by name.
+    /// Every folder Rail syncs, sorted by name. A cap that cuts the listing is logged with the
+    /// folder it stopped at; a folder whose children answer not found (deleted mid-listing)
+    /// keeps its place and loses its subtree for this pass.
     pub(crate) async fn list_folders(&self) -> Result<Vec<RemoteFolder>, ProviderError> {
         let kinds = self.well_known().await?;
         let (mut found, mut pending) = (Vec::new(), Vec::new());
@@ -104,12 +121,34 @@ impl GraphProvider {
         }
         while let Some(parent) = pending.pop() {
             if found.len() >= MAX_FOLDERS {
+                tracing::warn!(
+                    folder = %parent.id,
+                    cap = MAX_FOLDERS,
+                    "the Microsoft 365 folder listing reached its cap; the rest is left out"
+                );
                 break;
             }
             let path = format!("me/mailFolders/{}/childFolders", parent.id);
-            for wire in self.folder_pages(&path).await? {
+            let children = match self.folder_pages(&path).await {
+                Ok(children) => children,
+                Err(ProviderError::NotFound) => {
+                    tracing::info!(
+                        folder = %parent.id,
+                        "a Microsoft 365 folder's subfolders answered not found; skipped this pass"
+                    );
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            for wire in children {
                 keep(wire, Some(&parent), &kinds, &mut found, &mut pending);
             }
+        }
+        if found.len() > MAX_FOLDERS {
+            tracing::warn!(
+                cap = MAX_FOLDERS,
+                "the Microsoft 365 folder listing reached its cap; the rest is left out"
+            );
         }
         found.truncate(MAX_FOLDERS);
         found.sort_by(|a, b| a.name.cmp(&b.name));
@@ -130,6 +169,13 @@ impl GraphProvider {
             };
             page = self.api.get_json(&next, &[], COST_REQUEST).await?;
             all.append(&mut page.value);
+        }
+        if page.next_link.is_some() {
+            tracing::warn!(
+                path,
+                cap = MAX_FOLDER_PAGES,
+                "a Microsoft 365 folder listing has more pages than Rail reads; the rest is left out"
+            );
         }
         Ok(all)
     }

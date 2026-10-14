@@ -11,12 +11,11 @@ use super::wire::{AttachmentWire, BodyWire, Page};
 use super::{COST_REQUEST, GraphProvider, graph_id};
 use crate::provider::gmail::body::{Kind, render};
 use crate::provider::gmail::metadata::one_line_capped;
+use crate::provider::limits::{MAX_ATTACHMENTS, MAX_FILENAME_CHARS};
 use crate::provider::{AttachmentMeta, Body, ProviderError};
 
 /// The preference that asks for the HTML body.
 pub const HTML_BODY: &str = "outlook.body-content-type=\"html\"";
-const MAX_ATTACHMENTS: usize = 100;
-const MAX_FILENAME_CHARS: usize = 255;
 const MAX_MIME_CHARS: usize = 255;
 
 fn unreadable() -> ProviderError {

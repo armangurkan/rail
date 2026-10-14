@@ -893,12 +893,12 @@ MFA) can still intervene after consent; see [Microsoft sign-in errors](#microsof
 What a Microsoft 365 account does today. It syncs, reads, acts on threads and writes mail over
 Microsoft Graph.
 
-- **Folders.** Every mail folder is synced, nested ones as `Parent/Child`. Inbox, Sent Items,
-  Drafts, Archive, Deleted Items and Junk Email are the account's system folders in the sidebar,
-  under those names, and fill `Sent` and `Trash` under UNIFIED; every other folder is under
-  `More folders`, nested ones as a tree. Search folders and Conversation History, RSS Feeds, RSS
-  Subscriptions and Sync Issues are left out. Those last four are matched by their English names,
-  so a mailbox in another language may show them.
+- **Folders.** Every mail folder is synced, nested ones as `Parent/Child` (a `/` in a folder's
+  own name shows as `∕`). Inbox, Sent Items, Drafts, Archive, Deleted Items and Junk Email are the
+  account's system folders in the sidebar, under those names, and fill `Sent` and `Trash` under
+  UNIFIED; every other folder is under `More folders`, nested ones as a tree. Search folders and
+  Conversation History, RSS Feeds, RSS Subscriptions and Sync Issues are left out. Those last four
+  are matched by their English names, so a mailbox in another language may show them.
 - **Threads and stars.** A thread is an Outlook conversation, and a star is Outlook's flag.
 - **The first sync** shows `⟳` and a running count with no total, because Microsoft gives no cheap
   one. It reads folder by folder, the inbox first. New mail then arrives within one
@@ -1331,6 +1331,7 @@ their own.
 | `Outlook uses folders, not labels: press m to move.` | Expected: Outlook has folders, not labels. Press `m` to move the thread to a folder. |
 | `This mailbox has no Archive folder; press m to move.` | The mailbox has no Archive folder and Rail never makes one. Press `m` to move the thread to a folder. |
 | `This mailbox has no Deleted Items folder.` | `d` found no Deleted Items folder in the last folder listing, which an Exchange Online mailbox always has; Rail put the thread back. Press `Ctrl-r` to sync, or `m` to move the thread to a folder. |
+| `Could not … : Rail holds no messages of this Microsoft 365 conversation` | The thread's messages left the store before the action was sent (another device moved or deleted them). Press `Ctrl-r`; the next sync shows where they are now. |
 | `the folder for this move no longer exists in Microsoft 365` | The folder was deleted in Outlook before the move was sent; Rail put the thread back. Press `m` and pick another folder. |
 | `Microsoft 365 is busy or unavailable (HTTP 429)`, or `retrying` in `rail sync` | Microsoft is throttling the mailbox. Rail waits as long as Microsoft asks (up to two minutes at a time) and tries again. |
 | `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |

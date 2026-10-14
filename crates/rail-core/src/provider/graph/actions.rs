@@ -16,6 +16,8 @@ use crate::provider::{Change, FolderKind, ProviderError, RemoteId, ThreadTarget}
 
 /// A move into a folder Graph no longer lists.
 pub const MOVE_TARGET_GONE: &str = "the folder for this move no longer exists in Microsoft 365";
+/// A target with no stored messages: nothing Rail could name to Graph.
+const NO_STORED_MESSAGES: &str = "Rail holds no messages of this Microsoft 365 conversation";
 const NO_DELETED_ITEMS: &str = "This mailbox has no Deleted Items folder.";
 
 fn unsendable(what: &str) -> ProviderError {
@@ -76,7 +78,7 @@ fn settle(ids: &[RemoteId], answers: Vec<BatchAnswer>) -> Result<(), ProviderErr
 
 impl GraphProvider {
     /// `change` on the messages the scope rule picks from each target. Nothing to touch sends
-    /// nothing, not even a folder listing.
+    /// nothing, not even a folder listing; a target with no stored messages is refused, naming it.
     pub(crate) async fn apply_change(
         &self,
         threads: &[ThreadTarget],
@@ -84,6 +86,11 @@ impl GraphProvider {
     ) -> Result<(), ProviderError> {
         if matches!(change, Change::Labels { .. }) {
             return Err(ProviderError::permanent(M365_LABELS));
+        }
+        if let Some(empty) = threads.iter().find(|t| t.messages.is_empty()) {
+            return Err(
+                ProviderError::permanent(NO_STORED_MESSAGES).with_detail(empty.thread_id.clone())
+            );
         }
         let ids = touched_ids(threads, change);
         if ids.is_empty() {

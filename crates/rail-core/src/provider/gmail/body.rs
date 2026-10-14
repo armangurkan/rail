@@ -15,6 +15,7 @@ use super::wire::{AttachmentBody, Message, Part};
 use super::{COST_ATTACHMENT, COST_GET, GmailProvider, checked_id, safe_id};
 use crate::config::model::is_format_char;
 use crate::provider::html::html_render;
+use crate::provider::limits::{MAX_ATTACHMENTS, MAX_FILENAME_CHARS};
 use crate::provider::links::{Rendered, plain_links};
 use crate::provider::{AttachmentMeta, Body, ProviderError};
 
@@ -23,8 +24,6 @@ pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 /// The end of a body Rail cut at `MAX_BODY_BYTES`.
 pub const TRUNCATED_MARKER: &str = "\n\n[Rail kept only the first 10 MiB of this message.]";
 pub(super) const MAX_PART_DEPTH: usize = 32;
-const MAX_ATTACHMENTS: usize = 100;
-const MAX_FILENAME_CHARS: usize = 255;
 const MAX_MIME_CHARS: usize = 255;
 const MAX_ATTACHMENT_ID: usize = 1024;
 /// A part id is dot-separated numbers (`0`, `1.2`); each one at most this long.
