@@ -250,3 +250,25 @@ fn a_folded_account_stays_folded_when_its_scope_is_pointed_at() {
     );
     assert_eq!(s.current(&ScopeChoice::Account(1)), Some(s.cursor()));
 }
+
+#[test]
+fn the_scroll_offset_is_clamped_when_rows_fold_away() {
+    let mut s = sidebar();
+    walk_to(&mut s, "More folders (7)");
+    s.toggle_fold();
+    let height = 12;
+    let last = s.rows().len() - 1;
+    assert!(last >= height, "the sidebar is taller than the pane");
+    assert_eq!(s.scroll(last, height), last + 1 - height);
+    while here(&s) != Some("Personal") {
+        s.up();
+    }
+    s.toggle_fold();
+    let target = s.cursor();
+    let offset = s.scroll(target, height);
+    assert!(
+        offset + height <= s.rows().len().max(height),
+        "no blank row below the last one: offset {offset}, rows {}",
+        s.rows().len()
+    );
+}
