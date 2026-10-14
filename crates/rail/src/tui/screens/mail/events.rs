@@ -37,7 +37,7 @@ impl MailScreen {
         }
         let (at, place) = self
             .navigating
-            .unwrap_or_else(|| (self.list.requery_at(), Place::Keep));
+            .unwrap_or_else(|| (self.list.requery_at(self.drawn_top.get()), Place::Keep));
         let list = self.list_request(at, place);
         let sidebar_seq = self.next_seq();
         self.latest_sidebar = sidebar_seq;

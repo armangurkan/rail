@@ -26,18 +26,23 @@ fn threads(prefix: &str, start_ms: i64, n: usize) -> Vec<(usize, Envelope)> {
 /// threads on 2025-10-09 from 08:53 (`subject ym<i>`, `ym0` read), a minute apart, newest
 /// first in the list; `home` has none. Started and settled with `icons`.
 async fn grouped_with(today: usize, yesterday: usize, icons: Icons) -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
-    let paths = Paths::all_in(tmp.path());
     let mut older = threads("y", BASE_MS, yesterday);
     if let Some((_, oldest)) = older.first_mut() {
         oldest.is_read = true;
     }
     let mut envelopes = threads("d", BASE_MS + 26 * HOUR_MS, today);
     envelopes.extend(older);
+    seeded(&envelopes, icons).await
+}
+
+/// `work` with `envelopes` (`home` has none), started and settled with `icons`.
+async fn seeded(envelopes: &[(usize, Envelope)], icons: Icons) -> Fixture {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::all_in(tmp.path());
     seed_store(
         &paths,
         &[("work", "w@example.com"), ("home", "h@example.com")],
-        &envelopes,
+        envelopes,
     );
     let fake = Arc::new(FakeDaemon::default());
     *fake.statuses.lock().unwrap() = vec![
@@ -219,6 +224,39 @@ async fn home_and_end_show_their_group_rows_and_the_cursor() {
     let rows = lines(&f, 90, 12);
     assert_eq!(rows[1].trim_end(), "TODAY");
     assert_eq!(cursor_row(&f, 90, 12), Some(2));
+}
+
+/// The final review's I1: `End` from a screen with four group rows leaves the pane drawing
+/// threads above the remembered first row; a re-read must keep them in the window.
+#[tokio::test]
+async fn a_re_read_after_end_keeps_the_drawn_threads_and_fills_the_pane() {
+    const DAY_MS: i64 = 24 * HOUR_MS;
+    let mut envelopes = threads("o", BASE_MS - 10 * DAY_MS, 10);
+    envelopes.extend(threads("w", BASE_MS - 2 * DAY_MS, 1));
+    envelopes.extend(threads("y", BASE_MS, 1));
+    envelopes.extend(threads("d", BASE_MS + 26 * HOUR_MS, 1));
+    let mut f = seeded(&envelopes, Icons::Unicode).await;
+    let home = lines(&f, 90, 12);
+    for group in GROUPS {
+        assert!(home.iter().any(|r| r.trim_end() == group), "{home:?}");
+    }
+    press(&mut f, KeyCode::End).await;
+    assert_eq!(selected(&f).as_deref(), Some("subject om0"));
+    let before = lines(&f, 90, 12);
+    assert_eq!(before[1].trim_end(), "OLDER", "{before:?}");
+    assert!(before[2].contains("subject om8"), "{before:?}");
+    assert!(before[10].contains("subject om0"), "{before:?}");
+    store_changed(&mut f).await;
+    let after = lines(&f, 90, 12);
+    assert_eq!(
+        after[1..11],
+        before[1..11],
+        "the same threads on screen after the re-read"
+    );
+    assert!(
+        after[1..11].iter().all(|r| !r.trim().is_empty()),
+        "no blank list row: {after:?}"
+    );
 }
 
 #[tokio::test]

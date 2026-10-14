@@ -281,6 +281,10 @@ impl MailScreen {
             .count();
         let fits = u16::try_from(height.saturating_sub(group_rows).max(1)).unwrap_or(u16::MAX);
         self.size.set((fits, self.size.get().1));
+        self.drawn_top.set(shown.iter().find_map(|line| match line {
+            ListLine::Thread(index) => Some(*index),
+            ListLine::Group(_) => None,
+        }));
         let heading = theme.muted.add_modifier(Modifier::BOLD);
         let rows: Vec<Line> = shown
             .iter()

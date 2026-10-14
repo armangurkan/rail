@@ -112,9 +112,12 @@ impl ListWindow {
     /// Where a re-read after a store change starts: from the first row on screen, so the
     /// selection (always on screen, and a screen is shorter than a page) is in the page that
     /// comes back; from the top when the screen starts at the newest thread (so new mail shows).
-    pub fn requery_at(&self) -> PageAt {
-        match self.rows.get(self.offset) {
-            Some(top) if self.offset > 0 || self.newer => PageAt::From(top.key),
+    /// The first row on screen is the newer of `offset` and `drawn`, the first thread the last
+    /// frame drew: a frame held at the last full screen draws threads above `offset`.
+    pub fn requery_at(&self, drawn: Option<usize>) -> PageAt {
+        let first = drawn.map_or(self.offset, |drawn| drawn.min(self.offset));
+        match self.rows.get(first) {
+            Some(top) if first > 0 || self.newer => PageAt::From(top.key),
             _ => PageAt::First,
         }
     }
