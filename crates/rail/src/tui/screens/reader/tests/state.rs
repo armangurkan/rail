@@ -1,15 +1,18 @@
 //! The reader's cursor across re-reads.
 
 use crossterm::event::KeyCode;
+use rail_core::config::ThreadOrder;
 use rail_core::ops::SyncPhase;
 use rail_core::store::Store;
 use rail_core::sync::Batch;
+use ratatui::style::Color;
 
 use super::{Fixture, fixture, press, store_bodies_on_fetch};
 use crate::tui::app::{Msg, TaskResult};
 use crate::tui::data::{DaemonEvent, MailEvent};
 use crate::tui::screen::Screen;
 use crate::tui::test_util::{BASE_MS, settle, status};
+use crate::tui::theme::Theme;
 
 /// Delete message `id` as a sync would, and let the screen re-read.
 async fn delete(f: &mut Fixture, id: &str) {
@@ -48,4 +51,17 @@ async fn a_reread_keeps_the_cursor_line_or_clamps_it_to_the_last() {
     let last = reader.lines(80).len() - 1;
     assert_eq!(reader.cursor, last, "the thread got shorter");
     assert!(f.screen.reader_cursor_text().is_some());
+}
+
+#[tokio::test]
+async fn the_reader_gets_its_threads_account_and_the_configured_order() {
+    let mut f = fixture(false).await;
+    press(&mut f, KeyCode::Enter).await;
+    let reader = f.screen.reader().expect("the reader is open");
+    let account = reader.account();
+    assert_eq!((account.index, account.color), (0, Some(Color::Cyan)));
+    assert_eq!(account.badge, "W");
+    assert_eq!(account.label, "work");
+    assert_eq!(account.color(&Theme::default()), Color::Cyan);
+    assert_eq!(reader.order(), ThreadOrder::Oldest);
 }

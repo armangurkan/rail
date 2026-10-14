@@ -12,7 +12,7 @@ use crate::tui::modals::{
     AttachmentList, AttachmentRow, Command, Confirm, ErrorList, ErrorRow, LinkPrompt, Modal,
     ModalOutcome, Target,
 };
-use crate::tui::screens::reader::{Reader, ReaderOutcome};
+use crate::tui::screens::reader::{Reader, ReaderAccount, ReaderOutcome};
 use crate::tui::text::{escape, fit, link_lines, safe_link};
 
 /// How much of a refused address the status bar repeats.
@@ -64,8 +64,15 @@ impl MailScreen {
                     Some(reader) => reader.refresh(detail),
                     None => {
                         let glyphs = Glyphs::of(self.ctx.icons);
+                        let account = self.reader_account(detail.account_id);
                         marked = self.mark_read_on_open(&mut detail);
-                        self.reader = Some(Reader::new(detail, self.ctx.clock.clone(), glyphs));
+                        self.reader = Some(Reader::new(
+                            detail,
+                            self.ctx.clock.clone(),
+                            glyphs,
+                            account,
+                            self.ctx.thread_order,
+                        ));
                         // A read landing under an open composer leaves it the keys.
                         if self.compose.is_none() {
                             self.focus = Focus::Reader;
@@ -94,6 +101,19 @@ impl MailScreen {
                 Vec::new()
             }
         }
+    }
+
+    /// The thread's account as the reader's title block shows it: its place, colour, badge and
+    /// label; `ReaderAccount::unknown` when it is no longer configured.
+    fn reader_account(&self, account_id: i64) -> ReaderAccount {
+        self.account_index_of(account_id)
+            .and_then(|index| self.accounts.get(index).map(|entry| (index, entry)))
+            .map_or_else(ReaderAccount::unknown, |(index, entry)| ReaderAccount {
+                index,
+                color: entry.color,
+                badge: entry.badge(),
+                label: entry.label.clone(),
+            })
     }
 
     /// One `body.fetch` per `MAX_BODY_FETCH` of the open thread's uncached messages.

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rail_core::config::{AccountConfig, AccountKind, Config, Icons};
+use rail_core::config::{AccountConfig, AccountKind, Config, Icons, ThreadOrder};
 use rail_core::daemon::{
     BeginGate, Connector, DaemonContext, Opener as DaemonOpener, SaveGate, ServeConfig, Server,
     SpawnFn,
@@ -477,6 +477,7 @@ pub fn mail_ctx(paths: &Paths, fake: Arc<FakeDaemon>) -> MailContext {
         icons: Icons::Unicode,
         split_threshold: 140,
         hints: true,
+        thread_order: ThreadOrder::Oldest,
         hyperlinks: false,
         depth: ColorDepth::TrueColor,
         theme_choice: ThemeChoice::default(),

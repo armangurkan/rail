@@ -46,22 +46,62 @@ pub enum Tone {
     Muted,
     Quote,
     Error,
+    /// The subject: the accent colour, bold.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "drawn from the wiring task (Task 5) on; remove then"
+        )
+    )]
+    Accent,
+    /// The account's badge: black on the account's colour.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "drawn from the wiring task (Task 5) on; remove then"
+        )
+    )]
+    Badge,
+    /// A card's number: the text colour on the border colour.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "drawn from the wiring task (Task 5) on; remove then"
+        )
+    )]
+    Number,
 }
 
-/// One line, escaped and at most the width it was built for. It holds mail text, so it is
-/// never logged.
+/// One line, escaped and at most the width it was built for: segments, each drawn in its tone,
+/// and `text`, their concatenation (what `fit`, `markers` and the tests read). It holds mail
+/// text, so it is never logged.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ReaderLine {
     pub kind: LineKind,
     pub text: String,
-    pub tone: Tone,
+    pub segments: Vec<(String, Tone)>,
+}
+
+impl ReaderLine {
+    /// A line in one tone.
+    pub fn one(kind: LineKind, text: String, tone: Tone) -> Self {
+        Self {
+            kind,
+            segments: vec![(text.clone(), tone)],
+            text,
+        }
+    }
 }
 
 impl std::fmt::Debug for ReaderLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let tones: Vec<Tone> = self.segments.iter().map(|(_, tone)| *tone).collect();
         f.debug_struct("ReaderLine")
             .field("kind", &self.kind)
-            .field("tone", &self.tone)
+            .field("tones", &tones)
             .finish_non_exhaustive()
     }
 }
@@ -77,7 +117,7 @@ pub(super) struct State<'a> {
 }
 
 fn line(kind: LineKind, text: String, tone: Tone) -> ReaderLine {
-    ReaderLine { kind, text, tone }
+    ReaderLine::one(kind, text, tone)
 }
 
 /// `Name <address>` (or the address) for each mailbox, joined.

@@ -12,8 +12,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use rail_core::config::ThreadOrder;
 use rail_core::ops::{BodyFetchResponse, BodyOutcome, OpError};
 use rail_core::store::view::{BodyState, MessageView, ThreadDetail};
+use ratatui::style::Color;
 
 pub use lines::{LineKind, ReaderLine, Tone};
 
@@ -21,6 +23,7 @@ use crate::tui::clock::Clock;
 use crate::tui::keys::Action;
 use crate::tui::screens::mail::{Glyphs, error_line};
 use crate::tui::text::markers;
+use crate::tui::theme::Theme;
 
 /// Columns assumed before the first frame.
 const FALLBACK_WIDTH: u16 = 80;
@@ -38,10 +41,49 @@ pub enum ReaderOutcome {
     Attachments,
 }
 
+/// The thread's account as the title block shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReaderAccount {
+    /// Its place in `config.toml`'s order: the theme's colour when it has none of its own.
+    pub index: usize,
+    /// Its own colour (`color` in `[[accounts]]`).
+    pub color: Option<Color>,
+    /// `AccountEntry::badge`: one escaped cell.
+    pub badge: String,
+    /// What the screen calls the account: outside text, escaped when drawn.
+    pub label: String,
+}
+
+impl ReaderAccount {
+    /// An account that is no longer configured: no badge or label, the terminal's colour.
+    pub fn unknown() -> Self {
+        Self {
+            index: 0,
+            color: Some(Color::Reset),
+            badge: String::new(),
+            label: String::new(),
+        }
+    }
+
+    /// The badge's colour: the account's own, else the theme's by place.
+    pub fn color(&self, theme: &Theme) -> Color {
+        self.color
+            .unwrap_or_else(|| theme.account_color(self.index))
+    }
+}
+
 pub struct Reader {
     detail: ThreadDetail,
     clock: Clock,
     glyphs: Glyphs,
+    /// The thread's account, for the title block's badge.
+    account: ReaderAccount,
+    /// How the older messages run (`thread_order`, `:thread-order`).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read by the lines from Task 4 on; remove then")
+    )]
+    order: ThreadOrder,
     expanded: Vec<bool>,
     unfolded: HashSet<(usize, usize)>,
     /// Message ids with a `body.fetch` in flight.
@@ -74,12 +116,20 @@ fn default_expanded(detail: &ThreadDetail) -> Vec<bool> {
 }
 
 impl Reader {
-    pub fn new(detail: ThreadDetail, clock: Clock, glyphs: Glyphs) -> Self {
+    pub fn new(
+        detail: ThreadDetail,
+        clock: Clock,
+        glyphs: Glyphs,
+        account: ReaderAccount,
+        order: ThreadOrder,
+    ) -> Self {
         Self {
             expanded: default_expanded(&detail),
             detail,
             clock,
             glyphs,
+            account,
+            order,
             unfolded: HashSet::new(),
             fetching: HashSet::new(),
             asked: HashSet::new(),
@@ -103,6 +153,18 @@ impl Reader {
 
     pub fn detail(&self) -> &ThreadDetail {
         &self.detail
+    }
+
+    /// The thread's account (tests).
+    #[cfg(test)]
+    pub fn account(&self) -> &ReaderAccount {
+        &self.account
+    }
+
+    /// How the older messages run (tests).
+    #[cfg(test)]
+    pub fn order(&self) -> ThreadOrder {
+        self.order
     }
 
     fn changed(&self) {
