@@ -309,6 +309,9 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A reply or forward of an HTML mail quoted its `[1]` link markers without the links. The links
+  the text marks now follow it, one line each (`[1] https://…`, or `(link not included)` for an
+  address Rail would not open) (#43).
 - When Rail could not take the terminal back from the editor, the next frame drew only what
   changed, so the editor's text could stay on screen. It now repaints the whole screen and logs
   the error (#23).

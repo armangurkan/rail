@@ -712,7 +712,7 @@ fn message_view(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageView> {
 
 /// The links column, at most `MAX_LINKS`. An unreadable one (a hand-edited store) is logged
 /// by message id and read as none: the markers then show as plain text.
-fn read_links(id: i64, json: &str) -> Vec<String> {
+pub(super) fn read_links(id: i64, json: &str) -> Vec<String> {
     match serde_json::from_str::<Vec<String>>(json) {
         Ok(mut links) => {
             links.truncate(MAX_LINKS);

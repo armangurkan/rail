@@ -1,5 +1,7 @@
-//! What a reply or a forward starts with: recipients, subject, the quoted or forwarded text,
-//! and the signature.
+//! What a reply or a forward starts with: recipients, subject, the quoted or forwarded text with
+//! its links, and the signature.
+
+use std::collections::BTreeSet;
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -8,10 +10,13 @@ use rail_core::store::drafts::ReplySource;
 
 use super::file::{one_line, plain_line_ends};
 use super::model::Headers;
+use crate::tui::text::{markers, safe_link};
 
 const FORWARD_BAR: &str = "---------- Forwarded message ---------";
 /// Characters that make a display name need quotes.
 const NAME_SPECIALS: [char; 3] = [',', '<', '>'];
+/// What a link line says for an address Rail would not open.
+const NOT_INCLUDED: &str = "(link not included)";
 
 /// `Name <address>`, or `address` alone when there is no name, controls replaced by spaces.
 /// Quotes and backslashes are dropped from the name (a quoted name may not hold them) and a name holding `,`, `<` or `>`
@@ -61,6 +66,32 @@ pub fn fwd_subject(subject: &str) -> String {
     } else {
         format!("Fwd: {subject}")
     }
+}
+
+/// `text`, then a blank line and one line per link marker it holds, by number: `[n] url` for
+/// a link `safe_link` accepts, `[n] (link not included)` for one it refuses. Links the text
+/// never marks are left out; a text with no marker comes back as it is.
+pub fn with_links(text: &str, links: &[String]) -> String {
+    let named: BTreeSet<usize> = text
+        .lines()
+        .flat_map(|line| markers(line, links.len()))
+        .map(|m| m.number)
+        .collect();
+    if named.is_empty() {
+        return text.to_string();
+    }
+    let mut out = text.to_string();
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push('\n');
+    for number in named {
+        match links.get(number - 1).and_then(|l| safe_link(l.as_str())) {
+            Some(url) => out.push_str(&format!("[{number}] {}\n", url.as_str())),
+            None => out.push_str(&format!("[{number}] {NOT_INCLUDED}\n")),
+        }
+    }
+    out
 }
 
 /// Every line with `> ` in front (`>` alone before an already quoted or an empty line), ending
@@ -156,7 +187,10 @@ pub fn reply(source: &ReplySource, all: bool, me: &str, tz: &TimeZone) -> (Heade
     let body = format!(
         "\n\nOn {}, {who} wrote:\n{}",
         rfc2822(source.date, tz),
-        quoted(source.body_text.as_deref().unwrap_or(""))
+        quoted(&with_links(
+            source.body_text.as_deref().unwrap_or(""),
+            &source.links
+        ))
     );
     let headers = Headers {
         to,
@@ -185,8 +219,8 @@ pub fn forward(source: &ReplySource) -> (Headers, String) {
         body.push_str(&format!("Cc: {}\n", joined(&source.cc)));
     }
     body.push('\n');
-    let text = source.body_text.as_deref().unwrap_or("");
-    body.push_str(text);
+    let text = with_links(source.body_text.as_deref().unwrap_or(""), &source.links);
+    body.push_str(&text);
     if !text.is_empty() && !text.ends_with('\n') {
         body.push('\n');
     }

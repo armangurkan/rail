@@ -591,7 +591,9 @@ at. One message is written at a time (`Finish or close the message being written
 reply goes to the message's `Reply-To` when it has one, otherwise to its sender; `R` adds the
 other recipients except you, keeping the old `Cc` in `Cc`. A reply starts with `Re:` once and the
 quoted text under `On <date>, <name> wrote:`; a forward starts with `Fwd:`, no recipients, and the
-original under a `Forwarded message` line, with its attachments. If the message's text is not in
+original under a `Forwarded message` line, with its attachments. The links the quoted or
+forwarded text marks follow it after a blank line, one per marker: `[1] https://…`, or
+`[2] (link not included)` for an address Rail would not open. If the message's text is not in
 the store yet, Rail fetches it first (`fetching the message…`). Writing from a Microsoft 365
 account works the same way; [Microsoft 365 mail](#microsoft-365-mail) says what differs.
 

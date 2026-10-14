@@ -276,6 +276,9 @@ pub struct ReplySource {
     pub date: i64,
     /// `None` until the body is fetched.
     pub body_text: Option<String>,
+    /// The addresses `body_text`'s `[n]` markers stand for (link n is `links[n - 1]`), at most
+    /// `MAX_LINKS`; empty when none are stored.
+    pub links: Vec<String>,
     pub attachments: Vec<ReplyAttachment>,
 }
 
@@ -285,6 +288,7 @@ impl std::fmt::Debug for ReplySource {
             .field("message", &self.message)
             .field("thread_id", &self.thread_id)
             .field("has_body", &self.body_text.is_some())
+            .field("links", &self.links.len())
             .field("attachments", &self.attachments.len())
             .finish_non_exhaustive()
     }
@@ -334,9 +338,11 @@ fn read_draft(r: &Row<'_>) -> rusqlite::Result<Draft> {
 /// JSON array the sync writer stores.
 fn read_reply_head(r: &Row<'_>) -> rusqlite::Result<ReplySource> {
     let text = |i: usize| -> rusqlite::Result<String> { r.get(i) };
+    let message: i64 = r.get(0)?;
     let references: Option<String> = r.get(6)?;
+    let links: Option<String> = r.get(14)?;
     Ok(ReplySource {
-        message: r.get(0)?,
+        message,
         account_id: r.get(1)?,
         thread_id: r.get(2)?,
         remote_thread_id: text(3)?,
@@ -350,6 +356,9 @@ fn read_reply_head(r: &Row<'_>) -> rusqlite::Result<ReplySource> {
         cc: parsed(&text(11)?),
         date: r.get(12)?,
         body_text: r.get(13)?,
+        links: links
+            .map(|json| super::view::read_links(message, &json))
+            .unwrap_or_default(),
         attachments: Vec::new(),
     })
 }
@@ -602,7 +611,7 @@ impl Store {
             .query_row(
                 "SELECT m.id, t.account_id, m.thread_id, t.remote_id, m.remote_id, m.message_id,
                         m.references_ids, m.subject, m.from_json, m.reply_to_json, m.to_json,
-                        m.cc_json, m.date, m.body_text
+                        m.cc_json, m.date, m.body_text, m.links
                  FROM messages m JOIN threads t ON t.id = m.thread_id WHERE m.id = ?1",
                 [message],
                 read_reply_head,
