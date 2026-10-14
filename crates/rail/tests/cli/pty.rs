@@ -424,6 +424,17 @@ fn a_panic_in_the_mail_screen_restores_the_terminal() {
 
 /// Start `rail` under `script` and wait for `wanted` on the screen, then quit with `q`.
 fn mail_screen_shows(dir: &tempfile::TempDir, wanted: &str, tweak: impl FnOnce(&mut Command)) {
+    mail_screen_draws(dir, wanted, tweak, |shown| shown.contains(wanted));
+}
+
+/// Start the mail screen at 100x30, wait until `done` holds for what the terminal showed (`what`
+/// names it in a timeout), then quit.
+fn mail_screen_draws(
+    dir: &tempfile::TempDir,
+    what: &str,
+    tweak: impl FnOnce(&mut Command),
+    done: impl Fn(&str) -> bool,
+) {
     let command = format!(
         "stty cols 100 rows 30; exec '{}'",
         env!("CARGO_BIN_EXE_rail")
@@ -439,11 +450,24 @@ fn mail_screen_shows(dir: &tempfile::TempDir, wanted: &str, tweak: impl FnOnce(&
     let mut keys = child.0.stdin.take().unwrap();
     let output = collect(child.0.stdout.take().unwrap());
     let shown = output.clone();
-    let wanted_text = wanted.to_string();
-    wait_until(wanted, &output, move || text(&shown).contains(&wanted_text));
+    wait_until(what, &output, move || done(&text(&shown)));
     keys.write_all(b"q").unwrap();
     keys.flush().unwrap();
     wait_for_exit(&mut child, &output);
+}
+
+/// The screen row (1 is the first) `needle` was last drawn on: the row of the last cursor move
+/// (`ESC [ row ; col H`) before it. The terminal backend moves the cursor only between cells
+/// that are not side by side, so the move before a run of text is on that text's row.
+fn drawn_row(shown: &str, needle: &str) -> Option<u16> {
+    let before = &shown[..shown.rfind(needle)?];
+    before.rmatch_indices("\x1b[").find_map(|(at, _)| {
+        let rest = &before[at + 2..];
+        let (pos, _) = rest.split_once('H')?;
+        let (row, col) = pos.split_once(';')?;
+        col.parse::<u16>().ok()?;
+        row.parse().ok()
+    })
 }
 
 #[test]
@@ -459,7 +483,7 @@ fn a_store_that_is_not_set_up_shows_the_hint_in_the_list_area() {
 }
 
 #[test]
-fn a_daemon_that_cannot_be_reached_shows_in_the_status_bar() {
+fn a_daemon_that_cannot_be_reached_shows_in_the_header() {
     if !script_available() {
         eprintln!("skipping: util-linux `script` is not installed");
         return;
@@ -470,8 +494,13 @@ fn a_daemon_that_cannot_be_reached_shows_in_the_status_bar() {
     // A runtime directory under a regular file can never be created, so no daemon can start.
     let blocker = dir.path().join("blocker");
     std::fs::write(&blocker, b"x").unwrap();
-    mail_screen_shows(&dir, "daemon unreachable", |cmd| {
+    // The header is the first row; the hint bar (the last) shows only the accounts.
+    let wanted = "daemon unreachable";
+    let tweak = |cmd: &mut Command| {
         cmd.env("RAIL_RUNTIME_DIR", blocker.join("run"));
+    };
+    mail_screen_draws(&dir, "daemon unreachable in the header", tweak, |shown| {
+        drawn_row(shown, wanted) == Some(1)
     });
 }
 

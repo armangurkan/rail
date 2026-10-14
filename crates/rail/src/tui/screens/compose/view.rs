@@ -1,12 +1,12 @@
-//! Drawing the review: the title, the rows with the cursor row highlighted, the key hint or
-//! the discard question, and the open prompt over the bottom rows.
+//! Drawing the review: the title and the rows with the cursor row highlighted, and the open
+//! prompt over the bottom rows. The keys and the discard question are the hint bar's.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Span;
 use ratatui::widgets::{Clear, Paragraph};
 
-use super::review::{self, DISCARD_QUESTION, Row, RowStyle};
+use super::review::{self, Row, RowStyle};
 use super::{Composer, Prompting};
 use crate::tui::screens::mail::Glyphs;
 use crate::tui::text::{fit, pad};
@@ -29,15 +29,15 @@ fn line(frame: &mut Frame, area: Rect, y: u16, span: Span<'_>) {
 }
 
 impl Composer {
-    /// The review over all of `area`: title, a blank row, the rows, the hint on the last row.
+    /// The review over all of `area`: title, a blank row, then the rows.
     pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme, glyphs: &Glyphs) {
-        if area.height < 3 || area.width == 0 {
+        if area.height < 2 || area.width == 0 {
             return;
         }
         frame.render_widget(Clear, area);
         let cols = usize::from(area.width);
         self.width.set(cols);
-        let body = Rect::new(area.x, area.y + 2, area.width, area.height - 3);
+        let body = Rect::new(area.x, area.y + 2, area.width, area.height - 2);
         self.view_rows.set(usize::from(body.height));
         let title = review::title(&self.composing);
         line(
@@ -48,13 +48,6 @@ impl Composer {
         );
         let rows = review::rows(&self.composing, cols, glyphs.attachment);
         self.render_rows(frame, body, theme, &rows);
-        let last = area.y + area.height - 1;
-        let hint = if self.confirm_discard {
-            Span::styled(fit(DISCARD_QUESTION, cols), theme.error)
-        } else {
-            Span::styled(fit(&self.hint, cols), theme.muted)
-        };
-        line(frame, area, last, hint);
         match &self.prompting {
             Some(Prompting::Headers(state)) => state.prompt.render(frame, area, theme),
             Some(Prompting::Path(prompt)) => prompt.render(frame, area, theme),

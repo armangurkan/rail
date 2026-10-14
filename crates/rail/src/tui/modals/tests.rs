@@ -427,18 +427,18 @@ fn the_palette_and_the_filter_line_draw_the_cursor_where_it_is() {
     assert_eq!(cursor_after(&modal), Some(Position::new(12, 5)));
     modal.key(key(KeyCode::Right));
     assert_eq!(cursor_after(&modal), Some(Position::new(14, 5)));
-    // The filter line is the bottom row; `/` takes column 0.
+    // The filter line is the first row of its area; `/` takes column 0.
     let mut line = Modal::Filter(FilterLine::new("a\u{1b}b"));
     assert_eq!(
         cursor_after(&line),
-        Some(Position::new(9, 23)),
+        Some(Position::new(9, 0)),
         "after the escape's columns"
     );
     line.key(key(KeyCode::Left));
     line.key(key(KeyCode::Left));
-    assert_eq!(cursor_after(&line), Some(Position::new(2, 23)));
+    assert_eq!(cursor_after(&line), Some(Position::new(2, 0)));
     line.key(key(KeyCode::End));
-    assert_eq!(cursor_after(&line), Some(Position::new(9, 23)));
+    assert_eq!(cursor_after(&line), Some(Position::new(9, 0)));
 }
 
 fn token() -> rail_core::ops::RowToken {

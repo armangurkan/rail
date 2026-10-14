@@ -475,6 +475,7 @@ pub fn mail_ctx(paths: &Paths, fake: Arc<FakeDaemon>) -> MailContext {
         clock: Clock::fixed(NOW, jiff::tz::TimeZone::UTC),
         icons: Icons::Unicode,
         split_threshold: 140,
+        hints: true,
         hyperlinks: false,
         depth: ColorDepth::TrueColor,
         theme_choice: ThemeChoice::default(),

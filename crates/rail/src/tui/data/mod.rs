@@ -107,6 +107,10 @@ pub enum MailEvent {
     ThemeSaved {
         result: Result<(), String>,
     },
+    /// `config.toml` was written for `:hints`; the error is a config or IO error's text.
+    HintsSaved {
+        result: Result<(), String>,
+    },
     /// The refresh with this sequence number gave its last answer, or its job panicked.
     RefreshEnded {
         seq: u64,
@@ -231,6 +235,10 @@ impl fmt::Debug for MailEvent {
                 .finish(),
             Self::ThemeSaved { result } => f
                 .debug_struct("ThemeSaved")
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::HintsSaved { result } => f
+                .debug_struct("HintsSaved")
                 .field("ok", &result.is_ok())
                 .finish(),
             Self::RefreshEnded { seq } => f.debug_struct("RefreshEnded").field("seq", seq).finish(),

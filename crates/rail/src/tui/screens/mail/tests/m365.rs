@@ -197,7 +197,7 @@ fn bottom(f: &Fixture) -> String {
     let rows = crate::tui::test_util::render_lines(120, 30, |frame| {
         f.screen.view(frame, &Theme::default());
     });
-    rows[28].clone()
+    rows[29].clone()
 }
 
 #[tokio::test]
@@ -211,9 +211,10 @@ async fn writing_from_a_microsoft_365_account_goes_through_and_names_it() {
         press(&mut f, KeyCode::Char('q')).await;
     }
     press(&mut f, KeyCode::Char('r')).await;
+    expire_notice(&mut f).await;
     let hint = bottom(&f);
     assert!(
-        hint.contains("y send · s save to Microsoft 365 · e edit"),
+        hint.contains("y send  s save to Microsoft 365  e edit"),
         "{hint}"
     );
     press(&mut f, KeyCode::Char('s')).await;

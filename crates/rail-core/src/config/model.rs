@@ -55,6 +55,9 @@ pub struct General {
     pub theme: Option<String>,
     /// `general.accent`: a palette slot 0-15, a colour name, or `#rrggbb`; absent is cyan.
     pub accent: Option<AccentSpec>,
+    /// `general.hints`: the key hints in the bottom bar; `false` keeps only notices and each
+    /// account's state there. `:hints` toggles it.
+    pub hints: bool,
 }
 
 impl Default for General {
@@ -70,6 +73,7 @@ impl Default for General {
             secrets: SecretsBackend::Keyring,
             theme: None,
             accent: None,
+            hints: true,
         }
     }
 }

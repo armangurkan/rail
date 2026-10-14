@@ -1,5 +1,5 @@
 //! `:theme` and `:accent`: preview on every move, Esc restores, Enter keeps and writes config,
-//! the non-truecolor path, a failed write.
+//! the non-truecolor path, a failed write; `:hints` and its save.
 
 use ratatui::style::Color;
 
@@ -275,4 +275,91 @@ fn two_saves_at_once_both_land_in_the_file() {
         assert!(text.contains("theme = \"Dracula\""), "{text}");
         assert!(text.contains("accent = 3"), "{text}");
     }
+}
+
+/// The last row of the screen drawn at 90x24.
+fn bottom_row(f: &Fixture) -> String {
+    let lines = crate::tui::test_util::render_lines(90, 24, |frame| {
+        f.screen.view(frame, &Theme::default())
+    });
+    lines[23].clone()
+}
+
+/// `:hints` typed in the palette and run with Enter.
+async fn run_hints_from_the_palette(f: &mut Fixture) {
+    press(f, KeyCode::Char(':')).await;
+    type_text(f, "hints").await;
+    press(f, KeyCode::Enter).await;
+}
+
+#[tokio::test]
+async fn colon_hints_turns_the_hints_off_and_on_and_saves_the_choice() {
+    let mut f = fixture(3).await;
+    write_config(&f, "[general]\neditor = \"vi\" # mine\n");
+    assert!(bottom_row(&f).contains("? help"), "{}", bottom_row(&f));
+    run_hints_from_the_palette(&mut f).await;
+    assert!(f.screen.modal.is_none());
+    assert!(
+        f.screen.status_line().contains("hints: off"),
+        "{}",
+        f.screen.status_line()
+    );
+    let text = config_text(&f);
+    assert!(text.contains("[general]\n"), "{text}");
+    assert!(text.contains("editor = \"vi\" # mine"), "{text}");
+    let config = rail_core::config::parse(&text, &f.paths.config_file()).unwrap();
+    assert!(!config.general.hints, "{text}");
+    assert!(text.contains("hints = false"), "{text}");
+    expire_notice(&mut f).await;
+    let bottom = bottom_row(&f);
+    assert!(
+        !bottom.contains("? help"),
+        "the bar lost its hints: {bottom}"
+    );
+    assert!(!bottom.contains("Enter open"), "{bottom}");
+    assert!(
+        f.screen
+            .palette_entries()
+            .iter()
+            .any(|e| e.target == Target::Hints && e.text == "Turn the key hints on")
+    );
+
+    run_hints_from_the_palette(&mut f).await;
+    assert!(
+        f.screen.status_line().contains("hints: on"),
+        "{}",
+        f.screen.status_line()
+    );
+    let text = config_text(&f);
+    assert!(!text.contains("hints"), "true is the default: {text}");
+    assert!(text.contains("editor = \"vi\" # mine"), "{text}");
+    expire_notice(&mut f).await;
+    assert!(bottom_row(&f).contains("? help"), "{}", bottom_row(&f));
+}
+
+#[tokio::test]
+async fn a_failed_hints_save_keeps_the_setting_and_reports() {
+    let mut f = fixture(3).await;
+    write_config(&f, "[general]\n");
+    let dir = f.paths.config_file().parent().unwrap().to_path_buf();
+    let writable = std::fs::metadata(&dir).unwrap().permissions();
+    let mut read_only = writable.clone();
+    read_only.set_readonly(true);
+    std::fs::set_permissions(&dir, read_only).unwrap();
+    if std::fs::write(dir.join("probe"), "x").is_ok() {
+        eprintln!("skipped: this user can write a read-only directory");
+        std::fs::set_permissions(&dir, writable).unwrap();
+        return;
+    }
+    run_target(&mut f, Target::Hints).await;
+    std::fs::set_permissions(&dir, writable).unwrap();
+    assert!(!f.screen.hints, "kept off for the session");
+    assert!(
+        f.screen
+            .status_line()
+            .contains("Could not save the hints setting"),
+        "{}",
+        f.screen.status_line()
+    );
+    assert_eq!(f.screen.error_count(), 1);
 }

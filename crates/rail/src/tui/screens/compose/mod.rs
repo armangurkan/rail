@@ -5,7 +5,7 @@ pub mod file;
 pub mod model;
 pub mod prefill;
 pub mod prompt;
-mod review;
+pub(crate) mod review;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -70,8 +70,6 @@ pub struct Composer {
     prompting: Option<Prompting>,
     confirm_discard: bool,
     seq: u64,
-    /// The bottom row: the review's keys.
-    hint: String,
     /// The review's width and body height at the last draw, for cursor moves.
     width: Cell<usize>,
     view_rows: Cell<usize>,
@@ -127,7 +125,6 @@ impl Composer {
             prompting: None,
             confirm_discard: false,
             seq: 0,
-            hint: review::default_hint(),
             width: Cell::new(FIRST_WIDTH),
             view_rows: Cell::new(0),
         }
@@ -139,13 +136,6 @@ impl Composer {
         let mut composer = Self::new(composing);
         composer.start_headers(steps, true);
         composer
-    }
-
-    /// Name these keys on the bottom row: the labels of send, push, edit, headers, attach,
-    /// remove, keep and discard, in that order; `provider` is where `s` saves.
-    pub fn with_hint(mut self, labels: &[String; 8], provider: &str) -> Self {
-        self.hint = review::hint(labels, provider);
-        self
     }
 
     pub fn composing(&self) -> &Composing {
@@ -166,7 +156,7 @@ impl Composer {
         self.prompting.is_some() || self.confirm_discard
     }
 
-    #[cfg(test)]
+    /// Whether the discard question is open; the hint bar asks it.
     pub fn confirming_discard(&self) -> bool {
         self.confirm_discard
     }

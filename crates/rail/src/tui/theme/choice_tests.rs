@@ -25,6 +25,12 @@ fn a_scheme_maps_onto_the_roles_by_slot() {
     assert_eq!(t.accent.fg, Some(Color::Rgb(0x8b, 0xe9, 0xfd)), "palette 6");
     assert!(t.accent.add_modifier.contains(Modifier::BOLD));
     assert_eq!(t.error.fg, Some(Color::Rgb(0xff, 0x55, 0x55)), "palette 1");
+    assert_eq!(t.border.fg, Some(Color::Rgb(0x62, 0x72, 0xa4)), "palette 8");
+    assert_eq!(
+        t.border_focus.fg,
+        Some(Color::Rgb(0x8b, 0xe9, 0xfd)),
+        "palette 6"
+    );
     assert_eq!(t.selected.bg, Some(Color::Rgb(0x44, 0x47, 0x5a)));
     assert_eq!(t.selected.fg, Some(Color::Rgb(0xff, 0xff, 0xff)));
     assert_eq!(
@@ -41,7 +47,7 @@ fn a_scheme_maps_onto_the_roles_by_slot() {
 }
 
 #[test]
-fn the_accent_override_lands_only_in_accent() {
+fn the_accent_override_lands_in_accent_and_the_focus_border() {
     let base = Theme::from_choice(dracula(), ColorDepth::TrueColor);
     let slot = Theme::from_choice(
         ThemeChoice {
@@ -51,6 +57,8 @@ fn the_accent_override_lands_only_in_accent() {
         ColorDepth::TrueColor,
     );
     assert_eq!(slot.accent.fg, Some(Color::Rgb(0xff, 0x79, 0xc6)));
+    assert_eq!(slot.border_focus.fg, Some(Color::Rgb(0xff, 0x79, 0xc6)));
+    assert_eq!(slot.border, base.border);
     assert_eq!(slot.text, base.text);
     assert_eq!(slot.selected, base.selected);
     assert_eq!(slot.account_colors, base.account_colors);

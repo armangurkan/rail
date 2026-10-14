@@ -46,13 +46,13 @@ impl FilterLine {
         }
     }
 
-    /// Drawn in the bottom row of `area`: `/text` with the cursor in it and, muted, the parsed
+    /// Drawn in the first row of `area`: `/text` with the cursor in it and, muted, the parsed
     /// operators.
-    pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let Some(y) = (area.y + area.height).checked_sub(1) else {
+    pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        if area.height == 0 || area.width == 0 {
             return;
-        };
-        let row = Rect::new(area.x, y, area.width, 1);
+        }
+        let row = Rect::new(area.x, area.y, area.width, 1);
         let cols = usize::from(area.width);
         let (typed, column) = input_row("/", self.input.value(), self.input.cursor(), cols);
         let parsed = format!("   {}", escape(&self.parsed()));
@@ -64,11 +64,9 @@ impl FilterLine {
         frame.render_widget(Clear, row);
         paint_background(frame, row, theme);
         frame.render_widget(Paragraph::new(line), row);
-        if cols > 0 {
-            let x = row
-                .x
-                .saturating_add(u16::try_from(column).unwrap_or(u16::MAX));
-            frame.set_cursor_position(Position::new(x, row.y));
-        }
+        let x = row
+            .x
+            .saturating_add(u16::try_from(column).unwrap_or(u16::MAX));
+        frame.set_cursor_position(Position::new(x, row.y));
     }
 }

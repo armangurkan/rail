@@ -96,6 +96,14 @@ async fn press(f: &mut Fixture, code: KeyCode) {
     settle_capturing(&mut f.screen, effects, &f.last_theme, &f.editor).await;
 }
 
+/// Tick until the notice has expired, so the hint bar shows the hints again.
+async fn expire_notice(f: &mut Fixture) {
+    for _ in 0..=status::NOTICE_TICKS {
+        let effects = f.screen.update(Msg::Tick);
+        settle(&mut f.screen, effects).await;
+    }
+}
+
 async fn press_n(f: &mut Fixture, code: KeyCode, times: usize) {
     for _ in 0..times {
         press(f, code).await;
@@ -538,7 +546,7 @@ async fn progress_reaches_the_status_bar_and_a_lost_daemon_says_so() {
     assert_eq!(f.screen.status.daemon, DaemonState::Unreachable);
     assert!(
         f.screen
-            .status_line()
+            .header_summary()
             .contains("daemon unreachable (Ctrl-r retries)")
     );
     assert_eq!(f.screen.status.errors().count(), 1, ":errors keeps it");

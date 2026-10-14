@@ -13,7 +13,6 @@ use rail_core::store::drafts::{Attachment, Draft, DraftKind, Recipient, ReplySou
 use super::{Focus, MailScreen};
 use crate::tui::app::Effect;
 use crate::tui::data::{ReplyTarget, SaveCall};
-use crate::tui::keys::Action;
 use crate::tui::screens::compose::model::{AttachmentRow, Composing, Headers};
 use crate::tui::screens::compose::{Composer, file, prefill};
 use crate::tui::text::escape;
@@ -191,22 +190,7 @@ impl MailScreen {
 
     /// Show `composer` over the screen.
     pub(super) fn show_composer(&mut self, composer: Composer) {
-        let keymap = &self.ctx.keymap;
-        let labels = [
-            Action::ComposeSend,
-            Action::ComposePush,
-            Action::ComposeEdit,
-            Action::ComposeHeaders,
-            Action::ComposeAttach,
-            Action::ComposeRemove,
-            Action::ComposeClose,
-            Action::ComposeDiscard,
-        ]
-        .map(|a| keymap.label(a));
-        let provider = self
-            .kind_at(composer.composing().account_index)
-            .provider_name();
-        self.compose = Some(composer.with_hint(&labels, provider));
+        self.compose = Some(composer);
         self.composing.unsaved = false;
         self.focus = Focus::Compose;
     }

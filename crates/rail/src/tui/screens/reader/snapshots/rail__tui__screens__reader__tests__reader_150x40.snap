@@ -2,43 +2,43 @@
 source: crates/rail/src/tui/screens/reader/tests.rs
 expression: "draw(&f, width, height)"
 ---
-▍All inboxes  1 account · 1 unread                                                                                                              ? help
-  All inboxes           1│●  Yesterday  Tom, Sender     (3)  📎  Q4 plan           Q4 plan  (3 messages)
-● work                  1│                                                        ▾ Tom  Thu 09 Oct 2025 08:53
-    Sent                 │                                                        From: Tom <tom@example.com>
-    Projects             │                                                        To: Dana Reyes <dana@example.com>
-                         │                                                        Date: Thu 09 Oct 2025 08:53
-                         │
-                         │                                                        Hi Dana,
-                         │
-                         │                                                        The plan is in the doc[1]; notes are on the wiki[2].
-                         │
-                         │                                                        [5 quoted lines]
-                         │
-                         │                                                        Thanks,
-                         │                                                        Tom
-                         │                                                        📎  plan.pdf
-                         │
-                         │                                                        ▸ Sender  Thu 09 Oct 2025 08:54  snippet m2
-                         │                                                        ▾ Sender  Thu 09 Oct 2025 08:55
-                         │                                                        From: Sender <sender@example.com>
-                         │                                                        Date: Thu 09 Oct 2025 08:55
-                         │
-                         │                                                        body of m3
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-work ✓
+▍Rail │ All inboxes · 1 account · 1 unread  / Search                                                                                    ● Synced 12:39
+┌────────────────────────┐┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────────────────┐
+│  All inboxes          1││●  Yesterday  Tom, Sender    (3)  📎  Q4 plan          ││Q4 plan  (3 messages)                                             │
+│● work                 1││                                                      ││▾ Tom  Thu 09 Oct 2025 08:53                                      │
+│    Sent                ││                                                      ││From: Tom <tom@example.com>                                       │
+│    Projects            ││                                                      ││To: Dana Reyes <dana@example.com>                                 │
+│                        ││                                                      ││Date: Thu 09 Oct 2025 08:53                                       │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││Hi Dana,                                                          │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││The plan is in the doc[1]; notes are on the wiki[2].              │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││[5 quoted lines]                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││Thanks,                                                           │
+│                        ││                                                      ││Tom                                                               │
+│                        ││                                                      ││📎  plan.pdf                                                       │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││▸ Sender  Thu 09 Oct 2025 08:54  snippet m2                       │
+│                        ││                                                      ││▾ Sender  Thu 09 Oct 2025 08:55                                   │
+│                        ││                                                      ││From: Sender <sender@example.com>                                 │
+│                        ││                                                      ││Date: Thu 09 Oct 2025 08:55                                       │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││body of m3                                                        │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+│                        ││                                                      ││                                                                  │
+└────────────────────────┘└──────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────┘
+┌─────┐         ┌─────┐      ┌───┐       ┌───┐         ┌───┐      ┌───┐
+│ n/p │ message │ Tab │ fold │ r │ reply │ e │ archive │ q │ back │ ? │ help                                                                  ● work ✓
+└─────┘         └─────┘      └───┘       └───┘         └───┘      └───┘

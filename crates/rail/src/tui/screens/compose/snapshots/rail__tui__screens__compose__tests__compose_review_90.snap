@@ -1,6 +1,5 @@
 ---
 source: crates/rail/src/tui/screens/compose/tests.rs
-assertion_line: 430
 expression: "shown(&c, w, h)"
 ---
 Reply · me@example.com
@@ -17,13 +16,3 @@ Yes please.
 
 On Thu, 9 Oct 2025, Dana Reyes wrote:
 [5 quoted lines]
-
-
-
-
-
-
-
-
-
-y send · s save to Gmail · e edit · t headers · a attach · x remove · q keep · d discard

@@ -110,7 +110,8 @@ async fn the_status_line_shows_the_parsed_filter_and_esc_clears_it() {
     let (_tmp, mut screen) = screen().await;
     press(&mut screen, KeyCode::Char('/'));
     type_in(&mut screen, "is:unread form:dana");
-    let text = snapshot(90, 24, |frame| screen.view(frame, &Theme::default()));
+    // Wide enough for the slot to hold the typed text and the parsed operators.
+    let text = snapshot(150, 24, |frame| screen.view(frame, &Theme::default()));
     assert!(text.contains("/is:unread form:dana"), "{text}");
     assert!(
         text.contains("is:unread · words: form:dana"),
@@ -119,18 +120,14 @@ async fn the_status_line_shows_the_parsed_filter_and_esc_clears_it() {
     let effects = fire_filter(&mut screen);
     settle(&mut screen, effects).await;
     press(&mut screen, KeyCode::Enter);
-    assert!(
-        screen
-            .status_line()
-            .starts_with("filter: is:unread · words: form:dana")
-    );
+    assert_eq!(screen.slot_text(), "/ is:unread · words: form:dana");
     assert!(screen.list.rows().is_empty());
     press(&mut screen, KeyCode::Char('/'));
     let effects = press(&mut screen, KeyCode::Esc);
     settle(&mut screen, effects).await;
     assert!(screen.filter.is_empty());
     assert_eq!(screen.list.rows().len(), 10);
-    assert!(!screen.status_line().starts_with("filter:"));
+    assert_eq!(screen.slot_text(), "/ Search", "the slot is idle again");
 }
 
 #[tokio::test]

@@ -282,6 +282,14 @@ async fn d_asks_then_discards_and_a_non_zero_editor_exit_asks_to_keep_the_text()
     press(&mut f, KeyCode::Char('r')).await;
     press(&mut f, KeyCode::Char('d')).await;
     assert!(compose_open(&f), "asks first");
+    let rows = crate::tui::test_util::render_lines(120, 30, |frame| {
+        f.screen.view(frame, &Theme::default());
+    });
+    assert!(
+        rows[29].starts_with("Discard this draft? (y/n)"),
+        "{}",
+        rows[29]
+    );
     press(&mut f, KeyCode::Char('y')).await;
     assert!(!compose_open(&f));
     assert!(
@@ -677,9 +685,33 @@ async fn the_review_names_the_users_keys() {
     let rows = crate::tui::test_util::render_lines(120, 30, |frame| {
         f.screen.view(frame, &Theme::default());
     });
-    let hint = &rows[28];
+    let hint = &rows[29];
     assert!(
-        hint.starts_with("S send · s save to Gmail · e edit · t headers"),
+        hint.starts_with("S send  s save to Gmail  e edit  t headers"),
         "{hint}"
     );
+}
+
+#[tokio::test]
+async fn an_open_prompt_shows_its_own_keys_in_the_bar() {
+    let mut f = compose_fixture().await;
+    editor_appends(&f, "");
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    let bar = |f: &Fixture| {
+        crate::tui::test_util::render_lines(120, 30, |frame| {
+            f.screen.view(frame, &Theme::default());
+        })[29]
+            .clone()
+    };
+    press(&mut f, KeyCode::Char('t')).await;
+    let row = bar(&f);
+    assert!(
+        row.starts_with("Enter accept  Tab complete  Esc cancel"),
+        "{row}"
+    );
+    assert!(!row.contains("y send") && !row.contains("? help"), "{row}");
+    press(&mut f, KeyCode::Esc).await;
+    let row = bar(&f);
+    assert!(row.starts_with("y send  s save to Gmail"), "{row}");
 }

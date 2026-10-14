@@ -646,13 +646,13 @@ async fn entering_the_folder_closes_the_reader_of_the_old_scope() {
 async fn the_bar_shows_no_filter_in_the_folder() {
     let mut f = drafts_fixture().await;
     f.screen.filter = rail_core::store::filter::parse("from:sender");
-    assert!(f.screen.status_line().contains("filter:"));
+    assert!(f.screen.slot_text().contains("from:"));
     open_drafts(&mut f).await;
-    let line = f.screen.status_line();
-    assert!(!line.contains("filter:"), "{line}");
+    let slot = f.screen.slot_text();
+    assert_eq!(slot, "", "the folder has no search slot");
     press(&mut f, KeyCode::Char('0')).await;
     assert!(
-        f.screen.status_line().contains("filter:"),
+        f.screen.slot_text().contains("from:"),
         "back in a thread list"
     );
 }
