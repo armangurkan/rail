@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/list.rs
+expression: "crate::tui::test_util::snapshot(90, 24, |frame|\n{ f.screen.view(frame, &Theme::default()) })"
+---
+|Rail | All inboxes · 2 accounts · 3 unread  / Search                       * Synced 12:39
+TODAY
+*  W  Sender                      subject dm1                                        10:54
+*  W  Sender                      subject dm0                                        10:53
+YESTERDAY
+*  W  Sender                      subject ym1                                        08:54
+.  W  Sender                      subject ym0                                        08:53
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter open  j/k move  r reply  c compose  e archive  ? help          * work ok · * home ok

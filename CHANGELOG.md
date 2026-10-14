@@ -196,6 +196,13 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Changed
 
+- The thread list is in date groups (`TODAY`, `YESTERDAY`, `THIS WEEK`, `OLDER`), the group of
+  the top row kept on the first row. A row reads dot, badge, people, `★`/`📎`, subject `(n)`,
+  time: the time at the right edge (`14:05`, `Mon 18:20`, `Oct 03`, `2024-10-03`) replaces the
+  date column, the message count follows the subject and is never cut, a read thread's dot is a
+  muted `·` (`.` with `icons = "ascii"`), and in `All inboxes`, `Starred`, `Sent` and `Trash`
+  each row carries its account's badge. Mail dated after today is under `TODAY` with its date.
+  A page moves by the threads that fit.
 - The sidebar has two sections. UNIFIED: `All inboxes`, `Starred`, `Drafts`, `Sent` and `Trash`
   across accounts. ACCOUNTS: each account with only its system folders; every other folder or
   label is under `More folders (N)` as a tree of its path, Gmail's categories under

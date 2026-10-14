@@ -3,16 +3,16 @@ source: crates/rail/src/tui/screens/mail/view_tests.rs
 expression: "draw(&screen, 90, 24)"
 ---
 ▍Rail │ All inboxes · 2 accounts · 5 unread  / Search                 ⟳ Backfill 1200/5000
-UNIFIED                  │●      11:54  Dana Reyes, Tom   (3) ★   Q4 roadmap review — can…
-✉  All inboxes          5│●      09:53  GitLab                 📎  Pipeline failed: rail!42
-★  Starred              1│●  Yesterday  Sender                    subject h1
-✎  Drafts                │●        Wed  Priya Nair                Re: offsite logistics
-➤  Sent                  │●     Sep 09  Evil\u{7}Corp             pay\u{202e}fdp.exe \u{1…
-✕  Trash                 │● 2024-09-04  Sender                    A very long subject tha…
-─────────────────────────│
-ACCOUNTS                 │
-▾  W  work              4│
-  ✉  Inbox              4│
+UNIFIED                  │TODAY
+✉  All inboxes          5│●  W  Dana Reyes, Tom   ★   Q4 roadmap review —… (3)       11:54
+★  Starred              1│●  W  GitLab             📎  Pipeline failed: rail!42       09:53
+✎  Drafts                │YESTERDAY
+➤  Sent                  │●  H  Sender                subject h1                     10:53
+✕  Trash                 │THIS WEEK
+─────────────────────────│·  W  Priya Nair            Re: offsite logistics      Wed 12:53
+ACCOUNTS                 │OLDER
+▾  W  work              4│●  W  Evil\u{7}Corp         pay\u{202e}fdp.exe \u{1…      Sep 09
+  ✉  Inbox              4│●  W  Sender                A very long subject tha…  2024-09-04
   ➤  Sent                │
   ✕  Trash               │
 ─────────────────────────│

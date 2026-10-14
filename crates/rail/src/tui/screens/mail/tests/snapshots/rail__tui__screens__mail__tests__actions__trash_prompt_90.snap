@@ -3,12 +3,12 @@ source: crates/rail/src/tui/screens/mail/tests/actions.rs
 expression: shot
 ---
 ▍Rail │ All inboxes · 2 accounts · 5 unread  / Search                       ● Synced 12:39
-●  Yesterday  Sender                          subject wm2
-●  Yesterday  Sender                          subject hm1
-●  Yesterday  Sender                          subject wm1
-●  Yesterday  Sender                          subject hm0
-●  Yesterday  Sender                          subject wm0
-
+YESTERDAY
+●  W  Sender                      subject wm2                                        08:55
+●  H  Sender                      subject hm1                                        08:54
+●  W  Sender                      subject wm1                                        08:54
+●  H  Sender                      subject hm0                                        08:53
+●  W  Sender                      subject wm0                                        08:53
 
 
          ┌ Trash? ──────────────────────────────────────────────────────────────┐

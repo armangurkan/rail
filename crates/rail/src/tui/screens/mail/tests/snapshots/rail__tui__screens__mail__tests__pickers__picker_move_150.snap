@@ -4,12 +4,12 @@ expression: shot
 ---
 ▍Rail │ All inboxes · 2 accounts · 5 unread  / Search                                                                                   ● Synced 12:39
 ┌────────────────────────┐┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────────────────┐
-│UNIFIED                 ││●  Yesterday  Sender                 subject wm2      ││Open a thread with Enter; it shows here.                          │
-│✉  All inboxes         5││●  Yesterday  Sender                 subject hm1      ││                                                                  │
-│★  Starred              ││●  Yesterday  Send┌ Move to ─────────────────────────────────────────────────┐                                            │
-│✎  Drafts               ││●  Yesterday  Send│>                                                         │                                            │
-│➤  Sent                 ││●  Yesterday  Send│                                                          │                                            │
-│✕  Trash                ││                  │Projects                                                  │                                            │
+│UNIFIED                 ││YESTERDAY                                             ││Open a thread with Enter; it shows here.                          │
+│✉  All inboxes         5││●  W  Sender             subject wm2             08:55││                                                                  │
+│★  Starred              ││●  H  Sender      ┌ Move to ─────────────────────────────────────────────────┐                                            │
+│✎  Drafts               ││●  W  Sender      │>                                                         │                                            │
+│➤  Sent                 ││●  H  Sender      │                                                          │                                            │
+│✕  Trash                ││●  W  Sender      │Projects                                                  │                                            │
 │────────────────────────││                  │                                                          │                                            │
 │ACCOUNTS                ││                  │                                                          │                                            │
 │▾  W  work             3││                  │                                                          │                                            │

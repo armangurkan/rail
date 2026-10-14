@@ -15,6 +15,7 @@ mod hints;
 mod hints_toggle;
 mod layout;
 mod list;
+mod list_view;
 mod m365;
 #[cfg(test)]
 mod modal_tests;
@@ -189,6 +190,8 @@ pub struct MailScreen {
     store_state: StoreState,
     /// The list area's rows and the frame's width, from the last frame drawn.
     size: Cell<(u16, u16)>,
+    /// The first thread the last list frame drew (a window index), for the re-read.
+    drawn_top: Cell<Option<usize>>,
     /// The header's search slot from the last frame drawn, when it was drawn.
     slot_rect: Cell<Option<Rect>>,
     /// The newest list read that replaces the window (a scope change, `Home`, `End`) while it
@@ -259,6 +262,7 @@ impl MailScreen {
             sidebar_shown: None,
             store_state: StoreState::Loading,
             size: Cell::new((0, 0)),
+            drawn_top: Cell::new(None),
             slot_rect: Cell::new(None),
             navigating: None,
             reader: None,
