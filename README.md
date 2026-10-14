@@ -284,8 +284,8 @@ selected with `Space`), the account's badge in `All inboxes`, `Starred`, `Sent` 
 label's first letter on its colour), the people, `★` for starred and `📎` for attachments, the
 subject with the message count after it (`(3)`, never cut), and at the right edge the time:
 `14:05` today and yesterday, `Mon 18:20` this week, `Oct 03` earlier this year, `2024-10-03`
-before; mail dated after today is under `TODAY` with its date. Unread threads are bold. With `icons = "ascii"` the dots are `*`, `.` and `>`, `★` is `+`
-and `📎` is `@`.
+before; mail dated after today is under `TODAY` with its date. Unread threads are bold.
+With `icons = "ascii"` the dots are `*`, `.` and `>`, `★` is `+` and `📎` is `@`.
 `1` to `9` show one account's inbox, `0` the unified inbox again. The sidebar (shown at 100 columns
 and wider; `b` toggles it, `Tab` moves into it) has two sections. UNIFIED holds `All inboxes`,
 `Starred`, `Drafts`, `Sent` and `Trash`, each with every account's mail. ACCOUNTS holds each
