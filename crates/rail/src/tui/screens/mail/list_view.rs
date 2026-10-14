@@ -82,6 +82,8 @@ pub(super) fn frame_lines(
     }
     // A start just above a group row would keep a group with nothing on screen over it. The
     // cursor is a thread below that row, so it stays in view.
+    // At the end of the list this can leave the bottom row blank, accepted: every thread on
+    // screen keeps its group row above it, which matters more than a full last screen.
     if matches!(lines.get(start + 1), Some(ListLine::Group(_))) {
         start += 1;
     }
@@ -620,6 +622,19 @@ mod tests {
             frame_lines(&ten_and_ten, 9, 12, 5),
             [G(Yesterday), T(10), T(11), T(12), T(13)],
             "a kept group row heads a thread on screen: no TODAY over YESTERDAY"
+        );
+        // [G(Today), T0, T1, T2, G(Yesterday), T3..T7]: the last full screen would start on T2,
+        // right above YESTERDAY's row; it starts on that row instead and leaves one row blank.
+        let three_and_five = list_lines(&[[Today; 3].as_slice(), &[Yesterday; 5]].concat());
+        let last = frame_lines(&three_and_five, 0, 7, 7);
+        assert_eq!(
+            last,
+            [G(Yesterday), T(3), T(4), T(5), T(6), T(7)],
+            "six lines in seven rows: every thread on screen keeps its group row above it"
+        );
+        assert!(
+            last.contains(&T(7)),
+            "the cursor on the last thread is shown"
         );
     }
 }
