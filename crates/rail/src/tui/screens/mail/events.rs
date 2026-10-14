@@ -170,7 +170,8 @@ impl MailScreen {
 
     /// A failed pass's permanent error joins `:errors` once while `:errors` still holds it
     /// (the header already ranks the failed pass), with its outside detail labelled and escaped
-    /// as `error_line` writes it; a Microsoft 365 folder Rail gave up on is one, named there. Transient failures stay out: the next pass retries them.
+    /// as `error_line` writes it; a Microsoft 365 folder Rail gave up on is one, named there.
+    /// Transient failures stay out: the next pass retries them.
     fn keep_standing_error(&mut self, status: &AccountSyncStatus) {
         let Some(error) = status
             .last_error

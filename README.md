@@ -908,7 +908,9 @@ Microsoft Graph.
   mail in a folder beyond that is not synced.
   Raising `history_days` reads every folder again. When Microsoft forgets a folder's place (after
   a long time offline), or a folder is deleted, the account reads every folder again and removes
-  what is gone.
+  what is gone, except while a folder's subfolders cannot be listed or a folder is given up on:
+  then nothing is removed until a later full read (see `a folder cannot be synced` in
+  [Troubleshooting](#troubleshooting)).
 - **Search.** `from:`, `subject:`, `to:`, `body:` and plain words work; Gmail's `label:`, `is:`
   and `has:` do not. A search returns at most 1,000 results from the server.
 - **Attachments.** A OneDrive or SharePoint link attachment is listed, and when Rail is asked for
@@ -942,14 +944,13 @@ Microsoft Graph.
   discarding the draft in Rail leaves that copy. Delete the extra one in Outlook's Drafts.
 - **Attachments.** At most 50 files and 25 MiB in all, as on Gmail (`the message is … MiB, larger
   than Microsoft 365's 25 MiB limit`). A file of 3 MiB or more goes up in 3.75 MiB pieces, and a
-  failed upload is tried again later. A forward keeps the original's attachments in Outlook
-  without downloading them; remove one in the review and it goes from the draft too. Rail matches
-  its attachments to the draft's by name and the size Outlook lists for them, so a save or send
-  uploads only a file that is new or has changed since (other bytes, or the same length written
-  again). Rail writes the message as
-  plain text, so pictures inside the body of a reply, a forward or an imported Outlook draft are
-  dropped from it. Attached messages and OneDrive or SharePoint links stay as Outlook has them:
-  Rail does not list them for removal and never downloads or uploads them.
+  failed upload is tried again later. A forward keeps the original's attachments in Outlook without
+  downloading them; remove one in the review and it goes from the draft too. Rail matches its
+  attachments to the draft's by name and the size Outlook lists for them, so a save or send uploads
+  only a file that is new or has changed since (other bytes, or the same length written again). Rail
+  writes the message as plain text, so pictures inside the body of a reply, a forward or an imported
+  Outlook draft are dropped from it. Attached messages and OneDrive or SharePoint links stay as
+  Outlook has them: Rail does not list them for removal and never downloads or uploads them.
 - **Never sent twice.** Before any later attempt (a retry, or a start after the daemon stopped
   mid-send), Rail asks Outlook for a sent message with the draft's `Message-ID`, and about the
   draft it saved, and counts a sent one as sent.
@@ -1332,8 +1333,8 @@ their own.
 | `Outlook uses folders, not labels: press m to move.` | Expected: Outlook has folders, not labels. Press `m` to move the thread to a folder. |
 | `This mailbox has no Archive folder; press m to move.` | The mailbox has no Archive folder and Rail never makes one. Press `m` to move the thread to a folder. |
 | `This mailbox has no Deleted Items folder.` | `d` found no Deleted Items folder in the last folder listing, which an Exchange Online mailbox always has; Rail put the thread back. Press `Ctrl-r` to sync, or `m` to move the thread to a folder. |
-| `Could not … : Rail holds no messages of this Microsoft 365 conversation` | The thread's messages left the store before the action was sent (another device moved or deleted them). Press `Ctrl-r`; the next sync shows where they are now. |
-| `a folder cannot be synced: its sync link is longer than 4 KiB` (in the header as `⚠ name sync failed`; `:errors` names the folder after it, as `(from outside Rail (the provider or the system): "Projects")`) | Microsoft answered three times in a row with a sync link for that folder longer than Rail keeps. Rail stops syncing that folder until the daemon restarts (`rail daemon stop`); every other folder goes on, and the mail Rail holds from it stays. Mail deleted on the server while the folder is parked stays in Rail until Rail next resyncs the account in full (when Microsoft expires its sync link, a synced folder is deleted, or `history_days` grows); a restart alone does not remove it. Until then every pass counts as failed: `rail doctor`'s last-success time stops advancing and its sync check fails, and `rail sync` exits 1. Please report it if it comes back. |
+| `Could not …: Rail holds no messages of this Microsoft 365 conversation` | The thread's messages left the store before the action was sent (another device moved or deleted them). Press `Ctrl-r`; the next sync shows where they are now. |
+| `a folder cannot be synced: its sync link is longer than 4 KiB` (in the header as `⚠ name sync failed`; `:errors` names the folder after it, as `(from outside Rail (the provider or the system): "Projects")`) | Microsoft answered three times in a row with a sync link for that folder longer than Rail keeps. Rail stops syncing that folder until the daemon restarts (`rail daemon stop`); every other folder goes on, and the mail Rail holds from it stays. Until the restart, or until the folder is deleted in Outlook, every pass counts as failed: `rail doctor`'s last-success time stops advancing and its sync check fails, and `rail sync` exits 1. Mail deleted on the server while the folder is given up on stays in Rail: a full resync (when Microsoft expires a sync link, a synced folder is deleted, or `history_days` grows) that runs while the folder is still given up on removes nothing, and a restart alone does not remove it either. It goes with the first full resync after a restart. Please report it if it comes back. |
 | `the folder for this move no longer exists in Microsoft 365` | The folder was deleted in Outlook before the move was sent; Rail put the thread back. Press `m` and pick another folder. |
 | `Microsoft 365 is busy or unavailable (HTTP 429)`, or `retrying` in `rail sync` | Microsoft is throttling the mailbox. Rail waits as long as Microsoft asks (up to two minutes at a time) and tries again. |
 | `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |

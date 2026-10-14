@@ -151,8 +151,9 @@ impl GraphProvider {
     /// the folder it stopped at. A folder whose children answer not found (deleted mid-listing,
     /// or not yet propagated) keeps its place and loses its subtree for this pass: the
     /// subfolders the last listing knew stay in the result and are remembered in `skipped`, so
-    /// the cursor neither counts them gone nor walks them. A real deletion shows on a later pass. A cold
-    /// provider has no last listing, so it fails the pass instead; a warm one skips the subtree.
+    /// the cursor neither counts them gone nor walks them. A real deletion shows on a later pass.
+    /// A cold provider has no last listing, so it fails the pass instead; a warm one skips the
+    /// subtree.
     pub(crate) async fn list_folders(&self) -> Result<Vec<RemoteFolder>, ProviderError> {
         let kinds = self.well_known().await?;
         let previous = self

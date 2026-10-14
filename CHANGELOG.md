@@ -309,17 +309,17 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
-- A Microsoft 365 folder whose sync link stayed longer than 4 KiB started over from its first
-  page on every pass, forever. After three start-overs in a row Rail stops syncing it until the
-  daemon restarts and says so in the header's failed state and in `:errors`
-  (`a folder cannot be synced: its sync link is longer than 4 KiB`, with the folder's name after
-  it as outside text). A resync while a folder is given up on, or while a subfolder listing is
-  skipped, no longer deletes that folder's mail. A permanent sync error is now kept in `:errors`
-  (#28).
-- A Microsoft 365 folder whose own name holds `/` showed as two levels; the `/` now shows as
-  `∕`. A folder whose subfolders vanished while Rail listed them no longer fails the whole sync
-  pass, and an action on a conversation whose messages left the store says so instead of
-  reporting success (#31).
+- A Microsoft 365 folder whose sync link stayed longer than 4 KiB started over from its first page
+  on every pass, forever. After three start-overs in a row Rail stops syncing it until the daemon
+  restarts and, until then or until the folder is deleted in Outlook, says so in the header's failed
+  state and in `:errors` (`a folder cannot be synced: its sync link is longer than 4 KiB`, with the
+  folder's name after it as outside text). A resync while a folder is given up on, or while a
+  subfolder listing is skipped, no longer deletes that folder's mail. A permanent sync error is now
+  kept in `:errors` (#28).
+- A Microsoft 365 folder whose own name holds `/` showed as two levels; the `/` now shows as `∕`.
+  Once Rail has listed the folders since the daemon started, a folder whose subfolders vanished
+  while Rail listed them no longer fails the whole sync pass, and an action on a conversation whose
+  messages left the store says so instead of reporting success (#31).
 - Undoing a Microsoft 365 move that a sync had overtaken could put the message back in two
   folders until its next sync; it goes back to the one folder it left. An undo no longer puts a
   message into a folder that took a deleted folder's place in the store (#33).
