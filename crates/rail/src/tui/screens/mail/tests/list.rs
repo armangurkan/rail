@@ -8,6 +8,7 @@ use super::*;
 use crate::tui::test_util::render_lines;
 
 const HOUR_MS: i64 = 3_600_000;
+const DAY_MS: i64 = 24 * HOUR_MS;
 const GROUPS: [&str; 4] = ["TODAY", "YESTERDAY", "THIS WEEK", "OLDER"];
 
 /// `n` one-message inbox threads for `work`, `{prefix}t0`.., a minute apart from `start_ms`
@@ -150,11 +151,45 @@ async fn a_page_down_moves_by_the_threads_that_fit() {
         "YESTERDAY",
         "the group's row stays on top"
     );
-    assert!(rows[22].contains("subject ym18"), "{}", rows[22]);
+    assert!(
+        rows[2].contains("subject ym20"),
+        "held at the last full screen: {}",
+        rows[2]
+    );
+    assert!(rows[22].contains("subject ym0"), "{}", rows[22]);
+    assert_eq!(cursor_row(&f, 90, 24), Some(4), "the cursor on ym18");
+}
+
+/// Spec §5 (C1): a page over a screen with three group rows lands on the thread after the last
+/// one shown, and the next screen starts with it: no thread is skipped.
+#[tokio::test]
+async fn a_page_down_over_three_group_rows_starts_with_the_thread_after_the_last_shown() {
+    let mut envelopes = threads("o", BASE_MS - 10 * DAY_MS, 30);
+    envelopes.extend(threads("y", BASE_MS, 5));
+    envelopes.extend(threads("d", BASE_MS + 26 * HOUR_MS, 5));
+    let mut f = seeded(&envelopes, Icons::Unicode).await;
+    let before = lines(&f, 90, 24);
+    assert_eq!(before[1].trim_end(), "TODAY");
+    assert!(
+        before[22].contains("subject om21"),
+        "the last shown: {}",
+        before[22]
+    );
+    press(&mut f, KeyCode::PageDown).await;
+    assert_eq!(selected(&f).as_deref(), Some("subject om20"));
+    let after = lines(&f, 90, 24);
+    assert_eq!(after[1].trim_end(), "OLDER");
+    assert!(
+        after[2].contains("subject om20"),
+        "the thread after the last one shown: {}",
+        after[2]
+    );
+    assert_eq!(cursor_row(&f, 90, 24), Some(2));
+    press(&mut f, KeyCode::PageUp).await;
     assert_eq!(
-        cursor_row(&f, 90, 24),
-        Some(22),
-        "the cursor on the last list row"
+        selected(&f).as_deref(),
+        Some("subject dm4"),
+        "back to the top"
     );
 }
 
@@ -230,7 +265,6 @@ async fn home_and_end_show_their_group_rows_and_the_cursor() {
 /// threads above the remembered first row; a re-read must keep them in the window.
 #[tokio::test]
 async fn a_re_read_after_end_keeps_the_drawn_threads_and_fills_the_pane() {
-    const DAY_MS: i64 = 24 * HOUR_MS;
     let mut envelopes = threads("o", BASE_MS - 10 * DAY_MS, 10);
     envelopes.extend(threads("w", BASE_MS - 2 * DAY_MS, 1));
     envelopes.extend(threads("y", BASE_MS, 1));

@@ -72,6 +72,27 @@ impl ListWindow {
         self.wanted(height)
     }
 
+    /// A page down (`forward`) or up from a screen whose first thread is `top` and that showed
+    /// `threads` threads: the next screen starts just after the last thread shown (or the one
+    /// before ends just above the first) and the selection moves as far, so no thread is
+    /// skipped. Says which page to read, as `move_by` does.
+    pub fn page(&mut self, forward: bool, top: usize, threads: usize) -> Option<PageAt> {
+        if self.rows.is_empty() {
+            return None;
+        }
+        let n = threads.max(1);
+        let last = self.rows.len() - 1;
+        if forward {
+            self.selected = (self.selected + n).min(last);
+            self.offset = (top + n).min(self.selected);
+        } else {
+            self.selected = self.selected.saturating_sub(n);
+            self.offset = top.saturating_sub(n).min(self.selected);
+        }
+        self.show(n);
+        self.wanted(n)
+    }
+
     /// The newest thread: a read of the first page when the window does not hold it.
     pub fn top(&mut self, height: usize) -> Option<PageAt> {
         if self.newer {
@@ -284,5 +305,27 @@ mod tests {
         };
         list.apply(page, PageAt::First, Place::Keep, 20);
         assert_eq!(list.generation(), first + 1);
+    }
+
+    /// Review Focus 2.
+    #[test]
+    fn a_page_down_near_the_windows_end_asks_for_the_older_page() {
+        let mut list = window(30, true);
+        let last = list.rows()[29].key;
+        assert_eq!(list.page(true, 0, 20), Some(PageAt::Older(last)));
+        assert_eq!((list.selected_index(), list.offset()), (20, 20));
+        assert_eq!(list.page(true, 20, 20), None, "a read is in flight");
+        assert_eq!(
+            list.selected_index(),
+            29,
+            "the selection still moves, to the last row"
+        );
+    }
+
+    #[test]
+    fn a_page_up_from_the_top_stays_at_the_top_and_reads_nothing() {
+        let mut list = window(30, false);
+        assert_eq!(list.page(false, 0, 20), None);
+        assert_eq!((list.selected_index(), list.offset()), (0, 0));
     }
 }

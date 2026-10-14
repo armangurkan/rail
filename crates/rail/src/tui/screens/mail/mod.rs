@@ -482,13 +482,13 @@ impl MailScreen {
 
     fn list_action(&mut self, action: Action) -> Vec<Effect> {
         let height = self.height();
-        let page = isize::try_from(height).unwrap_or(isize::MAX);
+        let top = self.drawn_top.get().unwrap_or(self.list.offset());
         let wanted = match action {
             Action::ListOpen => return self.open_selected(),
             Action::ListDown => self.list.move_by(1, height),
             Action::ListUp => self.list.move_by(-1, height),
-            Action::ListPageDown => self.list.move_by(page, height),
-            Action::ListPageUp => self.list.move_by(-page, height),
+            Action::ListPageDown => self.list.page(true, top, height),
+            Action::ListPageUp => self.list.page(false, top, height),
             Action::ListTop => self.list.top(height),
             Action::ListBottom => self.list.bottom(height),
             _ => None,
