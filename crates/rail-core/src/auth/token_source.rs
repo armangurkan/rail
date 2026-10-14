@@ -137,6 +137,7 @@ mod tests {
             name: "w".into(),
             address: ADDRESS.into(),
             color: None,
+            label: None,
             ..crate::test_support::sample_account()
         };
         let mut endpoints = endpoints_for(AccountKind::Gmail, None);

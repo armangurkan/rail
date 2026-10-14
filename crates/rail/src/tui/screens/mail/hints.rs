@@ -103,7 +103,8 @@ pub(super) fn hints(pane: Pane, keymap: &Keymap, sidebar_shown: bool, provider: 
             hint(l(Action::SidebarFocus), "sidebar"),
         ],
         Pane::Sidebar => vec![
-            hint(l(Action::SidebarOpen), "show"),
+            hint(l(Action::SidebarOpen), "open"),
+            hint(l(Action::SidebarFold), "fold"),
             hint(pair(keymap, Action::SidebarDown, Action::SidebarUp), "move"),
             hint(l(Action::SidebarFocus), "list"),
         ],
@@ -363,7 +364,7 @@ impl MailScreen {
             .enumerate()
             .map(|(i, account)| {
                 let status = self.status.status_of(account);
-                let text = account_part(&escape(&account.name), status, &glyphs);
+                let text = account_part(&escape(&account.label), status, &glyphs);
                 (self.account_color(i, theme), text)
             })
             .collect();
@@ -419,7 +420,7 @@ mod tests {
         );
         assert_eq!(
             words(&hints(Pane::Sidebar, &km, true, "Gmail")),
-            ["Enter show", "j/k move", "Tab list", "? help"]
+            ["Enter open", "Space fold", "j/k move", "Tab list", "? help"]
         );
         assert_eq!(
             words(&hints(Pane::Reader, &km, true, "Gmail")),
@@ -590,7 +591,7 @@ mod tests {
             std::sync::Arc::new(crate::tui::data::FakeDaemon::default()),
         );
         let mut accounts = crate::tui::test_util::work_and_home();
-        accounts[0].name = "wo\u{1b}[2Jrk".into();
+        accounts[0].label = "wo\u{1b}[2Jrk".into();
         let screen = MailScreen::new(ctx, accounts);
         let bar = screen.bar(&Theme::default());
         let text = &bar.right[0].1;

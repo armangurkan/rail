@@ -259,6 +259,7 @@ impl AccountDraft {
             kind,
             address: self.address.trim().to_ascii_lowercase(),
             color: non_empty(&self.color),
+            label: None,
             client_id: self.client_id.trim().to_string(),
             client_secret: non_empty(&self.client_secret),
             tenant: match kind {

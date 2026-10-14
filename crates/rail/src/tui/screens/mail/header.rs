@@ -9,7 +9,6 @@ use ratatui::widgets::Paragraph;
 
 use super::view::Glyphs;
 use super::{MailScreen, Summary};
-use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
 use crate::tui::text::{escape, fit, width};
 use crate::tui::theme::Theme;
@@ -213,13 +212,15 @@ impl MailScreen {
             glyphs.separator,
             self.scope_title()
         );
-        if self.scope == ScopeChoice::Unified {
+        if self.scope.is_unified() {
             let n = u64::try_from(self.accounts.len()).unwrap_or(u64::MAX);
             let plural = if n == 1 { "" } else { "s" };
             left.push_str(&format!(" · {} account{plural}", thousands(n)));
         }
-        let unread = self.sidebar.unread(&self.scope);
-        left.push_str(&format!(" · {} unread", thousands(unread)));
+        if self.scope.counts_unread() {
+            let unread = self.sidebar.unread(&self.scope);
+            left.push_str(&format!(" · {} unread", thousands(unread)));
+        }
         left
     }
 
@@ -504,6 +505,53 @@ mod tests {
             width(tiny[0].trim_end()),
             40,
             "a summary alone too wide fills the row"
+        );
+    }
+
+    /// Review Focus 1 (the label half).
+    #[test]
+    fn a_label_names_the_account_on_screen_and_a_blank_one_falls_back_to_the_name() {
+        let mut config = crate::tui::test_util::existing_config();
+        config.accounts[0].label = Some("Personal".into());
+        let mut second = config.accounts[0].clone();
+        second.name = "home".into();
+        second.address = "h@example.com".into();
+        second.label = Some("  ".into());
+        config.accounts.push(second);
+        let mut accounts = crate::tui::screens::mail::AccountEntry::from_config(&config);
+        assert_eq!(accounts[0].name, "work", "the name stays the identifier");
+        assert_eq!(accounts[0].label, "Personal");
+        assert_eq!(accounts[1].label, "home", "a blank label is no label");
+        accounts[1].label = "Ev\u{7}il".into();
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = mail_ctx(&Paths::all_in(tmp.path()), Arc::new(FakeDaemon::default()));
+        let mut screen = MailScreen::new(ctx, accounts);
+        screen.scope = crate::tui::data::ScopeChoice::Account(0);
+        assert_eq!(screen.header_left(), "▍Rail │ Personal · Inbox · 0 unread");
+        screen.scope = crate::tui::data::ScopeChoice::Account(1);
+        assert_eq!(
+            screen.header_left(),
+            "▍Rail │ Ev\\u{7}il · Inbox · 0 unread"
+        );
+        let bar = screen.bar(&Theme::default());
+        assert!(
+            bar.right[0].1.starts_with("Personal"),
+            "{:?}",
+            bar.right[0].1
+        );
+        assert!(
+            bar.right[1].1.starts_with("Ev\\u{7}il"),
+            "{:?}",
+            bar.right[1].1
+        );
+        let texts: Vec<String> = screen
+            .palette_entries()
+            .into_iter()
+            .map(|e| e.text)
+            .collect();
+        assert!(
+            texts.contains(&"Go to Personal's inbox".to_string()),
+            "{texts:?}"
         );
     }
 }

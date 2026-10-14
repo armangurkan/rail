@@ -22,6 +22,12 @@ mod palette;
 mod reading;
 mod selection;
 mod sidebar;
+#[cfg(test)]
+mod sidebar_tests;
+mod sidebar_tree;
+#[cfg(test)]
+mod sidebar_tree_tests;
+mod sidebar_view;
 mod status;
 #[cfg(test)]
 mod tests;
@@ -42,6 +48,7 @@ use rail_core::store::view::PageAt;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[cfg(test)]
 pub(crate) use actions::UNDO_TICKS;
@@ -102,6 +109,9 @@ pub struct MailContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountEntry {
     pub name: String,
+    /// What the screen calls the account: `label` from config when set and not blank, else
+    /// `name`. Outside text (the user's config): escaped when drawn.
+    pub label: String,
     pub address: String,
     pub kind: AccountKind,
     /// `None` takes the theme's colour by position.
@@ -109,6 +119,13 @@ pub struct AccountEntry {
 }
 
 impl AccountEntry {
+    /// The sidebar badge's letter: the label's first character, upper-cased, escaped and cut to
+    /// one cell.
+    pub fn badge(&self) -> String {
+        let first = self.label.graphemes(true).next().unwrap_or_default();
+        crate::tui::text::fit(&first.to_uppercase(), 1)
+    }
+
     /// The configured accounts; `color` read as a ratatui colour name or `#rrggbb`, else `None`
     /// (the theme's colour by position).
     pub fn from_config(config: &Config) -> Vec<AccountEntry> {
@@ -117,6 +134,11 @@ impl AccountEntry {
             .iter()
             .map(|account| AccountEntry {
                 name: account.name.clone(),
+                label: account
+                    .label
+                    .clone()
+                    .filter(|l| !l.trim().is_empty())
+                    .unwrap_or_else(|| account.name.clone()),
                 address: account.address.to_ascii_lowercase(),
                 kind: account.kind,
                 color: account
@@ -467,9 +489,9 @@ impl MailScreen {
         match action {
             Action::SidebarDown => self.sidebar.down(),
             Action::SidebarUp => self.sidebar.up(),
+            Action::SidebarFold => self.sidebar.toggle_fold(),
             Action::SidebarOpen => {
-                if let Some(item) = self.sidebar.selected() {
-                    let scope = item.scope.clone();
+                if let Some(scope) = self.sidebar.open() {
                     self.focus = Focus::List;
                     return self.set_scope(scope);
                 }

@@ -158,6 +158,10 @@ pub struct AccountConfig {
     pub address: String,
     #[serde(default, deserialize_with = "plain_color")]
     pub color: Option<String>,
+    /// The account's name on screen (the sidebar, the header, `Write from`, the account
+    /// states); `name` when unset or blank. At most `MAX_LABEL_CHARS` characters.
+    #[serde(default)]
+    pub label: Option<String>,
     pub client_id: String,
     #[serde(default)]
     pub client_secret: Option<String>,
@@ -232,6 +236,9 @@ pub(super) fn plain_text(field: &str, text: &str) -> Result<(), String> {
 
 /// The longest `from_name`, in characters.
 pub const MAX_FROM_NAME_CHARS: usize = 200;
+
+/// The longest account `label`, in characters.
+pub const MAX_LABEL_CHARS: usize = 40;
 
 /// `Ok` when `text` is a display name: ordinary spaces are allowed, other whitespace, control
 /// characters and format characters are not, and it is at most `MAX_FROM_NAME_CHARS` long.
@@ -354,6 +361,7 @@ impl std::fmt::Debug for AccountConfig {
             .field("kind", &self.kind)
             .field("address", &self.address)
             .field("color", &self.color)
+            .field("label", &self.label)
             .field("client_id", &self.client_id)
             .field(
                 "client_secret",

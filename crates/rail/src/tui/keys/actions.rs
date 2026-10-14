@@ -133,6 +133,7 @@ actions! {
     SidebarDown => "sidebar.down", [Sidebar], ["j", "down"], "Next mailbox";
     SidebarUp => "sidebar.up", [Sidebar], ["k", "up"], "Previous mailbox";
     SidebarOpen => "sidebar.open", [Sidebar], ["enter"], "Show this mailbox";
+    SidebarFold => "sidebar.fold", [Sidebar], ["space", "left", "right"], "Fold or unfold this account or folder";
     ReaderNext => "reader.next", [Reader], ["n"], "Next message";
     ReaderPrev => "reader.prev", [Reader], ["p"], "Previous message";
     ReaderExpand => "reader.expand", [Reader], ["tab"], "Expand or collapse the message";

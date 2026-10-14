@@ -205,6 +205,7 @@ pub fn existing_config() -> Config {
             kind: AccountKind::Gmail,
             address: "work@example.com".into(),
             color: None,
+            label: None,
             client_id: "cid".into(),
             client_secret: None,
             tenant: None,
@@ -489,12 +490,14 @@ pub fn work_and_home() -> Vec<AccountEntry> {
     vec![
         AccountEntry {
             name: "work".into(),
+            label: "work".into(),
             address: "w@example.com".into(),
             kind: AccountKind::Gmail,
             color: Some(Color::Cyan),
         },
         AccountEntry {
             name: "home".into(),
+            label: "home".into(),
             address: "h@example.com".into(),
             kind: AccountKind::Gmail,
             color: Some(Color::Magenta),

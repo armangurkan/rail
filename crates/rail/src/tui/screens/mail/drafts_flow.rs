@@ -39,16 +39,21 @@ pub(crate) struct DraftsState {
 }
 
 impl MailScreen {
-    /// The scope is an account's Drafts folder: the list area shows the drafts pane.
+    /// The scope is the merged Drafts or an account's Drafts folder: the list area shows the
+    /// drafts pane.
     pub(super) fn in_drafts(&self) -> bool {
-        matches!(&self.scope, ScopeChoice::Folder { folder_id, .. }
-            if self.sidebar.drafts_folder_ids().contains(folder_id))
+        match &self.scope {
+            ScopeChoice::Drafts => true,
+            ScopeChoice::Folder { folder_id, .. } => {
+                self.sidebar.drafts_folder_ids().contains(folder_id)
+            }
+            _ => false,
+        }
     }
 
-    /// The store ids of the scope's account (every account's in the unified inbox).
-    fn scope_account_ids(&self) -> Vec<i64> {
+    /// The store ids of the scope's account (every account's in a merged mailbox).
+    pub(super) fn scope_account_ids(&self) -> Vec<i64> {
         match &self.scope {
-            ScopeChoice::Unified => self.account_ids.iter().flatten().copied().collect(),
             ScopeChoice::Account(index) | ScopeChoice::Folder { account: index, .. } => self
                 .account_ids
                 .get(*index)
@@ -56,6 +61,7 @@ impl MailScreen {
                 .flatten()
                 .into_iter()
                 .collect(),
+            _ => self.account_ids.iter().flatten().copied().collect(),
         }
     }
 
@@ -274,7 +280,7 @@ impl MailScreen {
     }
 
     /// `:drafts`: the Drafts-folder rows of the scope's account (every account's in the
-    /// unified inbox).
+    /// unified inbox and the merged mailboxes).
     pub(super) fn drafts_picker(&mut self) -> Vec<Effect> {
         if self.composing_busy() {
             return Vec::new();

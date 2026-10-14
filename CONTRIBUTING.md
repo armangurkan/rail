@@ -15,11 +15,11 @@ never let a secret reach a log or the terminal.
 crates/rail-core/        Library: paths, config, store, auth, onboarding, operations, daemon, sync. No terminal dependency.
   src/config/            TOML model, loading with line-numbered errors, comment-preserving edits
   src/store/             SQLite open, migrations, repositories
-    store/view.rs        Read-only queries the mail screen runs: thread pages, the sidebar, one thread, a message's HTML
+    store/view.rs        Read-only queries the mail screen runs: thread pages (an inbox, a folder, Starred, Sent and Trash across accounts), the sidebar's counts, one thread, a message's HTML
     store/filter.rs      The filter line's syntax as SQL conditions
     store/outbox.rs      The outbox queue the action operations and the worker share
     store/drafts.rs      Local drafts, their recipients and attachments
-    store/drafts_folder.rs The Drafts folder's rows (local and provider) and the import's source query
+    store/drafts_folder.rs The Drafts folder's rows (local and provider), their count, and the import's source query
     store/outbox_drafts.rs The outbox rows that save a draft to the provider and delete its provider copy
     store/addresses.rs   The addresses mail has taught the store, for `To:` completion
     store/apply_local.rs Local changes of actions and their exact reverse, and the conflict rule
@@ -54,7 +54,7 @@ crates/rail/             Binary: clap CLI, logging, and the account, daemon, doc
     tui/keys             Actions, their default keys and `[keys]` overrides: the keymap every screen reads
     tui/text             Escaping, width, wrapping and hyperlinks for text that came from outside
     tui/data             The mail screen's read side (the store reader) and its link to the daemon
-    tui/screens/mail     The mail screen: thread list, sidebar, status bar; `events.rs` takes the store's and the daemon's answers, `header.rs` and `hints.rs` draw the header row and the hint bar, `composing*.rs` is its side of writing mail, `drafts_pane.rs` and `drafts_flow.rs` its Drafts folder
+    tui/screens/mail     The mail screen: thread list, sidebar, status bar; `events.rs` takes the store's and the daemon's answers, `header.rs` and `hints.rs` draw the header row and the hint bar, `sidebar_tree.rs` builds the sidebar's rows and folds and `sidebar_view.rs` draws them, `composing*.rs` is its side of writing mail, `drafts_pane.rs` and `drafts_flow.rs` its Drafts folder
     tui/screens/mail/tests/compose_gmail.rs, drafts_folder.rs  The tests of saving to Gmail and of the Drafts folder
     tui/screens/reader   The reader: messages, folded quotes, numbered links
     tui/screens/compose  The composer: the compose file, reply and forward prefill, prompts with completion, the review

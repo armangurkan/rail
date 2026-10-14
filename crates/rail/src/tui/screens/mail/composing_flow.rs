@@ -42,14 +42,16 @@ impl MailScreen {
             return Vec::new();
         }
         let index = match &self.scope {
-            ScopeChoice::Unified if self.accounts.len() > 1 => {
+            ScopeChoice::Account(index) | ScopeChoice::Folder { account: index, .. } => *index,
+            // A merged mailbox: ask which account writes when there are several.
+            _ if self.accounts.len() > 1 => {
                 let items = self
                     .accounts
                     .iter()
                     .enumerate()
                     .map(|(i, a)| PickerItem {
                         id: i64::try_from(i).unwrap_or(i64::MAX),
-                        name: format!("{} · {}", a.name, a.address),
+                        name: format!("{} · {}", a.label, a.address),
                         checked: false,
                         swatch: Vec::new(),
                     })
@@ -57,8 +59,7 @@ impl MailScreen {
                 self.modal = Some(Modal::Picker(Picker::new(PickerKind::Account, items)));
                 return Vec::new();
             }
-            ScopeChoice::Unified => 0,
-            ScopeChoice::Account(index) | ScopeChoice::Folder { account: index, .. } => *index,
+            _ => 0,
         };
         self.start_new(index)
     }

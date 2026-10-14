@@ -147,7 +147,24 @@ fn validate(config: &Config) -> Result<(), String> {
     if config.general.poll_interval < MIN_POLL_INTERVAL {
         return Err("general.poll_interval must be at least 5s".to_string());
     }
+    validate_labels(config)?;
     validate_onepassword(config)
+}
+
+/// Each account's `label` is at most `MAX_LABEL_CHARS` characters; the error names the account
+/// by its position (0-based, as TOML paths do).
+fn validate_labels(config: &Config) -> Result<(), String> {
+    let max = super::model::MAX_LABEL_CHARS;
+    for (index, account) in config.accounts.iter().enumerate() {
+        if account
+            .label
+            .as_ref()
+            .is_some_and(|l| l.chars().count() > max)
+        {
+            return Err(format!("accounts[{index}].label: at most {max} characters"));
+        }
+    }
+    Ok(())
 }
 
 fn validate_onepassword(config: &Config) -> Result<(), String> {
@@ -514,5 +531,36 @@ client_id = "2"
                 "{err}"
             );
         }
+    }
+
+    #[test]
+    fn a_label_loads_and_one_over_forty_characters_is_refused() {
+        let account = |name: &str, line: &str| {
+            format!(
+                "[[accounts]]\nname = \"{name}\"\nkind = \"gmail\"\naddress = \"{name}@example.com\"\nclient_id = \"1\"\n{line}\n"
+            )
+        };
+        let both = format!(
+            "{}{}",
+            account("a", "label = \"Personal\""),
+            account("b", "")
+        );
+        let config = p(&both).unwrap();
+        assert_eq!(config.accounts[0].label.as_deref(), Some("Personal"));
+        assert_eq!(config.accounts[1].label, None);
+        let fits = account("a", &format!("label = \"{}\"", "é".repeat(40)));
+        assert!(p(&fits).is_ok(), "40 characters, not bytes");
+        let long = format!(
+            "{}{}",
+            account("a", ""),
+            account("b", &format!("label = \"{}\"", "x".repeat(41)))
+        );
+        let err = p(&long).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        assert!(
+            err.to_string()
+                .contains("accounts[1].label: at most 40 characters"),
+            "{err}"
+        );
     }
 }

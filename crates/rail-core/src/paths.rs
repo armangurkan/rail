@@ -227,6 +227,35 @@ pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)
 }
 
+/// Pre-create the file owner-only so it is never visible at umask mode.
+#[cfg(unix)]
+pub(crate) fn create_private_file(file: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(file)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn create_private_file(_file: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(crate) fn restrict_to_owner(file: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn restrict_to_owner(_file: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// Replace `path` with `bytes` atomically: the parent is created private, the
 /// data goes to a 0600 sibling temp file which is synced and renamed over
 /// `path`. A crash leaves either the old file or the new one, never a torn one.

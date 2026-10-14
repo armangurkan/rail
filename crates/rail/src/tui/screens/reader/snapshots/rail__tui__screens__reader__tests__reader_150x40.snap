@@ -4,19 +4,19 @@ expression: "draw(&f, width, height)"
 ---
 ▍Rail │ All inboxes · 1 account · 1 unread  / Search                                                                                    ● Synced 12:39
 ┌────────────────────────┐┌──────────────────────────────────────────────────────┐┌──────────────────────────────────────────────────────────────────┐
-│  All inboxes          1││●  Yesterday  Tom, Sender    (3)  📎  Q4 plan          ││Q4 plan  (3 messages)                                             │
-│● work                 1││                                                      ││▾ Tom  Thu 09 Oct 2025 08:53                                      │
-│    Sent                ││                                                      ││From: Tom <tom@example.com>                                       │
-│    Projects            ││                                                      ││To: Dana Reyes <dana@example.com>                                 │
-│                        ││                                                      ││Date: Thu 09 Oct 2025 08:53                                       │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││Hi Dana,                                                          │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││The plan is in the doc[1]; notes are on the wiki[2].              │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││[5 quoted lines]                                                  │
-│                        ││                                                      ││                                                                  │
-│                        ││                                                      ││Thanks,                                                           │
+│UNIFIED                 ││●  Yesterday  Tom, Sender    (3)  📎  Q4 plan          ││Q4 plan  (3 messages)                                             │
+│✉  All inboxes         1││                                                      ││▾ Tom  Thu 09 Oct 2025 08:53                                      │
+│★  Starred              ││                                                      ││From: Tom <tom@example.com>                                       │
+│✎  Drafts               ││                                                      ││To: Dana Reyes <dana@example.com>                                 │
+│➤  Sent                 ││                                                      ││Date: Thu 09 Oct 2025 08:53                                       │
+│✕  Trash                ││                                                      ││                                                                  │
+│────────────────────────││                                                      ││Hi Dana,                                                          │
+│ACCOUNTS                ││                                                      ││                                                                  │
+│▾  W  work             1││                                                      ││The plan is in the doc[1]; notes are on the wiki[2].              │
+│  ✉  Inbox             1││                                                      ││                                                                  │
+│  ➤  Sent               ││                                                      ││[5 quoted lines]                                                  │
+│────────────────────────││                                                      ││                                                                  │
+│▸ 📁  More folders (1)   ││                                                      ││Thanks,                                                           │
 │                        ││                                                      ││Tom                                                               │
 │                        ││                                                      ││📎  plan.pdf                                                       │
 │                        ││                                                      ││                                                                  │

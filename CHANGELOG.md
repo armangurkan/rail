@@ -8,6 +8,20 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- `label` in an account's `[[accounts]]` table names the account on screen: the sidebar, the
+  header (`Personal · Inbox`), `Write from`, the account states and the palette; `name` stays
+  what commands, `--account` and `account:` use. At most 40 characters; `rail doctor` warns
+  `two accounts share the label "X"`.
+- Starred, Drafts, Sent and Trash of every account together (`Mailbox: Starred` and so on in
+  the palette): newest first, with the filter and the keys working as in the unified inbox and
+  each action going to the thread's own account. The header says
+  `Starred · 2 accounts · 12 unread`, `Sent · 2 accounts`; Sent and Trash match each provider's
+  own folder (`Sent Items`, `Deleted Items` on Microsoft 365).
+- The sidebar's look: `UNIFIED` and `ACCOUNTS` headings, rules under UNIFIED and above each
+  `More folders`, `▾`/`▸` fold arrows, a badge per account (its label's first letter on its
+  colour), an icon per mailbox (`✉ ★ ✎ ➤ ✕ ▣ ⊘ 📁`; letters with `icons = "ascii"`), counts
+  right-aligned with thousands separators, and the current mailbox's row in the accent colour
+  while the sidebar does not have focus. The sidebar scrolls to keep that row, or the cursor, in view.
 - The mail screen's frame: a header row with the scope, its counts, a search slot and one sync
   summary (`● Synced 14:47`, or the worst account's state; kept whole, the scope is cut when both
   do not fit); the sidebar, the list and the reader
@@ -182,6 +196,13 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Changed
 
+- The sidebar has two sections. UNIFIED: `All inboxes`, `Starred`, `Drafts`, `Sent` and `Trash`
+  across accounts. ACCOUNTS: each account with only its system folders; every other folder or
+  label is under `More folders (N)` as a tree of its path, Gmail's categories under
+  `Categories`. `Space`, `←` or `→` folds an account, `More folders` or a path, for the session;
+  `Enter` on `More folders` or on a path with no folder of its own unfolds it. Counts are unread
+  threads, drafts on `Drafts`, none on `Sent` and `Trash`. The palette lists labels by their
+  whole path (`Label: AXON · Inbox/Infrastructure/Linode`).
 - The filter is typed in the header's search slot, and the compose review's key row is the last
   row's hints, so the review has one more row for its content. While a `t` or `a` prompt is open
   the row shows `Enter accept  Tab complete  Esc cancel`.

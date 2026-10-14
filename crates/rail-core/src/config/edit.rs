@@ -264,6 +264,7 @@ mod tests {
             kind: AccountKind::M365,
             address: address.into(),
             color: Some("magenta".into()),
+            label: None,
             tenant: Some("common".into()),
             ..crate::test_support::sample_account()
         }

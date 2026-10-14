@@ -40,6 +40,8 @@ mod view_labels;
 mod view_sidebar_tests;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod view_unified_tests;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -51,7 +53,7 @@ pub use sync_read::{StoreCounts, StoredBody, StoredHit, SyncStateRow, fts_query}
 use rusqlite::{Connection, ErrorCode, OpenFlags};
 
 use crate::error::ErrorClass;
-use crate::paths::create_private_dir;
+use crate::paths::{create_private_dir, create_private_file, restrict_to_owner};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -94,35 +96,6 @@ impl StoreError {
             | Self::NotSetUp { .. } => ErrorClass::Permanent,
         }
     }
-}
-
-/// Pre-create the file owner-only so it is never visible at umask mode.
-#[cfg(unix)]
-fn create_private_file(file: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(file)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn create_private_file(_file: &Path) -> std::io::Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn restrict_to_owner(file: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(not(unix))]
-fn restrict_to_owner(_file: &Path) -> std::io::Result<()> {
-    Ok(())
 }
 
 /// How long any connection waits for another's write lock before it reports busy. The writer

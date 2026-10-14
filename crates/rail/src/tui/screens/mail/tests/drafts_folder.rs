@@ -12,9 +12,9 @@ use super::*;
 use crate::tui::modals::Target;
 
 /// When the seeded drafts were saved: after every fixture message, a minute apart.
-const LOCAL_AT: i64 = BASE_MS / 1000 + 3_600;
+pub(super) const LOCAL_AT: i64 = BASE_MS / 1000 + 3_600;
 
-fn recipient(name: Option<&str>, address: &str) -> Recipient {
+pub(super) fn recipient(name: Option<&str>, address: &str) -> Recipient {
     Recipient {
         name: name.map(str::to_string),
         address: address.into(),
@@ -22,7 +22,14 @@ fn recipient(name: Option<&str>, address: &str) -> Recipient {
 }
 
 /// A local draft of account `account_id` saved at `at`; it must get `id`.
-fn seed_local(f: &Fixture, id: i64, account_id: i64, subject: &str, to: Recipient, at: i64) {
+pub(super) fn seed_local(
+    f: &Fixture,
+    id: i64,
+    account_id: i64,
+    subject: &str,
+    to: Recipient,
+    at: i64,
+) {
     let write = DraftWrite {
         id: None,
         account_id,
@@ -45,7 +52,7 @@ fn seed_local(f: &Fixture, id: i64, account_id: i64, subject: &str, to: Recipien
 }
 
 /// A synced Gmail draft of `work` in the Drafts folder only.
-fn gmail_draft(remote: &str, subject: &str, to: &str, secs: i64) -> Envelope {
+pub(super) fn gmail_draft(remote: &str, subject: &str, to: &str, secs: i64) -> Envelope {
     Envelope {
         is_draft: true,
         subject: subject.into(),
@@ -59,7 +66,7 @@ fn gmail_draft(remote: &str, subject: &str, to: &str, secs: i64) -> Envelope {
 }
 
 /// `work`'s folders with Gmail's Drafts added, and its Gmail drafts.
-fn sync_drafts(f: &Fixture, upserts: Vec<Envelope>) {
+pub(super) fn sync_drafts(f: &Fixture, upserts: Vec<Envelope>) {
     let folders = vec![
         ("INBOX", "Inbox", FolderKind::Inbox),
         ("Label_1", "Projects", FolderKind::User),
@@ -134,9 +141,9 @@ async fn drafts_fixture() -> Fixture {
 fn drafts_item(f: &Fixture) -> usize {
     f.screen
         .sidebar
-        .items()
+        .rows()
         .iter()
-        .position(|i| i.label == "Drafts" && i.account == Some(0))
+        .position(|i| i.label == "Drafts" && i.account() == Some(0))
         .expect("work's Drafts folder is in the sidebar")
 }
 
@@ -155,7 +162,7 @@ async fn open_drafts(f: &mut Fixture) {
     assert!(f.screen.in_drafts());
 }
 
-fn pane_subjects(f: &Fixture) -> Vec<String> {
+pub(super) fn pane_subjects(f: &Fixture) -> Vec<String> {
     f.screen
         .drafts
         .pane
@@ -616,7 +623,9 @@ async fn entering_the_folder_closes_the_reader_of_the_old_scope() {
     let _ = drawn(&f, 150, 30); // the split layout
     press(&mut f, KeyCode::Enter).await;
     assert!(f.screen.reader.is_some(), "a thread is open in the pane");
-    let scope = f.screen.sidebar.items()[drafts_item(&f)].scope.clone();
+    let scope = f.screen.sidebar.rows()[drafts_item(&f)]
+        .scope()
+        .expect("a folder row opens a scope");
     let effects = f.screen.set_scope(scope);
     settle(&mut f.screen, effects).await;
     assert!(f.screen.in_drafts());

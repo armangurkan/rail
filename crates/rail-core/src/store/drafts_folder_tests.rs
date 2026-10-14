@@ -456,3 +456,47 @@ fn a_drafts_row_debug_shows_no_content() {
     }
     assert!(shown.contains("account_id"), "{shown}");
 }
+
+#[test]
+fn the_count_is_the_rows_the_folder_lists_without_the_cap() {
+    let (mut store, account) = store_with_account();
+    local(&mut store, account, 1, 1_000);
+    let pushed = local(&mut store, account, 2, 3_000);
+    store.draft_set_remote(pushed, "r1", "dm1").unwrap();
+    sync(
+        &mut store,
+        account,
+        vec![gmail_draft("dm1", 3_000), gmail_draft("dm2", 2_000)],
+        vec![],
+    );
+    let other = second_account(&store);
+    local(&mut store, other, 3, 4_000);
+    assert_eq!(
+        store.drafts_count(&[account]).unwrap(),
+        3,
+        "two local drafts and dm2; dm1 is the pushed draft's copy"
+    );
+    assert_eq!(store.drafts_count(&[account, other]).unwrap(), 4);
+    let rows = store.drafts_folder(&[account, other]).unwrap().len();
+    assert_eq!(
+        store.drafts_count(&[account, other]).unwrap(),
+        u64::try_from(rows).unwrap()
+    );
+    assert_eq!(store.drafts_count(&[]).unwrap(), 0);
+}
+
+#[test]
+fn the_sidebar_counts_each_accounts_drafts_a_local_only_one_included() {
+    let (mut store, account) = store_with_account();
+    local(&mut store, account, 1, 1_000);
+    sync(&mut store, account, vec![gmail_draft("dm2", 2_000)], vec![]);
+    let other = second_account(&store);
+    local(&mut store, other, 3, 4_000);
+    let unified = store.sidebar_counts(&[account, other]).unwrap().unified;
+    assert_eq!(
+        unified.drafts_by_account,
+        [(account, 2), (other, 1)],
+        "the other account's only draft is local and still counted"
+    );
+    assert_eq!(unified.drafts, 3, "the total is their sum");
+}

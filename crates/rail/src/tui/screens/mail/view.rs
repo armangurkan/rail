@@ -9,16 +9,15 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::layout::{self, areas};
-use super::sidebar::SidebarItem;
 use super::{Focus, MailScreen, StoreState};
 use super::{header, hints};
 use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
 use crate::tui::modals::Modal;
-use crate::tui::text::{escape, fit, outside, pad, pad_left, width};
+use crate::tui::text::{escape, fit, outside, pad, pad_left};
 use crate::tui::theme::Theme;
 
 /// Columns of the date column.
@@ -47,6 +46,18 @@ pub struct Glyphs {
     pub draft: &'static str,
     /// Between `Rail` and the scope in the header.
     pub separator: &'static str,
+    /// The sidebar's mailbox icons, each padded to two cells when drawn.
+    pub icon_inbox: &'static str,
+    pub icon_starred: &'static str,
+    pub icon_drafts: &'static str,
+    pub icon_sent: &'static str,
+    pub icon_trash: &'static str,
+    pub icon_archive: &'static str,
+    pub icon_spam: &'static str,
+    /// `More folders` and a path with folders under it.
+    pub icon_folder: &'static str,
+    /// A sidebar rule's line.
+    pub rule: &'static str,
 }
 
 impl Glyphs {
@@ -65,6 +76,15 @@ impl Glyphs {
                 closed: "▸",
                 draft: "✎",
                 separator: "│",
+                icon_inbox: "✉",
+                icon_starred: "★",
+                icon_drafts: "✎",
+                icon_sent: "➤",
+                icon_trash: "✕",
+                icon_archive: "▣",
+                icon_spam: "⊘",
+                icon_folder: "📁",
+                rule: "─",
             },
             Icons::Ascii => Self {
                 bar: "|",
@@ -79,6 +99,15 @@ impl Glyphs {
                 closed: ">",
                 draft: "*",
                 separator: "|",
+                icon_inbox: "i",
+                icon_starred: "*",
+                icon_drafts: "d",
+                icon_sent: ">",
+                icon_trash: "x",
+                icon_archive: "a",
+                icon_spam: "s",
+                icon_folder: "/",
+                rule: "-",
             },
         }
     }
@@ -209,90 +238,17 @@ impl MailScreen {
         let name = |i: usize| {
             self.accounts
                 .get(i)
-                .map_or("?".to_string(), |a| escape(&a.name))
+                .map_or("?".to_string(), |a| escape(&a.label))
         };
         match &self.scope {
-            ScopeChoice::Unified => "All inboxes".to_string(),
             ScopeChoice::Account(i) => format!("{} · Inbox", name(*i)),
             ScopeChoice::Folder {
                 account,
                 name: folder,
                 ..
-            } => {
-                format!("{} · {}", name(*account), escape(folder))
-            }
+            } => format!("{} · {}", name(*account), escape(folder)),
+            merged => merged.unified_name().unwrap_or_default().to_string(),
         }
-    }
-
-    /// Boxed, the box is the border; stacked, a line on the right in the border style.
-    fn render_sidebar(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        boxed: bool,
-        theme: &Theme,
-        glyphs: &Glyphs,
-    ) {
-        let inner = if boxed {
-            area
-        } else {
-            let block = Block::new()
-                .borders(Borders::RIGHT)
-                .border_set(layout::border_set(self.ctx.icons))
-                .border_style(theme.border);
-            let inner = block.inner(area);
-            frame.render_widget(block, area);
-            inner
-        };
-        let cols = usize::from(inner.width);
-        let items: Vec<Line> = self
-            .sidebar
-            .items()
-            .iter()
-            .enumerate()
-            .map(|(index, item)| self.sidebar_line(index, item, cols, theme, glyphs))
-            .collect();
-        let note = self
-            .sidebar
-            .failed()
-            .then(|| Line::styled(fit("Could not read folders", cols), theme.error));
-        let lines: Vec<Line> = note.into_iter().chain(items).collect();
-        frame.render_widget(Paragraph::new(lines), inner);
-    }
-
-    /// One sidebar row: the account dot, the indented label, the unread count.
-    fn sidebar_line(
-        &self,
-        index: usize,
-        item: &SidebarItem,
-        cols: usize,
-        theme: &Theme,
-        glyphs: &Glyphs,
-    ) -> Line<'static> {
-        let selected = index == self.sidebar.cursor() && self.focus == super::Focus::Sidebar;
-        let style = if selected { theme.selected } else { theme.text };
-        let count = if item.unread > 0 {
-            item.unread.to_string()
-        } else {
-            String::new()
-        };
-        let indent = if item.depth > 0 { "    " } else { "" };
-        let dot = match item.account {
-            Some(_) if item.depth == 0 => format!("{} ", glyphs.account),
-            _ if item.depth == 0 => "  ".to_string(),
-            _ => String::new(),
-        };
-        let color = item
-            .account
-            .map_or(Color::Reset, |i| self.account_color(i, theme));
-        let label_cols = cols.saturating_sub(width(&dot) + indent.len() + count.len() + 1);
-        Line::from(vec![
-            Span::styled(dot, style.fg(color)),
-            Span::styled(
-                format!("{indent}{} {count}", pad(&item.label, label_cols)),
-                style,
-            ),
-        ])
     }
 
     fn render_list(&self, frame: &mut Frame, area: Rect, theme: &Theme, glyphs: &Glyphs) {

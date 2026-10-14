@@ -4,25 +4,25 @@ expression: shot
 ---
 |Rail | work · Drafts · 2 unread                                                                                                        ~ Syncing work
 +------------------------++------------------------------------------------------++------------------------------------------------------------------+
-|  All inboxes          5||*  Yesterday  Pat Doe          Pushed note            ||Open a draft with Enter; its review takes the screen.             |
-|* work                 3||*  Yesterday  Gail             Written on the phone   ||                                                                  |
-|    Sent                ||*  Yesterday  (local)        * Local plan             ||                                                                  |
-|    Drafts             2||                                                      ||                                                                  |
-|    Projects            ||                                                      ||                                                                  |
-|* home                 2||                                                      ||                                                                  |
-|    Sent                ||                                                      ||                                                                  |
-|    Projects            ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
-|                        ||                                                      ||                                                                  |
+|UNIFIED                 ||*  Yesterday  Pat Doe          Pushed note            ||Open a draft with Enter; its review takes the screen.             |
+|i  All inboxes         5||*  Yesterday  Gail             Written on the phone   ||                                                                  |
+|*  Starred              ||*  Yesterday  (local)        * Local plan             ||                                                                  |
+|d  Drafts              3||                                                      ||                                                                  |
+|>  Sent                 ||                                                      ||                                                                  |
+|x  Trash                ||                                                      ||                                                                  |
+|------------------------||                                                      ||                                                                  |
+|ACCOUNTS                ||                                                      ||                                                                  |
+|v  W  work             3||                                                      ||                                                                  |
+|  i  Inbox             3||                                                      ||                                                                  |
+|  >  Sent               ||                                                      ||                                                                  |
+|  d  Drafts            3||                                                      ||                                                                  |
+|------------------------||                                                      ||                                                                  |
+|> /  More folders (1)   ||                                                      ||                                                                  |
+|v  H  home             2||                                                      ||                                                                  |
+|  i  Inbox             2||                                                      ||                                                                  |
+|  >  Sent               ||                                                      ||                                                                  |
+|------------------------||                                                      ||                                                                  |
+|> /  More folders (1)   ||                                                      ||                                                                  |
 |                        ||                                                      ||                                                                  |
 |                        ||                                                      ||                                                                  |
 |                        ||                                                      ||                                                                  |

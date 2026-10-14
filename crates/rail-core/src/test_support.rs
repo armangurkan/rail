@@ -10,6 +10,7 @@ pub(crate) fn sample_account() -> AccountConfig {
         kind: AccountKind::Gmail,
         address: "me@example.com".to_string(),
         color: Some("blue".to_string()),
+        label: None,
         client_id: "cid".to_string(),
         client_secret: None,
         tenant: None,

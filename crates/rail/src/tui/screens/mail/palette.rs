@@ -1,5 +1,5 @@
 //! The `:` palette's entries: the active view's key actions and the global ones, Rail's own
-//! commands, each account and label.
+//! commands, each account, merged mailbox and label.
 
 use super::MailScreen;
 use crate::tui::data::ScopeChoice;
@@ -8,7 +8,8 @@ use crate::tui::modals::{PaletteEntry, Target};
 
 impl MailScreen {
     /// Every palette entry: each key action of the active view and the global ones with its
-    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, each account and label.
+    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, each account, merged
+    /// mailbox and label.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let key = |a: Action| self.ctx.keymap.label(a);
         let views = self.views();
@@ -26,11 +27,15 @@ impl MailScreen {
             .collect();
         entries.extend(self.command_entries());
         entries.extend(self.accounts.iter().enumerate().map(|(i, a)| PaletteEntry {
-            text: format!("Go to {}'s inbox", a.name),
-            search: format!("Go to {}'s inbox account {} {}", a.name, a.name, a.address),
+            text: format!("Go to {}'s inbox", a.label),
+            search: format!(
+                "Go to {}'s inbox account {} {} {}",
+                a.label, a.label, a.name, a.address
+            ),
             key: account_action(i + 1).map(key).unwrap_or_default(),
             target: Target::Scope(ScopeChoice::Account(i)),
         }));
+        entries.extend(mailbox_entries());
         entries.extend(self.label_entries());
         entries
     }
@@ -78,22 +83,21 @@ impl MailScreen {
     }
 
     fn label_entries(&self) -> impl Iterator<Item = PaletteEntry> + '_ {
-        self.sidebar
-            .items()
-            .iter()
-            .filter(|i| i.depth > 0)
-            .map(|item| {
-                let account = item
-                    .account
-                    .and_then(|i| self.accounts.get(i))
-                    .map_or("", |a| a.name.as_str());
-                PaletteEntry {
-                    text: format!("Label: {account} · {}", item.label),
-                    search: format!("label {account} {}", item.label),
-                    key: String::new(),
-                    target: Target::Scope(item.scope.clone()),
-                }
+        self.sidebar.all_rows().iter().filter_map(|row| {
+            let scope = row.scope()?;
+            let ScopeChoice::Folder { account, name, .. } = &scope else {
+                return None;
+            };
+            let entry = self.accounts.get(*account);
+            let label = entry.map_or("", |a| a.label.as_str());
+            let id = entry.map_or("", |a| a.name.as_str());
+            Some(PaletteEntry {
+                text: format!("Label: {label} · {name}"),
+                search: format!("label {label} {id} {name}"),
+                key: String::new(),
+                target: Target::Scope(scope.clone()),
             })
+        })
     }
 }
 
@@ -129,4 +133,24 @@ pub(super) fn account_number(action: Action) -> Option<usize> {
         _ => return None,
     };
     Some(number)
+}
+
+/// `Mailbox: Starred` and the other merged mailboxes (`0` reaches All inboxes).
+fn mailbox_entries() -> impl Iterator<Item = PaletteEntry> {
+    [
+        ScopeChoice::Starred,
+        ScopeChoice::Drafts,
+        ScopeChoice::Sent,
+        ScopeChoice::Trash,
+    ]
+    .into_iter()
+    .map(|scope| {
+        let name = scope.unified_name().unwrap_or_default();
+        PaletteEntry {
+            text: format!("Mailbox: {name}"),
+            search: format!("mailbox {} {name}", name.to_lowercase()),
+            key: String::new(),
+            target: Target::Scope(scope),
+        }
+    })
 }
