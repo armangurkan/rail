@@ -32,6 +32,8 @@ pub struct Glyphs {
     pub account: &'static str,
     /// Replaces the account dot on a selected row.
     pub marked: &'static str,
+    /// A read thread's dot in the list.
+    pub read: &'static str,
     pub star: &'static str,
     /// Two columns wide in both sets.
     pub attachment: &'static str,
@@ -67,6 +69,7 @@ impl Glyphs {
                 bar: "▍",
                 account: "●",
                 marked: "▸",
+                read: "·",
                 star: "★",
                 attachment: "📎",
                 ok: "✓",
@@ -90,6 +93,7 @@ impl Glyphs {
                 bar: "|",
                 account: "*",
                 marked: ">",
+                read: ".",
                 star: "+",
                 attachment: "@ ",
                 ok: "ok",

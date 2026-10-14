@@ -15,6 +15,7 @@ mod hints;
 mod hints_toggle;
 mod layout;
 mod list;
+mod list_view;
 mod m365;
 #[cfg(test)]
 mod modal_tests;
