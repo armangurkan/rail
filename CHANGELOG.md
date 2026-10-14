@@ -309,6 +309,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- `:thread-order` with the reader's cursor on a rule or a blank line moved the cursor to
+  another message; it stays on the message it was in.
 - A reader 16 to 18 columns wide showed `…  /  4 messages` under the subject; it shows
   `/  4 messages`. A title or card line full exactly at a part's end now ends in `…` when
   something was left off.

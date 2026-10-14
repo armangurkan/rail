@@ -22,6 +22,19 @@ use crate::tui::theme::Theme;
 async fn h_shows_and_hides_the_headers_and_help_lists_it() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);
+    Store::open(&f.paths.db_file())
+        .unwrap()
+        .conn()
+        .execute(
+            "UPDATE messages SET cc_json = '[{\"name\":\"Priya Nair\",\"address\":\"priya@example.com\"}]', \
+             subject = 'Re: Q4 plan' WHERE remote_id = 'm1'",
+            [],
+        )
+        .unwrap();
+    // 12-hour times, as `:time` sets them.
+    press(&mut f, KeyCode::Char(':')).await;
+    keys(&mut f, "time").await;
+    press(&mut f, KeyCode::Enter).await;
     press(&mut f, KeyCode::Enter).await;
     open_toms_card(&mut f).await;
     assert!(!all_text(&f).contains("From:"), "hidden at first");
@@ -29,7 +42,15 @@ async fn h_shows_and_hides_the_headers_and_help_lists_it() {
     let text = all_text(&f);
     assert!(text.contains("From: Tom <tom@example.com>"), "{text}");
     assert!(text.contains("To: Dana Reyes <dana@example.com>"), "{text}");
-    assert!(text.contains("Date: Thu 09 Oct 2025 08:53"), "{text}");
+    assert!(
+        text.contains("Cc: Priya Nair <priya@example.com>"),
+        "{text}"
+    );
+    assert!(text.contains("Date: Thu 09 Oct 2025 8:53 am"), "{text}");
+    assert!(
+        text.contains("Subject: Q4 plan"),
+        "the newest's subject differs from the thread's (now Tom's): {text}"
+    );
     assert!(
         text.contains("From: Sender <sender@example.com>"),
         "the newest's too: {text}"

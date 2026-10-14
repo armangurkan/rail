@@ -398,3 +398,38 @@ fn a_reread_that_grows_the_newest_body_keeps_the_cursor_on_its_card() {
         reader.cursor_line().unwrap().text()
     );
 }
+
+/// Spec §6 (D5): before the first frame a page is `FALLBACK_HEIGHT` rows, not one.
+#[test]
+fn before_the_first_frame_a_page_is_the_fallback_height() {
+    let mut detail = four(0);
+    let text: Vec<String> = (1..=60).map(|n| format!("line {n}")).collect();
+    detail.messages[3].body = BodyState::Text {
+        text: text.join("\n"),
+        cut: false,
+    };
+    let mut reader = reader_of(detail, ThreadOrder::Oldest);
+    reader.act(Action::ReaderPageDown);
+    assert_eq!(reader.cursor, 24);
+    reader.act(Action::ReaderPageUp);
+    assert_eq!(reader.cursor, 0);
+}
+
+/// Spec §6 (D6): `:thread-order` from a rule, a note or a gap lands on the message above it.
+#[test]
+fn set_order_from_a_rule_or_a_gap_lands_on_the_message_above_it() {
+    let mut reader = reader_of(four(0), ThreadOrder::Oldest);
+    act(&mut reader, &[Action::ReaderDown; 13]);
+    assert_eq!(at(&reader), LineKind::Rule, "the rule under Tom's card");
+    reader.set_order(ThreadOrder::Newest);
+    assert_eq!(
+        at(&reader),
+        LineKind::Card { message: 1 },
+        "Tom's card, wherever it is now"
+    );
+    act(&mut reader, &[Action::ReaderTop]);
+    act(&mut reader, &[Action::ReaderDown; 4]);
+    assert_eq!(at(&reader), LineKind::Gap, "the gap above the newest body");
+    reader.set_order(ThreadOrder::Oldest);
+    assert_eq!(reader.cursor, 0, "the newest message's start: its subject");
+}

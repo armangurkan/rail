@@ -214,7 +214,10 @@ mod tests {
             "the second account's"
         );
         let gone = ReaderAccount::unknown();
-        assert_eq!(gone.color(&theme), Color::Reset);
+        assert_eq!(
+            gone.color, None,
+            "nothing of it is drawn, so it has no colour"
+        );
         assert!(gone.badge.is_empty() && gone.label.is_empty());
     }
 }
