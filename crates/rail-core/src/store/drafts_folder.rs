@@ -76,35 +76,43 @@ impl std::fmt::Debug for ImportSource {
     }
 }
 
+/// The local drafts' `FROM`/`WHERE`, shared by the listing and its count.
+macro_rules! local_from {
+    () => {
+        "FROM drafts WHERE account_id IN (SELECT value FROM json_each(?1))"
+    };
+}
+/// The provider drafts' `FROM`/`WHERE`, shared by the listing and its count so the sidebar
+/// never counts a row the pane does not list. Driven from each account's Drafts folder
+/// (`message_folders_by_folder`), not a walk over every message: Gmail's `DRAFT` label is both
+/// the folder and `is_draft`. `CROSS JOIN` keeps SQLite to that order.
+macro_rules! gmail_from {
+    () => {
+        "FROM folders f
+     CROSS JOIN message_folders mf ON mf.folder_id = f.id
+     CROSS JOIN messages m ON m.id = mf.message_id
+     WHERE f.kind = 'drafts' AND f.account_id IN (SELECT value FROM json_each(?1))
+       AND m.is_draft = 1
+       AND NOT EXISTS (SELECT 1 FROM drafts d
+                       WHERE d.account_id = f.account_id AND d.remote_message_id = m.remote_id)"
+    };
+}
+
 /// `drafts.updated_at` is the writer's clock in Unix seconds, as `messages.date` (the
 /// `Date:` header) is: the two compare as they are.
-const LOCAL: &str =
-    "SELECT id, account_id, remote_draft_id IS NOT NULL, to_json, subject, updated_at
-     FROM drafts WHERE account_id IN (SELECT value FROM json_each(?1))
-     ORDER BY updated_at DESC, id DESC LIMIT ?2";
-/// Driven from each account's Drafts folder (`message_folders_by_folder`), not a walk over
-/// every message: Gmail's `DRAFT` label is both the folder and `is_draft`. `CROSS JOIN` keeps
-/// SQLite to that order.
-pub(super) const GMAIL: &str = "SELECT m.id, f.account_id, m.to_json, m.subject, m.date
-     FROM folders f
-     CROSS JOIN message_folders mf ON mf.folder_id = f.id
-     CROSS JOIN messages m ON m.id = mf.message_id
-     WHERE f.kind = 'drafts' AND f.account_id IN (SELECT value FROM json_each(?1))
-       AND m.is_draft = 1
-       AND NOT EXISTS (SELECT 1 FROM drafts d
-                       WHERE d.account_id = f.account_id AND d.remote_message_id = m.remote_id)
-     ORDER BY m.date DESC, m.id DESC LIMIT ?2";
-
+const LOCAL: &str = concat!(
+    "SELECT id, account_id, remote_draft_id IS NOT NULL, to_json, subject, updated_at ",
+    local_from!(),
+    " ORDER BY updated_at DESC, id DESC LIMIT ?2"
+);
+pub(super) const GMAIL: &str = concat!(
+    "SELECT m.id, f.account_id, m.to_json, m.subject, m.date ",
+    gmail_from!(),
+    " ORDER BY m.date DESC, m.id DESC LIMIT ?2"
+);
 /// `LOCAL` and `GMAIL` counted, without their order and limit.
-const LOCAL_COUNT: &str =
-    "SELECT count(*) FROM drafts WHERE account_id IN (SELECT value FROM json_each(?1))";
-const REMOTE_COUNT: &str = "SELECT count(*) FROM folders f
-     CROSS JOIN message_folders mf ON mf.folder_id = f.id
-     CROSS JOIN messages m ON m.id = mf.message_id
-     WHERE f.kind = 'drafts' AND f.account_id IN (SELECT value FROM json_each(?1))
-       AND m.is_draft = 1
-       AND NOT EXISTS (SELECT 1 FROM drafts d
-                       WHERE d.account_id = f.account_id AND d.remote_message_id = m.remote_id)";
+const LOCAL_COUNT: &str = concat!("SELECT count(*) ", local_from!());
+const REMOTE_COUNT: &str = concat!("SELECT count(*) ", gmail_from!());
 
 fn read_local(r: &Row<'_>) -> rusqlite::Result<DraftsRow> {
     Ok(DraftsRow {
