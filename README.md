@@ -230,7 +230,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `reader.next` | reader | `n` | Next message. |
 | `reader.prev` | reader | `p` | Previous message. |
 | `reader.expand` | reader | `tab` | Expand or collapse the message. |
-| `reader.unfold` | reader | `enter` | Show or hide the quoted lines. |
+| `reader.unfold` | reader | `enter` | Show the quoted lines, or open the message. |
 | `reader.headers` | reader | `h` | Show or hide the headers. |
 | `reader.open_browser` | reader | `o` | Open the message in the browser. |
 | `reader.attachments` | reader | `a` | List the attachments. |

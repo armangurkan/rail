@@ -137,7 +137,7 @@ actions! {
     ReaderNext => "reader.next", [Reader], ["n"], "Next message";
     ReaderPrev => "reader.prev", [Reader], ["p"], "Previous message";
     ReaderExpand => "reader.expand", [Reader], ["tab"], "Expand or collapse the message";
-    ReaderUnfold => "reader.unfold", [Reader], ["enter"], "Show or hide the quoted lines";
+    ReaderUnfold => "reader.unfold", [Reader], ["enter"], "Show the quoted lines, or open the message";
     ReaderHeaders => "reader.headers", [Reader], ["h"], "Show or hide the headers";
     ReaderOpenBrowser => "reader.open_browser", [Reader], ["o"], "Open the message in the browser";
     ReaderAttachments => "reader.attachments", [Reader], ["a"], "List the attachments";

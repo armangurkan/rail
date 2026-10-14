@@ -46,6 +46,10 @@ async fn h_shows_and_hides_the_headers_and_help_lists_it() {
     keys(&mut f, "?").await;
     let help = draw(&f, 150, 40);
     assert!(help.contains("Show or hide the headers"), "{help}");
+    assert!(
+        help.contains("Show the quoted lines, or open the message"),
+        "Enter's row says it opens a card too: {help}"
+    );
 }
 
 /// Whether the first cell of `name` on the drawn row holding `card` is bold.
