@@ -160,13 +160,14 @@ fn relative_directory_settings_work_through_the_daemon() {
     assert!(stdout_of(&list).contains("me@example.com"), "{list:?}");
     // The absolute spelling reaches the same daemon: same directories, no refusal.
     // The account has no tokens, so its sync line fails the check; the daemon still answers.
-    // The daemon's first sync attempt is asynchronous (slow on an instrumented build): wait,
-    // bounded, for the sync line to leave "idle, never synced" before asserting on it.
+    // The daemon's first sync attempt is asynchronous (slow on an instrumented build) and
+    // passes through `labels, never synced` on its way to the failure: wait, bounded, for the
+    // sync line to say `needs a login` before asserting on it.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let (doctor, text) = loop {
         let doctor = rail_cmd(&dir).arg("doctor").output().unwrap();
         let text = stdout_of(&doctor);
-        if !text.contains("idle, never synced") || std::time::Instant::now() >= deadline {
+        if text.contains("needs a login") || std::time::Instant::now() >= deadline {
             break (doctor, text);
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
