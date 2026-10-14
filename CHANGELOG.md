@@ -309,6 +309,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A thread dated beyond what the clock can read was grouped under `OLDER` even when it was in
+  the future, so `OLDER` could head the list twice; it goes by its sign now.
 - The header showed an unread count on an account's own Sent, Trash or Drafts folder
   (`work · Sent · 3 unread`); it reads `work · Sent`, as the merged mailboxes do.
 - `:hints` turning the hints back on posted `hints: on` for five seconds over the hints it had

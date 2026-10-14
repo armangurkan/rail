@@ -14,7 +14,6 @@ use super::layout::{self, areas};
 use super::list_view::{ListLine, frame_lines, list_lines};
 use super::{Focus, MailScreen, StoreState};
 use super::{header, hints};
-use crate::tui::clock::Group;
 use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
 use crate::tui::modals::Modal;
@@ -269,12 +268,7 @@ impl MailScreen {
             return;
         }
         let height = usize::from(area.height);
-        let groups: Vec<Group> = self
-            .list
-            .rows()
-            .iter()
-            .map(|row| self.ctx.clock.group(row.key.last_date))
-            .collect();
+        let groups = self.list_groups.groups(&self.list, &self.ctx.clock);
         let shown = frame_lines(
             &list_lines(&groups),
             self.list.offset(),

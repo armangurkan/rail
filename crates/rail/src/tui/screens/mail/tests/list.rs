@@ -259,6 +259,33 @@ async fn a_re_read_after_end_keeps_the_drawn_threads_and_fills_the_pane() {
     );
 }
 
+/// Spec §5 (C4): the groups are worked out once per list read and per day, not per frame.
+#[tokio::test]
+async fn the_groups_are_worked_out_once_per_read_and_per_day() {
+    let mut f = grouped(2, 2).await;
+    let _ = lines(&f, 90, 24);
+    let _ = lines(&f, 90, 24);
+    assert_eq!(f.screen.list_groups.builds(), 1, "two frames, one read");
+    store_changed(&mut f).await;
+    let _ = lines(&f, 90, 24);
+    assert_eq!(
+        f.screen.list_groups.builds(),
+        2,
+        "a list read works them out again"
+    );
+    f.screen
+        .ctx
+        .clock
+        .set_now(crate::tui::test_util::NOW + 86_400);
+    let rows = lines(&f, 90, 24);
+    assert_eq!(f.screen.list_groups.builds(), 3, "so does a new day");
+    assert_eq!(
+        rows[1].trim_end(),
+        "YESTERDAY",
+        "today's threads are yesterday's now"
+    );
+}
+
 #[tokio::test]
 async fn the_badge_shows_in_merged_mailboxes_and_not_in_an_accounts_inbox() {
     let mut f = grouped(2, 0).await;

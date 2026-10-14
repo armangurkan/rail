@@ -686,6 +686,20 @@ mod tests {
         assert!(list_lines(&[]).is_empty());
     }
 
+    /// Spec §5 (C3): a date the clock cannot place groups by its sign; OLDER heads the list
+    /// once.
+    #[test]
+    fn dates_beyond_the_clocks_range_group_by_their_sign() {
+        let now = crate::tui::test_util::NOW;
+        let clock = crate::tui::clock::Clock::fixed(now, jiff::tz::TimeZone::UTC);
+        let newest_first = [i64::MAX, now, now - 30 * 86_400, i64::MIN].map(|s| clock.group(s));
+        let groups: Vec<ListLine> = list_lines(&newest_first)
+            .into_iter()
+            .filter(|l| matches!(l, ListLine::Group(_)))
+            .collect();
+        assert_eq!(groups, [G(Today), G(Older)], "OLDER heads the list once");
+    }
+
     /// Review Focus 4.
     #[test]
     fn frame_lines_keep_the_cursor_in_view_with_group_rows_counted() {

@@ -24,13 +24,31 @@ impl Clock {
         }
     }
 
+    /// A clock fixed at `now` in `tz` writing 24-hour times (tests).
     #[cfg(test)]
     pub fn fixed(now: i64, tz: TimeZone) -> Self {
+        Self::fixed_with(now, tz, TimeFormat::H24)
+    }
+
+    /// A clock fixed at `now` in `tz` writing times as `format` says (tests).
+    #[cfg(test)]
+    pub fn fixed_with(now: i64, tz: TimeZone, format: TimeFormat) -> Self {
         Self {
             now: Some(now),
             tz,
-            format: TimeFormat::H24,
+            format,
         }
+    }
+
+    /// Move a fixed clock to `now` (tests).
+    #[cfg(test)]
+    pub fn set_now(&mut self, now: i64) {
+        self.now = Some(now);
+    }
+
+    /// Today's date in the clock's zone; `None` when now is out of range.
+    pub fn today(&self) -> Option<jiff::civil::Date> {
+        self.zoned(self.now()).map(|z| z.date())
     }
 
     /// How a time of day is written.
@@ -95,14 +113,17 @@ impl Clock {
         }
     }
 
-    /// The thread list's group for `secs`: by calendar day in the clock's zone.
+    /// The thread list's group for `secs`: by calendar day in the clock's zone; a time the clock
+    /// cannot place goes by its sign, ahead with the later days in `Today`, behind in `Older`.
     pub fn group(&self, secs: i64) -> Group {
         match self.days_back(secs).map(|(_, _, days)| days) {
             // A later day sorts first in the newest-first list: it joins the newest group.
             Some(..=0) => Group::Today,
             Some(1) => Group::Yesterday,
             Some(2..=6) => Group::ThisWeek,
-            _ => Group::Older,
+            Some(_) => Group::Older,
+            None if secs > self.now() => Group::Today,
+            None => Group::Older,
         }
     }
 
@@ -234,7 +255,12 @@ mod tests {
             Group::Today,
             "06:59 UTC is today in UTC: the zone moves the day"
         );
-        assert_eq!(clock.group(i64::MAX), Group::Older);
+        assert_eq!(
+            clock.group(i64::MAX),
+            Group::Today,
+            "beyond the range ahead: by its sign, with the later days"
+        );
+        assert_eq!(clock.group(i64::MIN), Group::Older, "beyond it behind");
         assert_eq!(clock.time_in_group(i64::MAX, Group::Older), "?");
         assert_eq!(
             clock.short(midnight - 60),
@@ -243,6 +269,22 @@ mod tests {
         );
         assert_eq!(clock.short(midnight - 6 * day + 60), "Sat");
         assert_eq!(clock.short(midnight - 6 * day - 60), "Oct 03");
+    }
+
+    #[test]
+    fn a_fixed_clock_can_start_in_twelve_hour_time_and_move_to_another_day() {
+        let mut clock = Clock::fixed_with(NOW, TimeZone::UTC, TimeFormat::H12);
+        assert_eq!(clock.short(NOW - 3_600), "11:40 am");
+        assert_eq!(
+            Clock::fixed(NOW, TimeZone::UTC).format(),
+            TimeFormat::H24,
+            "fixed keeps 24h"
+        );
+        let today = clock.today();
+        assert!(today.is_some());
+        clock.set_now(NOW + 86_400);
+        assert_ne!(clock.today(), today);
+        assert_eq!(clock.group(NOW), Group::Yesterday);
     }
 
     #[test]

@@ -190,6 +190,8 @@ pub struct MailScreen {
     /// The newest filter keystroke: only its timer reads.
     filter_token: u64,
     list: ListWindow,
+    /// The list's date groups, kept beside the rows.
+    list_groups: list::GroupCache,
     /// Where the selection goes when the newest list read answers.
     place: Place,
     sidebar: Sidebar,
@@ -268,6 +270,7 @@ impl MailScreen {
             filter_text: String::new(),
             filter_token: 0,
             list: ListWindow::default(),
+            list_groups: list::GroupCache::default(),
             place: Place::Top,
             sidebar: Sidebar::default(),
             status: StatusBar::default(),
