@@ -399,7 +399,8 @@ is an action Gmail refused, `j`/`k` or `↓`/`↑` highlight an entry and `Enter
 again. `:hints` turns the key hints off, or back on, and saves the choice (`hints = false` under
 `[general]`; turning them on removes the key); a save that fails says
 `Could not save the hints setting: …` and keeps the choice for this session. `:time` switches
-every time of day on screen (the list, `● Synced 14:47`, the reader's `Fri 10 Oct 2025 12:40`)
+every time of day on screen (the list, `● Synced 14:47`, the Drafts list, `:errors`, the
+reader's `Fri 10 Oct 2025 12:40`)
 between 24-hour and 12-hour (`2:47 pm`, `Fri 10 Oct 2025 12:40 pm`) and saves the choice
 (`time = "12h"` under `[general]`; 24-hour removes the key); a save that fails says
 `Could not save the time setting: …` and keeps the choice for this session.
@@ -1048,7 +1049,7 @@ running syncs carry on unchanged.
 | `accent` | unset | The accent colour: a palette slot `0` to `15` of the scheme (a number, or a string such as `"5"`), a colour name such as `"blue"`, or `"#rrggbb"`. Without truecolor a `"#rrggbb"` accent is not applied. |
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
 | `hints` | `true` | `false` turns the key hints off: the bottom row keeps only notices and each account's state, and the key boxes' rows go to the panes. `:hints` in the palette toggles it and saves it. |
-| `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced`, the reader's dates). `:time` in the palette toggles it and saves it. |
+| `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced`, the Drafts list, `:errors`, the reader's dates). `:time` in the palette toggles it and saves it. |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 

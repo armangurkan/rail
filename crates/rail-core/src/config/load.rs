@@ -277,6 +277,7 @@ archive = "e"
         );
         let err = p("[general]\ntime = \"13h\"\n").unwrap_err().to_string();
         assert!(err.contains(":2:"), "{err}");
+        assert!(err.contains("13h") && err.contains("24h"), "{err}");
     }
 
     #[test]
