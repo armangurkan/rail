@@ -6,6 +6,7 @@
 //! upserted where it is now. Bodies never come through the delta.
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::PoisonError;
 
 use serde_json::Value;
 
@@ -101,7 +102,15 @@ impl GraphProvider {
         cursor.begin_round();
         let mut net = Net::default();
         let mut pages = 0;
+        let skipped = self
+            .skipped
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         'folders: for id in cursor.order(&folders) {
+            if skipped.contains(&id) {
+                continue;
+            }
             while let Some(folder) = cursor
                 .folders
                 .get(&id)

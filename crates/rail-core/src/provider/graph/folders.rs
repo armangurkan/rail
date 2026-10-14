@@ -5,7 +5,8 @@
 //! Names are `Parent/Child`, as Gmail's nested labels are; a `/` in a folder's own name is
 //! written `∕` (U+2215). A cap that cuts the listing is logged.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::PoisonError;
 
 use super::wire::{FolderWire, IdOnly, Page};
 use super::{COST_REQUEST, GraphProvider, graph_id};
@@ -107,18 +108,64 @@ fn keep(
     });
 }
 
+/// The folders of `previous` below `root`, at any depth.
+fn under(previous: &[RemoteFolder], root: &str) -> Vec<RemoteFolder> {
+    let parents: HashMap<&str, Option<&str>> = previous
+        .iter()
+        .map(|f| (f.remote_id.as_str(), f.parent.as_deref()))
+        .collect();
+    let below = |start: &RemoteFolder| {
+        let mut at = start.parent.as_deref();
+        for _ in 0..=MAX_FOLDER_DEPTH {
+            match at {
+                Some(id) if id == root => return true,
+                Some(id) => at = parents.get(id).copied().flatten(),
+                None => return false,
+            }
+        }
+        false
+    };
+    previous.iter().filter(|f| below(f)).cloned().collect()
+}
+
+/// A folder's children answered not found: the subfolders the last listing knew stay in `found`
+/// and are noted in `skipped`.
+fn skip_subtree(
+    parent: &str,
+    previous: &[RemoteFolder],
+    found: &mut Vec<RemoteFolder>,
+    skipped: &mut HashSet<RemoteId>,
+) {
+    tracing::info!(
+        folder = %parent,
+        "a Microsoft 365 folder's subfolders answered not found; skipped this pass"
+    );
+    for old in under(previous, parent) {
+        skipped.insert(old.remote_id.clone());
+        found.push(old);
+    }
+}
+
 impl GraphProvider {
-    /// Every folder Rail syncs, sorted by name. A cap that cuts the listing is logged with the
-    /// folder it stopped at; a folder whose children answer not found (deleted mid-listing)
-    /// keeps its place and loses its subtree for this pass.
+    /// Every folder Rail syncs, sorted by name. A cap that cuts the listing is logged once, with
+    /// the folder it stopped at. A folder whose children answer not found (deleted mid-listing,
+    /// or not yet propagated) keeps its place and loses its subtree for this pass: the
+    /// subfolders the last listing knew stay in the result and are remembered in `skipped`, so
+    /// the cursor neither counts them gone nor walks them. A real deletion shows on a later pass.
     pub(crate) async fn list_folders(&self) -> Result<Vec<RemoteFolder>, ProviderError> {
         let kinds = self.well_known().await?;
-        let (mut found, mut pending) = (Vec::new(), Vec::new());
+        let previous = self
+            .folders
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let (mut found, mut pending, mut skipped) = (Vec::new(), Vec::new(), HashSet::new());
         for wire in self.folder_pages("me/mailFolders").await? {
             if !skipped_root(&wire) {
                 keep(wire, None, &kinds, &mut found, &mut pending);
             }
         }
+        let mut capped = false;
         while let Some(parent) = pending.pop() {
             if found.len() >= MAX_FOLDERS {
                 tracing::warn!(
@@ -126,16 +173,14 @@ impl GraphProvider {
                     cap = MAX_FOLDERS,
                     "the Microsoft 365 folder listing reached its cap; the rest is left out"
                 );
+                capped = true;
                 break;
             }
             let path = format!("me/mailFolders/{}/childFolders", parent.id);
             let children = match self.folder_pages(&path).await {
                 Ok(children) => children,
                 Err(ProviderError::NotFound) => {
-                    tracing::info!(
-                        folder = %parent.id,
-                        "a Microsoft 365 folder's subfolders answered not found; skipped this pass"
-                    );
+                    skip_subtree(&parent.id, &previous, &mut found, &mut skipped);
                     continue;
                 }
                 Err(error) => return Err(error),
@@ -144,7 +189,7 @@ impl GraphProvider {
                 keep(wire, Some(&parent), &kinds, &mut found, &mut pending);
             }
         }
-        if found.len() > MAX_FOLDERS {
+        if !capped && found.len() > MAX_FOLDERS {
             tracing::warn!(
                 cap = MAX_FOLDERS,
                 "the Microsoft 365 folder listing reached its cap; the rest is left out"
@@ -152,6 +197,7 @@ impl GraphProvider {
         }
         found.truncate(MAX_FOLDERS);
         found.sort_by(|a, b| a.name.cmp(&b.name));
+        *self.skipped.lock().unwrap_or_else(PoisonError::into_inner) = skipped;
         Ok(found)
     }
 

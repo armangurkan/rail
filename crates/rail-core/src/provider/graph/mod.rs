@@ -49,6 +49,7 @@ mod send_tests;
 #[cfg(test)]
 mod upload_tests;
 
+use std::collections::HashSet;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -89,6 +90,9 @@ pub struct GraphProvider {
     history_days: u32,
     /// What the last folder listing found: the delta's folders and their order.
     folders: Mutex<Vec<RemoteFolder>>,
+    /// The folders of `folders` whose parent's child listing answered not found in the last
+    /// listing: kept as known, not walked this pass.
+    skipped: Mutex<HashSet<RemoteId>>,
 }
 
 impl GraphProvider {
@@ -97,6 +101,7 @@ impl GraphProvider {
             api,
             history_days: 0,
             folders: Mutex::new(Vec::new()),
+            skipped: Mutex::new(HashSet::new()),
         }
     }
 

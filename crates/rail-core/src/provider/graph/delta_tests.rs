@@ -530,3 +530,50 @@ async fn a_cursor_saved_mid_folder_follows_its_next_link_and_finishes_the_folder
     assert_eq!(after.folders["f-inbox"].link, Some(g.link_to("d-f-inbox")));
     assert_eq!(after.folders["f-inbox"].state, State::CaughtUp);
 }
+
+/// Inbox and Projects at the root, with Projects' one subfolder `f-sub` when `children`.
+async fn projects_mailbox(g: &Graph, children: bool) {
+    g.mount_root(json!([
+        folder("f-inbox", "Inbox", 0),
+        folder("f-proj", "Projects", 1),
+    ]))
+    .await;
+    if children {
+        g.mount_children("f-proj", json!([folder("f-sub", "Sub", 0)]))
+            .await;
+    }
+    g.mount_well_known(&[("inbox", "f-inbox")]).await;
+}
+
+#[tokio::test]
+async fn a_child_listing_not_found_does_not_expire_a_cursor_that_knows_the_subfolder() {
+    let g = Graph::start().await;
+    projects_mailbox(&g, true).await;
+    let provider = g.provider();
+    provider.folders().await.unwrap();
+    let known = cursor(
+        &g,
+        &[
+            ("f-inbox", Some("d-f-inbox"), "caught_up"),
+            ("f-proj", Some("d-f-proj"), "caught_up"),
+            ("f-sub", Some("d-f-sub"), "caught_up"),
+        ],
+    );
+
+    // The next listing: Projects' children answer 404. f-sub is not walked (nothing is
+    // mounted for its link) and not counted gone.
+    g.reset().await;
+    projects_mailbox(&g, false).await;
+    quiet(&g, &["f-inbox", "f-proj"]).await;
+    provider.folders().await.unwrap();
+    let set = provider.changes(&known).await.unwrap();
+    assert_eq!(state_of(&set, "f-sub"), State::Due, "kept, not walked");
+
+    // The listing is back: f-sub is walked again.
+    g.reset().await;
+    projects_mailbox(&g, true).await;
+    quiet(&g, &["f-inbox", "f-proj", "f-sub"]).await;
+    provider.folders().await.unwrap();
+    let set = provider.changes(&set.cursor).await.unwrap();
+    assert_eq!(state_of(&set, "f-sub"), State::CaughtUp);
+}

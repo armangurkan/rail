@@ -182,3 +182,12 @@ async fn a_child_listing_not_found_skips_that_subtree_only() {
     let found = g.provider().folders().await.unwrap();
     assert_eq!(ids(&found), ["f-gone", "f-proj", "f-2026"]);
 }
+
+#[tokio::test]
+async fn a_root_listing_not_found_still_fails_the_pass() {
+    let g = Graph::start().await;
+    // The root's listing is not mounted: fake Graph answers 404.
+    g.mount_well_known(&[]).await;
+    let error = g.provider().folders().await.unwrap_err();
+    assert_eq!(error, ProviderError::NotFound);
+}

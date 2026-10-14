@@ -1,5 +1,6 @@
 //! Graph's `DateTimeOffset` values, which it always writes in UTC (`2026-10-12T08:30:15Z`, with
-//! up to seven fraction digits), to and from Unix milliseconds. Anything else, a day its month does not have included, is not a date.
+//! up to seven fraction digits), to and from Unix milliseconds. Anything else, a day its month
+//! does not have included, is not a date.
 
 /// `text` as Unix milliseconds: `YYYY-MM-DDTHH:MM:SS`, an optional `.` and digits, then `Z`.
 pub(crate) fn parse_ms(text: &str) -> Option<i64> {
