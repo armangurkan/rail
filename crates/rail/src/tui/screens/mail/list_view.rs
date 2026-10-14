@@ -589,26 +589,18 @@ mod tests {
     fn at_the_width_where_the_subjects_room_is_zero_the_row_is_the_count_alone() {
         let (theme, glyphs) = (Theme::default(), Glyphs::of(Icons::Unicode));
         let row = thread("Q4 roadmap", 12, 1);
-        let shown = text(&thread_line(
+        let line = thread_line(
             &row,
             &context(Some("W"), "11:54"),
             NO_ROOM_COLS,
             &theme,
             &glyphs,
-        ));
+        );
+        let shown = text(&line);
         assert_eq!(width(&shown), usize::from(NO_ROOM_COLS), "{shown}");
         assert!(!shown.contains("Q4") && !shown.contains('…'), "{shown}");
         assert!(shown.contains(" (12)"), "the count whole: {shown}");
-        let _ = drawn(
-            thread_line(
-                &row,
-                &context(Some("W"), "11:54"),
-                NO_ROOM_COLS,
-                &theme,
-                &glyphs,
-            ),
-            NO_ROOM_COLS,
-        );
+        let _ = drawn(line, NO_ROOM_COLS);
     }
 
     #[test]

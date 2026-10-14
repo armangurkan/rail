@@ -179,6 +179,7 @@ async fn the_sidebar_drawn_folded_and_unfolded() {
     use crossterm::event::KeyCode;
     for (icons, name) in [(Icons::Unicode, "unicode"), (Icons::Ascii, "ascii")] {
         let (_tmp, mut screen) = tree_screen(icons).await;
+        // A first frame records the width, so `b` toggles from the sidebar hidden at 90.
         let _ = draw(&screen, 90, 24);
         press(&mut screen, KeyCode::Char('b')).await;
         insta::assert_snapshot!(format!("sidebar_shown_{name}_90x24"), draw(&screen, 90, 24));
@@ -353,6 +354,7 @@ async fn the_list_draws_its_date_groups_in_order_with_their_times() {
 #[tokio::test]
 async fn the_sidebar_unboxed_at_120_columns() {
     let (_tmp, screen) = screen(Icons::Unicode).await;
+    // A first frame records the width the sidebar's default is read from.
     let _ = draw(&screen, 120, 30);
     assert!(screen.sidebar_visible(), "shown by default at 120 columns");
     insta::assert_snapshot!("mail_sidebar_unboxed_120x30", draw(&screen, 120, 30));

@@ -1,6 +1,7 @@
-//! The mail screen: the thread list over the local store, the sidebar of accounts and labels,
-//! and the status bar (the reader and the modals join in later tasks). Keys go through the
-//! keymap; every read and daemon call is a job whose answer comes back as a `MailEvent`.
+//! The mail screen: the header (the scope, the search slot, the sync summary, the clock), the
+//! sidebar of merged mailboxes, accounts and folders, the thread list or the Drafts pane, the
+//! reader, the hint bar, and the modals over them. Keys go through the keymap; every read and
+//! daemon call is a job whose answer comes back as a `MailEvent`.
 
 mod actions;
 mod actions_pick;

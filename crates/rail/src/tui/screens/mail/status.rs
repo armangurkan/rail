@@ -290,10 +290,7 @@ impl StatusBar {
     pub fn line(&self, accounts: &[AccountEntry], glyphs: &Glyphs) -> String {
         let mut parts: Vec<String> = self.notice().map(str::to_string).into_iter().collect();
         for account in accounts {
-            let status = self
-                .statuses
-                .iter()
-                .find(|s| s.address.eq_ignore_ascii_case(&account.address));
+            let status = self.status_of(account);
             parts.push(account_part(&escape(&account.label), status, glyphs));
         }
         parts.join("  ·  ")

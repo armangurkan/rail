@@ -352,25 +352,24 @@ The top of the screen is the header: `▍Rail │ All inboxes · 2 accounts · 2
 own Sent, Trash or Drafts shows no unread count, `work · Sent`), the search region
 (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`; the filter shows there once set, and the
 Drafts folder has none), and on the right one line for every account's sync: `● Synced 14:47`
-when all are caught up (the earliest account's time), else the worst
-state (`⟳ Syncing work`, `⟳ Backfill 1,200/5,000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
-`! work needs login`, `! work sync failed`, or the daemon's state), then the time of day at the
-right edge: `● Synced 14:47 │ 15:02` (`3:02 pm` with `time = "12h"`; `:time` changes it at once).
-`clock = false` under `[general]`, or `:clock`, hides the clock. At `split_threshold` (140
-columns by default) and wider the sidebar, the list and the reader are boxed, the focused pane in
-the accent colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and an
-unboxed header reads `|Rail | All inboxes …`. At `split_threshold` and wider, and at least 12
-rows high, the header has a box of its own too (never in the accent colour), and inside it the
-row reads `│ Rail │ All inboxes … ● Synced 14:47 │ 15:02 │`, without the `▍` bar (`| Rail | …` with
-`icons = "ascii"`). When the scope and the summary do not both fit, the summary and the clock
-stay whole and the scope is cut. While a filter is set or being typed, the search slot keeps at
-least 24 cells (at 60 columns and wider): the scope is cut first. Under 60 columns the clock and
-the search region go, and under 40 the summary. The status bar at the bottom names the keys of the
-pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your
-`config.toml` sets) and shows each account's state on the right. Narrower than `split_threshold`
-it is one row; at `split_threshold` and wider (and at least 12 rows high) it takes three rows and
-each key is drawn in its own box, with no frame around the bar (`+`, `-` and `|` with
-`icons = "ascii"`):
+when all are caught up (the earliest account's time), else the worst state (`⟳ Syncing work`,
+`⟳ Backfill 1,200/5,000`, `⟳ retrying`, `work stopped`, `! 2 failed`, `! work needs login`,
+`! work sync failed`, or the daemon's state), then the time of day at the right edge:
+`● Synced 14:47 │ 15:02` (`3:02 pm` with `time = "12h"`; `:time` changes it at once).
+`clock = false` under `[general]`, or `:clock`, hides the clock. At `split_threshold` (140 columns
+by default) and wider the sidebar, the list and the reader are boxed, the focused pane in the accent
+colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and an unboxed header
+reads `|Rail | All inboxes …`. At `split_threshold` and wider, and at least 12 rows high, the header
+has a box of its own too (never in the accent colour), and inside it the row reads
+`│ Rail │ All inboxes … ● Synced 14:47 │ 15:02 │`, without the `▍` bar (`| Rail | …` with
+`icons = "ascii"`). When the scope and the summary do not both fit, the summary and the clock stay
+whole and the scope is cut. While a filter is set or being typed, the search slot keeps at least 24
+cells (at 60 columns and wider): the scope is cut first. Under 60 columns the clock and the search
+region go, and under 40 the summary. The status bar at the bottom names the keys of the pane you are
+in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your `config.toml` sets)
+and shows each account's state on the right. Narrower than `split_threshold` it is one row; at
+`split_threshold` and wider (and at least 12 rows high) it takes three rows and each key is drawn in
+its own box, with no frame around the bar (`+`, `-` and `|` with `icons = "ascii"`):
 
 ```
 ┌───────┐      ┌─────┐      ┌─────┐         ┌───┐
@@ -441,16 +440,14 @@ and the text appears when it lands. If the fetch fails the message says why.
 `/` opens the filter line in the header's search slot and filters the list as you type. The
 slot is not drawn when the terminal is narrower than 60 columns, or, before a filter is set, when
 fewer than 8 cells are left for it after the counts and the summary; the line then opens in the
-status bar. Plain words
-search subjects, the names and addresses of senders and recipients (To, Cc and Bcc) and stored
-bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`, `is:unread`,
-`is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
-`account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread matches
-when one of its messages matches all of them. Anything else is searched as words, and the header's
-search slot shows how Rail read your filter
-(`/ is:unread · words: form:dana`), so a typo such as
-`form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
-local store only (`rail search` also asks each account's server).
+status bar. Plain words search subjects, the names and addresses of senders and recipients (To, Cc
+and Bcc) and stored bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`,
+`is:unread`, `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail
+arrived) and `account:<name>` narrow it; quote values with spaces (`from:"Dana Reyes"`). A thread
+matches when one of its messages matches all of them. Anything else is searched as words, and the
+header's search slot shows how Rail read your filter (`/ is:unread · words: form:dana`), so a typo
+such as `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter
+searches the local store only (`rail search` also asks each account's server).
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account,
 a label or a merged mailbox (`Mailbox: Starred`, `Mailbox: Drafts`, `Mailbox: Sent`,
@@ -462,24 +459,22 @@ is an action Gmail refused, `j`/`k` or `↓`/`↑` highlight an entry and `Enter
 again. `:hints` turns the key hints off (`hints: off`), or back on (the hints are the
 confirmation: no notice), and saves the choice (`hints = false` under `[general]`; turning them on
 removes the key); a save that fails says `Could not save the hints setting: …` and keeps the
-choice for this session. `:clock` hides the
-header's clock (`clock: off`), or shows it again (`clock: on`), and saves the choice
-(`clock = false` under `[general]`; showing it removes the key); a save that fails says
-`Could not save the clock setting: …` and keeps the choice for this session. `:time` switches
-every time of day on screen (the list, `● Synced 14:47`, the header's clock, the Drafts list,
-`:errors`, the reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines) between 24-hour
-and 12-hour
-(`2:47 pm`, `4:32 am`, `Date: Fri 10 Oct 2025 12:40 pm`) and saves the choice (`time = "12h"`
-under `[general]`; 24-hour removes the key); a save that fails says
-`Could not save the time setting: …` and keeps the choice for this session.
-`:thread-order` turns the reader's older messages round (newest first, or oldest first again),
-in the open thread too, says `thread order: newest` or `thread order: oldest`, and saves the
-choice (`thread_order = "newest"` under `[general]`; oldest first removes the key); a save that
-fails says `Could not save the thread order: …` and keeps the choice for this session.
-`?` shows the keys of the view you are in,
-marking with `*` the ones set in `config.toml`; `?` again (or whatever `global.help` is bound to),
-`Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more`
-line (`v more` and `^ more` with `icons = "ascii"`) says there is more beyond the box.
+choice for this session. `:clock` hides the header's clock (`clock: off`), or shows it again
+(`clock: on`), and saves the choice (`clock = false` under `[general]`; showing it removes the key);
+a save that fails says `Could not save the clock setting: …` and keeps the choice for this session.
+`:time` switches every time of day on screen (the list, `● Synced 14:47`, the header's clock, the
+Drafts list, `:errors`, the reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines) between
+24-hour and 12-hour (`2:47 pm`, `4:32 am`, `Date: Fri 10 Oct 2025 12:40 pm`) and saves the choice
+(`time = "12h"` under `[general]`; 24-hour removes the key); a save that fails says
+`Could not save the time setting: …` and keeps the choice for this session. `:thread-order` turns
+the reader's older messages round (newest first, or oldest first again), in the open thread too,
+says `thread order: newest` or `thread order: oldest`, and saves the choice
+(`thread_order = "newest"` under `[general]`; oldest first removes the key); a save that fails says
+`Could not save the thread order: …` and keeps the choice for this session. `?` shows the keys of
+the view you are in, marking with `*` the ones set in `config.toml`; `?` again (or whatever
+`global.help` is bound to), `Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or
+`↓`/`↑`; a `↓ more` or `↑ more` line (`v more` and `^ more` with `icons = "ascii"`) says there is
+more beyond the box.
 
 The status bar shows, on the right, each account's sync state (`✓` caught up, `⟳` syncing, with
 a count during the first sync, `retrying`, `stopped`, and `!` for `needs login` or
@@ -733,7 +728,8 @@ draft that was deleted elsewhere before you opened or discarded it says
 `Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
 select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`, `space`, `r`, `R`, `f`, `/`) say
 `Not available on drafts`; `Esc` does nothing there and `c` writes a new message as everywhere.
-The search slot is empty in this folder: the pane is not filtered. The pane is read again whenever sync or the outbox
+The search slot is empty in this folder: the pane is not filtered. The pane is read again whenever
+sync or the outbox
 changes something. `:drafts` (`Open a draft` in the palette) lists the same rows for the account
 in view; in the unified inbox and the merged mailboxes it merges every account's, and `Enter`
 opens one the same way.
@@ -748,11 +744,13 @@ the draft removes its files, and so does a completed send; when the daemon start
 file no draft refers to, which catches any a removal could not.
 
 **Limits.** A message has at most 100 recipients, 50 attachments and 25 MiB in all (Gmail's
-limit, kept for Microsoft 365), 10 MiB of text and a one-line subject. Attachments count as they are sent, a third larger
+limit, kept for Microsoft 365), 10 MiB of text and a one-line subject. Attachments count as they are
+sent, a third larger
 than the files (so about 18 MiB of files fit); the review's total shows the files' own sizes, and
 a file that would take the message over is refused when you attach it, naming the size the
 message would have. File names are cleaned before they are sent. Attachments come from files you
-name by path; a forward carries the original's attachments along, and they count in the total. Only regular files can be attached, and
+name by path; a forward carries the original's attachments along, and they count in the total. Only
+regular files can be attached, and
 they are read when the message goes out: one that was moved or deleted in the meantime fails the
 send (`Could not send: could not read an attachment of this message`) and the review opens again.
 

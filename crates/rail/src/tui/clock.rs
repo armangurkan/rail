@@ -174,13 +174,13 @@ fn date(when: &Zoned, now: &Zoned) -> String {
 /// The thread list's date groups, newest first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
-    /// The same calendar day as now, or a later day.
+    /// The same calendar day as now, or a later day (beyond the clock's range too).
     Today,
     /// The day before.
     Yesterday,
     /// Two to six days ago.
     ThisWeek,
-    /// A week ago or more, or out of range.
+    /// A week ago or more, or before the clock's range.
     Older,
 }
 
