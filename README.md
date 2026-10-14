@@ -294,8 +294,8 @@ Each account row has its fold arrow (`▾` unfolded, `▸` folded) and a badge, 
 letter on the account's colour. Mailboxes have icons (`✉` inbox, `★` Starred, `✎` Drafts, `➤`
 Sent, `✕` Trash, `▣` Archive, `⊘` Spam, `📁` `More folders` and a path with folders under it)
 and their counts on the right with thousands separators. With `icons = "ascii"` the arrows are
-`v` and `>` and the icons `i`, `*`, `d`, `>`, `x`, `a`, `s` and `/`. While the list has focus the
-current mailbox's row is in the accent colour; the sidebar scrolls to keep it (or, while the
+`v` and `>` and the icons `i`, `*`, `d`, `>`, `x`, `a`, `s` and `/`. While the sidebar does not have
+focus the current mailbox's row is in the accent colour; the sidebar scrolls to keep it (or, while the
 sidebar has focus, the cursor) in view.
 
 The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread`
