@@ -2,12 +2,14 @@
 //! (Oct 03), Tom (Mon 22:11), David starred and unread (Wed 18:20), and David's newest (today
 //! 04:32) to Vito and dana@example.com, in the AXON account.
 
+use rail_core::config::{Icons, ThreadOrder};
 use rail_core::provider::Mailbox;
 use rail_core::store::view::{BodyState, MessageView, ThreadDetail};
 use ratatui::style::Color;
 
-use super::ReaderAccount;
+use super::{Reader, ReaderAccount};
 use crate::tui::clock::Clock;
+use crate::tui::screens::mail::Glyphs;
 use crate::tui::test_util::NOW;
 
 pub const SUBJECT: &str = "Q4 roadmap review";
@@ -85,4 +87,10 @@ pub fn axon() -> ReaderAccount {
 /// `NOW` in UTC, 24-hour times.
 pub fn clock() -> Clock {
     Clock::fixed(NOW, jiff::tz::TimeZone::UTC)
+}
+
+/// A reader of `detail` in `order` on the fixed clock, Unicode glyphs, AXON. No frame is drawn,
+/// so it works at 80 columns.
+pub fn reader_of(detail: ThreadDetail, order: ThreadOrder) -> Reader {
+    Reader::new(detail, clock(), Glyphs::of(Icons::Unicode), axon(), order)
 }

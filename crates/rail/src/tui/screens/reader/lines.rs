@@ -1,7 +1,7 @@
-//! A thread as the reader's lines at one width: a header line per message, and for expanded
-//! messages the header fields, the body (wrapped, quote runs folded, link markers as written)
-//! and the attachments. Every outside string is escaped (by `fit`, `wrap` of escaped text, or
-//! `escape`).
+//! The reader's line types and the parts of an open message at one width: its header fields,
+//! its body (wrapped, quote runs folded, link markers as written) and its attachments line;
+//! `cards.rs` puts the thread together. Every outside string is escaped (by `fit`, `wrap` of
+//! escaped text, or `escape`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -19,9 +19,6 @@ use crate::tui::text::{Block, blocks, escape, expand_tabs, fit, fold_label, wrap
 pub enum LineKind {
     /// A thread-wide note: the left-out count, or an empty thread's subject.
     Note,
-    Header {
-        message: usize,
-    },
     /// The title block's subject, sender and recipients lines, on the newest message.
     Title {
         message: usize,
@@ -59,8 +56,7 @@ pub enum LineKind {
 impl LineKind {
     pub fn message(self) -> Option<usize> {
         match self {
-            Self::Header { message }
-            | Self::Title { message }
+            Self::Title { message }
             | Self::Card { message }
             | Self::Preview { message }
             | Self::Field { message }
@@ -81,31 +77,10 @@ pub enum Tone {
     Quote,
     Error,
     /// The subject: the accent colour, bold.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "drawn from the wiring task (Task 5) on; remove then"
-        )
-    )]
     Accent,
     /// The account's badge: black on the account's colour.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "drawn from the wiring task (Task 5) on; remove then"
-        )
-    )]
     Badge,
     /// A card's number: the text colour on the border colour.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "drawn from the wiring task (Task 5) on; remove then"
-        )
-    )]
     Number,
 }
 
@@ -196,66 +171,6 @@ pub(super) fn sender(message: &MessageView) -> String {
         Some(first) => first.address.clone(),
         None => "(no sender)".to_string(),
     }
-}
-
-pub(super) fn build(detail: &ThreadDetail, state: &State<'_>, width: usize) -> Vec<ReaderLine> {
-    let mut out = Vec::new();
-    if detail.older_left_out > 0 {
-        let note = format!(
-            "[{} older messages of this thread are not shown]",
-            detail.older_left_out
-        );
-        out.push(line(LineKind::Note, fit(&note, width), Tone::Muted));
-    }
-    for (index, message) in detail.messages.iter().enumerate() {
-        let open = state.expanded.get(index).copied().unwrap_or(false);
-        out.push(header(index, message, open, state, width));
-        if open {
-            expanded(&mut out, index, message, detail, state, width);
-        }
-    }
-    out
-}
-
-fn header(
-    index: usize,
-    m: &MessageView,
-    open: bool,
-    state: &State<'_>,
-    width: usize,
-) -> ReaderLine {
-    let arrow = if open {
-        state.glyphs.open
-    } else {
-        state.glyphs.closed
-    };
-    let star = if m.is_starred {
-        format!(" {}", state.glyphs.star)
-    } else {
-        String::new()
-    };
-    let mut text = format!(
-        "{arrow} {}  {}{star}",
-        sender(m),
-        state.clock.long(m.internal_date / 1000)
-    );
-    if !open {
-        text.push_str(&format!("  {}", m.snippet));
-    }
-    let tone = if m.is_read { Tone::Plain } else { Tone::Strong };
-    line(LineKind::Header { message: index }, fit(&text, width), tone)
-}
-
-fn expanded(
-    out: &mut Vec<ReaderLine>,
-    index: usize,
-    m: &MessageView,
-    detail: &ThreadDetail,
-    state: &State<'_>,
-    width: usize,
-) {
-    fields(out, index, m, detail, state, width);
-    content(out, index, m, state, width);
 }
 
 /// An open message's header fields: `From:`, `To:` and `Cc:` (each when not empty), `Date:`,

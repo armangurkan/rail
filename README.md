@@ -59,8 +59,9 @@ up without ever seeing your secrets.
 - `rail search` over the local store and, through each account's server (Gmail's search,
   Microsoft Graph's `$search`), the mailbox itself.
 - Reading mail in the terminal: a unified inbox and per-account and per-label lists over the local
-  store, a sidebar of merged mailboxes and each account's folders as a folding tree, a reader with
-  folded quotes and numbered (clickable) links, filter as you type, a command palette, keys you can
+  store, a sidebar of merged mailboxes and each account's folders as a folding tree, a reader that
+  opens on the newest message with the older ones as cards, folded quotes and numbered
+  (clickable) links, filter as you type, a command palette, keys you can
   change in `config.toml`, and `o` to open a message's HTML in the browser. See
   [Reading mail](#reading-mail).
 - Archive, trash, star and mark read or unread, alone or as a selection, with undo, on Gmail and
@@ -334,9 +335,20 @@ each key is drawn in its own box, with no frame around the bar (`+`, `-` and `|`
 and account states at every width, and `?` still lists the keys.
 
 `Enter` opens a thread. At `split_threshold` columns (140 by default) and wider the reader opens
-beside the list; narrower, it covers the screen. `q` or `Esc` closes it. Messages are oldest
-first; unread ones and the latest are expanded. `j`/`k` move the cursor, `n`/`p` jump between
-messages, `Tab` expands or collapses one, and `Enter` on `[n quoted lines]` shows the quoted text.
+beside the list; narrower, it covers the screen. `q` or `Esc` closes it. The reader starts with
+the thread's title block: the subject; the newest message's sender, its time as the list writes
+it and the account's badge and label (`Dana Reyes  04:32   W  WORK`); its recipients by name
+and the thread's size (`To: Vito, Tom  /  4 messages`, or `/  4 messages` when it names none);
+then a rule. The newest message is open under it. The older messages follow as cards between
+rules, oldest first (`thread_order = "newest"` under `[general]` runs them newest first): a
+card is the message's number in the thread in a grey box, its sender (bold while unread, `★`
+when starred) and its time at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its
+text. When a long thread's oldest messages are not shown,
+`[5 older messages of this thread are not shown]` stands where they would be. `j`/`k` move the
+cursor, `n`/`p` jump between the newest message and each card, `Tab` (or `Enter` on a card, the
+subject or a preview) opens or closes the message under the cursor, and `Enter` on
+`[n quoted lines]` shows the quoted text. With `icons = "ascii"` the arrows are `>` and `v` and
+the rules `-`.
 
 HTML mail is shown as Rail's plain-text rendering, with each link as a numbered marker such as
 `[1]`; in terminals that support hyperlinks (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows
@@ -400,8 +412,8 @@ again. `:hints` turns the key hints off, or back on, and saves the choice (`hint
 `[general]`; turning them on removes the key); a save that fails says
 `Could not save the hints setting: …` and keeps the choice for this session. `:time` switches
 every time of day on screen (the list, `● Synced 14:47`, the Drafts list, `:errors`, the
-reader's `Fri 10 Oct 2025 12:40`)
-between 24-hour and 12-hour (`2:47 pm`, `Fri 10 Oct 2025 12:40 pm`) and saves the choice
+reader's `04:32`)
+between 24-hour and 12-hour (`2:47 pm`, `4:32 am`) and saves the choice
 (`time = "12h"` under `[general]`; 24-hour removes the key); a save that fails says
 `Could not save the time setting: …` and keeps the choice for this session.
 `?` shows the keys of the view you are in,
@@ -422,7 +434,7 @@ reached shows in the header's summary (`connecting to the daemon…`,
 once a message fetch gets through after the connection was lost); notices show on the status bar,
 in place of the key hints. When the daemon cannot be reached the list still reads from the store;
 `Ctrl-r` reconnects (and starts a sync) and resumes live updates. A store read that fails says so
-where it was shown (the list, the top of the sidebar, or the reader's title) and in the status
+where it was shown (the list, the top of the sidebar, or the reader's subject line) and in the status
 bar; `:errors` keeps it.
 
 ### Themes
@@ -1050,6 +1062,7 @@ running syncs carry on unchanged.
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
 | `hints` | `true` | `false` turns the key hints off: the bottom row keeps only notices and each account's state, and the key boxes' rows go to the panes. `:hints` in the palette toggles it and saves it. |
 | `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced`, the Drafts list, `:errors`, the reader's dates). `:time` in the palette toggles it and saves it. |
+| `thread_order` | `"oldest"` | How the reader lists a thread's older messages under the newest one: `"oldest"` first or `"newest"` first. |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 

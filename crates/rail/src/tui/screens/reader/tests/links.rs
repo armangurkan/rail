@@ -21,10 +21,11 @@ fn set_links(f: &Fixture, links: &[&str]) {
         .unwrap();
 }
 
-/// Open the thread, expand m1 and put the cursor on its line with both markers.
+/// Open the thread, open m1's card and put the cursor on its line with both markers.
 async fn open_on_the_link_line(f: &mut Fixture) {
     press(f, KeyCode::Enter).await;
     press(f, KeyCode::Home).await;
+    press(f, KeyCode::Char('n')).await;
     press(f, KeyCode::Tab).await;
     cursor_to(f, "doc[1]").await;
 }

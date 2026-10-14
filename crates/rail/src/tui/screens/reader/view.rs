@@ -1,19 +1,20 @@
-//! Drawing the reader: the thread's subject, then the lines from the scroll offset, each segment
-//! in its tone's style and the cursor line highlighted, and (where the terminal supports them)
-//! the link markers as OSC 8 hyperlinks.
+//! Drawing the reader: its lines from the scroll offset (the title block first, so a long
+//! newest message scrolls the subject away), each segment in its tone's style and the cursor
+//! line highlighted, and (where the terminal supports them) the link markers as OSC 8
+//! hyperlinks.
 
 use std::num::NonZeroU16;
 
 use ratatui::Frame;
 use ratatui::buffer::{Buffer, CellDiffOption};
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::{LineKind, Reader, ReaderLine, Tone};
 use crate::tui::screens::mail::visible_offset;
-use crate::tui::text::{fit, markers, osc8, safe_link};
+use crate::tui::text::{markers, osc8, safe_link};
 use crate::tui::theme::Theme;
 
 /// A segment's style in `tone`; `badge` is the account's colour.
@@ -60,24 +61,8 @@ fn styled(line: &ReaderLine, theme: &Theme, badge: Color, cursor: bool) -> Line<
 }
 
 impl Reader {
-    /// The subject and message count, or a failed re-read's error until a read succeeds.
-    fn render_title(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let count = self.detail.messages.len();
-        let (heading, style) = match &self.read_error {
-            Some(text) => (text.clone(), theme.error),
-            None => (
-                format!(
-                    "{}  ({count} message{})",
-                    self.detail.subject,
-                    if count == 1 { "" } else { "s" }
-                ),
-                theme.accent,
-            ),
-        };
-        let line = Line::styled(fit(&heading, usize::from(area.width)), style);
-        frame.render_widget(Paragraph::new(line), area);
-    }
-
+    /// The lines in `area` from the scroll offset, the cursor line highlighted while
+    /// `focused`, and the link markers as OSC 8 hyperlinks when `hyperlinks`.
     pub fn render(
         &self,
         frame: &mut Frame,
@@ -86,12 +71,9 @@ impl Reader {
         hyperlinks: bool,
         focused: bool,
     ) {
-        let [title, body] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-        self.render_title(frame, title, theme);
-        self.size.set((body.width, body.height));
-        let lines = self.lines(body.width);
-        let height = usize::from(body.height);
+        self.size.set((area.width, area.height));
+        let lines = self.lines(area.width);
+        let height = usize::from(area.height);
         let scroll = visible_offset(self.scroll, self.cursor, height);
         let badge = self.account.color(theme);
         let shown: Vec<Line> = lines
@@ -101,9 +83,9 @@ impl Reader {
             .take(height)
             .map(|(index, line)| styled(line, theme, badge, focused && index == self.cursor))
             .collect();
-        frame.render_widget(Paragraph::new(shown), body);
+        frame.render_widget(Paragraph::new(shown), area);
         if hyperlinks {
-            self.link_cells(frame.buffer_mut(), body, &lines[scroll.min(lines.len())..]);
+            self.link_cells(frame.buffer_mut(), area, &lines[scroll.min(lines.len())..]);
         }
     }
 

@@ -199,6 +199,15 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Changed
 
+- The reader opens on a title block: the subject, the newest message's sender, its time as the
+  list writes it and the account's badge and label, its recipients by name with the thread's
+  size (`To: Vito  /  4 messages`), and a rule; the newest message is open under it, and the
+  subject scrolls away with it. The older messages are cards between rules, oldest first
+  (`thread_order = "newest"` under `[general]` runs them newest first): each shows its number in
+  the thread, its sender (bold while unread) and its time at the right edge over a line of its
+  text, and `Tab` or `Enter` opens it in place. Unread older messages no longer open on their
+  own; `n`/`p` jump between the newest message and each card. The `From:`, `To:` and `Date:`
+  lines are no longer shown.
 - The thread list is in date groups (`TODAY`, `YESTERDAY`, `THIS WEEK`, `OLDER`), the group of
   the top row kept on the first row. A row reads dot, badge, people, `★`/`📎`, subject `(n)`,
   time: the time at the right edge (`14:05`, `Mon 18:20`, `Oct 03`, `2024-10-03`) replaces the

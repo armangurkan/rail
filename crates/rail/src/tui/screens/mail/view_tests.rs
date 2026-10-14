@@ -545,9 +545,11 @@ async fn the_header_and_the_hint_bar_are_on_every_screen() {
     let lines = rows(&screen, 90, 24);
     assert!(lines[0].starts_with("▍Rail │"), "{}", lines[0]);
     assert!(
-        lines[1].contains("(3 messages)"),
-        "the reader's title is the first body row"
+        lines[1].starts_with("Q4 roadmap review"),
+        "the reader's subject is the first body row: {}",
+        lines[1]
     );
+    assert!(lines[3].starts_with("/  3 messages"), "{}", lines[3]);
     assert!(
         lines[23].starts_with("n/p message  Tab fold"),
         "{}",

@@ -56,7 +56,7 @@ crates/rail/             Binary: clap CLI, logging, and the account, daemon, doc
     tui/data             The mail screen's read side (the store reader) and its link to the daemon
     tui/screens/mail     The mail screen: thread list, sidebar, status bar; `events.rs` takes the store's and the daemon's answers, `header.rs` and `hints.rs` draw the header row and the hint bar, `sidebar_tree.rs` builds the sidebar's rows and folds and `sidebar_view.rs` draws them, `list_view.rs` draws the thread list's rows and date groups, `composing*.rs` is its side of writing mail, `drafts_pane.rs` and `drafts_flow.rs` its Drafts folder
     tui/screens/mail/tests/compose_gmail.rs, drafts_folder.rs  The tests of saving to Gmail and of the Drafts folder
-    tui/screens/reader   The reader: messages, folded quotes, numbered links
+    tui/screens/reader   The reader: `cards.rs` builds the title block, the newest message and the cards, `lines.rs` the parts of an open message (folded quotes, numbered links), `view.rs` draws them
     tui/screens/compose  The composer: the compose file, reply and forward prefill, prompts with completion, the review
     tui/editor.rs        Which editor to run and how (`handover.rs` hands the terminal over)
     tui/modals           The palette, filter line, help, confirmations, label pickers and the error list

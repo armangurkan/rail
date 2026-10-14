@@ -5,13 +5,6 @@
 //! itself), oldest or newest first, with a rule after each, and the note for the messages left
 //! out where they would be. Every outside string is escaped (`fit`, `escape`, or the body's
 //! escaped rows).
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the reader's lines from the wiring task (Task 5) on; remove then"
-    )
-)]
 
 use rail_core::config::ThreadOrder;
 use rail_core::provider::Mailbox;

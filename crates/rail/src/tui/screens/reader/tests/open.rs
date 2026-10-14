@@ -32,7 +32,7 @@ async fn o_confirms_once_names_remote_images_and_removes_the_file_on_close() {
     store_bodies_on_fetch(&f);
     press(&mut f, KeyCode::Enter).await;
     press(&mut f, KeyCode::Home).await;
-    keys(&mut f, "o").await;
+    keys(&mut f, "no").await;
     let text = draw(&f, 90, 24);
     assert!(
         text.contains("Remote images in this message will load there"),
@@ -68,7 +68,7 @@ async fn no_at_the_confirmation_writes_and_opens_nothing() {
     store_bodies_on_fetch(&f);
     press(&mut f, KeyCode::Enter).await;
     press(&mut f, KeyCode::Home).await;
-    keys(&mut f, "on").await;
+    keys(&mut f, "non").await;
     assert!(f.opened.lock().unwrap().is_empty());
     let dir = f.paths.cache_dir.join("open");
     assert!(!dir.exists() || std::fs::read_dir(&dir).unwrap().next().is_none());
@@ -79,7 +79,7 @@ async fn o_on_a_message_without_html_says_so() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);
     press(&mut f, KeyCode::Enter).await;
-    press(&mut f, KeyCode::End).await;
+    press(&mut f, KeyCode::Home).await;
     keys(&mut f, "o").await;
     keys(&mut f, "y").await;
     assert!(f.opened.lock().unwrap().is_empty());
@@ -97,7 +97,7 @@ async fn o_on_an_uncached_message_fetches_first_and_opens_when_it_lands() {
         results: Vec::new(),
     }));
     press(&mut f, KeyCode::Enter).await;
-    press(&mut f, KeyCode::End).await;
+    press(&mut f, KeyCode::Home).await;
     keys(&mut f, "o").await;
     assert!(
         f.screen.status_line().contains("fetching"),
@@ -150,7 +150,7 @@ async fn a_browser_that_will_not_start_is_reported() {
     }));
     press(&mut f, KeyCode::Enter).await;
     press(&mut f, KeyCode::Home).await;
-    keys(&mut f, "oy").await;
+    keys(&mut f, "noy").await;
     let line = f.screen.status_line();
     assert!(
         line.contains("Could not start the browser: no browser \\u{1b}[2J"),
@@ -185,7 +185,7 @@ async fn open_then_fail_m3(f: &mut Fixture) {
         results: Vec::new(),
     }));
     press(f, KeyCode::Enter).await;
-    press(f, KeyCode::End).await;
+    press(f, KeyCode::Home).await;
     keys(f, "o").await;
     assert!(f.screen.pending_open().is_some(), "waiting for the fetch");
     let failed = BodyFetchResponse {
@@ -258,7 +258,7 @@ async fn an_html_answer_after_the_reader_closed_is_dropped() {
     store_bodies_on_fetch(&f);
     press(&mut f, KeyCode::Enter).await;
     press(&mut f, KeyCode::Home).await;
-    keys(&mut f, "o").await;
+    keys(&mut f, "no").await;
     let confirm = f
         .screen
         .update(Msg::Key(crate::tui::test_util::key(KeyCode::Char('y'))));

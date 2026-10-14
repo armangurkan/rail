@@ -6,6 +6,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crossterm::event::KeyCode;
+use rail_core::config::Icons;
 use rail_core::ops::{
     BodyFetchResponse, BodyFetchResult, BodyOutcome, ErrorCode, OpError, SyncPhase,
 };
@@ -42,6 +43,11 @@ struct Fixture {
 /// One work thread of three messages: m1 read with `BODY` (two links, a quote, a PDF), m2 read
 /// and not fetched, m3 unread and not fetched (the latest).
 async fn fixture(hyperlinks: bool) -> Fixture {
+    fixture_with(hyperlinks, Icons::Unicode).await
+}
+
+/// `fixture` with `icons`.
+async fn fixture_with(hyperlinks: bool, icons: Icons) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let paths = Paths::all_in(tmp.path());
     let mut m1 = mail_envelope("m1", "t1", BASE_MS);
@@ -96,6 +102,7 @@ async fn fixture(hyperlinks: bool) -> Fixture {
     let mut ctx = mail_ctx(&paths, fake.clone());
     ctx.opener = opener;
     ctx.hyperlinks = hyperlinks;
+    ctx.icons = icons;
     let mut screen = MailScreen::new(ctx, work_and_home()[..1].to_vec());
     let effects = screen.start();
     settle(&mut screen, effects).await;
@@ -164,6 +171,13 @@ async fn cursor_to(f: &mut Fixture, needle: &str) {
         press(f, KeyCode::Char('j')).await;
     }
     panic!("no reader line contains {needle:?}");
+}
+
+/// Put the cursor on m1's card (Tom's, the first card oldest first) and open it.
+async fn open_toms_card(f: &mut Fixture) {
+    press(f, KeyCode::Home).await;
+    press(f, KeyCode::Char('n')).await;
+    press(f, KeyCode::Tab).await;
 }
 
 /// Every reader line at a width where nothing wraps, joined.
@@ -258,28 +272,51 @@ async fn a_body_that_never_lands_is_not_asked_for_again() {
 }
 
 #[tokio::test]
-async fn unread_and_latest_messages_start_expanded_and_tab_n_p_move_through_them() {
+async fn the_newest_opens_under_the_title_block_and_n_p_tab_move_through_the_cards() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);
     press(&mut f, KeyCode::Enter).await;
     let text = draw(&f, 90, 40);
-    assert!(text.contains("▸ Tom"), "m1 collapsed: {text}");
-    assert!(text.contains("▾ Sender"), "m3 expanded: {text}");
-    assert!(text.contains("body of m3"));
-    assert!(!text.contains("The plan is in the doc"));
-    press(&mut f, KeyCode::Home).await;
+    assert!(
+        text.contains("Sender  08:55   W  WORK"),
+        "the title block: {text}"
+    );
+    assert!(text.contains("/  3 messages"), "{text}");
+    assert!(text.contains("body of m3"), "the newest is open: {text}");
+    assert!(text.contains("▸   1   Tom"), "m1 is a card: {text}");
+    assert!(
+        text.contains("        snippet m1"),
+        "its preview under the sender: {text}"
+    );
+    assert!(!text.contains("The plan is in the doc"), "{text}");
+    assert_eq!(
+        f.screen.reader_cursor_text().as_deref(),
+        Some("Q4 plan"),
+        "the cursor starts on the subject"
+    );
+    press(&mut f, KeyCode::Char('n')).await;
+    assert!(
+        f.screen
+            .reader_cursor_text()
+            .unwrap()
+            .starts_with("▸   1   Tom")
+    );
     press(&mut f, KeyCode::Tab).await;
     let text = draw(&f, 90, 40);
+    assert!(text.contains("▾   1   Tom"), "{text}");
     assert!(text.contains("The plan is in the doc[1]"), "{text}");
     assert!(text.contains("[5 quoted lines]"), "{text}");
     assert!(text.contains("plan.pdf"), "the attachment line: {text}");
     press(&mut f, KeyCode::Char('n')).await;
-    let at = f.screen.reader_cursor_text().unwrap();
-    assert!(at.contains("Sender"), "n jumps to the next header: {at}");
+    assert!(
+        f.screen
+            .reader_cursor_text()
+            .unwrap()
+            .starts_with("▸   2   Sender")
+    );
     press(&mut f, KeyCode::Char('p')).await;
-    assert!(f.screen.reader_cursor_text().unwrap().contains("Tom"));
-    press(&mut f, KeyCode::Char('j')).await;
-    assert!(f.screen.reader_cursor_text().unwrap().starts_with("From:"));
+    press(&mut f, KeyCode::Char('p')).await;
+    assert_eq!(f.screen.reader_cursor_text().as_deref(), Some("Q4 plan"));
 }
 
 #[tokio::test]
@@ -287,8 +324,7 @@ async fn enter_opens_and_closes_a_fold() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);
     press(&mut f, KeyCode::Enter).await;
-    press(&mut f, KeyCode::Home).await;
-    press(&mut f, KeyCode::Tab).await;
+    open_toms_card(&mut f).await;
     cursor_to(&mut f, "quoted lines").await;
     press(&mut f, KeyCode::Enter).await;
     let text = draw(&f, 90, 40);
@@ -333,8 +369,7 @@ async fn a_failed_fetch_shows_on_its_message_with_outside_text_escaped() {
     );
     assert!(!draw(&f, 120, 40).contains('\u{1b}'));
     assert!(!text.contains("fetching…"));
-    press(&mut f, KeyCode::Home).await;
-    press(&mut f, KeyCode::Tab).await;
+    open_toms_card(&mut f).await;
     assert!(
         all_text(&f).contains("The plan is in the doc"),
         "the rest stays readable"
@@ -419,8 +454,7 @@ async fn g_x_confirms_a_single_link_and_asks_which_of_several() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);
     press(&mut f, KeyCode::Enter).await;
-    press(&mut f, KeyCode::Home).await;
-    press(&mut f, KeyCode::Tab).await;
+    open_toms_card(&mut f).await;
     cursor_to(&mut f, "doc[1]").await;
     keys(&mut f, "gx").await;
     let text = draw(&f, 90, 30);
@@ -469,8 +503,7 @@ async fn a_stored_link_rail_would_not_open_is_refused() {
         )
         .unwrap();
     press(&mut f, KeyCode::Enter).await;
-    press(&mut f, KeyCode::Home).await;
-    press(&mut f, KeyCode::Tab).await;
+    open_toms_card(&mut f).await;
     cursor_to(&mut f, "doc[1]").await;
     keys(&mut f, "gx").await;
     keys(&mut f, "1").await;
@@ -511,8 +544,7 @@ async fn markers_become_osc8_hyperlinks_where_the_terminal_supports_them() {
     let mut f = fixture(true).await;
     store_bodies_on_fetch(&f);
     press(&mut f, KeyCode::Enter).await;
-    press(&mut f, KeyCode::Home).await;
-    press(&mut f, KeyCode::Tab).await;
+    open_toms_card(&mut f).await;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| f.screen.view(frame, &Theme::default()))
@@ -563,20 +595,21 @@ async fn the_reader_is_a_pane_when_wide_and_a_full_screen_view_when_narrow() {
         wide.contains("Q4 plan") && wide.contains("All inboxes"),
         "list and reader together: {wide}"
     );
-    // Narrow, the reader takes the body: its title is the first row under the header.
+    // Narrow, the reader takes the body: its subject is the first row under the header.
     let narrow = draw(&f, 90, 24);
-    let body = narrow.lines().nth(1).unwrap_or_default();
-    assert!(
-        body.starts_with("Q4 plan  (3 messages)"),
+    assert_eq!(
+        narrow.lines().nth(1),
+        Some("Q4 plan"),
         "the reader covers the list: {narrow}"
     );
+    assert_eq!(narrow.lines().nth(3), Some("/  3 messages"), "{narrow}");
     press(&mut f, KeyCode::Char('q')).await;
     assert_eq!(f.screen.focus, Focus::List);
     let list = draw(&f, 90, 24);
     // The list's group row, then its first thread.
     let body = list.lines().nth(2).unwrap_or_default();
     assert!(
-        body.contains("Q4 plan") && !body.contains("(3 messages)"),
+        body.contains("Q4 plan") && !body.contains("3 messages"),
         "the list is back: {list}"
     );
 }
@@ -615,13 +648,21 @@ async fn a_store_change_that_leaves_the_thread_as_it_was_rebuilds_nothing() {
 
 #[tokio::test]
 async fn reader_snapshots() {
-    let mut f = fixture(false).await;
-    store_bodies_on_fetch(&f);
-    press(&mut f, KeyCode::Enter).await;
-    press(&mut f, KeyCode::Home).await;
-    press(&mut f, KeyCode::Tab).await;
-    for (width, height) in [(90, 24), (150, 40)] {
-        insta::assert_snapshot!(format!("reader_{width}x{height}"), draw(&f, width, height));
+    for icons in [Icons::Unicode, Icons::Ascii] {
+        let mut f = fixture_with(false, icons).await;
+        store_bodies_on_fetch(&f);
+        press(&mut f, KeyCode::Enter).await;
+        // A frame first, as the app draws one before each key: the reader knows its height,
+        // so `n` to Tom's card does not scroll the title block away.
+        let _ = draw(&f, 90, 24);
+        open_toms_card(&mut f).await;
+        if icons == Icons::Ascii {
+            insta::assert_snapshot!("reader_ascii_90x24", draw(&f, 90, 24));
+            continue;
+        }
+        for (width, height) in [(90, 24), (150, 40)] {
+            insta::assert_snapshot!(format!("reader_{width}x{height}"), draw(&f, width, height));
+        }
     }
 }
 
@@ -665,8 +706,7 @@ async fn a_resize_wraps_the_lines_again() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);
     press(&mut f, KeyCode::Enter).await;
-    press(&mut f, KeyCode::Home).await;
-    press(&mut f, KeyCode::Tab).await;
+    open_toms_card(&mut f).await;
     let wide = draw(&f, 100, 40);
     assert!(wide.contains("The plan is in the doc[1]; notes are on the wiki[2]."));
     let narrow = draw(&f, 30, 60);

@@ -1,9 +1,13 @@
-//! The thread reader: one thread's messages oldest first, collapsed to a header line except
-//! unread ones and the latest, bodies wrapped at the pane's width with folded quotes and
+//! The thread reader: a title block for the thread (the subject, the newest message's sender,
+//! time and account, its recipients and the count), the newest message open under it, and the
+//! older messages as cards (number, sender, time, then a preview or the message itself) in the
+//! order `thread_order` says; bodies wrapped at the pane's width with folded quotes and
 //! numbered links, "fetching…" for bodies the store does not hold yet. One component, drawn in
 //! the split layout's pane or as a full-screen view; the mail screen decides which.
 
 mod cards;
+#[cfg(test)]
+mod keys_tests;
 mod lines;
 #[cfg(test)]
 mod lines_tests;
@@ -96,7 +100,7 @@ pub struct Reader {
     asked: HashSet<i64>,
     /// Escaped error text per message id.
     errors: HashMap<i64, String>,
-    /// The last re-read failed: the title row shows this (escaped) until a read succeeds.
+    /// The last re-read failed: the subject line shows this (escaped) until a read succeeds.
     read_error: Option<String>,
     cursor: usize,
     scroll: usize,
@@ -107,15 +111,10 @@ pub struct Reader {
     size: Cell<(u16, u16)>,
 }
 
-/// Unread messages and the latest start expanded.
+/// The newest message starts open, the older ones collapsed.
 fn default_expanded(detail: &ThreadDetail) -> Vec<bool> {
     let last = detail.messages.len().saturating_sub(1);
-    detail
-        .messages
-        .iter()
-        .enumerate()
-        .map(|(i, m)| !m.is_read || i == last)
-        .collect()
+    (0..detail.messages.len()).map(|i| i == last).collect()
 }
 
 impl Reader {
@@ -186,7 +185,10 @@ impl Reader {
     /// An unchanged thread leaves everything as it is, unless a body it waited for did not
     /// arrive (that message gets its note).
     pub fn refresh(&mut self, detail: ThreadDetail) {
-        self.read_error = None;
+        // A failed re-read's error is the subject line's until a read works.
+        if self.read_error.take().is_some() {
+            self.changed();
+        }
         if detail == self.detail && !self.missed_a_body() {
             return;
         }
@@ -233,6 +235,7 @@ impl Reader {
     /// A re-read of this thread failed with `text` (escaped).
     pub fn read_failed(&mut self, text: String) {
         self.read_error = Some(text);
+        self.changed();
     }
 
     /// A body asked for and answered is still missing, with no note yet.
@@ -338,7 +341,7 @@ impl Reader {
             order: self.order,
             read_error: self.read_error.as_deref(),
         };
-        let built = Rc::new(lines::build(
+        let built = Rc::new(cards::build(
             &self.detail,
             &state,
             usize::from(width.max(1)),
@@ -409,22 +412,13 @@ impl Reader {
     }
 
     fn jump(&mut self, lines: &[ReaderLine], forward: bool) {
-        let is_header = |l: &ReaderLine| matches!(l.kind, LineKind::Header { .. });
+        let starts = starts(lines);
         let found = if forward {
-            lines
-                .iter()
-                .enumerate()
-                .skip(self.cursor + 1)
-                .find(|(_, l)| is_header(l))
+            starts.into_iter().find(|&i| i > self.cursor)
         } else {
-            lines
-                .iter()
-                .enumerate()
-                .take(self.cursor)
-                .rev()
-                .find(|(_, l)| is_header(l))
+            starts.into_iter().rev().find(|&i| i < self.cursor)
         };
-        if let Some((index, _)) = found {
+        if let Some(index) = found {
             self.cursor = index;
         }
     }
@@ -437,11 +431,17 @@ impl Reader {
             *open = !*open;
         }
         self.changed();
+        self.land(Some(message));
+    }
+
+    /// The cursor on `message`'s first line as the lines are now; where it was (clamped) when
+    /// it is on no message's line.
+    fn land(&mut self, message: Option<usize>) {
         let fresh = self.current();
-        self.cursor = fresh
-            .iter()
-            .position(|l| l.kind == LineKind::Header { message })
-            .unwrap_or(0);
+        let last = fresh.len().saturating_sub(1);
+        self.cursor = message
+            .and_then(|m| start_of(&fresh, m))
+            .unwrap_or(self.cursor.min(last));
     }
 
     fn toggle_fold(&mut self, lines: &[ReaderLine]) {
@@ -449,7 +449,9 @@ impl Reader {
             Some(LineKind::Fold { message, block } | LineKind::Quote { message, block }) => {
                 (message, block)
             }
-            Some(LineKind::Header { .. }) => return self.toggle_message(lines),
+            Some(LineKind::Card { .. } | LineKind::Title { .. } | LineKind::Preview { .. }) => {
+                return self.toggle_message(lines);
+            }
             _ => return,
         };
         if !self.unfolded.remove(&target) {
@@ -464,4 +466,28 @@ impl Reader {
             })
             .unwrap_or(self.cursor.min(fresh.len().saturating_sub(1)));
     }
+}
+
+/// Where each message starts, in drawn order: the subject line for the newest, the card line
+/// for each older one.
+fn starts(lines: &[ReaderLine]) -> Vec<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .filter(|&(i, line)| match line.kind {
+            LineKind::Card { .. } => true,
+            LineKind::Title { .. } => {
+                i == 0 || !matches!(lines[i - 1].kind, LineKind::Title { .. })
+            }
+            _ => false,
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The line `message` starts on.
+fn start_of(lines: &[ReaderLine], message: usize) -> Option<usize> {
+    starts(lines)
+        .into_iter()
+        .find(|&i| lines[i].kind.message() == Some(message))
 }
