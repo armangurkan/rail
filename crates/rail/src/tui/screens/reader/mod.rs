@@ -84,10 +84,6 @@ pub struct Reader {
     /// The thread's account, for the title block's badge.
     account: ReaderAccount,
     /// How the older messages run (`thread_order`, `:thread-order`).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the lines from Task 4 on; remove then")
-    )]
     order: ThreadOrder,
     /// `h`: open messages show their header fields, for this session.
     headers: bool,
@@ -339,6 +335,7 @@ impl Reader {
             glyphs: &self.glyphs,
             account: &self.account,
             headers: self.headers,
+            order: self.order,
             read_error: self.read_error.as_deref(),
         };
         let built = Rc::new(lines::build(

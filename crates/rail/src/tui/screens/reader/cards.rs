@@ -1,7 +1,10 @@
 //! The reader's lines for one width: the title block (the subject, the newest message's
-//! sender, time and account, its recipients and the count, a rule), then the newest message,
-//! open (its headers when `h` shows them, its text) or collapsed to its preview, and a rule.
-//! Every outside string is escaped (`fit`, `escape`, or the body's escaped rows).
+//! sender, time and account, its recipients and the count, a rule), the newest message, open
+//! (its headers when `h` shows them, its text) or collapsed to its preview, and a rule; then
+//! each older message as a card (its number, sender and time over a preview, or the message
+//! itself), oldest or newest first, with a rule after each, and the note for the messages left
+//! out where they would be. Every outside string is escaped (`fit`, `escape`, or the body's
+//! escaped rows).
 #![cfg_attr(
     not(test),
     expect(
@@ -10,11 +13,17 @@
     )
 )]
 
+use rail_core::config::ThreadOrder;
 use rail_core::provider::Mailbox;
 use rail_core::store::view::{MessageView, ThreadDetail};
 
 use super::lines::{LineKind, ReaderLine, State, Tone, content, fields, sender};
 use crate::tui::text::{escape, fit, width as cells};
+
+/// The cells a card keeps for its sender however narrow the pane: the time is cut first.
+const MIN_SENDER: usize = 3;
+/// The least room between a card's sender and its time.
+const TIME_GAP: usize = 2;
 
 /// The lines of `detail` at `width`.
 pub(super) fn build(detail: &ThreadDetail, state: &State<'_>, width: usize) -> Vec<ReaderLine> {
@@ -25,7 +34,36 @@ pub(super) fn build(detail: &ThreadDetail, state: &State<'_>, width: usize) -> V
     };
     let mut out = title_block(detail, newest, state, width);
     newest_message(&mut out, detail, newest, state, width);
+    let older: Vec<usize> = match state.order {
+        ThreadOrder::Oldest => (0..newest).collect(),
+        ThreadOrder::Newest => (0..newest).rev().collect(),
+    };
+    // The messages left out are older than every card: before them oldest first, after them
+    // newest first.
+    let (before, after) = match state.order {
+        ThreadOrder::Oldest => (left_out(detail, width), None),
+        ThreadOrder::Newest => (None, left_out(detail, width)),
+    };
+    if let Some(note) = before {
+        out.push(note);
+        out.push(rule(state, width));
+    }
+    for index in older {
+        card(&mut out, detail, index, state, width);
+    }
+    out.extend(after);
     out
+}
+
+/// `[5 older messages of this thread are not shown]`, when some are.
+fn left_out(detail: &ThreadDetail, width: usize) -> Option<ReaderLine> {
+    (detail.older_left_out > 0).then(|| {
+        let note = format!(
+            "[{} older messages of this thread are not shown]",
+            detail.older_left_out
+        );
+        ReaderLine::one(LineKind::Note, fit(&note, width), Tone::Muted)
+    })
 }
 
 /// The subject (or a failed re-read's error), the sender line, the recipients line and a
@@ -145,6 +183,87 @@ fn open_message(
         fields(out, index, m, detail, state, width);
     }
     content(out, index, m, state, width);
+}
+
+/// An older message: its card line, then its preview under the sender or, open, the message
+/// itself; then a rule.
+fn card(
+    out: &mut Vec<ReaderLine>,
+    detail: &ThreadDetail,
+    index: usize,
+    state: &State<'_>,
+    width: usize,
+) {
+    let m = &detail.messages[index];
+    let open = is_open(state, index);
+    let prefix = card_prefix(detail.older_left_out + index + 1, open, state);
+    let indent = segments_width(&prefix).min(width);
+    let line = card_line(m, prefix, state, width);
+    out.push(ReaderLine::of(LineKind::Card { message: index }, line));
+    if open {
+        open_message(out, detail, index, state, width);
+    } else {
+        let snippet = fit(&m.snippet, width - indent);
+        let preview = format!("{}{snippet}", " ".repeat(indent));
+        out.push(ReaderLine::one(
+            LineKind::Preview { message: index },
+            preview,
+            Tone::Muted,
+        ));
+    }
+    out.push(rule(state, width));
+}
+
+/// `▸   2   `: the arrow (`▾` while open), two spaces, the number in its box (counted from the
+/// thread's oldest message), two spaces.
+fn card_prefix(number: usize, open: bool, state: &State<'_>) -> Vec<(String, Tone)> {
+    let arrow = if open {
+        state.glyphs.open
+    } else {
+        state.glyphs.closed
+    };
+    vec![
+        (arrow.to_string(), Tone::Muted),
+        ("  ".to_string(), Tone::Plain),
+        (format!(" {number} "), Tone::Number),
+        ("  ".to_string(), Tone::Plain),
+    ]
+}
+
+/// `segments` (the prefix), the sender (bold while unread, ` ★` when starred) cut so the time
+/// fits whole at the right edge; below about 20 columns the sender keeps three cells and the
+/// time is cut at the edge.
+fn card_line(
+    m: &MessageView,
+    mut segments: Vec<(String, Tone)>,
+    state: &State<'_>,
+    width: usize,
+) -> Vec<(String, Tone)> {
+    let star = if m.is_starred {
+        format!(" {}", state.glyphs.star)
+    } else {
+        String::new()
+    };
+    let tone = if m.is_read { Tone::Plain } else { Tone::Strong };
+    let time = time(m, state);
+    let used = segments_width(&segments);
+    let room = width
+        .saturating_sub(used + TIME_GAP + cells(&time))
+        .max(MIN_SENDER);
+    let name = fit(&format!("{}{star}", sender(m)), room);
+    let pad = width
+        .saturating_sub(used + cells(&name) + cells(&time))
+        .max(1);
+    segments.extend([
+        (name, tone),
+        (" ".repeat(pad), Tone::Plain),
+        (time, Tone::Muted),
+    ]);
+    cut(segments, width)
+}
+
+fn segments_width(segments: &[(String, Tone)]) -> usize {
+    segments.iter().map(|(text, _)| cells(text)).sum()
 }
 
 /// `segments` cut at `width` columns: the one that crosses the edge is cut with `…`, the rest

@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rail_core::config::Icons;
+use rail_core::config::{Icons, ThreadOrder};
 use rail_core::store::view::ThreadDetail;
 
 use super::ReaderAccount;
@@ -19,6 +19,7 @@ const TITLE: LineKind = LineKind::Title { message: 3 };
 struct Setup {
     expanded: Vec<bool>,
     headers: bool,
+    order: ThreadOrder,
     read_error: Option<String>,
     icons: Icons,
     account: ReaderAccount,
@@ -31,6 +32,7 @@ impl Setup {
         Self {
             expanded: (0..detail.messages.len()).map(|i| i == last).collect(),
             headers: false,
+            order: ThreadOrder::Oldest,
             read_error: None,
             icons: Icons::Unicode,
             account: axon(),
@@ -49,6 +51,7 @@ impl Setup {
             glyphs: &glyphs,
             account: &self.account,
             headers: self.headers,
+            order: self.order,
             read_error: self.read_error.as_deref(),
         };
         cards::build(detail, &state, cols)
@@ -297,18 +300,21 @@ fn an_unknown_account_has_no_badge_ascii_rules_are_dashes_and_an_empty_thread_is
     assert_eq!(tones(&lines[0]), [Tone::Accent]);
 }
 
-/// Every combination of headers, glyphs and expansion (all open or all collapsed).
+/// Every combination of order, headers, glyphs and expansion (all open or all collapsed).
 fn every_setup(detail: &ThreadDetail) -> Vec<Setup> {
     let mut out = Vec::new();
-    for headers in [false, true] {
-        for icons in [Icons::Unicode, Icons::Ascii] {
-            for open in [false, true] {
-                out.push(Setup {
-                    expanded: vec![open; detail.messages.len()],
-                    headers,
-                    icons,
-                    ..Setup::of(detail)
-                });
+    for order in [ThreadOrder::Oldest, ThreadOrder::Newest] {
+        for headers in [false, true] {
+            for icons in [Icons::Unicode, Icons::Ascii] {
+                for open in [false, true] {
+                    out.push(Setup {
+                        expanded: vec![open; detail.messages.len()],
+                        headers,
+                        order,
+                        icons,
+                        ..Setup::of(detail)
+                    });
+                }
             }
         }
     }
@@ -324,7 +330,8 @@ fn no_line_is_wider_than_the_width_it_was_built_for() {
             for line in setup.lines(&detail, cols) {
                 assert!(
                     width(&line.text) <= cols,
-                    "{cols} columns, headers {}, {:?}: {:?} {}",
+                    "{cols} columns, {:?}, headers {}, {:?}: {:?} {}",
+                    setup.order,
                     setup.headers,
                     setup.icons,
                     line.kind,
@@ -335,4 +342,262 @@ fn no_line_is_wider_than_the_width_it_was_built_for() {
             }
         }
     }
+}
+
+/// A card line: `head`, then `time` right-aligned at `cols`.
+fn card_text(head: &str, time: &str, cols: usize) -> String {
+    format!(
+        "{head}{}{time}",
+        " ".repeat(cols - width(head) - width(time))
+    )
+}
+
+fn card_of(lines: &[ReaderLine], message: usize) -> &ReaderLine {
+    lines
+        .iter()
+        .find(|l| l.kind == LineKind::Card { message })
+        .expect("the message's card")
+}
+
+#[test]
+fn the_four_message_thread_oldest_first_reads_as_the_concept() {
+    let detail = four(0);
+    let lines = Setup::of(&detail).lines(&detail, 90);
+    assert_eq!(lines.len(), 17);
+    let card = |message| LineKind::Card { message };
+    let preview = |message| LineKind::Preview { message };
+    assert_eq!(
+        kinds(&lines[8..]),
+        [
+            card(0),
+            preview(0),
+            LineKind::Rule,
+            card(1),
+            preview(1),
+            LineKind::Rule,
+            card(2),
+            preview(2),
+            LineKind::Rule
+        ]
+    );
+    let rule = "─".repeat(90);
+    let expected = [
+        card_text("▸   1   Priya Nair", "Oct 03", 90),
+        "        Agenda attached.".to_string(),
+        rule.clone(),
+        card_text("▸   2   Tom", "Mon 22:11", 90),
+        "        Sounds good.".to_string(),
+        rule.clone(),
+        card_text("▸   3   David Hallas ★", "Wed 18:20", 90),
+        "        Moving it to Thursday?".to_string(),
+        rule,
+    ];
+    assert_eq!(
+        texts(&lines[8..]),
+        expected.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        tones(&lines[8]),
+        [
+            Tone::Muted,
+            Tone::Plain,
+            Tone::Number,
+            Tone::Plain,
+            Tone::Plain,
+            Tone::Plain,
+            Tone::Muted
+        ],
+        "a read message's sender is plain"
+    );
+    assert_eq!(lines[8].segments[2].0, " 1 ", "the number in its box");
+    assert_eq!(
+        tones(&lines[14])[4],
+        Tone::Strong,
+        "an unread one's is bold"
+    );
+    assert_eq!(tones(&lines[9]), [Tone::Muted]);
+    assert_eq!(width(&lines[8].text), 90, "the time ends at the edge");
+}
+
+#[test]
+fn newest_first_runs_the_cards_the_other_way_under_the_same_open_message() {
+    let detail = four(0);
+    let oldest = Setup::of(&detail).lines(&detail, 90);
+    let mut setup = Setup::of(&detail);
+    setup.order = ThreadOrder::Newest;
+    let lines = setup.lines(&detail, 90);
+    assert_eq!(
+        texts(&lines[..8]),
+        texts(&oldest[..8]),
+        "the title block and the newest"
+    );
+    assert_eq!(
+        kinds(&lines[8..11]),
+        [
+            LineKind::Card { message: 2 },
+            LineKind::Preview { message: 2 },
+            LineKind::Rule
+        ]
+    );
+    let cards: Vec<&str> = lines
+        .iter()
+        .filter(|l| matches!(l.kind, LineKind::Card { .. }))
+        .map(|l| l.text.as_str())
+        .collect();
+    assert_eq!(
+        cards,
+        [
+            card_text("▸   3   David Hallas ★", "Wed 18:20", 90),
+            card_text("▸   2   Tom", "Mon 22:11", 90),
+            card_text("▸   1   Priya Nair", "Oct 03", 90),
+        ]
+    );
+    assert_eq!(lines.last().unwrap().kind, LineKind::Rule);
+}
+
+#[test]
+fn the_left_out_note_sits_where_those_messages_would_be_and_the_numbers_count_them() {
+    let detail = four(5);
+    let note = "[5 older messages of this thread are not shown]";
+    let oldest = Setup::of(&detail).lines(&detail, 90);
+    assert_eq!(
+        kinds(&oldest[7..11]),
+        [
+            LineKind::Rule,
+            LineKind::Note,
+            LineKind::Rule,
+            LineKind::Card { message: 0 }
+        ]
+    );
+    assert_eq!(oldest[8].text, note);
+    assert_eq!(tones(&oldest[8]), [Tone::Muted]);
+    assert!(
+        oldest[10].text.starts_with("▸   6   Priya Nair"),
+        "{}",
+        oldest[10].text
+    );
+    let mut setup = Setup::of(&detail);
+    setup.order = ThreadOrder::Newest;
+    let newest = setup.lines(&detail, 90);
+    let n = newest.len();
+    assert_eq!(kinds(&newest[n - 2..]), [LineKind::Rule, LineKind::Note]);
+    assert_eq!(newest[n - 1].text, note);
+    assert!(
+        newest[8].text.starts_with("▸   8   David Hallas ★"),
+        "{}",
+        newest[8].text
+    );
+}
+
+#[test]
+fn a_two_digit_number_moves_the_sender_and_its_preview_one_cell_right() {
+    let detail = four(9);
+    let lines = Setup::of(&detail).lines(&detail, 90);
+    assert!(card_of(&lines, 0).text.starts_with("▸   10   Priya Nair"));
+    let preview = lines
+        .iter()
+        .find(|l| l.kind == LineKind::Preview { message: 0 })
+        .unwrap();
+    assert_eq!(preview.text, "         Agenda attached.");
+}
+
+#[test]
+fn an_open_card_shows_its_text_and_with_h_its_headers_before_a_rule() {
+    let detail = four(0);
+    let mut setup = Setup::of(&detail);
+    setup.expanded[1] = true;
+    let lines = setup.lines(&detail, 90);
+    let at = lines
+        .iter()
+        .position(|l| l.kind == LineKind::Card { message: 1 })
+        .unwrap();
+    assert!(
+        lines[at].text.starts_with("▾   2   Tom"),
+        "{}",
+        lines[at].text
+    );
+    assert_eq!(
+        kinds(&lines[at + 1..at + 5]),
+        [
+            LineKind::Gap,
+            LineKind::Body { message: 1 },
+            LineKind::Gap,
+            LineKind::Rule
+        ]
+    );
+    assert_eq!(lines[at + 2].text, "Sounds good.");
+    setup.headers = true;
+    let lines = setup.lines(&detail, 90);
+    let at = lines
+        .iter()
+        .position(|l| l.kind == LineKind::Card { message: 1 })
+        .unwrap();
+    assert_eq!(
+        texts(&lines[at + 1..at + 3]),
+        ["From: Tom <tom@example.com>", "Date: Mon 06 Oct 2025 22:11"]
+    );
+    assert_eq!(
+        kinds(&lines[at + 3..at + 7]),
+        [
+            LineKind::Gap,
+            LineKind::Body { message: 1 },
+            LineKind::Gap,
+            LineKind::Rule
+        ]
+    );
+}
+
+#[test]
+fn a_long_sender_is_cut_so_the_time_stays_whole_at_the_edge() {
+    let mut detail = four(0);
+    detail.messages[1].from = vec![person(
+        Some("Bartholomew Alexander Fitzgerald-Smythe"),
+        "b@example.com",
+    )];
+    let lines = Setup::of(&detail).lines(&detail, 40);
+    let card = card_of(&lines, 1);
+    assert_eq!(card.text, "▸   2   Bartholomew Alexande…  Mon 22:11");
+    assert_eq!(width(&card.text), 40);
+}
+
+/// Review Focus 3.
+#[test]
+fn a_card_at_15_columns_keeps_three_cells_of_sender_and_cuts_the_time() {
+    let detail = four(0);
+    let lines = Setup::of(&detail).lines(&detail, 15);
+    assert_eq!(card_of(&lines, 0).text, "▸   1   Pr… Oc…");
+    assert_eq!(card_of(&lines, 1).text, "▸   2   Tom Mo…");
+    assert!(lines.iter().all(|l| width(&l.text) <= 15));
+    let preview = lines
+        .iter()
+        .find(|l| l.kind == LineKind::Preview { message: 0 })
+        .unwrap();
+    assert_eq!(preview.text, "        Agenda…");
+    let wider = Setup::of(&detail).lines(&detail, 22);
+    assert_eq!(
+        card_of(&wider, 1).text,
+        "▸   2   Tom  Mon 22:11",
+        "at 22 columns the time is whole again"
+    );
+}
+
+/// Review Focus 2 (a card).
+#[test]
+fn a_cards_preview_is_escaped_and_cut_under_its_sender() {
+    let mut detail = four(0);
+    detail.messages[1].snippet = format!("Sounds \u{1b}[2J good\u{2028}{}", "y".repeat(300));
+    let lines = Setup::of(&detail).lines(&detail, 60);
+    let preview = lines
+        .iter()
+        .find(|l| l.kind == LineKind::Preview { message: 1 })
+        .unwrap();
+    assert!(
+        preview
+            .text
+            .starts_with("        Sounds \\u{1b}[2J good\\u{2028}y"),
+        "{}",
+        preview.text
+    );
+    assert!(preview.text.ends_with('…'), "{}", preview.text);
+    assert_eq!(width(&preview.text), 60);
 }

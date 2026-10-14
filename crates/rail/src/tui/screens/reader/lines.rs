@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rail_core::config::ThreadOrder;
 use rail_core::provider::Mailbox;
 use rail_core::store::view::{BodyState, MessageView, ThreadDetail};
 
@@ -23,6 +24,10 @@ pub enum LineKind {
     },
     /// The title block's subject, sender and recipients lines, on the newest message.
     Title {
+        message: usize,
+    },
+    /// An older message's card line.
+    Card {
         message: usize,
     },
     /// A collapsed message's preview.
@@ -56,6 +61,7 @@ impl LineKind {
         match self {
             Self::Header { message }
             | Self::Title { message }
+            | Self::Card { message }
             | Self::Preview { message }
             | Self::Field { message }
             | Self::Body { message }
@@ -160,6 +166,8 @@ pub(super) struct State<'a> {
     pub account: &'a ReaderAccount,
     /// `h`: every open message shows its header fields.
     pub headers: bool,
+    /// How the older messages run.
+    pub order: ThreadOrder,
     /// A failed re-read's error (escaped), drawn in place of the subject.
     pub read_error: Option<&'a str>,
 }
