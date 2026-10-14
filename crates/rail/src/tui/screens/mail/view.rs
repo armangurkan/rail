@@ -268,6 +268,7 @@ impl MailScreen {
             return;
         }
         let height = usize::from(area.height);
+        self.list_rows.set(height);
         let groups = self.list_groups.groups(&self.list, &self.ctx.clock);
         let shown = frame_lines(
             &list_lines(&groups),

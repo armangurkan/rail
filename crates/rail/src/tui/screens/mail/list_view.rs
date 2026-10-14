@@ -101,6 +101,19 @@ pub(super) fn frame_lines(
     out
 }
 
+/// The last thread a pane `height` rows tall draws when it starts at thread `top` with the
+/// cursor on it: how far a page from `top` reaches.
+pub(super) fn last_thread_from(lines: &[ListLine], top: usize, height: usize) -> usize {
+    frame_lines(lines, top, top, height)
+        .iter()
+        .rev()
+        .find_map(|line| match line {
+            ListLine::Thread(index) => Some(*index),
+            ListLine::Group(_) => None,
+        })
+        .unwrap_or(top)
+}
+
 impl MailScreen {
     /// The window's thread `index` as a row in a list `cols` wide, its time by `group`: the
     /// cursor, the multi-selection, a failed action, the badge in a merged mailbox.

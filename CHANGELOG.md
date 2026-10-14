@@ -315,10 +315,12 @@ All notable changes to Rail are recorded here. The format follows
   the count); it shows `/  4 messages`. A title or card line full exactly at a part's end now
   ends in `…` when something was left off. The From:, To: and Cc: lines no longer repeat an
   address that is also the name.
-- Page down in the thread list could leave threads between two screens unseen when the next
-  screen had more group rows; a page now moves by the threads shown and the next screen starts
-  with the thread after the last one shown. A group's name is no longer drawn alone on the
-  bottom row.
+- Page down and page up in the thread list could leave threads between two screens unseen when
+  the next screen had more group rows; a page now moves by the threads shown, the next screen
+  starts with the thread after the last one shown and the screen above ends with the thread
+  before the first one shown, whatever row the cursor is on (it goes to the new screen's last
+  thread when that screen holds fewer). A group's name is no longer drawn alone on the bottom
+  row.
 - A thread dated beyond what the clock can read was grouped under `OLDER` even when it was in
   the future, so `OLDER` could head the list twice; it goes by its sign now.
 - The header showed an unread count on an account's own Sent, Trash or Drafts folder

@@ -205,6 +205,8 @@ pub struct MailScreen {
     size: Cell<(u16, u16)>,
     /// The first thread the last list frame drew (a window index), for the re-read.
     drawn_top: Cell<Option<usize>>,
+    /// The thread list's rows in the last frame drawn (threads and group rows), for a page.
+    list_rows: Cell<usize>,
     /// The header's search slot from the last frame drawn, when it was drawn.
     slot_rect: Cell<Option<Rect>>,
     /// The newest list read that replaces the window (a scope change, `Home`, `End`) while it
@@ -280,6 +282,7 @@ impl MailScreen {
             store_state: StoreState::Loading,
             size: Cell::new((0, 0)),
             drawn_top: Cell::new(None),
+            list_rows: Cell::new(0),
             slot_rect: Cell::new(None),
             navigating: None,
             reader: None,
@@ -488,8 +491,8 @@ impl MailScreen {
             Action::ListOpen => return self.open_selected(),
             Action::ListDown => self.list.move_by(1, height),
             Action::ListUp => self.list.move_by(-1, height),
-            Action::ListPageDown => self.list.page(true, top, height),
-            Action::ListPageUp => self.list.page(false, top, height),
+            Action::ListPageDown => self.page(true, top, height),
+            Action::ListPageUp => self.page(false, top, height),
             Action::ListTop => self.list.top(height),
             Action::ListBottom => self.list.bottom(height),
             _ => None,
@@ -505,6 +508,20 @@ impl MailScreen {
             }
             None => Vec::new(),
         }
+    }
+
+    /// A page of the list from a screen starting at thread `top` that showed `threads`
+    /// threads, each screen worked out from the window's groups and the pane's rows.
+    fn page(&mut self, forward: bool, top: usize, threads: usize) -> Option<PageAt> {
+        let groups = self.list_groups.groups(&self.list, &self.ctx.clock);
+        let lines = list_view::list_lines(&groups);
+        let rows = match self.list_rows.get() {
+            0 => FALLBACK_HEIGHT,
+            rows => rows,
+        };
+        self.list.page(forward, top, threads, |start| {
+            list_view::last_thread_from(&lines, start, rows)
+        })
     }
 
     fn sidebar_action(&mut self, action: Action) -> Vec<Effect> {

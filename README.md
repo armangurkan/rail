@@ -316,7 +316,9 @@ The thread list shows the unified inbox, newest first, in date groups: `TODAY`, 
 `THIS WEEK` (two to six days ago) and `OLDER`, each name on its own row above its threads; the
 group of the top row stays on the first row as you scroll. `PgDn` and `PgUp` (`Ctrl-d`, `Ctrl-u`)
 move a page by the threads on screen: the next page starts with the thread after the last one
-shown, and a group's name never sits alone on the bottom row. A row shows a dot (`●` in the
+shown, the page above ends with the thread before the first one shown, and the cursor keeps its
+row, or goes to the page's last thread when the page holds fewer. A group's name never sits alone
+on the bottom row. A row shows a dot (`●` in the
 account's colour while the thread has unread mail, a muted `·` once it is read, `▸` when it is
 selected with `Space`), the account's badge in `All inboxes`, `Starred`, `Sent` and `Trash` (its
 label's first letter on its colour), the people, `★` for starred and `📎` for attachments, the

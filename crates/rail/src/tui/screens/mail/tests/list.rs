@@ -193,6 +193,84 @@ async fn a_page_down_over_three_group_rows_starts_with_the_thread_after_the_last
     );
 }
 
+/// The final review's finding 1: the cursor on the bottom row and a next screen with more group
+/// rows (so fewer threads) than this one. The next screen still starts with the thread after
+/// the last one shown, and the cursor clamps to its last thread.
+#[tokio::test]
+async fn a_page_down_from_the_bottom_row_starts_with_the_thread_after_the_last_shown() {
+    let mut envelopes = threads("o", BASE_MS - 10 * DAY_MS, 30);
+    envelopes.extend(threads("w", BASE_MS - 2 * DAY_MS, 2));
+    envelopes.extend(threads("y", BASE_MS, 2));
+    envelopes.extend(threads("d", BASE_MS + 26 * HOUR_MS, 21));
+    let mut f = seeded(&envelopes, Icons::Unicode).await;
+    let before = lines(&f, 90, 24);
+    assert_eq!(before[1].trim_end(), "TODAY");
+    assert!(
+        before[22].contains("subject dm0"),
+        "the last shown: {}",
+        before[22]
+    );
+    for _ in 0..20 {
+        press(&mut f, KeyCode::Char('j')).await;
+    }
+    assert_eq!(
+        cursor_row(&f, 90, 24),
+        Some(22),
+        "the cursor on the bottom row"
+    );
+    press(&mut f, KeyCode::PageDown).await;
+    let after = lines(&f, 90, 24);
+    assert_eq!(after[1].trim_end(), "YESTERDAY", "{after:?}");
+    assert!(
+        after[2].contains("subject ym1"),
+        "the thread after the last one shown: {}",
+        after[2]
+    );
+    assert_eq!(
+        selected(&f).as_deref(),
+        Some("subject om15"),
+        "the screen's last thread"
+    );
+    assert_eq!(cursor_row(&f, 90, 24), Some(22));
+}
+
+/// The mirror: the cursor on the top row and a screen above with more group rows than this one.
+/// The previous screen ends with the thread before the first one shown.
+#[tokio::test]
+async fn a_page_up_from_the_top_row_ends_with_the_thread_before_the_first_shown() {
+    let mut envelopes = threads("o", BASE_MS - 10 * DAY_MS, 40);
+    envelopes.extend(threads("w", BASE_MS - 2 * DAY_MS, 2));
+    envelopes.extend(threads("y", BASE_MS, 2));
+    envelopes.extend(threads("d", BASE_MS + 26 * HOUR_MS, 2));
+    let mut f = seeded(&envelopes, Icons::Unicode).await;
+    let _ = lines(&f, 90, 24);
+    press(&mut f, KeyCode::End).await;
+    for _ in 0..20 {
+        press(&mut f, KeyCode::Char('k')).await;
+    }
+    let before = lines(&f, 90, 24);
+    assert_eq!(before[1].trim_end(), "OLDER");
+    assert!(
+        before[2].contains("subject om20"),
+        "the first shown: {}",
+        before[2]
+    );
+    assert_eq!(cursor_row(&f, 90, 24), Some(2), "the cursor on the top row");
+    press(&mut f, KeyCode::PageUp).await;
+    let after = lines(&f, 90, 24);
+    assert!(
+        after[22].contains("subject om21"),
+        "the thread before the first one shown: {after:?}"
+    );
+    assert_eq!(after[1].trim_end(), "THIS WEEK", "{after:?}");
+    assert_eq!(
+        selected(&f).as_deref(),
+        Some("subject wm0"),
+        "the cursor keeps its row"
+    );
+    assert_eq!(cursor_row(&f, 90, 24), Some(2));
+}
+
 /// Review Focus 5 (selection and opening).
 #[tokio::test]
 async fn space_selects_across_a_group_row_and_enter_opens_the_thread_under_the_cursor() {
