@@ -363,7 +363,7 @@ impl MailScreen {
             .enumerate()
             .map(|(i, account)| {
                 let status = self.status.status_of(account);
-                let text = account_part(&escape(&account.name), status, &glyphs);
+                let text = account_part(&escape(&account.label), status, &glyphs);
                 (self.account_color(i, theme), text)
             })
             .collect();
@@ -590,7 +590,7 @@ mod tests {
             std::sync::Arc::new(crate::tui::data::FakeDaemon::default()),
         );
         let mut accounts = crate::tui::test_util::work_and_home();
-        accounts[0].name = "wo\u{1b}[2Jrk".into();
+        accounts[0].label = "wo\u{1b}[2Jrk".into();
         let screen = MailScreen::new(ctx, accounts);
         let bar = screen.bar(&Theme::default());
         let text = &bar.right[0].1;

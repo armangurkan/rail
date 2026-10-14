@@ -217,6 +217,7 @@ mod tests {
         AccountConfig {
             client_secret: Some("sec".into()),
             color: None,
+            label: None,
             ..crate::test_support::sample_account()
         }
     }

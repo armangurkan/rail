@@ -46,6 +46,10 @@ pub struct DoctorReport {
     /// treats as another).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout_note: Option<String>,
+    /// Two accounts show the same label on screen (compared ignoring case); changes nothing's
+    /// health.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_note: Option<String>,
     /// `general.theme` as configured (not checked against the TUI's table).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,

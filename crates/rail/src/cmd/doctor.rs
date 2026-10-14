@@ -82,6 +82,9 @@ fn render_config(out: &mut String, report: &DoctorReport) {
     if let Some(note) = &report.layout_note {
         let _ = writeln!(out, "{WARN} layout   {}", escaped(note));
     }
+    if let Some(note) = &report.label_note {
+        let _ = writeln!(out, "{WARN} labels   {}", escaped(note));
+    }
     if let Some(theme) = &report.theme {
         let _ = writeln!(out, "{} theme    {}", mark(true), escaped(theme));
     }
@@ -576,5 +579,22 @@ mod tests {
         drop(store);
         let text = render(&gather(&paths, &ItemIdCache::default()));
         assert!(text.contains("FAIL store"), "{text}");
+    }
+
+    #[test]
+    fn a_shared_label_is_a_warning_line_that_does_not_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(dir.path());
+        write_config(
+            &paths,
+            "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"x\"\nlabel = \"Mail\"\n\n[[accounts]]\nname = \"home\"\nkind = \"gmail\"\naddress = \"h@example.com\"\nclient_id = \"y\"\nlabel = \"mail\"\n",
+        );
+        let report = gather(&paths, &ItemIdCache::default());
+        let text = render(&report);
+        assert!(
+            text.contains("warn labels   two accounts share the label \"mail\""),
+            "{text}"
+        );
+        assert!(report.is_healthy());
     }
 }

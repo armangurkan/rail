@@ -33,6 +33,7 @@ pub fn gather(paths: &Paths, ids: &ItemIdCache) -> DoctorReport {
         secrets_checked: false,
         accounts: Vec::new(),
         layout_note: None,
+        label_note: None,
         theme: config.general.theme.clone(),
     };
     report.layout_note = match config.general.layout {
@@ -40,6 +41,7 @@ pub fn gather(paths: &Paths, ids: &ItemIdCache) -> DoctorReport {
         Layout::Split => Some(layout_note("split")),
         Layout::Stack => Some(layout_note("stack")),
     };
+    report.label_note = label_note(config);
     let rows = check_store(&mut report);
     if let Some(config) = &loaded {
         check_accounts(&mut report, config, secrets.as_ref(), &rows);
@@ -50,6 +52,21 @@ pub fn gather(paths: &Paths, ids: &ItemIdCache) -> DoctorReport {
 
 fn layout_note(value: &str) -> String {
     format!("general.layout = \"{value}\" acts as \"auto\" in this version of Rail")
+}
+
+/// `two accounts share the label "X"` for the first account whose label (its name when unset or
+/// blank) another account before it already shows, ignoring case.
+fn label_note(config: &Config) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    config.accounts.iter().find_map(|account| {
+        let shown = account
+            .label
+            .as_deref()
+            .filter(|l| !l.trim().is_empty())
+            .unwrap_or(&account.name);
+        (!seen.insert(shown.to_lowercase()))
+            .then(|| format!("two accounts share the label \"{shown}\""))
+    })
 }
 
 /// Open the store, recording schema version, size and any failure.
@@ -274,5 +291,33 @@ mod tests {
         fake.lock();
         let report = gather(&paths, &ItemIdCache::default());
         assert!(report.secrets_error.unwrap().get().contains("op signin"));
+    }
+
+    #[test]
+    fn two_accounts_showing_one_label_are_noted() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(dir.path());
+        write_config(
+            &paths,
+            "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"x\"\nlabel = \"Mail\"\n\n[[accounts]]\nname = \"home\"\nkind = \"gmail\"\naddress = \"h@example.com\"\nclient_id = \"y\"\nlabel = \"mail\"\n",
+        );
+        let report = gather(&paths, &ItemIdCache::default());
+        assert_eq!(
+            report.label_note.as_deref(),
+            Some("two accounts share the label \"mail\"")
+        );
+        write_config(
+            &paths,
+            "[general]\nsecrets = \"file\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"x\"\n\n[[accounts]]\nname = \"home\"\nkind = \"gmail\"\naddress = \"h@example.com\"\nclient_id = \"y\"\nlabel = \"WORK\"\n",
+        );
+        assert_eq!(
+            gather(&paths, &ItemIdCache::default())
+                .label_note
+                .as_deref(),
+            Some("two accounts share the label \"WORK\""),
+            "an unset label is the account's name"
+        );
+        write_config(&paths, FILE_BACKEND_ONE_ACCOUNT);
+        assert_eq!(gather(&paths, &ItemIdCache::default()).label_note, None);
     }
 }

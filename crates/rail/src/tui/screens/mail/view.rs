@@ -209,7 +209,7 @@ impl MailScreen {
         let name = |i: usize| {
             self.accounts
                 .get(i)
-                .map_or("?".to_string(), |a| escape(&a.name))
+                .map_or("?".to_string(), |a| escape(&a.label))
         };
         match &self.scope {
             ScopeChoice::Unified => "All inboxes".to_string(),

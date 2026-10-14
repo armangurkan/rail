@@ -1022,6 +1022,7 @@ running syncs carry on unchanged.
 | `client_secret` | Gmail | The desktop client's secret, or an `op://vault/item/field` reference. |
 | `tenant` | no | Microsoft tenant ID or domain (default `common`). |
 | `color` | no | Account colour in the UI. |
+| `label` | no | The account's name on screen: the sidebar, the header, `Write from`, the account states and the palette (at most 40 characters; `name` stays what commands, `--account` and `account:` use). `rail doctor` warns when two accounts show the same one. |
 | `history_days`, `body_cache_days` | no | Per-account overrides of the `[general]` values. |
 | `ai_send` | no | `"confirm"` (default), `"drafts"` or `"client"`; see below. |
 | `signature` | no | A text file whose contents go under `-- ` at the end of every new message, reply and forward from this account (`~` is your home directory; trailing blank lines are dropped; at most 4 KiB are used). Read when the mail screen starts; a file that cannot be read is noticed when you start writing, and the message goes without it. |

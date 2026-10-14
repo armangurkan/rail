@@ -26,8 +26,11 @@ impl MailScreen {
             .collect();
         entries.extend(self.command_entries());
         entries.extend(self.accounts.iter().enumerate().map(|(i, a)| PaletteEntry {
-            text: format!("Go to {}'s inbox", a.name),
-            search: format!("Go to {}'s inbox account {} {}", a.name, a.name, a.address),
+            text: format!("Go to {}'s inbox", a.label),
+            search: format!(
+                "Go to {}'s inbox account {} {} {}",
+                a.label, a.label, a.name, a.address
+            ),
             key: account_action(i + 1).map(key).unwrap_or_default(),
             target: Target::Scope(ScopeChoice::Account(i)),
         }));
@@ -86,7 +89,7 @@ impl MailScreen {
                 let account = item
                     .account
                     .and_then(|i| self.accounts.get(i))
-                    .map_or("", |a| a.name.as_str());
+                    .map_or("", |a| a.label.as_str());
                 PaletteEntry {
                     text: format!("Label: {account} · {}", item.label),
                     search: format!("label {account} {}", item.label),

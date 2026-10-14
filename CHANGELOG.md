@@ -8,6 +8,10 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- `label` in an account's `[[accounts]]` table names the account on screen: the sidebar, the
+  header (`Personal · Inbox`), `Write from`, the account states and the palette; `name` stays
+  what commands, `--account` and `account:` use. At most 40 characters; `rail doctor` warns
+  `two accounts share the label "X"`.
 - The mail screen's frame: a header row with the scope, its counts, a search slot and one sync
   summary (`● Synced 14:47`, or the worst account's state; kept whole, the scope is cut when both
   do not fit); the sidebar, the list and the reader

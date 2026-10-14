@@ -49,7 +49,7 @@ impl MailScreen {
                     .enumerate()
                     .map(|(i, a)| PickerItem {
                         id: i64::try_from(i).unwrap_or(i64::MAX),
-                        name: format!("{} · {}", a.name, a.address),
+                        name: format!("{} · {}", a.label, a.address),
                         checked: false,
                         swatch: Vec::new(),
                     })

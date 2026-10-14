@@ -152,6 +152,7 @@ fn build_account(
         kind: request.kind,
         address,
         color: request.color.clone(),
+        label: None,
         client_id,
         client_secret: resolved.stored.as_ref().map(|s| s.expose().to_string()),
         tenant: match request.kind {

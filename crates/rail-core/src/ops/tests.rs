@@ -647,6 +647,7 @@ fn a_doctor_report_keeps_config_parser_text_in_detail() {
         secrets_checked: false,
         accounts: Vec::new(),
         layout_note: None,
+        label_note: None,
         theme: None,
     };
     assert!(!report.is_healthy());

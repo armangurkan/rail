@@ -231,7 +231,7 @@ impl StatusBar {
         }
         let ranked: Vec<(u8, String)> = accounts
             .iter()
-            .map(|a| rank(&escape(&a.name), self.status_of(a), glyphs))
+            .map(|a| rank(&escape(&a.label), self.status_of(a), glyphs))
             .collect();
         let failed: u64 = accounts
             .iter()
@@ -286,7 +286,7 @@ impl StatusBar {
                 .statuses
                 .iter()
                 .find(|s| s.address.eq_ignore_ascii_case(&account.address));
-            parts.push(account_part(&escape(&account.name), status, glyphs));
+            parts.push(account_part(&escape(&account.label), status, glyphs));
         }
         parts.join("  ·  ")
     }
@@ -509,6 +509,7 @@ mod tests {
         bar.connected(vec![status("work", "w@example.com", SyncPhase::Delta)]);
         let accounts = vec![crate::tui::screens::mail::AccountEntry {
             name: "Evil\u{7}Corp".into(),
+            label: "Evil\u{7}Corp".into(),
             address: "w@example.com".into(),
             kind: rail_core::config::AccountKind::Gmail,
             color: None,

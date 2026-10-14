@@ -102,6 +102,9 @@ pub struct MailContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountEntry {
     pub name: String,
+    /// What the screen calls the account: `label` from config when set and not blank, else
+    /// `name`. Outside text (the user's config): escaped when drawn.
+    pub label: String,
     pub address: String,
     pub kind: AccountKind,
     /// `None` takes the theme's colour by position.
@@ -117,6 +120,11 @@ impl AccountEntry {
             .iter()
             .map(|account| AccountEntry {
                 name: account.name.clone(),
+                label: account
+                    .label
+                    .clone()
+                    .filter(|l| !l.trim().is_empty())
+                    .unwrap_or_else(|| account.name.clone()),
                 address: account.address.to_ascii_lowercase(),
                 kind: account.kind,
                 color: account

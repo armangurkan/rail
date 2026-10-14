@@ -46,6 +46,7 @@ fn account(address: &str, secret: &str) -> AccountConfig {
         kind: AccountKind::Gmail,
         address: address.into(),
         color: None,
+        label: None,
         client_id: "cid".into(),
         client_secret: Some(secret.into()),
         tenant: None,

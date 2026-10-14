@@ -168,6 +168,7 @@ fn valid_details_ask_for_a_login_with_the_draft_account() {
         kind: AccountKind::Gmail,
         address: "me@gmail.com".into(),
         color: Some("blue".into()),
+        label: None,
         client_id: "cid".into(),
         client_secret: Some("sec".into()),
         tenant: None,

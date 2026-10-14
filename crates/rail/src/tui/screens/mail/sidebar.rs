@@ -62,7 +62,7 @@ impl Sidebar {
                 .map_or(0, |a| a.unread);
             items.push(SidebarItem {
                 scope: ScopeChoice::Account(index),
-                label: account.name.clone(),
+                label: account.label.clone(),
                 unread,
                 depth: 0,
                 account: Some(index),
