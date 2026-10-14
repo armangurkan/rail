@@ -22,6 +22,9 @@ mod palette;
 mod reading;
 mod selection;
 mod sidebar;
+mod sidebar_tree;
+#[cfg(test)]
+mod sidebar_tree_tests;
 mod status;
 #[cfg(test)]
 mod tests;
