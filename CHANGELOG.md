@@ -309,6 +309,9 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- A reader 16 to 18 columns wide showed `…  /  4 messages` under the subject; it shows
+  `/  4 messages`. A title or card line full exactly at a part's end now ends in `…` when
+  something was left off.
 - Page down in the thread list could leave threads between two screens unseen when the next
   screen had more group rows; a page now moves by the threads shown and the next screen starts
   with the thread after the last one shown. A group's name is no longer drawn alone on the

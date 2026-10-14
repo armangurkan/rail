@@ -85,13 +85,14 @@ pub enum Tone {
 }
 
 /// One line, escaped and at most the width it was built for: segments, each drawn in its tone,
-/// and `text`, their concatenation (what `fit`, `markers` and the tests read). It holds mail
-/// text, so it is never logged.
+/// and their concatenation (what `fit`, `markers` and the tests read). `one` and `of` are the
+/// only builders, so the text cannot drift from the segments. It holds mail text, so it is
+/// never logged.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ReaderLine {
     pub kind: LineKind,
-    pub text: String,
-    pub segments: Vec<(String, Tone)>,
+    text: String,
+    segments: Vec<(String, Tone)>,
 }
 
 impl ReaderLine {
@@ -116,6 +117,16 @@ impl ReaderLine {
             text,
             segments,
         }
+    }
+
+    /// The segments joined.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Each segment and its tone.
+    pub fn segments(&self) -> &[(String, Tone)] {
+        &self.segments
     }
 }
 
@@ -153,26 +164,31 @@ fn line(kind: LineKind, text: String, tone: Tone) -> ReaderLine {
     ReaderLine::one(kind, text, tone)
 }
 
+/// A mailbox's name, or its address when it has none.
+pub(super) fn display_name(mailbox: &Mailbox) -> String {
+    match mailbox.name.as_deref() {
+        Some(name) if !name.is_empty() => name.to_string(),
+        _ => mailbox.address.clone(),
+    }
+}
+
 /// `Name <address>` (or the address) for each mailbox, joined.
 fn mailboxes(people: &[Mailbox]) -> String {
     people
         .iter()
-        .map(|p| match p.name.as_deref() {
-            Some(name) if !name.is_empty() => format!("{name} <{}>", p.address),
-            _ => p.address.clone(),
+        .map(|p| match display_name(p) {
+            name if name == p.address => name,
+            name => format!("{name} <{}>", p.address),
         })
         .collect::<Vec<_>>()
         .join(", ")
 }
 
 pub(super) fn sender(message: &MessageView) -> String {
-    match message.from.first() {
-        Some(Mailbox {
-            name: Some(name), ..
-        }) if !name.is_empty() => name.clone(),
-        Some(first) => first.address.clone(),
-        None => "(no sender)".to_string(),
-    }
+    message
+        .from
+        .first()
+        .map_or_else(|| "(no sender)".to_string(), display_name)
 }
 
 /// An open message's header fields: `From:`, `To:` and `Cc:` (each when not empty), `Date:`,

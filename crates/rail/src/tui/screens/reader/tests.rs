@@ -186,7 +186,7 @@ fn all_text(f: &Fixture) -> String {
     let lines = f.screen.reader().unwrap().lines(400);
     lines
         .iter()
-        .map(|l| l.text.clone())
+        .map(|l| l.text().to_string())
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -626,7 +626,7 @@ async fn lines_are_cached_per_width() {
     assert!(Rc::ptr_eq(&a, &b));
     let c = reader.lines(60);
     assert!(!Rc::ptr_eq(&a, &c));
-    assert!(c.iter().all(|l| crate::tui::text::width(&l.text) <= 60));
+    assert!(c.iter().all(|l| crate::tui::text::width(l.text()) <= 60));
 }
 
 #[tokio::test]

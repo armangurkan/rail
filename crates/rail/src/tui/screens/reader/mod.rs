@@ -439,7 +439,7 @@ impl Reader {
         }
         let numbers = match line.kind {
             LineKind::Body { .. } | LineKind::Quote { .. } => {
-                markers(&line.text, message.links.len())
+                markers(line.text(), message.links.len())
                     .into_iter()
                     .map(|m| m.number)
                     .collect()

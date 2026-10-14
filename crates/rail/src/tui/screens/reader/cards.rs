@@ -7,10 +7,9 @@
 //! escaped rows).
 
 use rail_core::config::ThreadOrder;
-use rail_core::provider::Mailbox;
 use rail_core::store::view::{MessageView, ThreadDetail};
 
-use super::lines::{LineKind, ReaderLine, State, Tone, content, fields, sender};
+use super::lines::{LineKind, ReaderLine, State, Tone, content, display_name, fields, sender};
 use crate::tui::clock::Group;
 use crate::tui::text::{escape, fit, width as cells};
 
@@ -18,6 +17,9 @@ use crate::tui::text::{escape, fit, width as cells};
 const MIN_SENDER: usize = 3;
 /// The least room between a card's sender and its time.
 const TIME_GAP: usize = 2;
+/// The least room the title's recipients get: under it they are dropped and the count stands
+/// alone.
+const MIN_NAMES: usize = 4;
 
 /// The lines of `detail` at `width`.
 pub(super) fn build(detail: &ThreadDetail, state: &State<'_>, width: usize) -> Vec<ReaderLine> {
@@ -117,29 +119,24 @@ fn time(m: &MessageView, state: &State<'_>) -> String {
 }
 
 /// `To: Vito, dana@example.com  /  4 messages`, the names cut so the count stays whole;
-/// `/  4 messages` when the message names no recipient.
+/// `/  4 messages` when the message names no recipient or under `MIN_NAMES` cells are left
+/// for them.
 fn to_line(m: &MessageView, count: usize, width: usize) -> String {
     let count = match count {
         1 => "1 message".to_string(),
         n => format!("{n} messages"),
     };
+    let alone = format!("/  {count}");
     if m.to.is_empty() {
-        return fit(&format!("/  {count}"), width);
+        return fit(&alone, width);
     }
-    let names: Vec<String> = m.to.iter().map(name_of).collect();
+    let names: Vec<String> = m.to.iter().map(display_name).collect();
     let names = format!("To: {}", names.join(", "));
     let tail = format!("  /  {count}");
     match width.checked_sub(cells(&tail)) {
-        Some(room) if room > 0 => format!("{}{tail}", fit(&names, room)),
-        _ => fit(&format!("{names}{tail}"), width),
-    }
-}
-
-/// A mailbox's name, or its address when it has none.
-fn name_of(mailbox: &Mailbox) -> String {
-    match mailbox.name.as_deref() {
-        Some(name) if !name.is_empty() => name.to_string(),
-        _ => mailbox.address.clone(),
+        Some(room) if room >= MIN_NAMES => format!("{}{tail}", fit(&names, room)),
+        Some(_) => fit(&alone, width),
+        None => fit(&format!("{names}{tail}"), width),
     }
 }
 
@@ -274,9 +271,10 @@ fn segments_width(segments: &[(String, Tone)]) -> usize {
 }
 
 /// `segments` cut at `width` columns: the one that crosses the edge is cut with `…`, the rest
-/// are dropped.
+/// are dropped; when the row is full exactly at a segment's end and more follow, that last kept
+/// segment shows the `…`.
 fn cut(segments: Vec<(String, Tone)>, width: usize) -> Vec<(String, Tone)> {
-    let mut out = Vec::new();
+    let mut out: Vec<(String, Tone)> = Vec::new();
     let mut used = 0;
     for (text, tone) in segments {
         let w = cells(&text);
@@ -285,7 +283,11 @@ fn cut(segments: Vec<(String, Tone)>, width: usize) -> Vec<(String, Tone)> {
             out.push((text, tone));
             continue;
         }
-        out.push((fit(&text, width - used), tone));
+        if used < width {
+            out.push((fit(&text, width - used), tone));
+        } else if let Some((last, _)) = out.last_mut() {
+            *last = fit(&format!("{last}…"), cells(last));
+        }
         break;
     }
     out
