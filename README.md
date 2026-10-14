@@ -462,24 +462,23 @@ that failed for good (one a retry will not mend) is listed there once, after its
 while `:errors` still holds it. While one of them is an action Gmail refused, `j`/`k` or `↓`/`↑`
 highlight an entry and `Enter` sends that action again. `:hints` turns the key hints off
 (`hints: off`), or back on (the hints are the confirmation: no notice), and saves the choice
-(`hints = false` under `[general]`; turning them on
-removes the key); a save that fails says `Could not save the hints setting: …` and keeps the
-choice for this session. `:clock` hides the header's clock (`clock: off`), or shows it again
-(`clock: on`), and saves the choice (`clock = false` under `[general]`; showing it removes the key);
-a save that fails says `Could not save the clock setting: …` and keeps the choice for this session.
-`:time` switches every time of day on screen (the list, `● Synced 14:47`, the header's clock, the
-Drafts list, `:errors`, the reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines) between
-24-hour and 12-hour (`2:47 pm`, `4:32 am`, `Date: Fri 10 Oct 2025 12:40 pm`) and saves the choice
-(`time = "12h"` under `[general]`; 24-hour removes the key); a save that fails says
-`Could not save the time setting: …` and keeps the choice for this session. `:thread-order` turns
-the reader's older messages round (newest first, or oldest first again), in the open thread too,
-says `thread order: newest` or `thread order: oldest`, and saves the choice
-(`thread_order = "newest"` under `[general]`; oldest first removes the key); a save that fails says
-`Could not save the thread order: …` and keeps the choice for this session. `?` shows the keys of
-the view you are in, marking with `*` the ones set in `config.toml`; `?` again (or whatever
-`global.help` is bound to), `Esc` or `q` closes it. Help and `:errors` scroll with `j`/`k` or
-`↓`/`↑`; a `↓ more` or `↑ more` line (`v more` and `^ more` with `icons = "ascii"`) says there is
-more beyond the box.
+(`hints = false` under `[general]`; turning them on removes the key); a save that fails says
+`Could not save the hints setting: …` and keeps the choice for this session. `:clock` hides the
+header's clock (`clock: off`), or shows it again (`clock: on`), and saves the choice
+(`clock = false` under `[general]`; showing it removes the key); a save that fails says
+`Could not save the clock setting: …` and keeps the choice for this session. `:time` switches every
+time of day on screen (the list, `● Synced 14:47`, the header's clock, the Drafts list, `:errors`,
+the reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines) between 24-hour and 12-hour
+(`2:47 pm`, `4:32 am`, `Date: Fri 10 Oct 2025 12:40 pm`) and saves the choice (`time = "12h"` under
+`[general]`; 24-hour removes the key); a save that fails says `Could not save the time setting: …`
+and keeps the choice for this session. `:thread-order` turns the reader's older messages round
+(newest first, or oldest first again), in the open thread too, says `thread order: newest` or
+`thread order: oldest`, and saves the choice (`thread_order = "newest"` under `[general]`; oldest
+first removes the key); a save that fails says `Could not save the thread order: …` and keeps the
+choice for this session. `?` shows the keys of the view you are in, marking with `*` the ones set in
+`config.toml`; `?` again (or whatever `global.help` is bound to), `Esc` or `q` closes it. Help and
+`:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more` line (`v more` and `^ more` with
+`icons = "ascii"`) says there is more beyond the box.
 
 The status bar shows, on the right, each account's sync state (`✓` caught up, `⟳` syncing, with
 a count during the first sync, `retrying`, `stopped`, and `!` for `needs login` or
@@ -1334,7 +1333,7 @@ their own.
 | `This mailbox has no Archive folder; press m to move.` | The mailbox has no Archive folder and Rail never makes one. Press `m` to move the thread to a folder. |
 | `This mailbox has no Deleted Items folder.` | `d` found no Deleted Items folder in the last folder listing, which an Exchange Online mailbox always has; Rail put the thread back. Press `Ctrl-r` to sync, or `m` to move the thread to a folder. |
 | `Could not … : Rail holds no messages of this Microsoft 365 conversation` | The thread's messages left the store before the action was sent (another device moved or deleted them). Press `Ctrl-r`; the next sync shows where they are now. |
-| `a folder cannot be synced: its sync link is longer than 4 KiB` (in the header as `⚠ name sync failed`; `:errors` names the folder after it, as `(from outside Rail (the provider or the system): "Projects")`) | Microsoft answered three times in a row with a sync link for that folder longer than Rail keeps. Rail stops syncing that folder until the daemon restarts (`rail daemon stop`); every other folder goes on, and the mail Rail holds from it stays. Until then every pass counts as failed: `rail doctor`'s last-success time stops advancing and its sync check fails, and `rail sync` exits 1. Please report it if it comes back. |
+| `a folder cannot be synced: its sync link is longer than 4 KiB` (in the header as `⚠ name sync failed`; `:errors` names the folder after it, as `(from outside Rail (the provider or the system): "Projects")`) | Microsoft answered three times in a row with a sync link for that folder longer than Rail keeps. Rail stops syncing that folder until the daemon restarts (`rail daemon stop`); every other folder goes on, and the mail Rail holds from it stays. Mail deleted on the server while the folder is parked stays in Rail until the next full sync after a restart. Until then every pass counts as failed: `rail doctor`'s last-success time stops advancing and its sync check fails, and `rail sync` exits 1. Please report it if it comes back. |
 | `the folder for this move no longer exists in Microsoft 365` | The folder was deleted in Outlook before the move was sent; Rail put the thread back. Press `m` and pick another folder. |
 | `Microsoft 365 is busy or unavailable (HTTP 429)`, or `retrying` in `rail sync` | Microsoft is throttling the mailbox. Rail waits as long as Microsoft asks (up to two minutes at a time) and tries again. |
 | `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |

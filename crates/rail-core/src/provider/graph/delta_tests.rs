@@ -568,7 +568,13 @@ async fn a_child_listing_not_found_does_not_expire_a_cursor_that_knows_the_subfo
     quiet(&g, &["f-inbox", "f-proj"]).await;
     provider.folders().await.unwrap();
     let set = provider.changes(&known).await.unwrap();
-    assert_eq!(state_of(&set, "f-sub"), State::Due, "kept, not walked");
+    let sub = &GraphCursor::decode(&set.cursor).unwrap().folders["f-sub"];
+    assert_eq!(
+        (sub.state, sub.link.clone()),
+        (State::CaughtUp, Some(g.link_to("d-f-sub"))),
+        "kept, not walked: set aside with its link"
+    );
+    assert!(!set.more, "the call ends; the other folders' rounds go on");
 
     // The listing is back: f-sub is walked again.
     g.reset().await;
@@ -577,6 +583,7 @@ async fn a_child_listing_not_found_does_not_expire_a_cursor_that_knows_the_subfo
     provider.folders().await.unwrap();
     let set = provider.changes(&set.cursor).await.unwrap();
     assert_eq!(state_of(&set, "f-sub"), State::CaughtUp);
+    assert_eq!(link_requests(&g, "d-f-sub").await, 1, "from its kept link");
 }
 
 #[tokio::test]

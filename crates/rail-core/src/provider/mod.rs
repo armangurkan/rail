@@ -57,8 +57,8 @@ pub trait Provider: Send + Sync {
         None
     }
     /// False when the last pass left folders unwalked (Graph: a folder it gave up syncing, or
-    /// a subtree its listing skipped): a load that catches up then attaches no sweep, which
-    /// would delete their mail. True by default.
+    /// a subtree its listing skipped): a load that catches up then ends without its sweep,
+    /// which would delete their mail. True by default.
     fn walked_everything(&self) -> bool {
         true
     }

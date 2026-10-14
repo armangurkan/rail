@@ -364,6 +364,22 @@ async fn inbox_link_forgotten(g: &Graph) {
     g.mount_initial("f-inbox", page).await;
 }
 
+/// One pass of `engine` that goes through, recorded as the daemon records it.
+async fn recorded_pass(engine: &Engine) {
+    let pass = engine.pass().await;
+    assert!(pass.is_ok(), "{pass:?}");
+    engine.record(pass).await;
+}
+
+/// The load ended without a sweep (`stored` shows what it kept): no load is left open, and
+/// the account is idle, not in a backfill.
+fn assert_load_ended(h: &Harness) {
+    assert_eq!(state(h).backfill_started_at, None, "the load ended");
+    let status = h.board.get(ADDRESS).unwrap();
+    assert_eq!(status.phase, SyncPhase::Idle);
+    assert!(!status.pass_running);
+}
+
 #[tokio::test]
 async fn a_resync_with_a_folder_given_up_on_sweeps_none_of_its_mail() {
     let g = Graph::start().await;
@@ -399,15 +415,16 @@ async fn a_resync_with_a_folder_given_up_on_sweeps_none_of_its_mail() {
         ),
     )
     .await;
-    engine_on(&h, provider, 0, now + 120).pass().await.unwrap();
+    recorded_pass(&engine_on(&h, provider, 0, now + 120)).await;
     assert_eq!(
         stored(&h),
         ["m1", "mp", "ms"],
         "Projects' mail is not swept"
     );
+    assert_load_ended(&h);
     assert!(
-        state(&h).backfill_started_at.is_some(),
-        "the load waits for a pass that walks every folder"
+        h.board.get(ADDRESS).unwrap().last_pass_failed,
+        "the standing error"
     );
 }
 
@@ -424,11 +441,9 @@ async fn a_resync_with_a_subtree_skipped_sweeps_none_of_its_mail() {
     let at = recent(60);
     let page = g.page(vec![message("mp", "mp", "f-proj", &at)], None, Some("d3"));
     g.mount_initial("f-proj", page).await;
-    engine_on(&h, provider.clone(), 0, now + 60)
-        .pass()
-        .await
-        .unwrap();
+    recorded_pass(&engine_on(&h, provider.clone(), 0, now + 60)).await;
     assert!(!provider.walked_everything());
     assert_eq!(stored(&h), ["m1", "mp", "ms"], "Sub's mail is not swept");
-    assert!(state(&h).backfill_started_at.is_some());
+    assert_load_ended(&h);
+    assert!(!h.board.get(ADDRESS).unwrap().last_pass_failed);
 }

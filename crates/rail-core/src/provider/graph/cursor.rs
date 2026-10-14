@@ -193,6 +193,15 @@ impl GraphCursor {
         Ok(step)
     }
 
+    /// Leave folder `id` out of this round, its link kept: it counts as caught up, so the
+    /// other folders' rounds go on and the call can end, and the next round asks it from where
+    /// it stood.
+    pub(crate) fn set_aside(&mut self, id: &str) {
+        if let Some(folder) = self.folders.get_mut(id) {
+            folder.state = State::CaughtUp;
+        }
+    }
+
     /// Set folder `id` aside for this pass: caught up, with no link, so a round that asks it
     /// again would start it from its first page.
     pub(crate) fn park(&mut self, id: &str) {
@@ -343,6 +352,16 @@ mod tests {
         assert_eq!(cursor.folders["f-1"].state, State::CaughtUp);
         cursor.park("f-1");
         assert_eq!(cursor.folders["f-1"].link, None);
+        cursor.advance("f-1", Some("n1".into()), None).unwrap();
+        cursor.set_aside("f-1");
+        assert_eq!(
+            cursor.folders["f-1"],
+            Folder {
+                link: Some("n1".into()),
+                state: State::CaughtUp,
+            },
+            "set aside, it keeps its place"
+        );
     }
 
     #[test]

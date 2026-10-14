@@ -144,19 +144,19 @@ impl Engine {
         Ok(())
     }
 
-    /// The answer that caught a load up ends it with the sweep, when the provider walked every
-    /// folder; else the sweep would delete the mail of the folders it left, so the load stays
-    /// open for a pass that walks them all.
+    /// The answer that caught a load up ends it, with the sweep when the provider walked every
+    /// folder. Else the sweep would delete the mail of the folders it left, so the load ends
+    /// without one: mail deleted at the provider meanwhile stays until a later full load.
     fn end_load(&self, batch: &mut Batch, started_at: i64, window: Option<i64>) {
+        batch.state.backfill_started_at = Some(None);
         if !self.provider.walked_everything() {
-            tracing::warn!(account = %self.account.name, "the provider left folders unwalked; the load's sweep waits for a pass that walks every folder");
+            tracing::warn!(account = %self.account.name, "the provider left folders unwalked; the load ended without a sweep");
             return;
         }
         batch.sweep = Some(Sweep {
             started_at,
             window_start_ms: window,
         });
-        batch.state.backfill_started_at = Some(None);
     }
 
     /// While a delta-first provider's first load runs: when it began, which its sweep keeps.

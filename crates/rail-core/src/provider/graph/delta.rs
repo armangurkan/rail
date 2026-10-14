@@ -4,7 +4,8 @@
 //! over a removal of the same id, and a removal left unpaired is checked (`envelopes_of`)
 //! before it is reported deleted, so a message Graph still has, in a folder Rail syncs, is
 //! upserted where it is now. Bodies never come through the delta. A folder whose link stays over
-//! the cap is given up on after three start-overs in a row (`stuck`).
+//! the cap is given up on after three start-overs in a row (`stuck`); a folder of a skipped
+//! subtree is set aside for the call, its link kept.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::PoisonError;
@@ -111,6 +112,7 @@ impl GraphProvider {
             .clone();
         'folders: for id in cursor.order(&folders) {
             if skipped.contains(&id) {
+                cursor.set_aside(&id);
                 continue;
             }
             if self.stuck().given_up(&id) {
