@@ -5,6 +5,7 @@
 use std::rc::Rc;
 
 use rail_core::config::ThreadOrder;
+use rail_core::store::view::BodyState;
 
 use super::test_threads::{four, message, person, reader_of};
 use super::{LineKind, Reader, Tone};
@@ -359,5 +360,37 @@ fn set_order_turns_the_cards_round_and_keeps_the_cursor_on_its_message() {
     assert!(
         Rc::ptr_eq(&before, &reader.lines(80)),
         "the same order rebuilds nothing"
+    );
+}
+
+/// The newest body is drawn first, so when it lands everything below it moves: the cursor
+/// follows its message, not its line number.
+#[test]
+fn a_reread_that_grows_the_newest_body_keeps_the_cursor_on_its_card() {
+    let mut waiting = four(0);
+    waiting.messages[3].body = BodyState::NotFetched;
+    let mut reader = reader_of(waiting, ThreadOrder::Oldest);
+    act(&mut reader, &[Action::ReaderNext, Action::ReaderNext]);
+    assert_eq!(at(&reader), LineKind::Card { message: 1 }, "Tom's card");
+    let mut landed = four(0);
+    let text: Vec<String> = (1..=10).map(|n| format!("line {n}")).collect();
+    landed.messages[3].body = BodyState::Text {
+        text: text.join("\n"),
+        cut: false,
+    };
+    reader.refresh(landed);
+    assert_eq!(
+        at(&reader),
+        LineKind::Card { message: 1 },
+        "still Tom's card"
+    );
+    assert!(
+        reader
+            .cursor_line()
+            .unwrap()
+            .text
+            .starts_with("▸   2   Tom"),
+        "{}",
+        reader.cursor_line().unwrap().text
     );
 }

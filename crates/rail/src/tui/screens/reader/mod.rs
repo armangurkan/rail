@@ -228,6 +228,7 @@ impl Reader {
         if detail == self.detail && !self.missed_a_body() {
             return;
         }
+        let anchor = self.anchor();
         let defaults = default_expanded(&detail);
         let before: HashMap<i64, bool> = self
             .detail
@@ -263,9 +264,34 @@ impl Reader {
         }
         self.detail = detail;
         self.changed();
-        // The cursor stays on its line, or on the last one when the thread got shorter.
-        let last = self.current().len().saturating_sub(1);
-        self.cursor = self.cursor.min(last);
+        self.restore(anchor);
+    }
+
+    /// The id of the message under the cursor and the cursor's offset from its first line.
+    fn anchor(&self) -> Option<(i64, usize)> {
+        let lines = self.current();
+        let message = lines.get(self.cursor)?.kind.message()?;
+        let start = start_of(&lines, message)?;
+        let id = self.detail.messages.get(message)?.id;
+        Some((id, self.cursor.saturating_sub(start)))
+    }
+
+    /// After a re-read the cursor goes back to its message (`anchor`) at the same offset, kept
+    /// inside that message's lines; when the message went, it stays on its line, or on the last
+    /// one when the thread got shorter.
+    fn restore(&mut self, anchor: Option<(i64, usize)>) {
+        let lines = self.current();
+        let last = lines.len().saturating_sub(1);
+        let found = anchor.and_then(|(id, offset)| {
+            let message = self.detail.messages.iter().position(|m| m.id == id)?;
+            let start = start_of(&lines, message)?;
+            let end = starts(&lines)
+                .into_iter()
+                .find(|&i| i > start)
+                .map_or(last, |next| next - 1);
+            Some((start + offset).min(end))
+        });
+        self.cursor = found.unwrap_or(self.cursor.min(last));
     }
 
     /// A re-read of this thread failed with `text` (escaped).
