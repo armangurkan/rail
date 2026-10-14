@@ -345,10 +345,11 @@ focus the current mailbox's row is in the accent colour; the sidebar scrolls to 
 sidebar has focus, the cursor) in view.
 
 The top of the screen is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread`
-(`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), the search
-region (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`; the filter shows there once set, and
-the Drafts folder has none), and on the right one line for every account's
-sync: `● Synced 14:47` when all are caught up (the earliest account's time), else the worst
+(`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes; an account's
+own Sent, Trash or Drafts shows no unread count, `work · Sent`), the search region
+(`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`; the filter shows there once set, and the
+Drafts folder has none), and on the right one line for every account's sync: `● Synced 14:47`
+when all are caught up (the earliest account's time), else the worst
 state (`⟳ Syncing work`, `⟳ Backfill 1,200/5,000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
 `! work needs login`, `! work sync failed`, or the daemon's state), then the time of day at the
 right edge: `● Synced 14:47 │ 15:02` (`3:02 pm` with `time = "12h"`; `:time` changes it at once).

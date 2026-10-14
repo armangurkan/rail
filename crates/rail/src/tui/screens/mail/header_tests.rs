@@ -575,3 +575,32 @@ fn a_boxed_header_leaves_out_the_bar() {
     assert!(screen.header(true).left.starts_with("Rail │ All inboxes"));
     assert!(screen.header(false).left.starts_with("▍Rail │ All inboxes"));
 }
+
+/// Spec §3 (B1): an account's own Sent, Trash or Drafts counts no unread, as the merged ones
+/// do; Spam and user folders keep their count.
+#[test]
+fn an_accounts_sent_trash_or_drafts_folder_shows_no_unread_count() {
+    use rail_core::provider::FolderKind;
+    let (_tmp, mut screen) = bare_screen();
+    let folder = |name: &str, kind| crate::tui::data::ScopeChoice::Folder {
+        account: 0,
+        folder_id: 12,
+        name: name.into(),
+        kind,
+    };
+    for (name, kind) in [
+        ("Sent", FolderKind::Sent),
+        ("Trash", FolderKind::Trash),
+        ("Drafts", FolderKind::Drafts),
+    ] {
+        screen.scope = folder(name, kind);
+        assert_eq!(screen.header_left(), format!("▍Rail │ work · {name}"));
+    }
+    for (name, kind) in [("Spam", FolderKind::Spam), ("Projects", FolderKind::User)] {
+        screen.scope = folder(name, kind);
+        assert_eq!(
+            screen.header_left(),
+            format!("▍Rail │ work · {name} · 0 unread")
+        );
+    }
+}

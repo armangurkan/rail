@@ -2,7 +2,7 @@
 source: crates/rail/src/tui/screens/mail/tests/drafts_folder.rs
 expression: shot
 ---
-▍Rail │ work · Drafts · 2 unread                                    ⟳ Syncing work │ 12:40
+▍Rail │ work · Drafts                                               ⟳ Syncing work │ 12:40
 UNIFIED                  │●  Yesterday  Pat Doe             Pushed note
 ✉  All inboxes          5│●  Yesterday  Gail                Written on the phone
 ★  Starred               │●  Yesterday  (local)           ✎ Local plan

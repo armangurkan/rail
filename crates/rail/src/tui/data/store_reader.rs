@@ -44,11 +44,13 @@ pub enum ScopeChoice {
     /// Every account's drafts, in the Drafts pane.
     Drafts,
     Account(usize),
-    /// A folder of one account; `name` is its (outside) name, for the header.
+    /// A folder of one account; `name` is its (outside) name, for the header, and `kind` its
+    /// kind, for the header's unread count. Neither names the folder.
     Folder {
         account: usize,
         folder_id: i64,
         name: String,
+        kind: FolderKind,
     },
 }
 
@@ -96,9 +98,17 @@ impl ScopeChoice {
         self.unified_name().is_some()
     }
 
-    /// The header counts unread threads here: not in Sent, Trash or Drafts.
+    /// The header counts unread threads here: not in Sent, Trash or Drafts, merged or an
+    /// account's own.
     pub fn counts_unread(&self) -> bool {
-        !matches!(self, Self::Sent | Self::Trash | Self::Drafts)
+        match self {
+            Self::Sent | Self::Trash | Self::Drafts => false,
+            Self::Folder { kind, .. } => !matches!(
+                kind,
+                FolderKind::Sent | FolderKind::Trash | FolderKind::Drafts
+            ),
+            Self::Unified | Self::Starred | Self::Account(_) => true,
+        }
     }
 }
 

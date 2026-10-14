@@ -309,6 +309,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- The header showed an unread count on an account's own Sent, Trash or Drafts folder
+  (`work · Sent · 3 unread`); it reads `work · Sent`, as the merged mailboxes do.
 - `:hints` turning the hints back on posted `hints: on` for five seconds over the hints it had
   just brought back; it says nothing, and a `hints: off` still showing goes with it (#45).
 - The header's and the hint bar's backfill counts have thousands separators
