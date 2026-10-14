@@ -264,13 +264,8 @@ async fn the_sidebar_scrolls_to_keep_the_cursor_or_the_current_row_in_view() {
     let lines =
         crate::tui::test_util::render_lines(150, 14, |frame| screen.view(frame, &Theme::default()));
     let side: Vec<String> = lines.iter().map(|l| l.chars().take(26).collect()).collect();
-    // At 24 columns `More folders (1)` is cut to make room for its `···`.
-    let home = side
-        .iter()
-        .position(|l| l.contains(" H  home"))
-        .unwrap_or_else(|| panic!("home's account row: {side:#?}"));
     assert!(
-        side[home..].iter().any(|l| l.contains("More folders (")),
+        side.iter().any(|l| l.contains("More folders (1)")),
         "the last row is in view: {side:#?}"
     );
     assert!(

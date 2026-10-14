@@ -291,11 +291,11 @@ unfolded and the rest folded, for the session. Counts are unread threads (on a f
 everything under it), drafts on `Drafts`, and none on `Sent` and `Trash`.
 Each account row has its fold arrow (`▾` unfolded, `▸` folded) and a badge, its label's first
 letter on the account's colour. Mailboxes have icons (`✉` inbox, `★` Starred, `✎` Drafts, `➤`
-Sent, `🗑` Trash, `▣` Archive, `⊘` Spam, `📁` `More folders` and a path with folders under it)
-and their counts on the right with thousands separators; a folded `More folders` shows `···`.
-With `icons = "ascii"` the arrows are `v` and `>` and the icons `i`, `*`, `d`, `>`, `x`, `a`, `s`
-and `/`. While the list has focus the current mailbox's row is in the accent colour; the sidebar
-scrolls to keep it (or, while the sidebar has focus, the cursor) in view.
+Sent, `✕` Trash, `▣` Archive, `⊘` Spam, `📁` `More folders` and a path with folders under it)
+and their counts on the right with thousands separators. With `icons = "ascii"` the arrows are
+`v` and `>` and the icons `i`, `*`, `d`, `>`, `x`, `a`, `s` and `/`. While the list has focus the
+current mailbox's row is in the accent colour; the sidebar scrolls to keep it (or, while the
+sidebar has focus, the cursor) in view.
 
 The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread` (`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), a search slot
 (`/ Search`; the filter shows there once set), and on the right one line for every account's

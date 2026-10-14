@@ -80,7 +80,7 @@ impl Glyphs {
                 icon_starred: "★",
                 icon_drafts: "✎",
                 icon_sent: "➤",
-                icon_trash: "🗑",
+                icon_trash: "✕",
                 icon_archive: "▣",
                 icon_spam: "⊘",
                 icon_folder: "📁",

@@ -19,7 +19,7 @@ All notable changes to Rail are recorded here. The format follows
   own folder (`Sent Items`, `Deleted Items` on Microsoft 365).
 - The sidebar's look: `UNIFIED` and `ACCOUNTS` headings, rules under UNIFIED and above each
   `More folders`, `▾`/`▸` fold arrows, a badge per account (its label's first letter on its
-  colour), an icon per mailbox (`✉ ★ ✎ ➤ 🗑 ▣ ⊘ 📁`; letters with `icons = "ascii"`), counts
+  colour), an icon per mailbox (`✉ ★ ✎ ➤ ✕ ▣ ⊘ 📁`; letters with `icons = "ascii"`), counts
   right-aligned with thousands separators, and the current mailbox's row in the accent colour
   while the list has focus. The sidebar scrolls to keep that row, or the cursor, in view.
 - The mail screen's frame: a header row with the scope, its counts, a search slot and one sync

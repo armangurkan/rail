@@ -9,19 +9,19 @@ expression: shot
 │★  Starred              ││●  Yesterday  Sender                 subject wm1      ││                                                                  │
 │✎  Drafts               ││●  Yesterday  Sender                 subject hm0      ││                                                                  │
 │➤  Sent                 ││●  Yesterday  Sender                 subject wm0      ││                                                                  │
-│🗑  Trash                ││                                                      ││                                                                  │
+│✕  Trash                ││                                                      ││                                                                  │
 │────────────────────────││                                                      ││                                                                  │
 │ACCOUNTS                ││            ┌ Trash? ──────────────────────────────────────────────────────────────┐                                      │
 │▾  W  work             3││            │Trash "subject wm2"?                                                  │                                      │
 │  ✉  Inbox             3││            │Gmail keeps trashed mail in its Trash for 30 days.                    │                                      │
 │  ➤  Sent               ││            │                                                                      │                                      │
 │────────────────────────││            │y yes · n or Esc no                                                   │                                      │
-│▸ 📁  More folders (… ···││            └──────────────────────────────────────────────────────────────────────┘                                      │
+│▸ 📁  More folders (1)   ││            └──────────────────────────────────────────────────────────────────────┘                                      │
 │▾  H  home             2││                                                      ││                                                                  │
 │  ✉  Inbox             2││                                                      ││                                                                  │
 │  ➤  Sent               ││                                                      ││                                                                  │
 │────────────────────────││                                                      ││                                                                  │
-│▸ 📁  More folders (… ···││                                                      ││                                                                  │
+│▸ 📁  More folders (1)   ││                                                      ││                                                                  │
 └────────────────────────┘└──────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────┘
 ┌───────┐      ┌─────┐      ┌─────┐         ┌───┐       ┌───┐         ┌───┐         ┌───┐       ┌───┐        ┌───┐
 │ Enter │ open │ j/k │ move │ Tab │ sidebar │ r │ reply │ c │ compose │ e │ archive │ d │ trash │ / │ filter │ ? │ help            ● work ✓ · ● home ✓

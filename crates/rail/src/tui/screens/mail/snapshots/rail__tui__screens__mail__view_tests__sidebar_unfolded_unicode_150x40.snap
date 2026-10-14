@@ -9,13 +9,13 @@ expression: "draw(&screen, 150, 40)"
 │★  Starred             1││●  Yesterday  Sender                 subject h1       ││                                                                  │
 │✎  Drafts               ││●        Wed  Priya Nair             Re: offsite logi…││                                                                  │
 │➤  Sent                 ││●     Sep 09  Evil\u{7}Corp          pay\u{202e}fdp.e…││                                                                  │
-│🗑  Trash                ││● 2024-09-04  Sender                 A very long subj…││                                                                  │
+│✕  Trash                ││● 2024-09-04  Sender                 A very long subj…││                                                                  │
 │────────────────────────││                                                      ││                                                                  │
 │ACCOUNTS                ││                                                      ││                                                                  │
 │▾  W  work             4││                                                      ││                                                                  │
 │  ✉  Inbox             4││                                                      ││                                                                  │
 │  ➤  Sent               ││                                                      ││                                                                  │
-│  🗑  Trash              ││                                                      ││                                                                  │
+│  ✕  Trash              ││                                                      ││                                                                  │
 │────────────────────────││                                                      ││                                                                  │
 │▾ 📁  More folders (5)   ││                                                      ││                                                                  │
 │  ▸ 📁  Categories       ││                                                      ││                                                                  │
@@ -27,7 +27,7 @@ expression: "draw(&screen, 150, 40)"
 │  ✉  Inbox             1││                                                      ││                                                                  │
 │  ➤  Sent               ││                                                      ││                                                                  │
 │────────────────────────││                                                      ││                                                                  │
-│▸ 📁  More folders (… ···││                                                      ││                                                                  │
+│▸ 📁  More folders (1)   ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │
 │                        ││                                                      ││                                                                  │

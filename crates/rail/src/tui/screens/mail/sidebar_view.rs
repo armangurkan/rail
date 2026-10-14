@@ -23,8 +23,6 @@ use crate::tui::theme::Theme;
 
 /// Cells of the icon column.
 const ICON_COLS: usize = 2;
-/// Where a folded `More folders` would have a count.
-const MORE_FOLDED: &str = "···";
 /// The top of a sidebar whose last read failed.
 const READ_FAILED: &str = "Could not read folders";
 
@@ -198,11 +196,8 @@ fn icon(row: &SidebarRow, glyphs: &Glyphs) -> String {
     pad(glyph, ICON_COLS)
 }
 
-/// `22,853`; blank for none or 0; `···` on a folded `More folders`.
+/// `22,853`; blank for none or 0.
 fn count_text(row: &SidebarRow) -> String {
-    if matches!(row.kind, RowKind::More { .. }) && row.folded {
-        return MORE_FOLDED.to_string();
-    }
     row.count
         .filter(|&n| n > 0)
         .map(thousands)
@@ -312,7 +307,7 @@ mod tests {
             folded: true,
             ..leaf("More folders (3)", 1, None)
         };
-        assert_eq!(count_text(&more), "···");
+        assert_eq!(count_text(&more), "", "the arrow says it is folded");
     }
 
     #[test]
@@ -346,6 +341,11 @@ mod tests {
         };
         assert_eq!(icon(&starred, &Glyphs::of(Icons::Ascii)), "* ");
         assert_eq!(icon(&starred, &Glyphs::of(Icons::Unicode)), "★ ");
+        let trash = SidebarRow {
+            kind: RowKind::Unified(ScopeChoice::Trash),
+            ..leaf("Trash", 0, None)
+        };
+        assert_eq!(icon(&trash, &Glyphs::of(Icons::Unicode)), "✕ ");
     }
 
     #[test]

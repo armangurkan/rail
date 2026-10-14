@@ -9,14 +9,14 @@ expression: "draw(&f, width, height)"
 │★  Starred              ││                                                      ││From: Tom <tom@example.com>                                       │
 │✎  Drafts               ││                                                      ││To: Dana Reyes <dana@example.com>                                 │
 │➤  Sent                 ││                                                      ││Date: Thu 09 Oct 2025 08:53                                       │
-│🗑  Trash                ││                                                      ││                                                                  │
+│✕  Trash                ││                                                      ││                                                                  │
 │────────────────────────││                                                      ││Hi Dana,                                                          │
 │ACCOUNTS                ││                                                      ││                                                                  │
 │▾  W  work             1││                                                      ││The plan is in the doc[1]; notes are on the wiki[2].              │
 │  ✉  Inbox             1││                                                      ││                                                                  │
 │  ➤  Sent               ││                                                      ││[5 quoted lines]                                                  │
 │────────────────────────││                                                      ││                                                                  │
-│▸ 📁  More folders (… ···││                                                      ││Thanks,                                                           │
+│▸ 📁  More folders (1)   ││                                                      ││Thanks,                                                           │
 │                        ││                                                      ││Tom                                                               │
 │                        ││                                                      ││📎  plan.pdf                                                       │
 │                        ││                                                      ││                                                                  │
