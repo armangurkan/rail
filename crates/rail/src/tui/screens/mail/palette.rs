@@ -1,5 +1,5 @@
 //! The `:` palette's entries: the active view's key actions and the global ones, Rail's own
-//! commands, each account and label.
+//! commands, each account, merged mailbox and label.
 
 use super::MailScreen;
 use crate::tui::data::ScopeChoice;
@@ -8,7 +8,8 @@ use crate::tui::modals::{PaletteEntry, Target};
 
 impl MailScreen {
     /// Every palette entry: each key action of the active view and the global ones with its
-    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, each account and label.
+    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, each account, merged
+    /// mailbox and label.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let key = |a: Action| self.ctx.keymap.label(a);
         let views = self.views();
@@ -34,6 +35,7 @@ impl MailScreen {
             key: account_action(i + 1).map(key).unwrap_or_default(),
             target: Target::Scope(ScopeChoice::Account(i)),
         }));
+        entries.extend(mailbox_entries());
         entries.extend(self.label_entries());
         entries
     }
@@ -132,4 +134,24 @@ pub(super) fn account_number(action: Action) -> Option<usize> {
         _ => return None,
     };
     Some(number)
+}
+
+/// `Mailbox: Starred` and the other merged mailboxes (`0` reaches All inboxes).
+fn mailbox_entries() -> impl Iterator<Item = PaletteEntry> {
+    [
+        ScopeChoice::Starred,
+        ScopeChoice::Drafts,
+        ScopeChoice::Sent,
+        ScopeChoice::Trash,
+    ]
+    .into_iter()
+    .map(|scope| {
+        let name = scope.unified_name().unwrap_or_default();
+        PaletteEntry {
+            text: format!("Mailbox: {name}"),
+            search: format!("mailbox {} {name}", name.to_lowercase()),
+            key: String::new(),
+            target: Target::Scope(scope),
+        }
+    })
 }

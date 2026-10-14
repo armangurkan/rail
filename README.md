@@ -280,7 +280,7 @@ message count, `★` for starred and `📎` for attachments, and the subject; un
 and wider; `b` toggles it, `Tab` moves into it) lists every account and its labels (up to 500
 per account) with their unread counts; `Enter` opens one.
 
-The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread`, a search slot
+The first row is the header: `▍Rail │ All inboxes · 2 accounts · 22,853 unread` (`Starred · 2 accounts · 12 unread`, `Sent · 2 accounts` in the merged mailboxes), a search slot
 (`/ Search`; the filter shows there once set), and on the right one line for every account's
 sync: `● Synced 14:47` when all are caught up (the earliest account's time), else the worst
 state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
@@ -360,8 +360,9 @@ search slot shows how Rail read your filter
 `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter searches the
 local store only (`rail search` also asks each account's server).
 
-`:` opens the command palette: type a few letters of a key action for the current view, an account
-or a label and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
+`:` opens the command palette: type a few letters of a key action for the current view, an account,
+a label or a merged mailbox (`Mailbox: Starred`, `Mailbox: Drafts`, `Mailbox: Sent`,
+`Mailbox: Trash`: that mailbox of every account together, newest first) and press `Enter`; the key bound to each command is shown beside it. `:errors` lists
 the session's recent errors; while one of them is an action Gmail refused, `j`/`k` or `↓`/`↑`
 highlight an entry and `Enter` sends that action again. `:hints` turns the key hints off, or back
 on, and saves the choice (`hints = false` under `[general]`; turning them on removes the key); a

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rail_core::ops::{DraftId, OpError};
+use rail_core::provider::FolderKind;
 use rail_core::store::filter::Filter;
 use rail_core::store::view::{AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadPage};
 use rail_core::store::{Store, StoreError};
@@ -34,6 +35,14 @@ pub enum ReadError {
 #[derive(Debug, Clone, Eq)]
 pub enum ScopeChoice {
     Unified,
+    /// The starred threads of every account.
+    Starred,
+    /// Every account's Sent.
+    Sent,
+    /// Every account's Trash.
+    Trash,
+    /// Every account's drafts, in the Drafts pane.
+    Drafts,
     Account(usize),
     /// A folder of one account; `name` is its (outside) name, for the header.
     Folder {
@@ -46,7 +55,11 @@ pub enum ScopeChoice {
 impl PartialEq for ScopeChoice {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Unified, Self::Unified) => true,
+            (Self::Unified, Self::Unified)
+            | (Self::Starred, Self::Starred)
+            | (Self::Sent, Self::Sent)
+            | (Self::Trash, Self::Trash)
+            | (Self::Drafts, Self::Drafts) => true,
             (Self::Account(a), Self::Account(b)) => a == b,
             (
                 Self::Folder {
@@ -62,6 +75,30 @@ impl PartialEq for ScopeChoice {
             ) => a == b && x == y,
             _ => false,
         }
+    }
+}
+
+impl ScopeChoice {
+    /// A merged mailbox's name: `All inboxes`, `Starred`, `Drafts`, `Sent`, `Trash`.
+    pub fn unified_name(&self) -> Option<&'static str> {
+        match self {
+            Self::Unified => Some("All inboxes"),
+            Self::Starred => Some("Starred"),
+            Self::Drafts => Some("Drafts"),
+            Self::Sent => Some("Sent"),
+            Self::Trash => Some("Trash"),
+            Self::Account(_) | Self::Folder { .. } => None,
+        }
+    }
+
+    /// Every account's mail together.
+    pub fn is_unified(&self) -> bool {
+        self.unified_name().is_some()
+    }
+
+    /// The header counts unread threads here: not in Sent, Trash or Drafts.
+    pub fn counts_unread(&self) -> bool {
+        !matches!(self, Self::Sent | Self::Trash | Self::Drafts)
     }
 }
 
@@ -364,14 +401,23 @@ fn sidebar(store: &Store, addresses: &[String]) -> Result<SidebarOutcome, StoreE
     })
 }
 
-/// The page `request` asks for, its scope and `account:` resolved to store ids.
-fn list(store: &Store, request: &ListRequest) -> Result<ListOutcome, StoreError> {
-    let account_ids = store.account_ids(&request.addresses)?;
+/// The store's scope for `scope`; `None` when its account has no row in the store yet.
+fn store_scope(scope: &ScopeChoice, account_ids: &[Option<i64>]) -> Option<Scope> {
     let id_of = |index: usize| account_ids.get(index).copied().flatten();
-    let scope = match &request.scope {
-        ScopeChoice::Unified => Some(Scope::Unified {
-            accounts: account_ids.iter().flatten().copied().collect(),
-        }),
+    let all = || account_ids.iter().flatten().copied().collect::<Vec<i64>>();
+    let kind = |kind| {
+        Some(Scope::Kind {
+            accounts: all(),
+            kind,
+        })
+    };
+    match scope {
+        ScopeChoice::Unified => Some(Scope::Unified { accounts: all() }),
+        ScopeChoice::Starred => Some(Scope::Starred { accounts: all() }),
+        ScopeChoice::Sent => kind(FolderKind::Sent),
+        ScopeChoice::Trash => kind(FolderKind::Trash),
+        // The Drafts pane reads its own rows; a list read of it lists the draft threads.
+        ScopeChoice::Drafts => kind(FolderKind::Drafts),
         ScopeChoice::Account(index) => id_of(*index).map(|account_id| Scope::Inbox { account_id }),
         ScopeChoice::Folder {
             account, folder_id, ..
@@ -379,7 +425,14 @@ fn list(store: &Store, request: &ListRequest) -> Result<ListOutcome, StoreError>
             account_id,
             folder_id: *folder_id,
         }),
-    };
+    }
+}
+
+/// The page `request` asks for, its scope and `account:` resolved to store ids.
+fn list(store: &Store, request: &ListRequest) -> Result<ListOutcome, StoreError> {
+    let account_ids = store.account_ids(&request.addresses)?;
+    let id_of = |index: usize| account_ids.get(index).copied().flatten();
+    let scope = store_scope(&request.scope, &account_ids);
     let account = match &request.filter.account {
         None => AccountFilter::Any,
         Some(name) => request

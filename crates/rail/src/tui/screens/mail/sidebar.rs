@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use rail_core::store::view::MAX_SIDEBAR_FOLDERS;
+use rail_core::store::view::{MAX_SIDEBAR_FOLDERS, UnifiedCounts};
 
 use super::{AccountEntry, MailScreen};
 use crate::tui::app::Effect;
@@ -30,6 +30,8 @@ pub struct Sidebar {
     capped: Vec<usize>,
     /// The folders that are an account's Gmail Drafts.
     drafts: HashSet<i64>,
+    /// Starred and Drafts under UNIFIED, from the last read.
+    unified: UnifiedCounts,
 }
 
 impl Sidebar {
@@ -95,6 +97,7 @@ impl Sidebar {
             .unwrap_or(0);
         self.items = items;
         self.capped = capped;
+        self.unified = outcome.counts.unified.clone();
         self.drafts = outcome
             .counts
             .folders
@@ -146,6 +149,9 @@ impl Sidebar {
 
     /// The unread count shown for `scope`.
     pub fn unread(&self, scope: &ScopeChoice) -> u64 {
+        if *scope == ScopeChoice::Starred {
+            return self.unified.starred_unread;
+        }
         self.items
             .iter()
             .find(|i| i.scope == *scope)

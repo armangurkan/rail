@@ -12,6 +12,11 @@ All notable changes to Rail are recorded here. The format follows
   header (`Personal · Inbox`), `Write from`, the account states and the palette; `name` stays
   what commands, `--account` and `account:` use. At most 40 characters; `rail doctor` warns
   `two accounts share the label "X"`.
+- Starred, Drafts, Sent and Trash of every account together (`Mailbox: Starred` and so on in
+  the palette): newest first, with the filter and the keys working as in the unified inbox and
+  each action going to the thread's own account. The header says
+  `Starred · 2 accounts · 12 unread`, `Sent · 2 accounts`; Sent and Trash match each provider's
+  own folder (`Sent Items`, `Deleted Items` on Microsoft 365).
 - The mail screen's frame: a header row with the scope, its counts, a search slot and one sync
   summary (`● Synced 14:47`, or the worst account's state; kept whole, the scope is cut when both
   do not fit); the sidebar, the list and the reader

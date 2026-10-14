@@ -212,15 +212,13 @@ impl MailScreen {
                 .map_or("?".to_string(), |a| escape(&a.label))
         };
         match &self.scope {
-            ScopeChoice::Unified => "All inboxes".to_string(),
             ScopeChoice::Account(i) => format!("{} · Inbox", name(*i)),
             ScopeChoice::Folder {
                 account,
                 name: folder,
                 ..
-            } => {
-                format!("{} · {}", name(*account), escape(folder))
-            }
+            } => format!("{} · {}", name(*account), escape(folder)),
+            merged => merged.unified_name().unwrap_or_default().to_string(),
         }
     }
 

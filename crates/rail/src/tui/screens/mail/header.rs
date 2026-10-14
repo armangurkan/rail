@@ -9,7 +9,6 @@ use ratatui::widgets::Paragraph;
 
 use super::view::Glyphs;
 use super::{MailScreen, Summary};
-use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
 use crate::tui::text::{escape, fit, width};
 use crate::tui::theme::Theme;
@@ -213,13 +212,15 @@ impl MailScreen {
             glyphs.separator,
             self.scope_title()
         );
-        if self.scope == ScopeChoice::Unified {
+        if self.scope.is_unified() {
             let n = u64::try_from(self.accounts.len()).unwrap_or(u64::MAX);
             let plural = if n == 1 { "" } else { "s" };
             left.push_str(&format!(" · {} account{plural}", thousands(n)));
         }
-        let unread = self.sidebar.unread(&self.scope);
-        left.push_str(&format!(" · {} unread", thousands(unread)));
+        if self.scope.counts_unread() {
+            let unread = self.sidebar.unread(&self.scope);
+            left.push_str(&format!(" · {} unread", thousands(unread)));
+        }
         left
     }
 

@@ -33,6 +33,7 @@ mod pickers;
 mod replaced;
 mod state;
 mod themes;
+mod unified;
 
 struct Fixture {
     _tmp: tempfile::TempDir,
