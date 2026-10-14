@@ -12,6 +12,7 @@ use super::layout;
 use super::view::Glyphs;
 use super::{MailScreen, Summary};
 use crate::tui::keys::Action;
+use crate::tui::modals::Modal;
 use crate::tui::text::{escape, fit, width};
 use crate::tui::theme::Theme;
 
@@ -22,6 +23,9 @@ const MIN_FOR_RIGHT: usize = 40;
 const MIN_SLOT: usize = 8;
 /// Spaces on each side of the slot.
 const GAP: usize = 2;
+/// While a filter is active or being typed the slot keeps at least this many cells (at
+/// `MIN_FOR_SLOT` columns and wider): the scope is cut to make the room.
+const MIN_SLOT_ACTIVE: usize = 24;
 
 /// `22,853`.
 pub fn thousands(n: u64) -> String {
@@ -85,7 +89,7 @@ pub(super) struct HeaderCells {
 
 /// Under 40 columns only the left part is drawn. Otherwise the summary (and from 60 columns the
 /// clock after it) is kept whole, cut only when it alone is wider than the row, and the left part
-/// is cut to the columns left beside it.
+/// is cut to the columns left beside it, less `MIN_SLOT_ACTIVE` while a filter works.
 pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
     let joined = header.joined();
     if cols < MIN_FOR_RIGHT {
@@ -105,10 +109,10 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
     let clock_w = clock.as_deref().map_or(0, width);
     let right = fit(&header.right.text, cols.saturating_sub(clock_w));
     let right_w = width(&right) + clock_w;
-    let left = fit(&joined, cols.saturating_sub(right_w + GAP));
-    let left_w = width(&left);
     let prefix = glyphs.search;
     let prefix_w = width(prefix);
+    let left = fit(&joined, left_room(header, cols, right_w, prefix_w));
+    let left_w = width(&left);
     let room = cols.saturating_sub(left_w + right_w + 2 * GAP + prefix_w);
     let slot = match &header.slot {
         Slot::Idle(text) | Slot::Active(text) if cols >= MIN_FOR_SLOT && room >= MIN_SLOT => {
@@ -126,6 +130,16 @@ pub(super) fn header_cells(header: &Header, cols: usize) -> HeaderCells {
         slot,
         right: Some(right),
         clock,
+    }
+}
+
+/// The left part's room: beside the summary, less the room a working filter keeps.
+fn left_room(header: &Header, cols: usize, right_w: usize, prefix_w: usize) -> usize {
+    match header.slot {
+        Slot::Active(_) if cols >= MIN_FOR_SLOT => {
+            cols.saturating_sub(right_w + 2 * GAP + prefix_w + MIN_SLOT_ACTIVE)
+        }
+        _ => cols.saturating_sub(right_w + GAP),
     }
 }
 
@@ -335,6 +349,11 @@ impl MailScreen {
             return Slot::None;
         }
         let key = self.ctx.keymap.label(Action::ListFilter);
+        if matches!(self.modal, Some(Modal::Filter(_))) {
+            // Being typed: the filter line is drawn over the slot, which keeps a working
+            // filter's room.
+            return Slot::Active(format!("{key} {}", escape(&self.filter_text)));
+        }
         if self.filter.is_empty() {
             return Slot::Idle(format!("{key} Search"));
         }

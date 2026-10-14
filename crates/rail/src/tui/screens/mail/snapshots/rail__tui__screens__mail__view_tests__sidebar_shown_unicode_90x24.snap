@@ -2,7 +2,7 @@
 source: crates/rail/src/tui/screens/mail/view_tests.rs
 expression: "draw(&screen, 90, 24)"
 ---
-▍Rail │ All inboxes · 2 accounts · 5 unread  │ 🔍  / Search    ⟳ Backfill 1200/5000 │ 12:40
+▍Rail │ All inboxes · 2 accounts · 5 unread  │ 🔍  / Search  ⟳ Backfill 1,200/5,000 │ 12:40
 UNIFIED                  │TODAY
 ✉  All inboxes          5│●  W  Dana Reyes, Tom   ★   Q4 roadmap review —… (3)       11:54
 ★  Starred              1│●  W  GitLab             📎  Pipeline failed: rail!42       09:53
@@ -25,4 +25,4 @@ ACCOUNTS                 │OLDER
                          │
                          │
                          │
-Enter open  j/k move  Tab sidebar  r reply  ? help           ● work ✓ · ● home ⟳ 1200/5000
+Enter open  j/k move  Tab sidebar  r reply  ? help         ● work ✓ · ● home ⟳ 1,200/5,000

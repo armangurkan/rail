@@ -309,6 +309,10 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- The header's and the hint bar's backfill counts have thousands separators
+  (`⟳ Backfill 1,200/5,000`, `home ⟳ 1,200/5,000`).
+- A filter being typed or set keeps at least 24 cells of the header's search slot (at 60 columns
+  and wider); the scope is cut to make the room, the summary and the clock stay whole.
 - Microsoft 365 marking read touched every stored message of a thread, and one message Graph
   refused failed the whole action. Only the messages that need the change are sent, a refused one
   is skipped and logged by id, and the action fails only when every message is refused (#30).

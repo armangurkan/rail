@@ -513,6 +513,62 @@ fn three_rows_box_the_header_without_the_bar() {
     );
 }
 
+/// Spec §3: a working filter keeps 24 cells; the scope is cut, the summary and the clock stay
+/// whole.
+#[test]
+fn an_active_filter_keeps_its_room_and_the_scope_is_cut() {
+    let left = "▍Rail │ All inboxes · 2 accounts · 22,853 unread";
+    let h = clocked(
+        left,
+        Slot::Active("/ is:unread · from:dana".into()),
+        "⟳ Backfill 1,200/5,000",
+    );
+    let cells = header_cells(&h, 90);
+    assert_eq!(right_unit(&cells), "⟳ Backfill 1,200/5,000 │ 12:39");
+    assert_eq!(
+        width(&cells.left),
+        27,
+        "90 - 30 right - 2 - 5 prefix - 2 - 24"
+    );
+    assert!(cells.left.ends_with('…'), "{:?}", cells.left);
+    let (at, text) = cells.slot.expect("the slot is drawn");
+    assert_eq!(at, 27 + 2 + width("│ 🔍 "));
+    assert_eq!(text, "/ is:unread · from:dana", "whole in its 24 cells");
+    let idle = clocked(
+        left,
+        Slot::Idle("/ Search".into()),
+        "⟳ Backfill 1,200/5,000",
+    );
+    let cells = header_cells(&idle, 90);
+    assert_eq!(
+        cells.left, left,
+        "the idle slot keeps today's rule: the scope whole"
+    );
+    assert!(
+        cells.slot.is_none(),
+        "3 cells: under 8 the idle slot is dropped"
+    );
+}
+
+/// Review Focus 1.
+#[test]
+fn a_long_summary_beside_a_working_filter_stays_whole_and_the_slot_takes_what_is_left() {
+    let right = "daemon reachable again (Ctrl-r resumes live updates)";
+    let h = clocked(
+        "▍Rail │ All inboxes",
+        Slot::Active("/ is:unread".into()),
+        right,
+    );
+    let cells = header_cells(&h, 90);
+    assert_eq!(cells.right.as_deref(), Some(right));
+    assert_eq!(cells.left, "", "the scope gives way first");
+    let (_, text) = cells.slot.expect("21 cells are left for the slot");
+    assert_eq!(text, "/ is:unread");
+    let cells = header_cells(&h, 75);
+    assert!(cells.slot.is_none(), "6 cells: under 8 the slot is dropped");
+    assert_eq!(cells.right.as_deref(), Some(right));
+}
+
 #[test]
 fn a_boxed_header_leaves_out_the_bar() {
     let (_tmp, screen) = bare_screen();

@@ -349,7 +349,7 @@ The top of the screen is the header: `▍Rail │ All inboxes · 2 accounts · 2
 region (`│ 🔍 / Search`, `| / Search` with `icons = "ascii"`; the filter shows there once set, and
 the Drafts folder has none), and on the right one line for every account's
 sync: `● Synced 14:47` when all are caught up (the earliest account's time), else the worst
-state (`⟳ Syncing work`, `⟳ Backfill 1200/5000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
+state (`⟳ Syncing work`, `⟳ Backfill 1,200/5,000`, `⟳ retrying`, `work stopped`, `! 2 failed`,
 `! work needs login`, `! work sync failed`, or the daemon's state), then the time of day at the
 right edge: `● Synced 14:47 │ 15:02` (`3:02 pm` with `time = "12h"`; `:time` changes it at once).
 `clock = false` under `[general]`, or `:clock`, hides the clock. At `split_threshold` (140
@@ -359,8 +359,9 @@ unboxed header reads `|Rail | All inboxes …`. At `split_threshold` and wider, 
 rows high, the header has a box of its own too (never in the accent colour), and inside it the
 row reads `│ Rail │ All inboxes … ● Synced 14:47 │ 15:02 │`, without the `▍` bar (`| Rail | …` with
 `icons = "ascii"`). When the scope and the summary do not both fit, the summary and the clock
-stay whole and the scope is cut. Under 60 columns the clock and the search region go, and under
-40 the summary. The status bar at the bottom names the keys of the
+stay whole and the scope is cut. While a filter is set or being typed, the search slot keeps at
+least 24 cells (at 60 columns and wider): the scope is cut first. Under 60 columns the clock and
+the search region go, and under 40 the summary. The status bar at the bottom names the keys of the
 pane you are in (`Enter open  j/k move  Tab sidebar  r reply  …  ? help`, with the keys your
 `config.toml` sets) and shows each account's state on the right. Narrower than `split_threshold`
 it is one row; at `split_threshold` and wider (and at least 12 rows high) it takes three rows and
@@ -434,8 +435,9 @@ the rest of the thread stays readable,
 and the text appears when it lands. If the fetch fails the message says why.
 
 `/` opens the filter line in the header's search slot and filters the list as you type. The
-slot is not drawn when the terminal is narrower than 60 columns, or when fewer than 8 cells are
-left for it after the counts and the summary; the line then opens in the status bar. Plain words
+slot is not drawn when the terminal is narrower than 60 columns, or, before a filter is set, when
+fewer than 8 cells are left for it after the counts and the summary; the line then opens in the
+status bar. Plain words
 search subjects, the names and addresses of senders and recipients (To, Cc and Bcc) and stored
 bodies; `from:`, `to:` (also Cc and Bcc), `subject:`, `has:attachment`, `is:unread`,
 `is:starred`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD` (local dates, by when the mail arrived) and
