@@ -313,3 +313,61 @@ async fn an_outlook_draft_opens_and_is_discarded_with_outlooks_words() {
         ["Its copy in Outlook's Drafts is deleted too."]
     );
 }
+
+#[tokio::test]
+async fn m_on_a_microsoft_365_account_with_no_folders_says_folders() {
+    let mut f = m365_store_fixture().await;
+    writer(&f)
+        .conn()
+        .execute(
+            "DELETE FROM folders WHERE account_id = (SELECT id FROM accounts WHERE name = 'home')",
+            [],
+        )
+        .unwrap();
+    press(&mut f, KeyCode::Char('m')).await;
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("This account has no folders to choose from."),
+        "{line}"
+    );
+    assert!(f.screen.modal.is_none(), "no picker");
+}
+
+#[tokio::test]
+async fn a_pick_in_the_microsoft_365_m_picker_sends_move() {
+    let mut f = m365_store_fixture().await;
+    let projects: i64 = writer(&f)
+        .conn()
+        .query_row(
+            "SELECT f.id FROM folders f JOIN accounts a ON a.id = f.account_id
+             WHERE a.name = 'home' AND f.name = 'Projects'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    press(&mut f, KeyCode::Char('m')).await;
+    for c in "proj".chars() {
+        press(&mut f, KeyCode::Char(c)).await;
+    }
+    press(&mut f, KeyCode::Enter).await;
+    let calls = applies(&f);
+    assert!(
+        matches!(
+            &calls[..],
+            [FakeCall::Apply { account, action: MailAction::Move { to }, .. }]
+                if account == "home" && *to == projects
+        ),
+        "{calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn trash_notes_for_an_account_it_does_not_know_add_none() {
+    let f = m365_fixture().await;
+    let unknown = crate::tui::screens::mail::selection::Picked {
+        account_id: 9_999,
+        starred: false,
+        unread: false,
+    };
+    assert!(f.screen.trash_notes(&[(1, unknown)]).is_empty());
+}

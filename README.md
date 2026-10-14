@@ -389,18 +389,17 @@ the thread's title block: the subject; the newest message's sender, its time (`0
 `Thu 08:55` yesterday and this week, `Oct 03` or `2024-10-03` before) and the account's badge
 and label (`Dana Reyes  04:32   W  WORK`); its recipients by name and the thread's size
 (`To: Vito, Tom  /  4 messages`, or `/  4 messages` when it names none); then a rule. The
-newest message is open under it. The older messages follow as cards between rules, oldest
-first (`thread_order = "newest"` under `[general]` runs them newest first): a
-card is the message's number in the thread in a grey box, its sender (bold while unread, `★`
-when starred) and its time at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its
-text. When a long thread's oldest messages are not shown,
-`[5 older messages of this thread are not shown]` stands where they would be. `j`/`k` move the
-cursor, `n`/`p` jump between the newest message and each card, `Tab` (or `Enter` on a card, the
-subject or a preview) opens or closes the message under the cursor, and `Enter` on
-`[n quoted lines]` shows the quoted text. `h` shows or hides, for the session, the headers of
-every open message: `From:`, `To:` and `Cc:` with addresses, `Date: Fri 10 Oct 2025 12:40`, and
-`Subject:` when it differs from the thread's. With `icons = "ascii"` the arrows are `>` and `v`
-and the rules `-`.
+newest message is open under it. The older messages follow as cards between rules, oldest first
+(`thread_order = "newest"` under `[general]` runs them newest first): a card is the message's
+number in the thread in a grey box, its sender (bold while unread, `★` when starred) and its time
+at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its text. When a long thread's
+oldest messages are not shown, `[5 older messages of this thread are not shown]` stands where they
+would be. `j`/`k` move the cursor, `n`/`p` jump between the newest message and each card, `Tab` (or
+`Enter` on a card, the subject or a preview) opens or closes the message under the cursor, and
+`Enter` on `[n quoted lines]` shows the quoted text. `h` shows or hides, for the session, the
+headers of every open message: `From:`, `To:` and `Cc:` with addresses,
+`Date: Fri 10 Oct 2025 12:40`, and `Subject:` when it differs from the thread's. With
+`icons = "ascii"` the arrows are `>` and `v` and the rules `-`.
 
 HTML mail is shown as Rail's plain-text rendering, with each link as a numbered marker such as
 `[1]`; in terminals that support hyperlinks (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows
@@ -437,8 +436,8 @@ it is open; the blocking above cannot stop it, so close the tab if the page move
 
 Bodies of recent mail (`body_cache_days`) are already in the store. An older message shows
 **fetching…** while the daemon fetches its body from its account's server (Gmail or Microsoft 365);
-the rest of the thread stays readable,
-and the text appears when it lands. If the fetch fails the message says why.
+the rest of the thread stays readable, and the text appears when it lands. If the fetch fails the
+message says why.
 
 `/` opens the filter line in the header's search slot and filters the list as you type. The
 slot is not drawn when the terminal is narrower than 60 columns, or, before a filter is set, when
@@ -1331,6 +1330,7 @@ their own.
 | `this mailbox cannot be reached through Microsoft Graph (on-premises, unlicensed or inactive)` | The mailbox must be an Exchange Online mailbox with a licence. |
 | `Outlook uses folders, not labels: press m to move.` | Expected: Outlook has folders, not labels. Press `m` to move the thread to a folder. |
 | `This mailbox has no Archive folder; press m to move.` | The mailbox has no Archive folder and Rail never makes one. Press `m` to move the thread to a folder. |
+| `This mailbox has no Deleted Items folder.` | `d` found no Deleted Items folder in the last folder listing, which an Exchange Online mailbox always has; Rail put the thread back. Press `Ctrl-r` to sync, or `m` to move the thread to a folder. |
 | `the folder for this move no longer exists in Microsoft 365` | The folder was deleted in Outlook before the move was sent; Rail put the thread back. Press `m` and pick another folder. |
 | `Microsoft 365 is busy or unavailable (HTTP 429)`, or `retrying` in `rail sync` | Microsoft is throttling the mailbox. Rail waits as long as Microsoft asks (up to two minutes at a time) and tries again. |
 | `Gmail no longer has this draft` | The draft was deleted in Gmail since Rail last synced, and its row goes after the next sync. A draft you already opened stays on this computer, and `s` saves it to Gmail again. |

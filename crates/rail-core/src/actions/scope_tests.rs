@@ -23,8 +23,7 @@ fn m(
 }
 
 /// 0 Inbox unread, 1 Sent, 2 Drafts (the newest of all), 3 Deleted Items unread, 4 Projects
-/// flagged (the newest received),
-/// 5 Archive.
+/// flagged (the newest received), 5 Archive.
 fn spread() -> Vec<TargetMessage> {
     vec![
         m("a", Some((FolderKind::Inbox, "f-inbox")), true, false, 10),

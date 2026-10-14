@@ -309,6 +309,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Fixed
 
+- `m` on a Microsoft 365 account with no synced folders said `This account has no labels to
+  choose from.`; it now says `This account has no folders to choose from.` (#34).
 - A Microsoft 365 draft's attachment overwritten in place with new bytes of the same length kept
   the old copy in Outlook, and that copy was sent. Rail now records each file's modification time
   and uploads a file whose time or size changed (#42).

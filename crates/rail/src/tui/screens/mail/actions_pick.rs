@@ -1,7 +1,9 @@
 //! The label and move pickers (`l`, `m`): refused for a selection across accounts, otherwise a
 //! store read of the account's labels (`l`) or move targets (`m`, by its folder model: Gmail's
 //! labels, or a Microsoft 365 account's Inbox, Archive, Junk and own folders) and what the
-//! threads are in, then the picker; its answer is a `labels` or `move` action with grace.
+//! threads are in, then the picker; an account with nothing to offer says so in its own words
+//! (labels on Gmail, folders on Microsoft 365); its answer is a `labels` or `move` action with
+//! grace.
 
 use std::collections::BTreeSet;
 
@@ -62,9 +64,16 @@ impl MailScreen {
         };
         match result {
             Ok(choices) if choices.labels.is_empty() => {
-                self.actions.picking = None;
-                self.status
-                    .notify("This account has no labels to choose from.", self.tick);
+                let picking = self.actions.picking.take();
+                let folders = picking
+                    .as_ref()
+                    .and_then(|p| p.targets.first())
+                    .is_some_and(|(_, t)| self.is_m365(t.account_id));
+                let what = if folders { "folders" } else { "labels" };
+                self.status.notify(
+                    format!("This account has no {what} to choose from."),
+                    self.tick,
+                );
             }
             Ok(choices) => {
                 let items = choices
