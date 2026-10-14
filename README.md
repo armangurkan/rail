@@ -17,6 +17,40 @@ terminal and want something in the spirit of mutt with threads, a unified inbox 
 readable HTML and a command palette. It also speaks MCP, so an AI coding agent can help you set it
 up without ever seeing your secrets.
 
+<p align="center">
+  <img alt="The mail screen: the sidebar, the unified inbox and an open thread side by side, with the hint bar below" src="assets/screenshots/mail.jpg" width="100%">
+</p>
+<p align="center"><sub>The mail screen at 150 columns: the sidebar, the unified inbox and an open thread, with the keys for the pane you are in along the bottom. The accounts and the mail in these pictures are invented.</sub></p>
+
+<table>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <img alt="The thread list" src="assets/screenshots/list.jpg"><br>
+      <sub>The thread list: date groups, an unread dot in the account's colour, the account's badge, the people, stars and attachments, the message count after the subject and the time at the edge.</sub>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img alt="A thread in the reader" src="assets/screenshots/thread.png"><br>
+      <sub>A thread: the title block, the newest message open with its quoted lines folded, and the older messages as numbered cards. <code>n</code> and <code>p</code> move between messages, <code>Tab</code> opens or folds one.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <img alt="A message with its headers shown" src="assets/screenshots/message-headers.png"><br>
+      <sub>A message after <code>h</code>: the From, To and Date lines above the body. The title block shows names only, so the addresses stay out of the way until you ask.</sub>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img alt="The command palette" src="assets/screenshots/palette.png"><br>
+      <sub>The command palette on <code>:</code>: every command with its key, narrowed as you type. Themes, mailboxes and the settings toggles live here too.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top" align="center">
+      <img alt="The sidebar" src="assets/screenshots/sidebar.png"><br>
+      <sub>The sidebar: the merged mailboxes across every account, then each account with its badge, its system folders and <code>More folders</code> for the rest, folded and unfolded with <code>Space</code>.</sub>
+    </td>
+  </tr>
+</table>
+
 > **Rail is pre-1.0.** Account setup, background sync, search, reading mail, acting on threads
 > (archive, trash, star, read, move) and writing mail (new messages, replies and forwards, with
 > undo send, and drafts saved to the account's Drafts) work today for Gmail and Microsoft 365.
