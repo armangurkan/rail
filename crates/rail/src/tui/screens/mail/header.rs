@@ -174,7 +174,7 @@ pub(super) fn render_header(
     theme: &Theme,
     header: &Header,
 ) -> Option<Rect> {
-    let row = if area.height >= layout::HEADER_ROWS_BOXED && layout::fits_border(area) {
+    let row = if layout::header_boxed(area) {
         boxed_row(frame, area, theme, header.icons)
     } else {
         area

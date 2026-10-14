@@ -52,6 +52,12 @@ pub fn fits_border(area: Rect) -> bool {
     area.width >= 4 && area.height >= 3
 }
 
+/// The header area is drawn as a box: it was given its three rows and a border fits in it. The
+/// one place that decides, for the box and for the `▍` bar it replaces.
+pub fn header_boxed(area: Rect) -> bool {
+    area.height >= HEADER_ROWS_BOXED && fits_border(area)
+}
+
 /// The box `icons = "ascii"` draws: `+` corners, `-` and `|` sides.
 const ASCII_BORDER: border::Set<'static> = border::Set {
     top_left: "+",
@@ -152,5 +158,15 @@ mod tests {
         assert_eq!(header(150, 40, true).height, HEADER_ROWS_BOXED);
         assert_eq!(header(150, 11, true).height, 1, "under 12 rows");
         assert_eq!(header(90, 24, false).height, 1, "stacked");
+    }
+
+    #[test]
+    fn the_header_is_boxed_only_with_its_three_rows_and_room_for_a_border() {
+        assert!(header_boxed(Rect::new(0, 0, 80, 3)));
+        assert!(!header_boxed(Rect::new(0, 0, 80, 1)), "one row");
+        assert!(
+            !header_boxed(Rect::new(0, 0, 3, 3)),
+            "too narrow for a border"
+        );
     }
 }

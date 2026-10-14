@@ -321,9 +321,9 @@ right edge: `● Synced 14:47 │ 15:02` (`3:02 pm` with `time = "12h"`; `:time`
 `clock = false` under `[general]`, or `:clock`, hides the clock. At `split_threshold` (140
 columns by default) and wider the sidebar, the list and the reader are boxed, the focused pane in
 the accent colour; with `icons = "ascii"` the boxes are drawn with `+`, `-` and `|`, and an
-unboxed header reads `|Rail | All inboxes …`. At `split_threshold` and wider, and at least 12 rows high,
-the header has a box of its own too (never in the accent colour), and inside it the row reads
-`│ Rail │ All inboxes … ● Synced 14:47 │ 15:02 │`, without the `▍` bar (`| Rail | …` with
+unboxed header reads `|Rail | All inboxes …`. At `split_threshold` and wider, and at least 12
+rows high, the header has a box of its own too (never in the accent colour), and inside it the
+row reads `│ Rail │ All inboxes … ● Synced 14:47 │ 15:02 │`, without the `▍` bar (`| Rail | …` with
 `icons = "ascii"`). When the scope and the summary do not both fit, the summary and the clock
 stay whole and the scope is cut. Under 60 columns the clock and the search region go, and under
 40 the summary. The status bar at the bottom names the keys of the
@@ -422,11 +422,12 @@ is an action Gmail refused, `j`/`k` or `↓`/`↑` highlight an entry and `Enter
 again. `:hints` turns the key hints off, or back on, and saves the choice (`hints = false` under
 `[general]`; turning them on removes the key); a save that fails says
 `Could not save the hints setting: …` and keeps the choice for this session. `:clock` hides the
-header's clock (`clock: off`), or shows it again (`clock: on`), and saves the choice (`clock = false` under `[general]`;
-showing it removes the key); a save that fails says `Could not save the clock setting: …` and
-keeps the choice for this session. `:time` switches
-every time of day on screen (the list, `● Synced 14:47`, the header's clock, the Drafts list, `:errors`, the
-reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines) between 24-hour and 12-hour
+header's clock (`clock: off`), or shows it again (`clock: on`), and saves the choice
+(`clock = false` under `[general]`; showing it removes the key); a save that fails says
+`Could not save the clock setting: …` and keeps the choice for this session. `:time` switches
+every time of day on screen (the list, `● Synced 14:47`, the header's clock, the Drafts list,
+`:errors`, the reader's `04:32` and its `Date: Fri 10 Oct 2025 12:40` lines) between 24-hour
+and 12-hour
 (`2:47 pm`, `4:32 am`, `Date: Fri 10 Oct 2025 12:40 pm`) and saves the choice (`time = "12h"`
 under `[general]`; 24-hour removes the key); a save that fails says
 `Could not save the time setting: …` and keeps the choice for this session.
