@@ -12,19 +12,21 @@ use super::drafts::{
     not_queued, row_of_draft, saved_id, token_used, unexpected,
 };
 use crate::auth::unix_now;
+use crate::config::AccountKind;
 use crate::daemon::DaemonContext;
 use crate::daemon::registry::Call;
 use crate::ops::{
     Action, BodyFetchRequest, BodyOutcome, DraftId, DraftImportRequest, DraftImportResponse,
     DraftPushRequest, DraftPushResponse, OpError, UNDO_GRACE, new_message_id,
 };
-use crate::provider::Provider;
+use crate::provider::{Provider, ProviderError};
 use crate::store::Store;
-use crate::store::drafts::{Attachment, Draft, DraftKind, DraftState, DraftWrite};
+use crate::store::drafts::{Attachment, Draft, DraftKind, DraftState, DraftWrite, ReplyAttachment};
 use crate::store::drafts_folder::ImportSource;
 use crate::store::outbox::{NewAction, OutboxOutcome, OutboxWrite};
 use crate::sync::Wants;
-use crate::sync::manager::Reach;
+use crate::sync::batch::Batch;
+use crate::sync::manager::{Reach, unobserved};
 
 fn no_such_message() -> OpError {
     OpError::not_found("message: no such message")
@@ -194,6 +196,43 @@ async fn with_body(
     Ok(fetched)
 }
 
+/// Outlook edits keep the same message id, so its cached body and attachment listing may be
+/// stale. Fetch both before a first import; any failure stops it. Use the fetched data directly
+/// as well as updating the cache, so a concurrent store write cannot substitute an older body.
+async fn refresh_outlook_body(
+    ctx: &DaemonContext,
+    provider: &dyn Provider,
+    mut source: ImportSource,
+) -> Result<ImportSource, OpError> {
+    let body = unobserved(provider.body(&source.remote_id))
+        .await
+        .map_err(|error| match error {
+            ProviderError::NotFound => OpError::not_found("Microsoft 365 no longer has this draft"),
+            other => other.into(),
+        })?;
+    source.body_text = Some(body.text.clone());
+    source.attachments = body
+        .attachments
+        .iter()
+        .map(|part| ReplyAttachment {
+            part_id: part.part_id.clone(),
+            filename: part.filename.clone(),
+            mime_type: part.mime_type.clone(),
+            size: part.size,
+            plain_file: part.plain_file,
+        })
+        .collect();
+    ctx.sync
+        .writer(ctx)
+        .await?
+        .write(Batch {
+            bodies: vec![(source.remote_id.clone(), body)],
+            ..Batch::new(source.account_id)
+        })
+        .await?;
+    Ok(source)
+}
+
 /// The local draft an import writes: the source's recipients, text and threading, the files
 /// fetched for its attachments, and its own `Message-ID` when the MIME builder accepts it (`header_id` checks the inner part
 /// with `valid_message_id_inner`), a fresh one otherwise.
@@ -343,8 +382,8 @@ async fn find_gmail_draft(
     })
 }
 
-/// Everything Gmail holds of the import: the body (fetched when the store has none) and the
-/// attachments as files under the token's directory.
+/// The import's body and attachments: always refreshed for Outlook, fetched when uncached for
+/// Gmail. Attachments become files under the token's directory.
 async fn from_gmail(
     ctx: &DaemonContext,
     account: &str,
@@ -352,8 +391,12 @@ async fn from_gmail(
     source: ImportSource,
     token: &str,
     provider_name: &str,
+    kind: AccountKind,
 ) -> Result<(ImportSource, Vec<Attachment>, PathBuf), OpError> {
-    let mut source = with_body(ctx, account, source).await?;
+    let mut source = match kind {
+        AccountKind::M365 => refresh_outlook_body(ctx, provider, source).await?,
+        AccountKind::Gmail => with_body(ctx, account, source).await?,
+    };
     // Only plain files: an Outlook draft's attached messages and links stay in Outlook, where
     // the reconcile leaves them, and its inline pictures go when the reconcile writes the text
     // body (every Gmail part is a plain file).
@@ -401,6 +444,7 @@ pub(super) async fn import(
         source,
         &token,
         provider_name,
+        target.kind,
     )
     .await?;
     let count = files.len();
