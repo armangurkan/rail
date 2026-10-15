@@ -936,8 +936,10 @@ Microsoft Graph.
 - **Drafts.** `s` saves the draft to Outlook's Drafts (`saved to Microsoft 365 · z undoes`); later
   saves update the same Outlook draft, and one deleted in Outlook is made again in Drafts (the
   deleted copy stays in Deleted Items). Sending a saved draft sends that very draft, so none is
-  left in Drafts. A draft written in Outlook opens in Rail with its attached files; `d` on it
-  deletes it in Outlook (it goes to Deleted Items). An extra copy can stay in Outlook's Drafts:
+  left in Drafts. Opening a draft written in Outlook fetches its current body and attachment
+  listing, even when Rail has cached them; a failed fetch stops the import. Once imported, the
+  local draft keeps your edits when reopened. `d` on it deletes it in Outlook (it goes to
+  Deleted Items). An extra copy can stay in Outlook's Drafts:
   when Outlook made a reply, reply to everyone or forward draft but its answer was lost on the
   way back (a timeout, say) or could not be read, Rail makes another on the retry; and when a
   save made the Outlook draft but then failed for good (a permanent attachment error, say),
