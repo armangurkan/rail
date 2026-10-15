@@ -14,6 +14,8 @@ mod compose;
 #[cfg(test)]
 mod compose_tests;
 #[cfg(test)]
+mod gmail_send_tests;
+#[cfg(test)]
 mod graph_send_tests;
 mod plan;
 mod pushing;
