@@ -107,12 +107,13 @@ async fn send_refuses_a_thread_id_that_is_not_a_plain_id() {
 }
 
 #[tokio::test]
-async fn message_by_header_id_queries_rfc822msgid_and_maps_an_empty_list_to_none() {
+async fn message_by_header_id_queries_sent_mail_and_maps_an_empty_list_to_none() {
     let gmail = Gmail::start().await;
     let provider = gmail.provider();
     Mock::given(method("GET"))
         .and(path(format!("{API_PATH}/messages")))
         .and(query_param("q", "rfc822msgid:<abc@example.com>"))
+        .and(query_param("labelIds", "SENT"))
         .and(query_param("maxResults", "1"))
         .respond_with(
             ResponseTemplate::new(200)

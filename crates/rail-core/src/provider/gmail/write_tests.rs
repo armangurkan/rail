@@ -1,8 +1,8 @@
 //! The Gmail adapter's side of the writing trait: `send` and `draft_save` build the message with
 //! the MIME builder and make exactly the requests the raw-bytes calls made (`raw`, `threadId`,
 //! the draft id), a thread or draft gone at Gmail falls back as the worker did, `sent_already`
-//! is the `rfc822msgid:` search, a send never consumes a draft, and a carried attachment (which
-//! has no bytes) is refused before any request.
+//! searches sent mail by `rfc822msgid:`, a send never consumes a draft, and a carried attachment
+//! (which has no bytes) is refused before any request.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -221,11 +221,42 @@ async fn a_draft_in_a_thread_gmail_no_longer_has_is_saved_on_its_own() {
 }
 
 #[tokio::test]
-async fn sent_already_is_the_rfc822msgid_search() {
+async fn sent_already_does_not_count_an_unsent_remote_draft() {
+    let gmail = Gmail::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{API_PATH}/messages")))
+        .respond_with(|request: &wiremock::Request| {
+            let sent_only = request
+                .url
+                .query_pairs()
+                .any(|(key, value)| key == "labelIds" && value == "SENT");
+            let messages = if sent_only {
+                json!([])
+            } else {
+                json!([{"id": "m-old", "threadId": "t1"}])
+            };
+            ResponseTemplate::new(200).set_body_json(json!({"messages": messages}))
+        })
+        .expect(1)
+        .mount(&gmail.server)
+        .await;
+    assert!(
+        !gmail
+            .provider()
+            .sent_already(&mail(None, Some("r1")))
+            .await
+            .unwrap(),
+        "a matching Gmail draft has not been sent"
+    );
+}
+
+#[tokio::test]
+async fn sent_already_searches_sent_mail_by_rfc822msgid() {
     let gmail = Gmail::start().await;
     Mock::given(method("GET"))
         .and(path(format!("{API_PATH}/messages")))
         .and(query_param("q", "rfc822msgid:<w1@example.com>"))
+        .and(query_param("labelIds", "SENT"))
         .and(query_param("maxResults", "1"))
         .respond_with(
             ResponseTemplate::new(200)

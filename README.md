@@ -685,11 +685,11 @@ was queued and says `Could not confirm the send: … · check Sent and Drafts`
 it is still in Drafts, open it and press `y` again: that is safe, since the daemon refuses a draft
 it already has queued (`this draft is already being sent`) and a sent draft is gone. A message is
 never sent twice: before any later attempt (a retry, or a start after the daemon stopped
-mid-send) the daemon asks Gmail whether a message with that `Message-ID` is already there and, if
-so, counts it as sent. A reply whose conversation was deleted in Gmail meanwhile goes out on a
-conversation of its own. When Gmail refuses a message for good, the review opens again with the
-error (`Could not send: Gmail refused the request (HTTP 400)`) and the failure is listed in
-`:errors`.
+mid-send) the daemon asks Gmail whether a message with that `Message-ID` has the `SENT` label and,
+if so, counts it as sent. An unsent copy in Gmail's Drafts does not count. A reply whose
+conversation was deleted in Gmail meanwhile goes out on a conversation of its own. When Gmail
+refuses a message for good, the review opens again with the error
+(`Could not send: Gmail refused the request (HTTP 400)`) and the failure is listed in `:errors`.
 
 **Drafts.** Every editor round, header change and attachment change saves the message in the
 local store, so a crash or a closed terminal loses nothing. A reply whose original message has

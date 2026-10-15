@@ -1,4 +1,4 @@
-//! Sending and the "is it there already" lookup.
+//! Sending and the "was it sent already" lookup, restricted to messages labeled SENT.
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -119,6 +119,7 @@ impl GmailProvider {
         }
         let query = [
             ("q", format!("rfc822msgid:{id}")),
+            ("labelIds", "SENT".to_string()),
             ("maxResults", "1".to_string()),
         ];
         let list: ListWire = self.api.get_json("messages", &query, COST_LIST).await?;
