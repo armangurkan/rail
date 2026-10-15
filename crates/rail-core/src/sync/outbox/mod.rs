@@ -25,6 +25,8 @@ mod sending;
 #[cfg(test)]
 mod sending_tests;
 #[cfg(test)]
+mod settlement_tests;
+#[cfg(test)]
 mod tests;
 
 use std::collections::HashSet;
@@ -344,9 +346,7 @@ impl Worker {
 
     async fn settle(&self, row: OutboxRow, result: Result<Landed, ProviderError>) {
         let write = self.write_for(&row, &result).await;
-        if !matches!(write, OutboxWrite::Release { .. }) {
-            self.forget_recovered(row.id);
-        }
+        let released = matches!(write, OutboxWrite::Release { .. });
         // A completed draft row changed Gmail's Sent or Drafts: the next sync brings it.
         let landed = result.is_ok() && row.action.draft_id().is_some();
         // The completion deletes a sent draft, and its token with it: read the files first.
@@ -359,7 +359,11 @@ impl Worker {
             _ => "sent",
         };
         tracing::info!(account = %self.name, row = row.id, threads = row.thread_ids.len(), outcome = result.as_ref().err().map_or(done, ProviderError::code), "outbox row");
-        match self.writer.outbox(write).await {
+        let outcome = self.commit_settlement(row.id, &write).await;
+        if outcome.is_ok() && !released {
+            self.forget_recovered(row.id);
+        }
+        match outcome {
             Ok(OutboxOutcome::Failed {
                 gave_up: true,
                 row: Some(failed),
@@ -373,6 +377,29 @@ impl Worker {
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(account = %self.name, row = row.id, error = %error.message, "could not record an outbox result")
+            }
+        }
+    }
+
+    /// Keep the provider result until the writer records it. Retry only this transaction:
+    /// sending or creating a draft again could duplicate it. Even a storage error classified
+    /// permanent (disk full, for example) can be repaired while this writer is alive.
+    async fn commit_settlement(
+        &self,
+        row: OutboxId,
+        write: &OutboxWrite,
+    ) -> Result<OutboxOutcome, OpError> {
+        let mut wait = MIN_IDLE;
+        loop {
+            match self.writer.outbox(write.clone()).await {
+                Ok(outcome) => return Ok(outcome),
+                Err(error) if self.writer.is_closed() => return Err(error),
+                Err(error) => {
+                    tracing::warn!(account = %self.name, row, error = %error.message,
+                        retry_secs = wait.as_secs(), "could not record an outbox result; retrying the write");
+                    tokio::time::sleep(wait).await;
+                    wait = wait.saturating_mul(2).min(MAX_IDLE);
+                }
             }
         }
     }
