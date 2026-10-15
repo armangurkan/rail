@@ -1,6 +1,8 @@
 //! Begun logins and consents through a real daemon: wiremock serves the token endpoint and the
 //! test plays the browser by calling the loopback redirect itself.
 
+mod identity_tests;
+
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -66,8 +68,12 @@ async fn harness(config: &str) -> Harness {
     std::fs::create_dir_all(&paths.config_dir).unwrap();
     std::fs::write(paths.config_file(), config).unwrap();
     let server = token_server().await;
+    identity_tests::mount_matching_identity(&server).await;
     let (ctx, urls) = daemon_context(&paths);
-    let ctx = ctx.with_token_url(Some(format!("{}/token", server.uri())));
+    let ctx = ctx
+        .with_token_url(Some(format!("{}/token", server.uri())))
+        .with_gmail_url(Some(format!("{}/gmail/v1/users/me/", server.uri())))
+        .with_graph_url(Some(format!("{}/v1.0/", server.uri())));
     let gate = ctx.save_gate.clone();
     let begin_gate = ctx.begin_gate.clone();
     let daemon = start_daemon(ctx, ServeConfig::default()).await;

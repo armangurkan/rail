@@ -603,6 +603,13 @@ async fn token_server() -> wiremock::MockServer {
         })))
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/gmail/v1/users/me/profile"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"emailAddress": "me@example.com"})),
+        )
+        .mount(&server)
+        .await;
     server
 }
 
@@ -643,7 +650,13 @@ async fn every_tool_result_and_the_log_are_free_of_secrets() {
     let dir = tempfile::tempdir().unwrap();
     write_config(&dir, FILE_BACKEND);
     let server = bounded("the token server", token_server()).await;
-    let client = start(&dir, host(None), Some(format!("{}/token", server.uri()))).await;
+    let client = start_with_gmail(
+        &dir,
+        host(None),
+        Some(format!("{}/token", server.uri())),
+        Some(format!("{}/gmail/v1/users/me/", server.uri())),
+    )
+    .await;
     let file = dir.path().join("client_secret_1.json");
     let google = json!({"installed": {"client_id": "1.apps.googleusercontent.com", "client_secret": CLIENT_SECRET}});
     std::fs::write(&file, google.to_string()).unwrap();

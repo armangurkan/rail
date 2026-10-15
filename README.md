@@ -195,6 +195,14 @@ save had already started is always finished, never left half-written; Rail then 
 back so you can forward it to an administrator. When stdout is not a terminal, every way of opening
 the wizard prints a hint and exits 2.
 
+After a browser login, Rail verifies that the signed-in mailbox matches the account's address
+before saving credentials or adding the account. Selecting a different mailbox fails the login
+and preserves existing credentials. Address comparisons ignore case. For Gmail, use the primary
+mailbox address (consumer Gmail dot, plus-tag and `googlemail.com` variants also match); Google
+Workspace custom aliases require the primary address. Microsoft 365 also accepts the signed-in
+user's principal name and SMTP aliases returned by Graph. Verification uses the existing OAuth
+permissions; if the profile cannot be read, finish the login again once the error is resolved.
+
 Every key Rail reads is an *action* with an id and a default key. Change one in `config.toml`:
 
 ```toml
@@ -1317,6 +1325,7 @@ their own.
 | Symptom | Fix |
 |---|---|
 | A token refresh fails with "refresh token rejected", or `rail doctor` shows tokens `missing` | `rail account login <name>`. Common after a revoked grant, a sign-in frequency policy, or tokens deleted from the keyring. |
+| `the signed-in mailbox does not match this account's address` | Log in again and select the account's mailbox. For Google Workspace, configure its primary mailbox address rather than a custom alias. Existing credentials are kept. |
 | Gmail asks you to log in again every week | The OAuth consent screen is still in "Testing"; publish it ("In production"). |
 | No Secret Service (tty-only Linux, containers) | Set `secrets = "file"` under `[general]` before adding accounts, or move existing tokens with `rail secrets set file`. |
 | "1Password is locked" or `op` not signed in | Unlock the app, or turn on its CLI integration; `rail doctor` checks with `op whoami`. |

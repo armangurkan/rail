@@ -255,13 +255,23 @@ pub async fn gated_daemon_ctx(
         let _ = tx.send(url.clone());
         Ok(())
     });
-    // Never Google or Microsoft: an account the test configures syncs against unreachable addresses.
+    let gmail_url = token_url.as_ref().map_or_else(
+        || UNREACHABLE_GMAIL_URL.to_string(),
+        |token| {
+            Url::parse(token)
+                .unwrap()
+                .join("/gmail/v1/users/me/")
+                .unwrap()
+                .to_string()
+        },
+    );
+    // Never Google or Microsoft: calls go to the fake token/profile server or unreachable addresses.
     let ctx = DaemonContext::new(paths.clone(), daemon_opener)
         .expect("daemon context")
         .with_token_url(Some(
             token_url.unwrap_or_else(|| UNREACHABLE_TOKEN_URL.to_string()),
         ))
-        .with_gmail_url(Some(UNREACHABLE_GMAIL_URL.to_string()))
+        .with_gmail_url(Some(gmail_url))
         .with_graph_url(Some(UNREACHABLE_GRAPH_URL.to_string()));
     let gates = Gates {
         begin: ctx.begin_gate.clone(),
@@ -285,6 +295,13 @@ pub async fn token_server(access: &str, refresh: &str) -> MockServer {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "access_token": access, "refresh_token": refresh, "expires_in": 3600, "token_type": "Bearer"
         })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/gmail/v1/users/me/profile"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"emailAddress": "me@example.com"})),
+        )
         .mount(&server)
         .await;
     server

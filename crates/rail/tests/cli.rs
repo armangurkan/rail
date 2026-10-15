@@ -413,12 +413,24 @@ async fn account_login_replaces_tokens_in_the_file_backend() {
         .mount(&server)
         .await;
 
+    Mock::given(method("GET"))
+        .and(path("/gmail/v1/users/me/profile"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "emailAddress": "me@example.com"
+        })))
+        .mount(&server)
+        .await;
+
     let url_file = dir.path().join("url.txt");
     let child = rail_cmd(&dir)
         .args(["account", "login", "WORK"])
         .env("RAIL_TEST_OPENER", write_opener(&dir))
         .env("RAIL_TEST_URL_FILE", &url_file)
         .env("RAIL_TEST_TOKEN_URL", format!("{}/token", server.uri()))
+        .env(
+            "RAIL_TEST_GMAIL_URL",
+            format!("{}/gmail/v1/users/me/", server.uri()),
+        )
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()

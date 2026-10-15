@@ -1,6 +1,6 @@
 //! `account.add.begin`, `account.login.begin` and `consent.begin`. Each returns at once with
-//! the URL; a detached task waits for the redirect and saves. The task belongs to the daemon,
-//! not to the connection, so a client that goes away never stops a save.
+//! the URL; a detached task waits for the redirect, verifies the mailbox and saves. The task
+//! belongs to the daemon, not to the connection, so a client that goes away never stops a save.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use crate::accounts::{
 use crate::auth::{
     AuthSession, TokenSet, begin_admin_consent, begin_auth_code, open_secret_store, unix_now,
 };
-use crate::config::AccountConfig;
+use crate::config::{AccountConfig, AccountKind};
 use crate::daemon::context::DaemonContext;
 use crate::daemon::pending::{Refused, Slot};
 use crate::daemon::registry::{Call, Caller};
@@ -223,16 +223,29 @@ fn spawn_pending(
     });
 }
 
-/// The redirect and the code exchange, unless cancelled (`None`) or out of time.
+/// The redirect, code exchange and mailbox verification, unless cancelled (`None`) or timed out.
 async fn wait_for_tokens(
     ctx: &DaemonContext,
     session: AuthSession,
+    account: &AccountConfig,
     cancel: tokio::sync::oneshot::Receiver<()>,
 ) -> Option<Result<TokenSet, OpError>> {
+    let verified = async {
+        let tokens = session
+            .finish(&ctx.http, unix_now)
+            .await
+            .map_err(OpError::from)?;
+        let api_root = match account.kind {
+            AccountKind::Gmail => ctx.gmail_url(),
+            AccountKind::M365 => ctx.graph_url(),
+        };
+        crate::accounts::identity::verify_mailbox(&ctx.http, account, &tokens, api_root).await?;
+        Ok(tokens)
+    };
     tokio::select! {
-        result = tokio::time::timeout(LOGIN_LIFETIME, session.finish(&ctx.http, unix_now)) => {
+        result = tokio::time::timeout(LOGIN_LIFETIME, verified) => {
             Some(match result {
-                Ok(tokens) => tokens.map_err(OpError::from),
+                Ok(tokens) => tokens,
                 Err(_) => Err(timed_out()),
             })
         }
@@ -247,7 +260,7 @@ async fn finish_add(
     prepared: PreparedAdd,
     cancel: tokio::sync::oneshot::Receiver<()>,
 ) -> Option<PendingState> {
-    let tokens = match wait_for_tokens(&ctx, session, cancel).await? {
+    let tokens = match wait_for_tokens(&ctx, session, &prepared.account, cancel).await? {
         Ok(tokens) => tokens,
         Err(error) => return Some(failed(error)),
     };
@@ -276,7 +289,7 @@ async fn finish_login(
     account: AccountConfig,
     cancel: tokio::sync::oneshot::Receiver<()>,
 ) -> Option<PendingState> {
-    let tokens = match wait_for_tokens(&ctx, session, cancel).await? {
+    let tokens = match wait_for_tokens(&ctx, session, &account, cancel).await? {
         Ok(tokens) => tokens,
         Err(error) => return Some(failed(error)),
     };

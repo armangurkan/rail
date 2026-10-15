@@ -1,9 +1,10 @@
 //! The account pipeline the daemon runs for every front end: resolve the client secret,
-//! validate the new account against config, log in, and persist tokens, then the store row,
-//! then config.toml last.
+//! validate the new account against config, log in, verify the mailbox identity, and persist
+//! tokens, then the store row, then config.toml last.
 
 pub mod add;
 pub mod client_secret;
+pub(crate) mod identity;
 pub mod login;
 pub mod remove;
 
