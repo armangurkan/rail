@@ -90,6 +90,11 @@ cannot work.
 All four must pass before a pull request is opened. CI runs them on Linux and macOS, checks the
 minimum supported Rust version (1.88), and reports line coverage.
 
+GitHub also scans Rust and Actions workflows with CodeQL on pull requests, pushes to `main`
+and weekly. Workflows use actions pinned to commit SHAs, read-only default tokens and explicit
+timeouts. Dependabot checks Cargo and Actions weekly and opens security updates. Keep action
+pins current through Dependabot; select Rust toolchains through the action's `toolchain` input.
+
 Line coverage needs `cargo-llvm-cov`:
 
     cargo llvm-cov --workspace
