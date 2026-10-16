@@ -4,7 +4,7 @@
 //! A draft row (`send`, `push_draft`, `delete_draft`) names no threads: it is keyed by its
 //! `draft_id`, and a `send` row moves its draft between `editing` and `queued`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
@@ -49,6 +49,7 @@ pub struct OutboxRow {
     pub not_before: i64,
     pub last_error: Option<String>,
     pub(crate) reversal: Vec<Prior>,
+    pub(crate) folder_remotes: BTreeMap<i64, String>,
     /// The draft of a draft row.
     pub draft_id: Option<DraftId>,
     /// The token the row was queued with: undo and retry must name it.
@@ -188,7 +189,7 @@ pub enum OutboxOutcome {
 }
 
 const COLUMNS: &str = "id, account_id, payload, thread_ids, state, attempts, not_before, \
-    last_error, reversal, draft_id, client_token";
+    last_error, reversal, draft_id, client_token, folder_remotes";
 
 fn read_row(r: &Row<'_>) -> rusqlite::Result<OutboxRow> {
     let json = |i: usize| -> rusqlite::Result<String> { r.get(i) };
@@ -208,6 +209,9 @@ fn read_row(r: &Row<'_>) -> rusqlite::Result<OutboxRow> {
         reversal: serde_json::from_str(&json(8)?).unwrap_or_default(),
         draft_id: r.get(9)?,
         client_token: r.get(10)?,
+        folder_remotes: serde_json::from_str(&json(11)?).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(11, rusqlite::types::Type::Text, Box::new(e))
+        })?,
     })
 }
 
@@ -308,10 +312,11 @@ pub(crate) fn enqueue(
     if threads.is_empty() {
         return Ok(None);
     }
+    let remotes = super::action_folders::capture(tx, new.account_id, &new.action)?;
     let reversal = apply_local::apply(tx, new.account_id, &new.action, &threads)?;
     tx.execute(
-        "INSERT INTO outbox (account_id, kind, payload, state, client_token, not_before, thread_ids, reversal)
-         VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6, ?7)",
+        "INSERT INTO outbox (account_id, kind, payload, state, client_token, not_before, thread_ids, reversal, folder_remotes)
+         VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6, ?7, ?8)",
         params![
             new.account_id,
             new.action.kind_column(),
@@ -319,7 +324,8 @@ pub(crate) fn enqueue(
             new.client_token,
             new.not_before,
             json(&threads),
-            json(&reversal)
+            json(&reversal),
+            json(&remotes)
         ],
     )?;
     let id = tx.last_insert_rowid();

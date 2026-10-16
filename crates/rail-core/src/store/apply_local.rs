@@ -223,14 +223,14 @@ fn folder_remote(tx: &Transaction, folder: i64) -> Result<Option<String>, StoreE
 /// the account's and has the provider id recorded, else the account's folder holding that id
 /// now; `None`, logged, when none does. Both lookups stay in `account`: Gmail's label ids repeat
 /// across accounts. A record from before ids were kept names the folder as it is.
-fn resolved(
-    tx: &Transaction,
+pub(super) fn resolved(
+    tx: &Connection,
     account: i64,
     p: &Prior,
     folder: i64,
 ) -> Result<Option<i64>, StoreError> {
     let Some(remote) = p.remotes.get(&folder) else {
-        return Ok(Some(folder));
+        return Ok(super::targets::folder_remote_in(tx, account, folder)?.map(|_| folder));
     };
     if super::targets::folder_remote_in(tx, account, folder)?.as_ref() == Some(remote) {
         return Ok(Some(folder));
@@ -298,12 +298,14 @@ fn apply_labels(
 /// on a one-folder mailbox the server's folder then stands and `p`'s folder part is stale. A
 /// message in no folder at all (the folder `p` put it in was deleted, and its membership with
 /// it) has not left: its old folder goes back.
-fn left_its_folder(tx: &Transaction, p: &Prior) -> Result<bool, StoreError> {
+fn left_its_folder(tx: &Transaction, account: i64, p: &Prior) -> Result<bool, StoreError> {
     if p.added.is_empty() {
         return Ok(false);
     }
     for &folder in &p.added {
-        if in_folder(tx, p.message, folder)? {
+        if let Some(folder) = resolved(tx, account, p, folder)?
+            && in_folder(tx, p.message, folder)?
+        {
             return Ok(false);
         }
     }
@@ -323,7 +325,7 @@ pub(crate) fn revert(tx: &Transaction, account: i64, priors: &[Prior]) -> Result
         if let Some(starred) = p.starred {
             set_flag(tx, "is_starred", p.message, p.thread, starred)?;
         }
-        if single && left_its_folder(tx, p)? {
+        if single && left_its_folder(tx, account, p)? {
             continue;
         }
         for &folder in &p.added {
@@ -407,11 +409,13 @@ pub(crate) fn restack(
             .filter(|p| !threads.contains(&p.thread))
             .cloned()
             .collect();
-        if !drop.contains(&row.id) {
+        if !drop.contains(&row.id)
+            && let Some(action) = super::action_folders::action(tx, row)?
+        {
             kept.extend(apply(
                 tx,
                 row.account_id,
-                &row.action,
+                &action,
                 &within(&row.thread_ids, threads),
             )?);
         }
@@ -435,7 +439,7 @@ fn drop_stale_folder_parts(
     let mut kept = Vec::with_capacity(old.len());
     for mut p in old {
         let untouched = !fresh.iter().any(|f| f.message == p.message);
-        if untouched && left_its_folder(tx, &p)? {
+        if untouched && left_its_folder(tx, account, &p)? {
             p.added.clear();
             p.removed.clear();
         }
@@ -458,7 +462,10 @@ pub(crate) fn reapply_live(
         if row.account_id != account {
             continue;
         }
-        let fresh = apply(tx, account, &row.action, &within(&row.thread_ids, touched))?;
+        let fresh = match super::action_folders::action(tx, &row)? {
+            Some(action) => apply(tx, account, &action, &within(&row.thread_ids, touched))?,
+            None => Vec::new(),
+        };
         let old = drop_stale_folder_parts(tx, account, row.reversal, &fresh)?;
         save_threads_and_reversal(tx, row.id, &row.thread_ids, &merge(old, fresh))?;
     }

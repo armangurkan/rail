@@ -115,12 +115,13 @@ pub(crate) fn folder_remote_in(
 /// A folder's kind and provider id; `None`s for a folder gone since.
 fn folder_facts(
     conn: &Connection,
+    account: i64,
     folder: i64,
 ) -> Result<(Option<FolderKind>, Option<String>), StoreError> {
     let found: Option<(String, String)> = conn
         .query_row(
-            "SELECT kind, remote_id FROM folders WHERE id = ?1",
-            [folder],
+            "SELECT kind, remote_id FROM folders WHERE account_id = ?1 AND id = ?2",
+            params![account, folder],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
@@ -136,6 +137,7 @@ fn folder_facts(
 /// first); otherwise the folders now, less those the change added, plus those it removed.
 fn before(
     conn: &Connection,
+    account: i64,
     single: bool,
     facts: &mut TargetMessage,
     prior: &Prior,
@@ -149,17 +151,28 @@ fn before(
     if prior.added.is_empty() && prior.removed.is_empty() {
         return Ok(());
     }
+    let resolve = |f| super::apply_local::resolved(conn, account, prior, f);
+    let added = prior
+        .added
+        .iter()
+        .map(|&f| resolve(f))
+        .collect::<Result<Vec<_>, _>>()?;
+    let removed = prior
+        .removed
+        .iter()
+        .map(|&f| resolve(f))
+        .collect::<Result<Vec<_>, _>>()?;
     let first = if single && !prior.removed.is_empty() {
-        prior.removed.first().copied()
+        removed.first().copied().flatten()
     } else {
         folders_of(conn, prior.message)?
             .into_iter()
-            .filter(|f| !prior.added.contains(f))
-            .chain(prior.removed.iter().copied())
+            .filter(|f| !added.contains(&Some(*f)))
+            .chain(removed.into_iter().flatten())
             .min()
     };
     (facts.folder, facts.folder_remote) = match first {
-        Some(folder) => folder_facts(conn, folder)?,
+        Some(folder) => folder_facts(conn, account, folder)?,
         None => (None, None),
     };
     Ok(())
@@ -218,7 +231,7 @@ impl Store {
                     .iter()
                     .find(|p| p.message == *local && p.thread == thread);
                 if let Some(prior) = prior {
-                    before(&self.conn, single, facts, prior)?;
+                    before(&self.conn, row.account_id, single, facts, prior)?;
                 }
             }
         }

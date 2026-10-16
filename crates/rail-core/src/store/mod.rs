@@ -1,6 +1,7 @@
 //! The local SQLite store. One file, WAL mode, FTS5.
 
 pub mod accounts;
+mod action_folders;
 pub mod addresses;
 #[cfg(test)]
 mod addresses_tests;
@@ -540,7 +541,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!((version, migrations::LATEST_VERSION), (8, 8));
+        assert_eq!(version, migrations::LATEST_VERSION);
         let store = Store { conn };
         let state = store.sync_state(1).unwrap();
         assert_eq!(state.backfill_before, Some(1_700_000_000_000));
@@ -745,7 +746,7 @@ mod tests {
                 .unwrap();
         }
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), migrations::LATEST_VERSION);
         let (kind, source): (String, Option<String>) = store
             .conn()
             .query_row("SELECT kind, source_remote_id FROM drafts", [], |r| {
