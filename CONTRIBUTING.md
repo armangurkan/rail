@@ -99,6 +99,13 @@ Line coverage needs `cargo-llvm-cov`:
 
     cargo llvm-cov --workspace
 
+The README's coverage badge uses the measured workspace line coverage from the latest successful
+`main` coverage run. CI generates it from `lcov.info` with `scripts/coverage_badge.py`, then a
+separate job publishes `coverage.svg` and `coverage.json` (counts and source commit) on the
+`badges` branch. Pull requests never publish; only the main publishing job has repository write
+permission. Generated badge commits stay off `main`. Test the generator with
+`python3 -m unittest discover -s scripts -p 'test_*.py'`.
+
 Write the test first. Every behaviour change ships with a test that fails without it. Tests use
 temporary directories and in-process mock servers; nothing may touch the real XDG directories, the
 real OS keyring, a real browser, a real 1Password account (a fake `op` script stands in), a real

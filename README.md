@@ -6,10 +6,13 @@
   </picture>
 </h1>
 
-[![ci](https://github.com/vitosans/rail/actions/workflows/ci.yml/badge.svg)](https://github.com/vitosans/rail/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/vitosans/rail/actions/workflows/codeql.yml/badge.svg)](https://github.com/vitosans/rail/actions/workflows/codeql.yml)
+[![ci](https://github.com/vitosans/rail/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vitosans/rail/actions/workflows/ci.yml?query=branch%3Amain)
+[![CodeQL](https://github.com/vitosans/rail/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/vitosans/rail/actions/workflows/codeql.yml?query=branch%3Amain)
+[![coverage](https://raw.githubusercontent.com/vitosans/rail/badges/coverage.svg)](https://github.com/vitosans/rail/actions/workflows/ci.yml?query=branch%3Amain)
+[![version](https://img.shields.io/github/v/tag/vitosans/rail?sort=semver&filter=v%2A&label=version)](https://github.com/vitosans/rail/tags)
+[![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](Cargo.toml)
+[![platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-blue.svg)](#install)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)
 
 Rail is a terminal mail client for Gmail and Microsoft 365, written in Rust. It keeps a local copy
 of your mail in SQLite, synced by a small background daemon, so every list, search and open is a

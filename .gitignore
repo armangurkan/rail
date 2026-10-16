@@ -4,8 +4,12 @@
 
 # Coverage and profiling
 /lcov.info
+/coverage-badge/
 *.profraw
 *.profdata
+
+# Python badge-generator cache
+__pycache__/
 
 # Logs and local scratch
 *.log
