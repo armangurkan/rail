@@ -72,11 +72,19 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Test coverage badge generator
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 80
+      - name: Generate coverage badge
+        run: |
+          python3 scripts/coverage_badge.py lcov.info --output-dir coverage-badge --commit "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: lcov
-          path: lcov.info
+          path: |
+            lcov.info
+            coverage-badge/coverage.svg
+            coverage-badge/coverage.json
 
   deny:
     name: cargo deny
@@ -87,3 +95,47 @@ jobs:
         with:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+
+  publish-coverage:
+    name: publish coverage badge
+    needs: coverage
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: coverage-badge
+      cancel-in-progress: false
+    steps:
+      - name: Download coverage files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: lcov
+          path: coverage-artifact
+      - name: Publish badge and measurement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" != "$GITHUB_SHA" ]; then
+            echo 'Skipping coverage for a superseded main commit.'
+            exit 0
+          fi
+          badge_dir="$(mktemp -d)"
+          git -C "$badge_dir" init --initial-branch=badges
+          git -C "$badge_dir" remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          if git -C "$badge_dir" ls-remote --exit-code --heads origin badges > /dev/null; then
+            git -C "$badge_dir" fetch --depth=1 origin badges
+            git -C "$badge_dir" checkout -B badges FETCH_HEAD
+          fi
+          cp coverage-artifact/coverage-badge/coverage.svg coverage-artifact/coverage-badge/coverage.json "$badge_dir/"
+          git -C "$badge_dir" add coverage.svg coverage.json
+          if git -C "$badge_dir" diff --cached --quiet; then
+            exit 0
+          fi
+          git -C "$badge_dir" config user.name 'github-actions[bot]'
+          git -C "$badge_dir" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$badge_dir" commit -m "chore: coverage for $GITHUB_SHA"
+          gh auth setup-git --hostname github.com --force
+          git -C "$badge_dir" push origin HEAD:refs/heads/badges
