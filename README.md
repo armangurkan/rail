@@ -568,7 +568,10 @@ the server refused (`1 failed`). The daemon sends the actions on one thread in t
 an action waiting to be tried again holds back only the later actions on its own threads. When
 Gmail cannot be reached it tries again after 1, then 5, then 15 minutes, then every 15 minutes,
 and gives up on an action after 20 attempts. While an account needs a login, its actions wait and
-are sent after the login, and an action still waiting when Rail starts again is sent. When Gmail
+are sent after the login, and an action still waiting when Rail starts again is sent. If recording
+a server result in the local store fails, that account's queue waits while the daemon retries the
+store write after one second, doubling the wait up to one minute. It keeps the server result and
+does not repeat the provider action; the queue continues once the write succeeds. When Gmail
 refuses an action for good (the thread or the label no longer exists), Rail undoes it in the
 list, shows "Could not archive: …" on the thread's row, and keeps the error in `:errors`, where
 `Enter` on it sends the action again. Refusals are listed in `:errors` again whenever Rail
