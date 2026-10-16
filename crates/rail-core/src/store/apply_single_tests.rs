@@ -4,6 +4,8 @@
 //! a move into the folder every message is in changes nothing; and a row's targets show each
 //! message as it was before the row.
 
+mod identity_tests;
+
 use super::Store;
 use super::apply_local_tests::{enqueue, folder, state, thread, undo};
 use super::outbox::{Failure, OutboxOutcome, OutboxWrite};

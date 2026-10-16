@@ -560,6 +560,9 @@ undo. `z` works anywhere in the mail screen. An earlier action whose answer come
 still shows its error if it failed (its selected threads come back to the selection) and is still
 undone if `z` was pressed for it; that undo says only `too late to undo` when it came too late.
 
+Queued moves, label changes and undo keep targeting the original folder in the original account
+across syncs. If that folder has been deleted, Rail does not substitute another folder.
+
 Opening an unread thread marks it read at once in the reader; the list row and the unread counts
 follow a moment later. `u` marks it unread again.
 

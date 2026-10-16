@@ -18,6 +18,8 @@ mod gmail_send_tests;
 #[cfg(test)]
 mod graph_send_tests;
 mod plan;
+#[cfg(test)]
+mod plan_tests;
 mod pushing;
 #[cfg(test)]
 mod pushing_tests;

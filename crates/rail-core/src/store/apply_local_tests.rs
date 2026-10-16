@@ -10,6 +10,8 @@ use crate::provider::mock::envelope;
 use crate::provider::{FolderKind, RemoteFolder};
 use crate::sync::batch::Batch;
 
+mod identity_tests;
+
 const NOW: i64 = 1_760_000_000;
 
 type MakeAction = Box<dyn Fn(&Store) -> Action>;
