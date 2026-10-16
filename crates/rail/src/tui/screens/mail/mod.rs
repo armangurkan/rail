@@ -9,6 +9,7 @@ mod clock_toggle;
 mod composing;
 mod composing_answers;
 mod composing_flow;
+mod dim_read_toggle;
 mod drafts_flow;
 mod drafts_pane;
 mod events;
@@ -47,7 +48,7 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use crossterm::event::KeyEvent;
-use rail_core::config::{AccountKind, Config, Icons, ThreadOrder};
+use rail_core::config::{AccountKind, Config, DimRead, Icons, ThreadOrder};
 use rail_core::ops::OpError;
 use rail_core::paths::Paths;
 use rail_core::store::filter::{Filter, parse};
@@ -104,6 +105,8 @@ pub struct MailContext {
     /// `general.thread_order`: how the reader runs a thread's older messages; `:thread-order`
     /// flips it for the session.
     pub thread_order: ThreadOrder,
+    /// How read list rows are dimmed; `:dim-read` cycles the modes.
+    pub dim_read: DimRead,
     /// The terminal shows OSC 8 hyperlinks.
     pub hyperlinks: bool,
     /// What the terminal can show; the theme picker needs it to preview.

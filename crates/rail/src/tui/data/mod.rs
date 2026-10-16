@@ -123,6 +123,10 @@ pub enum MailEvent {
     ThreadOrderSaved {
         result: Result<(), String>,
     },
+    /// `config.toml` was written for `:dim-read`; the error is a config or IO error's text.
+    DimReadSaved {
+        result: Result<(), String>,
+    },
     /// The refresh with this sequence number gave its last answer, or its job panicked.
     RefreshEnded {
         seq: u64,
@@ -263,6 +267,10 @@ impl fmt::Debug for MailEvent {
                 .finish(),
             Self::ThreadOrderSaved { result } => f
                 .debug_struct("ThreadOrderSaved")
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::DimReadSaved { result } => f
+                .debug_struct("DimReadSaved")
                 .field("ok", &result.is_ok())
                 .finish(),
             Self::RefreshEnded { seq } => f.debug_struct("RefreshEnded").field("seq", seq).finish(),

@@ -8,6 +8,11 @@ All notable changes to Rail are recorded here. The format follows
 
 ### Added
 
+- `dim_read` under `[general]` selects `"dot"` (the current look and default), `"subject"`
+  (also dim read subjects), or `"all"` (dim read sender, subject, count and time). `:dim-read`
+  cycles the modes immediately and saves the choice. The theme supplies the muted colour;
+  cursor highlighting, account colours and action errors stay readable.
+
 - `clock = false` under `[general]` hides the header's clock; `:clock` in the palette hides it
   or shows it again for the session (`clock: off`, `clock: on`) and saves the choice. A save
   that fails says `Could not save the clock setting: …` and keeps the choice.

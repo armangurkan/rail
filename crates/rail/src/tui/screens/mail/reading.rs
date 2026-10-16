@@ -566,6 +566,7 @@ impl MailScreen {
             Target::Clock => self.toggle_clock(),
             Target::Time => self.toggle_time(),
             Target::ThreadOrder => self.toggle_thread_order(),
+            Target::DimRead => self.cycle_dim_read(),
             Target::Scope(scope) => {
                 let mut effects = self.close_reader();
                 effects.extend(self.set_scope(scope));

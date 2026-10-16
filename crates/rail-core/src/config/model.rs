@@ -65,6 +65,8 @@ pub struct General {
     /// `general.thread_order`: how the reader runs a thread's older messages.
     /// `:thread-order` toggles it.
     pub thread_order: ThreadOrder,
+    /// How read threads are dimmed in the list; `:dim-read` cycles the modes.
+    pub dim_read: DimRead,
 }
 
 impl Default for General {
@@ -84,6 +86,7 @@ impl Default for General {
             clock: true,
             time: TimeFormat::H24,
             thread_order: ThreadOrder::Oldest,
+            dim_read: DimRead::Dot,
         }
     }
 }
@@ -154,6 +157,27 @@ impl TimeFormat {
         match self {
             Self::H24 => "24h",
             Self::H12 => "12h",
+        }
+    }
+}
+
+/// `general.dim_read`: retain today's dot, dim read subjects, or dim all read row text.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DimRead {
+    #[default]
+    Dot,
+    Subject,
+    All,
+}
+
+impl DimRead {
+    /// The config value: `dot`, `subject` or `all`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dot => "dot",
+            Self::Subject => "subject",
+            Self::All => "all",
         }
     }
 }

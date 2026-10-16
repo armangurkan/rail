@@ -27,6 +27,7 @@ mod actions;
 mod compose;
 mod compose_edges;
 mod compose_gmail;
+mod dim_read;
 mod drafts_folder;
 mod list;
 mod m365;
