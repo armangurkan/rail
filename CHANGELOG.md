@@ -6,6 +6,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
 ### Added
 
 - `dim_read` under `[general]` selects `"dot"` (the current look and default), `"subject"`

@@ -78,7 +78,7 @@ fn version_flag_prints_name_and_version() {
     let out = rail_cmd(&dir).arg("--version").output().expect("run rail");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.starts_with("rail 0.1.0"), "got {stdout:?}");
+    assert_eq!(stdout, "rail 0.2.0\n");
 }
 
 #[test]
