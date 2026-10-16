@@ -6,6 +6,13 @@ All notable changes to Rail are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-15
+
+### Changed
+
+- Updated `serde_json`, `schemars`, `sha2` and `signal-hook` dependencies.
+- Added project status badges and automatic publication of measured code coverage from CI.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added
