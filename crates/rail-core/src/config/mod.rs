@@ -10,9 +10,9 @@ pub use edit::{
 };
 pub use load::{ConfigError, MAX_ADDRESS_CHARS, line_col, load, load_text_or_empty, parse};
 pub use model::{
-    AccentSpec, AccountConfig, AccountKind, AiSend, Config, DAY_SECS, FolderModel, General, Icons,
-    Layout, OnePasswordConfig, SecretsBackend, SyncSettings, ThreadOrder, TimeFormat,
-    is_format_char, is_plain, not_plain,
+    AccentSpec, AccountConfig, AccountKind, AiSend, Config, DAY_SECS, DimRead, FolderModel,
+    General, Icons, Layout, OnePasswordConfig, SecretsBackend, SyncSettings, ThreadOrder,
+    TimeFormat, is_format_char, is_plain, not_plain,
 };
 /// A config value with its byte range in the file (for line numbers).
 pub use toml::Spanned;

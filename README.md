@@ -484,7 +484,17 @@ and keeps the choice for this session. `:thread-order` turns the reader's older 
 (newest first, or oldest first again), in the open thread too, says `thread order: newest` or
 `thread order: oldest`, and saves the choice (`thread_order = "newest"` under `[general]`; oldest
 first removes the key); a save that fails says `Could not save the thread order: …` and keeps the
-choice for this session. `?` shows the keys of the view you are in, marking with `*` the ones set in
+choice for this session.
+
+`:dim-read` cycles how read threads look in the list: `dot` (the default) keeps today's small
+muted dot, `subject` also dims the subject, and `all` dims the sender, subject, count and time.
+Dimming uses the current theme's muted colour. Unread threads stay bold; the cursor highlight,
+account badges, selection marks and action errors keep their colours. The command says
+`dim read: dot`, `dim read: subject` or `dim read: all` and saves `dim_read` under `[general]`;
+returning to `dot` removes the key. A save that fails says
+`Could not save the read dimming setting: …` and keeps the choice for this session.
+
+`?` shows the keys of the view you are in, marking with `*` the ones set in
 `config.toml`; `?` again (or whatever `global.help` is bound to), `Esc` or `q` closes it. Help and
 `:errors` scroll with `j`/`k` or `↓`/`↑`; a `↓ more` or `↑ more` line (`v more` and `^ more` with
 `icons = "ascii"`) says there is more beyond the box.
@@ -1146,6 +1156,7 @@ running syncs carry on unchanged.
 | `hints` | `true` | `false` turns the key hints off: the bottom row keeps only notices and each account's state, and the key boxes' rows go to the panes. `:hints` in the palette toggles it and saves it. |
 | `clock` | `true` | `false` hides the time of day at the right edge of the header. `:clock` in the palette toggles it and saves it. |
 | `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced` and its clock, the Drafts list, `:errors`, the reader's title block and cards (`04:32` today, `Thu 08:55` yesterday and this week), and the `Date:` header line `h` shows). `:time` in the palette toggles it and saves it. |
+| `dim_read` | `"dot"` | Read threads: `"dot"` keeps the small muted dot, `"subject"` also dims the subject, `"all"` dims the sender, subject, count and time. `:dim-read` cycles the modes and saves the choice. |
 | `thread_order` | `"oldest"` | How the reader lists a thread's older messages under the newest one: `"oldest"` first or `"newest"` first. `:thread-order` in the palette toggles it and saves it. |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |

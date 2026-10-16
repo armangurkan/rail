@@ -1,7 +1,7 @@
 //! The `:` palette's entries: the active view's key actions and the global ones, Rail's own
 //! commands, each account, merged mailbox and label.
 
-use rail_core::config::{ThreadOrder, TimeFormat};
+use rail_core::config::{DimRead, ThreadOrder, TimeFormat};
 
 use super::MailScreen;
 use crate::tui::data::ScopeChoice;
@@ -10,7 +10,7 @@ use crate::tui::modals::{PaletteEntry, Target};
 
 impl MailScreen {
     /// Every palette entry: each key action of the active view and the global ones with its
-    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, `time`, `thread-order`,
+    /// key, `compose`, `drafts`, `errors`, `theme`, `accent`, `hints`, `time`, `thread-order`, `dim-read`,
     /// each account, merged mailbox and label.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let key = |a: Action| self.ctx.keymap.label(a);
@@ -83,8 +83,8 @@ impl MailScreen {
             .collect()
     }
 
-    /// `hints`, `time`, `thread-order` and `clock`, each saying what it will do.
-    fn toggles(&self) -> [(&'static str, &'static str, Target); 4] {
+    /// Display settings, each saying what it will do next.
+    fn toggles(&self) -> [(&'static str, &'static str, Target); 5] {
         let hints = if self.hints {
             "Turn the key hints off"
         } else {
@@ -103,7 +103,13 @@ impl MailScreen {
         } else {
             "Show the clock"
         };
+        let dim_read = match self.ctx.dim_read {
+            DimRead::Dot => "Dim read subjects",
+            DimRead::Subject => "Dim all read row text",
+            DimRead::All => "Dim only the read dot",
+        };
         [
+            (dim_read, "dim-read", Target::DimRead),
             (hints, "hints", Target::Hints),
             (time, "time", Target::Time),
             (order, "thread-order", Target::ThreadOrder),

@@ -476,6 +476,9 @@ impl MailScreen {
             MailEvent::ClockSaved { result } => self.setting_saved("clock setting", result),
             MailEvent::TimeSaved { result } => self.setting_saved("time setting", result),
             MailEvent::ThreadOrderSaved { result } => self.setting_saved("thread order", result),
+            MailEvent::DimReadSaved { result } => {
+                self.setting_saved("read dimming setting", result)
+            }
             other => self.compose_event(other),
         }
     }

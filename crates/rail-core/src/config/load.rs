@@ -303,6 +303,22 @@ archive = "e"
     }
 
     #[test]
+    fn dim_read_accepts_the_three_modes_and_reports_invalid_values_at_their_line() {
+        assert_eq!(p("").unwrap().general.dim_read, crate::config::DimRead::Dot);
+        for mode in ["dot", "subject", "all"] {
+            let text = format!("[general]\ndim_read = \"{mode}\"\n");
+            let config = p(&text).unwrap();
+            assert_eq!(config.general.dim_read.as_str(), mode);
+        }
+        for value in ["\"grey\"", "true", "42"] {
+            let err = p(&format!("[general]\ndim_read = {value}\n"))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(":2:"), "{err}");
+        }
+    }
+
+    #[test]
     fn icons_default_to_unicode_and_take_ascii() {
         assert_eq!(p("").unwrap().general.icons, crate::config::Icons::Unicode);
         let ascii = p("[general]\nicons = \"ascii\"\n").unwrap();

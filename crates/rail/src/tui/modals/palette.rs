@@ -38,6 +38,8 @@ pub enum Target {
     Time,
     /// `:thread-order`: the reader's older messages oldest or newest first.
     ThreadOrder,
+    /// `:dim-read`: dim the dot, subject or all text of read threads.
+    DimRead,
     Scope(ScopeChoice),
     /// Write a new message (`c`).
     Compose,

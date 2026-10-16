@@ -84,6 +84,7 @@ fn context(
         hints: config.general.hints,
         show_clock: config.general.clock,
         thread_order: config.general.thread_order,
+        dim_read: config.general.dim_read,
         hyperlinks: hyperlinks_supported(|name| std::env::var(name).ok()),
         depth,
         theme_choice,
