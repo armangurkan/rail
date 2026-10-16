@@ -7,6 +7,7 @@
 </h1>
 
 [![ci](https://github.com/vitosans/rail/actions/workflows/ci.yml/badge.svg)](https://github.com/vitosans/rail/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/vitosans/rail/actions/workflows/codeql.yml/badge.svg)](https://github.com/vitosans/rail/actions/workflows/codeql.yml)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 ![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)
 
