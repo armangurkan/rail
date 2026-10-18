@@ -6,6 +6,19 @@ All notable changes to Rail are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-18
+
+### Added
+
+- Linux x86_64 release binary with SHA-256 checksums (glibc 2.36 or newer).
+
+### Changed
+
+- Updated Tokio from 1.53.2 to 1.53.3, including runtime and synchronization fixes.
+- Updated the pinned Rust toolchain action used by CI.
+- Documented exceptions for three maintenance advisories in the Linux keyring
+  dependency tree while retaining Rust 1.88 support and vulnerability checks.
+
 ## [0.2.1] - 2026-10-15
 
 ### Changed
