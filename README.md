@@ -125,6 +125,10 @@ Linux and macOS only.
 
 ## Install
 
+Linux x86_64 binaries are available on the [GitHub releases page](https://github.com/vitosans/rail/releases)
+with SHA-256 checksums. They require glibc 2.36 or newer. Extract the archive and put `rail` in
+a directory on your `PATH`. Build from source on macOS and other Linux systems.
+
 Rail builds from source with Cargo. You need Rust 1.88 or newer and a C compiler (SQLite is
 bundled and compiled in). Supported platforms are Linux and macOS.
 
