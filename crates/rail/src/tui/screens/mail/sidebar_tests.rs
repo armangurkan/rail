@@ -305,3 +305,49 @@ fn a_reload_that_reorders_the_accounts_keeps_every_fold_and_the_cursor() {
     );
     assert!(s.rows().iter().any(|r| r.label == "[Imap]"));
 }
+
+/// `Ctrl-d` and `Ctrl-u` page through the sidebar, both `More folders` open, a screen of six
+/// rows at a time: the cursor keeps its place on the screen and passes over headings and rules;
+/// at either end it goes to the last or the first row.
+#[test]
+fn a_page_moves_by_the_rows_drawn_and_stops_at_either_end() {
+    let mut s = sidebar();
+    walk_to(&mut s, "More folders (7)");
+    s.toggle_fold();
+    walk_to(&mut s, "More folders (5)");
+    s.toggle_fold();
+    for _ in 0..s.rows().len() {
+        s.up();
+    }
+    // Draw a frame of six rows, then page.
+    let page = |s: &mut Sidebar, down: bool| {
+        s.scroll(s.cursor(), 6);
+        if down {
+            s.page_down()
+        } else {
+            s.page_up()
+        }
+        let offset = s.scroll(s.cursor(), 6);
+        (here(s).unwrap_or_default().to_string(), offset)
+    };
+    let downs: Vec<_> = (0..6).map(|_| page(&mut s, true)).collect();
+    let want = [
+        ("Personal", 6),
+        ("More folders (7)", 12),
+        ("Inbox", 18),
+        ("More folders (5)", 24),
+        ("Inbox", 26),
+        ("Outbox", 26),
+    ];
+    assert_eq!(downs, want.map(|(l, o)| (l.to_string(), o)), "down");
+    let ups: Vec<_> = (0..6).map(|_| page(&mut s, false)).collect();
+    let want = [
+        ("Junk Email", 20),
+        ("Shopping", 14),
+        ("Trash", 8),
+        ("Trash", 2),
+        ("Drafts", 0),
+        ("All inboxes", 0),
+    ];
+    assert_eq!(ups, want.map(|(l, o)| (l.to_string(), o)), "up");
+}

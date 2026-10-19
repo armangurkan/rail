@@ -132,6 +132,8 @@ actions! {
     SidebarFocus => "sidebar.focus", [List, Sidebar], ["tab"], "Move between the sidebar and the list";
     SidebarDown => "sidebar.down", [Sidebar], ["j", "down"], "Next mailbox";
     SidebarUp => "sidebar.up", [Sidebar], ["k", "up"], "Previous mailbox";
+    SidebarPageDown => "sidebar.page_down", [Sidebar], ["pagedown", "ctrl-d"], "One page down";
+    SidebarPageUp => "sidebar.page_up", [Sidebar], ["pageup", "ctrl-u"], "One page up";
     SidebarOpen => "sidebar.open", [Sidebar], ["enter"], "Show this mailbox";
     SidebarFold => "sidebar.fold", [Sidebar], ["space", "left", "right"], "Fold or unfold this account or folder";
     ReaderNext => "reader.next", [Reader], ["n"], "Next message";

@@ -275,6 +275,8 @@ are in, with `*` after the ones set in `config.toml`.
 | `sidebar.focus` | list, sidebar | `tab` | Move between the sidebar and the list. |
 | `sidebar.down` | sidebar | `j` `down` | Next mailbox. |
 | `sidebar.up` | sidebar | `k` `up` | Previous mailbox. |
+| `sidebar.page_down` | sidebar | `pagedown` `ctrl-d` | One page down. |
+| `sidebar.page_up` | sidebar | `pageup` `ctrl-u` | One page up. |
 | `sidebar.open` | sidebar | `enter` | Show this mailbox. |
 | `sidebar.fold` | sidebar | `space` `left` `right` | Fold or unfold this account or folder. |
 | `reader.next` | reader | `n` | Next message. |
