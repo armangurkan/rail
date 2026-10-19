@@ -31,6 +31,8 @@ pub struct Sidebar {
     drafts: HashSet<i64>,
     /// The first row drawn, from the last frame.
     offset: Cell<usize>,
+    /// The rows the last frame drew: a page.
+    height: Cell<usize>,
 }
 
 impl Sidebar {
@@ -104,6 +106,7 @@ impl Sidebar {
             .min(self.rows.len().saturating_sub(height));
         let offset = super::visible_offset(kept, target, height);
         self.offset.set(offset);
+        self.height.set(height);
         offset
     }
 
@@ -134,6 +137,51 @@ impl Sidebar {
                 return;
             }
         }
+    }
+
+    pub fn page_down(&mut self) {
+        self.page(true);
+    }
+
+    pub fn page_up(&mut self) {
+        self.page(false);
+    }
+
+    /// The next (`forward`) or previous screen of rows, as the last frame drew them: the cursor
+    /// keeps its place on the new screen, or goes to the last (first) row when the screen is
+    /// already at that end. A heading or rule there gives way to the nearest row it stops on.
+    fn page(&mut self, forward: bool) {
+        if self.rows.is_empty() {
+            return;
+        }
+        let height = match self.height.get() {
+            0 => super::FALLBACK_HEIGHT,
+            rows => rows,
+        };
+        let (last, bottom) = (self.rows.len() - 1, self.rows.len().saturating_sub(height));
+        let offset = self.offset.get().min(bottom);
+        let moved = if forward {
+            (offset + height).min(bottom)
+        } else {
+            offset.saturating_sub(height)
+        };
+        let at = match (moved == offset, forward) {
+            (true, true) => last,
+            (true, false) => 0,
+            (false, _) => (self.cursor() + moved).saturating_sub(offset).min(last),
+        };
+        let by = if forward { 1 } else { -1 };
+        if let Some(stop) = self.stop_near(at, by).or_else(|| self.stop_near(at, -by)) {
+            self.offset.set(moved);
+            self.cursor = Some(self.rows[stop].key.clone());
+        }
+    }
+
+    /// The first row from `at` on, `by` (1 or -1) at a time, that the cursor stops on.
+    fn stop_near(&self, at: usize, by: isize) -> Option<usize> {
+        std::iter::successors(Some(at), |i| i.checked_add_signed(by))
+            .take_while(|&i| i < self.rows.len())
+            .find(|&i| self.rows[i].selectable())
     }
 
     pub fn selected(&self) -> Option<&SidebarRow> {

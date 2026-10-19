@@ -531,6 +531,8 @@ impl MailScreen {
         match action {
             Action::SidebarDown => self.sidebar.down(),
             Action::SidebarUp => self.sidebar.up(),
+            Action::SidebarPageDown => self.sidebar.page_down(),
+            Action::SidebarPageUp => self.sidebar.page_up(),
             Action::SidebarFold => self.sidebar.toggle_fold(),
             Action::SidebarOpen => {
                 if let Some(scope) = self.sidebar.open() {
