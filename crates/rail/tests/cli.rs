@@ -718,6 +718,11 @@ mod daemon;
 #[path = "cli/pty.rs"]
 mod pty;
 
+/// Saved searches from outside Rail: `rail doctor` on a hand-written table, and the
+/// whole save story in a pseudo-terminal (that test is Linux-only, like `pty`).
+#[path = "cli/saved.rs"]
+mod saved;
+
 #[path = "cli/service.rs"]
 mod service;
 

@@ -35,6 +35,7 @@ mod list;
 mod m365;
 mod pickers;
 mod replaced;
+mod saved;
 mod sidebar;
 mod snooze;
 mod state;
