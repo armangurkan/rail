@@ -14,10 +14,10 @@ use super::{
 const FILE_BACKEND: &str = "[general]\nsecrets = \"file\"\n";
 const ACME: &str = "name = \"Acme Gmail\"\nkind = \"gmail\"\nclient_id = \"acme.apps.googleusercontent.com\"\nclient_secret = \"GOCSPX-acme\"\n";
 /// Bound on every wait; the child is killed when the test ends either way.
-const LIMIT: Duration = Duration::from_secs(30);
+pub(super) const LIMIT: Duration = Duration::from_secs(30);
 
 /// Kills the child if the test fails half way, so no wizard is left running.
-struct Running(Child);
+pub(super) struct Running(Child);
 
 impl Drop for Running {
     fn drop(&mut self) {
@@ -26,7 +26,7 @@ impl Drop for Running {
     }
 }
 
-fn script_available() -> bool {
+pub(super) fn script_available() -> bool {
     Command::new("script")
         .arg("--version")
         .output()
@@ -34,7 +34,7 @@ fn script_available() -> bool {
 }
 
 /// Everything the pseudo-terminal shows, collected on a thread.
-fn collect(mut out: impl Read + Send + 'static) -> Arc<Mutex<Vec<u8>>> {
+pub(super) fn collect(mut out: impl Read + Send + 'static) -> Arc<Mutex<Vec<u8>>> {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let sink = buffer.clone();
     std::thread::spawn(move || {
@@ -49,12 +49,12 @@ fn collect(mut out: impl Read + Send + 'static) -> Arc<Mutex<Vec<u8>>> {
     buffer
 }
 
-fn text(buffer: &Mutex<Vec<u8>>) -> String {
+pub(super) fn text(buffer: &Mutex<Vec<u8>>) -> String {
     String::from_utf8_lossy(&buffer.lock().unwrap()).into_owned()
 }
 
 /// Poll `done` until it holds; on timeout fail with what the terminal showed.
-fn wait_until(what: &str, output: &Mutex<Vec<u8>>, mut done: impl FnMut() -> bool) {
+pub(super) fn wait_until(what: &str, output: &Mutex<Vec<u8>>, mut done: impl FnMut() -> bool) {
     let deadline = Instant::now() + LIMIT;
     while !done() {
         assert!(
@@ -153,7 +153,7 @@ fn ctrl_c_during_login_wait_restores_the_terminal_and_saves_nothing() {
 }
 /// Start `rail <args>` under `script`, so stdin and stdout are a terminal. `args` is shell
 /// text, quoted by the caller.
-fn start_in_terminal(dir: &tempfile::TempDir, args: &str) -> (Running, ChildStdin) {
+pub(super) fn start_in_terminal(dir: &tempfile::TempDir, args: &str) -> (Running, ChildStdin) {
     let command = format!("exec '{}' {args}", env!("CARGO_BIN_EXE_rail"));
     let mut script = Command::new("script");
     rail_env(&mut script, dir)
@@ -423,13 +423,17 @@ fn a_panic_in_the_mail_screen_restores_the_terminal() {
 }
 
 /// Start `rail` under `script` and wait for `wanted` on the screen, then quit with `q`.
-fn mail_screen_shows(dir: &tempfile::TempDir, wanted: &str, tweak: impl FnOnce(&mut Command)) {
+pub(super) fn mail_screen_shows(
+    dir: &tempfile::TempDir,
+    wanted: &str,
+    tweak: impl FnOnce(&mut Command),
+) {
     mail_screen_draws(dir, wanted, tweak, |shown| shown.contains(wanted));
 }
 
 /// Start the mail screen at 100x30, wait until `done` holds for what the terminal showed (`what`
 /// names it in a timeout), then quit.
-fn mail_screen_draws(
+pub(super) fn mail_screen_draws(
     dir: &tempfile::TempDir,
     what: &str,
     tweak: impl FnOnce(&mut Command),
@@ -459,7 +463,7 @@ fn mail_screen_draws(
 /// The screen row (1 is the first) `needle` was last drawn on: the row of the last cursor move
 /// (`ESC [ row ; col H`) before it. The terminal backend moves the cursor only between cells
 /// that are not side by side, so the move before a run of text is on that text's row.
-fn drawn_row(shown: &str, needle: &str) -> Option<u16> {
+pub(super) fn drawn_row(shown: &str, needle: &str) -> Option<u16> {
     let before = &shown[..shown.rfind(needle)?];
     before.rmatch_indices("\x1b[").find_map(|(at, _)| {
         let rest = &before[at + 2..];
