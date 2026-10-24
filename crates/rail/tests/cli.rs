@@ -692,6 +692,13 @@ fn doctor_without_config_mentions_rail_setup() {
     assert!(!stdout.contains("rail_account_add"), "got {stdout:?}");
 }
 
+/// Saving an attachment from the reader, in a pseudo-terminal: the same two gates `mod pty`
+/// carries, whose helpers it reuses.
+#[cfg(target_os = "linux")]
+#[cfg(debug_assertions)]
+#[path = "cli/attachments.rs"]
+mod attachments;
+
 /// Bulk selection end to end, in a pseudo-terminal like `pty`: `* a` then `e`, a Shift range
 /// then `e`, and `z` within the grace, against a mocked Gmail. Gated like `pty`, whose helpers
 /// it reuses.

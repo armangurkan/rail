@@ -728,6 +728,7 @@ fn newest_first_an_open_card_shows_its_text_between_its_neighbours() {
 fn an_open_cards_attachments_follow_its_text() {
     let mut detail = four(0);
     detail.messages[1].attachments = vec![AttachmentView {
+        part_id: "0.1".into(),
         filename: "plan.pdf".into(),
         mime_type: "application/pdf".into(),
         size: 2_048,

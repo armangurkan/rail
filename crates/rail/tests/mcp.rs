@@ -389,6 +389,7 @@ async fn no_tool_changes_mail() {
             "draft",
             "send",
             "compose",
+            "save",
         ] {
             assert!(
                 !tool.name.contains(word),
