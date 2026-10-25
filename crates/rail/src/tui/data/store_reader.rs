@@ -478,11 +478,12 @@ fn store_scope(scope: &ScopeChoice, account_ids: &[Option<i64>]) -> Option<Scope
     }
 }
 
-/// The `ListQuery` `request` asks for, its scope and `account:` resolved to store ids; `None`
-/// when the scope's account has no row in the store yet (nothing synced). The one place a
-/// `ListQuery` is built, so the list and a select-all can never disagree on what matches.
-fn list_query(store: &Store, request: &ListRequest) -> Result<Option<ListQuery>, StoreError> {
-    let account_ids = store.account_ids(&request.addresses)?;
+/// The `ListQuery` `request` asks for, its scope and `account:` resolved against
+/// `account_ids` — `Store::account_ids` for `request.addresses`, which the caller has looked
+/// up already, so one list refresh costs one lookup; `None` when the scope's account has no
+/// row in the store yet (nothing synced). The one place a `ListQuery` is built, so the list
+/// and a select-all can never disagree on what matches.
+fn list_query(request: &ListRequest, account_ids: &[Option<i64>]) -> Option<ListQuery> {
     let id_of = |index: usize| account_ids.get(index).copied().flatten();
     let account = match &request.filter.account {
         None => AccountFilter::Any,
@@ -493,20 +494,19 @@ fn list_query(store: &Store, request: &ListRequest) -> Result<Option<ListQuery>,
             .and_then(id_of)
             .map_or(AccountFilter::Nobody, AccountFilter::Only),
     };
-    Ok(
-        store_scope(&request.scope, &account_ids).map(|scope| ListQuery {
-            scope,
-            filter: request.filter.clone(),
-            account,
-            utc_offset: request.utc_offset,
-        }),
-    )
+    store_scope(&request.scope, account_ids).map(|scope| ListQuery {
+        scope,
+        filter: request.filter.clone(),
+        account,
+        utc_offset: request.utc_offset,
+    })
 }
 
-/// The page `request` asks for, its scope and `account:` resolved to store ids.
+/// The page `request` asks for, its scope and `account:` resolved to store ids. The ids the
+/// outcome carries are the ones the query was built from: one lookup, not two.
 fn list(store: &Store, request: &ListRequest) -> Result<ListOutcome, StoreError> {
     let account_ids = store.account_ids(&request.addresses)?;
-    let page = match list_query(store, request)? {
+    let page = match list_query(request, &account_ids) {
         Some(query) => store.thread_page(&query, request.at)?,
         // The account has no row in the store yet: nothing synced, nothing to list.
         None => ThreadPage::default(),
@@ -525,7 +525,8 @@ fn matching(
     request: &ListRequest,
     limit: usize,
 ) -> Result<Vec<(ThreadKey, i64, bool, bool)>, StoreError> {
-    match list_query(store, request)? {
+    let account_ids = store.account_ids(&request.addresses)?;
+    match list_query(request, &account_ids) {
         Some(query) => store.matching_targets(&query, limit),
         None => Ok(Vec::new()),
     }
