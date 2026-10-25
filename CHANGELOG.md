@@ -6,6 +6,25 @@ All notable changes to Rail are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-25
+
+### Added
+
+- Page the sidebar a screen at a time with Ctrl-d and Ctrl-u (also PageDown and PageUp).
+  Thanks to @dhallas.
+
+### Security
+
+- Updated rustls-webpki to 0.103.16 (RUSTSEC-2026-0382) and webpki-roots to 1.0.11
+  (RUSTSEC-2026-0381), which affect certificate verification for the Gmail and Microsoft
+  Graph connections.
+
+### Changed
+
+- Updated Tokio from 1.53.3 to 1.54.1 and rmcp from 3.5.1 to 3.7.0.
+- Updated the CI cache, tool installer and CodeQL actions, and grouped the CodeQL action
+  updates so both steps always move together.
+
 ## [0.2.2] - 2026-10-18
 
 ### Added
