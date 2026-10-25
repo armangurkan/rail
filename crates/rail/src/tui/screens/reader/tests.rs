@@ -568,6 +568,25 @@ async fn markers_become_osc8_hyperlinks_where_the_terminal_supports_them() {
 }
 
 #[tokio::test]
+async fn a_lists_the_attachments_with_their_type_and_size() {
+    let mut f = fixture(false).await;
+    store_bodies_on_fetch(&f);
+    press(&mut f, KeyCode::Enter).await;
+    keys(&mut f, "a").await;
+    let text = draw(&f, 90, 24);
+    assert!(
+        text.contains("plan.pdf") && text.contains("application/pdf") && text.contains("2.0 KB"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Enter or o opens · s saves · S saves all · j/k move · Esc closes"),
+        "{text}"
+    );
+    press(&mut f, KeyCode::Esc).await;
+    assert!(!draw(&f, 90, 24).contains("application/pdf"));
+}
+
+#[tokio::test]
 async fn the_reader_is_a_pane_when_wide_and_a_full_screen_view_when_narrow() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);
