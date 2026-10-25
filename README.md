@@ -797,7 +797,8 @@ While a save to Gmail is still on its way the discard is refused
 draft that was deleted elsewhere before you opened or discarded it says
 `Gmail no longer has this draft`; one that cannot be fetched says `Could not open the draft: …` or
 `Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
-select, reply, forward and the filter (`e`, `s`, `u`, `l`, `m`, `space`, `r`, `R`, `f`, `/`) say
+select, selecting all or by sender, the range, reply, forward and the filter
+(`e`, `s`, `u`, `l`, `m`, `space`, `* a`, `* f`, `v`, `r`, `R`, `f`, `/`) say
 `Not available on drafts`; `Esc` does nothing there and `c` writes a new message as everywhere.
 The search slot is empty in this folder: the pane is not filtered. The pane is read again whenever
 sync or the outbox

@@ -112,6 +112,9 @@ impl MailScreen {
             | Action::ListLabels
             | Action::ListMove
             | Action::ListSelect
+            | Action::ListSelectAll
+            | Action::ListSelectSender
+            | Action::ListSelectRange
             | Action::ListReply
             | Action::ListReplyAll
             | Action::ListForward

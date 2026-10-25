@@ -383,6 +383,38 @@ async fn thread_actions_are_not_available_on_drafts() {
     assert_eq!(pane_subjects(&f).len(), 3);
 }
 
+/// `* a`, `* f` and `v` are refused here like `Space` and `/`: the pane draws drafts, and the
+/// threads a selection would reach are the ones the folder replaced, which are drawn nowhere.
+#[tokio::test]
+async fn bulk_selection_keys_are_not_available_on_drafts() {
+    let mut f = drafts_fixture().await;
+    open_drafts(&mut f).await;
+    let before = f.fake.calls.lock().unwrap().len();
+    let reads = f.screen.ctx.store.queries();
+    for keys in [['*', 'a'], ['*', 'f'], ['v', 'v']] {
+        f.screen.status.notify("", f.screen.tick);
+        for c in keys {
+            press(&mut f, KeyCode::Char(c)).await;
+        }
+        let line = f.screen.status_line();
+        assert!(line.contains("Not available on drafts"), "{keys:?}: {line}");
+        assert!(f.screen.modal.is_none(), "{keys:?} opens nothing");
+        assert!(
+            f.screen.actions.selection.is_empty(),
+            "{keys:?} selects nothing"
+        );
+        assert!(
+            f.screen.filter_text.is_empty(),
+            "{keys:?} leaves the filter alone: {:?}",
+            f.screen.filter_text
+        );
+        assert!(!f.screen.bulk_range_on(), "{keys:?} arms no range");
+    }
+    assert_eq!(f.screen.ctx.store.queries(), reads, "no read");
+    assert_eq!(f.fake.calls.lock().unwrap().len(), before, "no call");
+    assert_eq!(pane_subjects(&f).len(), 3);
+}
+
 #[tokio::test]
 async fn a_failed_import_says_so_and_stays_in_the_folder() {
     let mut f = drafts_fixture().await;
