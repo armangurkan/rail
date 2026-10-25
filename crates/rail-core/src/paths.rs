@@ -217,14 +217,20 @@ pub fn canonical_dir(dir: &Path) -> PathBuf {
 /// which `directories` reads; the argument keeps this function pure so tests never mutate the
 /// environment (`unsafe` is forbidden, so `std::env::set_var` is not available).
 #[must_use]
-pub fn download_dir_from(_home: Option<&Path>, _xdg_download: Option<&Path>) -> Option<PathBuf> {
-    None
+pub fn download_dir_from(home: Option<&Path>, xdg_download: Option<&Path>) -> Option<PathBuf> {
+    xdg_download
+        .map(Path::to_path_buf)
+        .or_else(|| home.map(|home| home.join("Downloads")))
 }
 
 /// `download_dir_from` over this process's environment, through `directories::UserDirs`.
 #[must_use]
 pub fn download_dir() -> Option<PathBuf> {
-    None
+    let dirs = directories::UserDirs::new();
+    download_dir_from(
+        dirs.as_ref().map(directories::UserDirs::home_dir),
+        dirs.as_ref().and_then(directories::UserDirs::download_dir),
+    )
 }
 
 /// Where a save lands. `configured` being `~` alone, or starting `~/`, is resolved against
@@ -234,11 +240,28 @@ pub fn download_dir() -> Option<PathBuf> {
 /// falls back to `download_dir_from`.
 #[must_use]
 pub fn attachment_target(
-    _configured: Option<&Path>,
-    _home: Option<&Path>,
-    _xdg_download: Option<&Path>,
+    configured: Option<&Path>,
+    home: Option<&Path>,
+    xdg_download: Option<&Path>,
 ) -> Option<PathBuf> {
-    None
+    configured
+        .filter(|path| !path.as_os_str().is_empty())
+        .and_then(|path| expand_tilde(path, home))
+        .or_else(|| download_dir_from(home, xdg_download))
+}
+
+/// `path` with a leading `~` — alone or followed by `/` — replaced by `home`; anything else
+/// exactly as typed, so a relative or `~user/...` value is never resolved here. `None` only
+/// when a `~` has no home to stand for.
+fn expand_tilde(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    let text = path.to_string_lossy();
+    if text == "~" {
+        return home.map(Path::to_path_buf);
+    }
+    if let Some(rest) = text.strip_prefix("~/") {
+        return home.map(|home| home.join(rest));
+    }
+    Some(path.to_path_buf())
 }
 
 /// Create `dir` (and missing parents) readable by the owner only. On unix a
@@ -385,6 +408,53 @@ mod tests {
         ] {
             assert_eq!(import_dir_in(root, bad), None, "{bad:?}");
         }
+    }
+
+    /// AC-37: where a save lands, over an injected environment. Nothing here reads or
+    /// mutates the process's own: `unsafe` is forbidden, so `set_var` is unavailable.
+    #[test]
+    fn attachment_target_expands_tilde_and_falls_back() {
+        let home = Path::new("/h");
+        let download = Path::new("/x/dl");
+        let target = |configured: Option<&str>, xdg: Option<&Path>| {
+            attachment_target(configured.map(Path::new), Some(home), xdg)
+        };
+        assert_eq!(target(Some("~/mail"), None), Some(PathBuf::from("/h/mail")));
+        assert_eq!(target(Some("~"), None), Some(PathBuf::from("/h")));
+        assert_eq!(target(Some("/abs"), None), Some(PathBuf::from("/abs")));
+        // Left as typed, so the daemon refuses it by name instead of saving into whatever
+        // directory `rail` happened to start in.
+        assert_eq!(
+            target(Some("rel/path"), None),
+            Some(PathBuf::from("rel/path"))
+        );
+        assert_eq!(
+            target(Some("~user/x"), None),
+            Some(PathBuf::from("~user/x"))
+        );
+        // An empty key counts as unset, as an empty `RAIL_*_DIR` does.
+        assert_eq!(
+            target(Some(""), Some(download)),
+            Some(download.to_path_buf())
+        );
+        assert_eq!(target(None, Some(download)), Some(download.to_path_buf()));
+        assert_eq!(target(None, None), Some(PathBuf::from("/h/Downloads")));
+        assert_eq!(attachment_target(None, None, None), None);
+        assert_eq!(attachment_target(Some(Path::new("~")), None, None), None);
+
+        assert_eq!(
+            download_dir_from(Some(home), Some(download)),
+            Some(download.to_path_buf())
+        );
+        assert_eq!(
+            download_dir_from(Some(home), None),
+            Some(PathBuf::from("/h/Downloads"))
+        );
+        assert_eq!(
+            download_dir_from(None, Some(download)),
+            Some(download.to_path_buf())
+        );
+        assert_eq!(download_dir_from(None, None), None);
     }
 
     #[cfg(unix)]

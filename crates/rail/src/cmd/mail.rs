@@ -95,12 +95,14 @@ fn context(
             .iter()
             .map(|a| a.signature.as_deref().map(read_signature))
             .collect(),
-        // The daemon's working directory is `/`, so the client resolves the destination.
+        // The daemon's working directory is `/`, so the client resolves the destination. A
+        // path that is not UTF-8 counts as unresolved: `dir` is a `String` on the wire.
         attachment_dir: rail_core::paths::attachment_target(
             config.general.attachment_dir.as_deref(),
             home_dir().as_deref(),
             rail_core::paths::download_dir().as_deref(),
-        ),
+        )
+        .filter(|dir| dir.to_str().is_some()),
     }
 }
 
@@ -160,6 +162,43 @@ mod tests {
         let capped = read_signature(&path).unwrap();
         assert!(capped.len() <= MAX_SIGNATURE_BYTES && capped.len() > MAX_SIGNATURE_BYTES - 2);
         assert!(read_signature(&dir.path().join("none")).is_err());
+    }
+
+    /// The mail context `rail` would build over `text`.
+    fn built(paths: &Paths, text: &str) -> MailContext {
+        let file = paths.config_file();
+        let config = rail_core::config::parse(text, &file).unwrap();
+        let keymap = Arc::new(Keymap::from_config(&config.keys, text, &file).unwrap());
+        context(
+            paths,
+            &config,
+            keymap,
+            ColorDepth::TrueColor,
+            ThemeChoice::default(),
+        )
+    }
+
+    /// AC-43: the client resolves the destination once, at startup. The environment is read,
+    /// never mutated.
+    #[test]
+    fn context_resolves_the_attachment_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(tmp.path());
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME is set"));
+        let account = "\n[[accounts]]\nname = \"w\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"c\"\n";
+        let with_key = built(
+            &paths,
+            &format!("[general]\nattachment_dir = \"~/mail\"{account}"),
+        );
+        assert_eq!(with_key.attachment_dir, Some(home.join("mail")));
+        let unset = built(&paths, &format!("[general]{account}"))
+            .attachment_dir
+            .expect("a download directory");
+        assert!(unset.is_absolute(), "{unset:?}");
+        assert_eq!(
+            unset,
+            rail_core::paths::download_dir().unwrap_or_else(|| home.join("Downloads"))
+        );
     }
 
     #[test]
