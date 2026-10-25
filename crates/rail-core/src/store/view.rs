@@ -291,7 +291,7 @@ const IN_KIND: &str = "t.id IN (SELECT mi.thread_id FROM folders f
     JOIN message_folders mf ON mf.folder_id = f.id JOIN messages mi ON mi.id = mf.message_id
     WHERE f.kind = ? AND f.account_id IN (SELECT value FROM json_each(?)))";
 
-fn int(n: usize) -> Value {
+pub(super) fn int(n: usize) -> Value {
     Value::Integer(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
@@ -305,7 +305,7 @@ fn count(n: i64) -> u64 {
 
 /// Senders and recipients the writer stored from `Mailbox` lists; an unreadable list (only a
 /// hand-edited store has one) shows no one.
-fn mailboxes(json: &str) -> Vec<Mailbox> {
+pub(super) fn mailboxes(json: &str) -> Vec<Mailbox> {
     serde_json::from_str(json).unwrap_or_default()
 }
 

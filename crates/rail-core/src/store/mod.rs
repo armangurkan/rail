@@ -39,6 +39,9 @@ pub mod view;
 mod view_labels;
 #[cfg(test)]
 mod view_sidebar_tests;
+mod view_targets;
+#[cfg(test)]
+mod view_targets_tests;
 #[cfg(test)]
 mod view_tests;
 #[cfg(test)]
