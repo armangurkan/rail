@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 
 use rail_core::store::view::ThreadRow;
 
+#[cfg(test)]
+use super::bulk::MAX_SELECTION;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Picked {
     pub account_id: i64,
@@ -37,9 +40,17 @@ impl Selection {
     }
 
     /// Add `targets` in the given order until the selection holds `MAX_SELECTION`; later ones
-    /// are dropped. True when anything was left out.
+    /// are dropped. True when anything was left out. The cap is on the whole selection, which
+    /// survives a scope change, so repeated select-alls can never take it over `MAX_SELECTION`.
     #[cfg(test)]
-    pub fn add(&mut self, _targets: &[(i64, Picked)]) -> bool {
+    pub fn add(&mut self, targets: &[(i64, Picked)]) -> bool {
+        for (id, picked) in targets {
+            // An id already selected is overwritten rather than counted again.
+            if self.picked.len() >= MAX_SELECTION && !self.picked.contains_key(id) {
+                return true;
+            }
+            self.picked.insert(*id, *picked);
+        }
         false
     }
 
@@ -121,5 +132,62 @@ mod tests {
         );
         s.clear();
         assert!(s.is_empty());
+    }
+
+    fn picked(account: i64) -> Picked {
+        Picked {
+            account_id: account,
+            starred: false,
+            unread: true,
+        }
+    }
+
+    /// `n` targets of account 1, ids `from..from + n`.
+    fn targets(from: i64, n: usize) -> Vec<(i64, Picked)> {
+        (0..i64::try_from(n).unwrap())
+            .map(|i| (from + i, picked(1)))
+            .collect()
+    }
+
+    #[test]
+    fn add_fills_up_to_the_cap_in_order_and_says_what_it_dropped() {
+        let mut s = Selection::default();
+        assert!(!s.add(&targets(1, 3)), "nothing dropped under the cap");
+        assert_eq!(s.len(), 3);
+
+        // An id already selected is overwritten, not counted again.
+        assert!(!s.add(&[(2, picked(7))]));
+        assert_eq!(s.len(), 3);
+        assert_eq!(
+            s.targets().iter().find(|(id, _)| *id == 2).unwrap().1,
+            picked(7),
+            "the newer flags win"
+        );
+
+        // The cap is on the whole selection, so repeated adds can never exceed it.
+        let mut s = Selection::default();
+        assert!(!s.add(&targets(1, MAX_SELECTION - 1)));
+        assert!(
+            s.add(&targets(i64::try_from(MAX_SELECTION).unwrap(), 5)),
+            "the add that crosses the cap reports the drop"
+        );
+        assert_eq!(s.len(), MAX_SELECTION);
+        assert!(
+            s.contains(i64::try_from(MAX_SELECTION).unwrap()),
+            "the first of the slice is kept"
+        );
+        assert!(
+            !s.contains(i64::try_from(MAX_SELECTION).unwrap() + 1),
+            "the ones after it are dropped, in the slice's order"
+        );
+        assert!(
+            s.add(&targets(900_000, 1)),
+            "a full selection takes nothing"
+        );
+        assert_eq!(s.len(), MAX_SELECTION);
+
+        // `restore` puts a failed call's own targets back and is not capped.
+        s.restore(&targets(900_000, 3));
+        assert_eq!(s.len(), MAX_SELECTION + 3);
     }
 }

@@ -5,6 +5,7 @@
 use rail_core::ops::Action as MailAction;
 
 use super::MailScreen;
+use super::header::thousands;
 
 /// Threads one bulk select takes at most: ~50 `action.apply` chunks and ~1 undo chunk per
 /// account, about 300 KB of ids and flags.
@@ -30,20 +31,51 @@ impl BulkState {
     }
 }
 
-/// The confirmation's box title for `action`.
-pub(super) fn title(_action: &MailAction) -> &'static str {
-    ""
+/// The confirmation's box title for `action`. Fixed words: no mail content reaches a question.
+pub(super) fn title(action: &MailAction) -> &'static str {
+    match action {
+        MailAction::Archive {} => "Archive?",
+        MailAction::Trash {} => "Trash?",
+        MailAction::Star { on: true } => "Star?",
+        MailAction::Star { on: false } => "Unstar?",
+        MailAction::Read { on: true } => "Mark read?",
+        MailAction::Read { on: false } => "Mark unread?",
+        MailAction::Labels { .. } => "Change the labels?",
+        MailAction::Move { .. } => "Move?",
+        MailAction::Send { .. } => "Send?",
+        MailAction::PushDraft { .. } => "Save the draft?",
+        MailAction::DeleteDraft { .. } => "Discard the draft?",
+    }
 }
 
-/// The confirmation's question for `action` over `count` threads, counted with commas.
-pub(super) fn question(_action: &MailAction, _count: usize) -> String {
-    String::new()
+/// The confirmation's question for `action` over `count` threads, counted with commas. Fixed
+/// words and a number only, so no mail content can reach it.
+pub(super) fn question(action: &MailAction, count: usize) -> String {
+    let n = thousands(u64::try_from(count).unwrap_or(u64::MAX));
+    match action {
+        MailAction::Archive {} => format!("Archive {n} threads?"),
+        MailAction::Trash {} => format!("Trash {n} threads?"),
+        MailAction::Star { on: true } => format!("Star {n} threads?"),
+        MailAction::Star { on: false } => format!("Unstar {n} threads?"),
+        MailAction::Read { on: true } => format!("Mark {n} threads read?"),
+        MailAction::Read { on: false } => format!("Mark {n} threads unread?"),
+        MailAction::Labels { .. } => format!("Change the labels of {n} threads?"),
+        MailAction::Move { .. } => format!("Move {n} threads?"),
+        MailAction::Send { .. } => format!("Send {n} messages?"),
+        MailAction::PushDraft { .. } => format!("Save {n} drafts?"),
+        MailAction::DeleteDraft { .. } => format!("Discard {n} drafts?"),
+    }
 }
 
 /// `action` over `count` threads asks first: more than `threshold` threads, which `0` turns
-/// off. Trash asks at every size, so it never reaches here.
-pub(super) fn needs_confirm(_action: &MailAction, _count: usize, _threshold: u32) -> bool {
-    false
+/// off. Only `e`, `s` and `u` ask this way — trash asks at every size through its own question,
+/// and the label and move pickers' own `Enter` is their confirmation.
+pub(super) fn needs_confirm(action: &MailAction, count: usize, threshold: u32) -> bool {
+    let asks = matches!(
+        action,
+        MailAction::Archive {} | MailAction::Star { .. } | MailAction::Read { .. }
+    );
+    asks && threshold > 0 && u64::try_from(count).unwrap_or(u64::MAX) > u64::from(threshold)
 }
 
 impl MailScreen {

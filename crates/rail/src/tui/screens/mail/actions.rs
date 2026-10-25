@@ -369,7 +369,7 @@ impl MailScreen {
             (1, Some(subject)) => {
                 format!("Trash \"{}\"?", fit(&escape(&subject), SHOWN_SUBJECT_CHARS))
             }
-            (n, _) => format!("Trash {n} threads?"),
+            (n, _) => super::bulk::question(&MailAction::Trash {}, n),
         };
         let mut lines = vec![line];
         lines.extend(self.trash_notes(&targets));
