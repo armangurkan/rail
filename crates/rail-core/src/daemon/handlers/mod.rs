@@ -1,7 +1,7 @@
 //! Every operation the daemon serves.
 
 mod actions;
-mod attachments;
+pub(super) mod attachments;
 mod body;
 pub(super) mod draft_files;
 mod drafts;
@@ -52,5 +52,6 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::SnoozeSet, _, _>(snooze::set);
     registry.register::<op::SnoozeClear, _, _>(snooze::clear);
     registry.register::<op::AttachmentSave, _, _>(attachments::save);
+    registry.register::<op::AttachmentOpen, _, _>(attachments::open);
     registry
 }

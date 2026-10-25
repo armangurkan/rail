@@ -33,6 +33,8 @@ fn the_registry_serves_exactly_the_implemented_operations() {
         names::ACTION_APPLY,
         names::ACTION_RETRY,
         names::ACTION_UNDO,
+        names::ATTACHMENT_OPEN,
+        names::ATTACHMENT_SAVE,
         names::BODY_FETCH,
         names::CONSENT_BEGIN,
         names::DAEMON_INFO,

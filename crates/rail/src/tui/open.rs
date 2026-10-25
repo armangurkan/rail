@@ -13,8 +13,9 @@ use rail_core::paths::{create_private_dir, write_private_atomic};
 
 /// The directory under the cache directory.
 pub const OPEN_DIR: &str = "open";
-/// Files older than this at startup are a crash's leftovers.
-pub const STALE_AFTER: Duration = Duration::from_secs(86_400);
+/// Files older than this at startup are a crash's leftovers. One value, shared with the
+/// daemon's own sweep of the attachments it opened.
+pub use rail_core::ops::STALE_AFTER;
 /// What every file starts with: nothing is allowed but styles, fonts, images and media (so
 /// no scripts, frames, connections, plugins, forms or base URL).
 pub const CSP_PREAMBLE: &str = "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src * data:; style-src 'unsafe-inline' *; font-src *; media-src *; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'\">\n";

@@ -261,6 +261,10 @@ impl Server {
         tokio::spawn(super::handlers::draft_files::sweep_at_start(
             self.ctx.clone(),
         ));
+        // And the copies an open wrote for the system opener, which a crashed terminal leaves.
+        tokio::spawn(super::handlers::attachments::sweep_at_start(
+            self.ctx.clone(),
+        ));
         // Intervals, not a sleep re-armed each turn: another arm firing more often than the
         // idle check would otherwise keep re-arming it, and the daemon would never idle out.
         // The first check waits one `CONFIG_CHECK`: the startup reconcile above covers now,

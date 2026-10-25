@@ -1,20 +1,28 @@
-//! `attachment.save`: one message's attachments written into a directory the client resolved.
-//! The answer is one outcome per requested part and the path each file got — never bytes, and
-//! never a replaced file: a name already in the destination becomes `2-name.pdf`. The
-//! destination is the user's own directory, so its mode is never changed. Front-end
-//! operations only: no MCP tool reaches them. Logs carry counts and error kinds, never a file
-//! name or a path.
+//! `attachment.save` and `attachment.open`. A save writes one message's attachments into a
+//! directory the client resolved; the answer is one outcome per requested part and the path
+//! each file got — never bytes, and never a replaced file: a name already in the destination
+//! becomes `2-name.pdf`. The destination is the user's own directory, so its mode is never
+//! changed. An open writes one part into a private directory of its own under the cache,
+//! named from the stored type rather than the sender's, and answers that path for the front
+//! end to hand to the system opener; those copies are swept at daemon start and before every
+//! open. Front-end operations only: no MCP tool reaches them. Logs carry counts and error
+//! kinds, never a file name or a path.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use super::draft_files::file_name;
+use crate::auth::random_token;
 use crate::daemon::DaemonContext;
 use crate::daemon::registry::Call;
+use crate::error::ErrorClass;
 use crate::ops::{
-    AttachmentOutcome, AttachmentResult, AttachmentSaveRequest, AttachmentSaveResponse, ErrorCode,
-    OpError, unwritable_dir,
+    AttachmentOpenRequest, AttachmentOpenResponse, AttachmentOutcome, AttachmentResult,
+    AttachmentSaveRequest, AttachmentSaveResponse, ErrorCode, OpError, STALE_AFTER, openable,
+    unwritable_dir,
 };
+use crate::paths::{Paths, create_private_dir};
 use crate::provider::ProviderError;
 use crate::provider::gmail::mime::sanitize_filename;
 use crate::store::Store;
@@ -23,6 +31,10 @@ use crate::sync::manager::{Reach, SearchTarget};
 
 /// A name that sanitizes to nothing, or that was only dots, becomes this.
 const FALLBACK_NAME: &str = "attachment";
+/// Held by every sweep, and by an open from its sweep through its write, so a sweep can never
+/// remove the token directory an open has just made and make its write fail. The precedent is
+/// `draft_files::IMPORTS`.
+static OPENS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// How many names past the ones already seen a save tries before it gives up.
 const EXTRA_NAME_TRIES: usize = 16;
 
@@ -281,5 +293,166 @@ fn write_error(what: &str, error: &std::io::Error) -> OpError {
         | ErrorKind::ReadOnlyFilesystem
         | ErrorKind::AlreadyExists => unwritable_dir().with_detail(error.to_string()),
         _ => OpError::io(ErrorCode::Internal, &format!("{what} an attachment"), error),
+    }
+}
+
+pub(super) async fn open(
+    call: Call,
+    request: AttachmentOpenRequest,
+) -> Result<AttachmentOpenResponse, OpError> {
+    request.checked()?;
+    let target = match call.ctx.sync.body_target(&request.account).await? {
+        Reach::Ready(target) => target,
+        Reach::Unavailable(error) => return Err(error),
+    };
+    // The writer opens (and migrates) the store; the handle is not kept.
+    call.ctx.sync.writer(&call.ctx).await?;
+    let listed = listed(&call.ctx, target.account_id, request.message_id.clone()).await?;
+    let meta = listed
+        .into_iter()
+        .find(|meta| meta.part_id == request.part_id)
+        // Never the part: it is the provider's text, and the front end already knows it.
+        .ok_or_else(|| OpError::not_found("this message has no such attachment"))?;
+    let extension = openable(&meta.mime_type).ok_or_else(unopenable)?;
+    let bytes = target
+        .provider
+        .attachment(&request.message_id, &meta.part_id)
+        .await?;
+    let name = cache_name(&meta.filename, extension);
+    let paths = call.ctx.paths.clone();
+    // Taken before the sweep and held through the write.
+    let _opens = OPENS.lock().await;
+    let path = call
+        .ctx
+        .blocking(move || write_open_copy(&paths, &name, &bytes))
+        .await?;
+    Ok(AttachmentOpenResponse { path })
+}
+
+/// The refusal a type outside `OPENABLE` gets. Scripted and executable formats are not handed
+/// to a program of the system's choosing.
+fn unopenable() -> OpError {
+    OpError::new(
+        ErrorCode::Unsupported,
+        ErrorClass::Permanent,
+        "Rail does not open this attachment's type",
+    )
+}
+
+/// The name an opened copy gets: the sanitized original's stem plus the extension the type
+/// table gives, never the sender's own. On macOS `open` dispatches on the extension, so an
+/// `.html` part declared `image/png` is handed over as `.png`, not to a browser.
+fn cache_name(filename: &str, extension: &str) -> String {
+    let base = visible_name(filename);
+    let stem = Path::new(&base)
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or(FALLBACK_NAME);
+    format!("{stem}.{extension}")
+}
+
+/// Sweep the stale copies, then write `bytes` as a 0600 file named `name` in a fresh 0700
+/// directory of its own under `attachments_dir()`; its path. A token directory per copy, so
+/// removing one never touches another's.
+fn write_open_copy(paths: &Paths, name: &str, bytes: &[u8]) -> Result<String, OpError> {
+    if let Err(error) = sweep(paths, SystemTime::now()) {
+        tracing::warn!(kind = ?error.kind(), "the opened attachments were not swept");
+    }
+    let dir = paths.attachments_dir().join(random_token());
+    create_private_dir(&dir).map_err(|error| {
+        OpError::io(ErrorCode::Internal, "creating a private directory", &error)
+    })?;
+    let path = dir.join(name);
+    let Some(text) = path.to_str().map(ToString::to_string) else {
+        return Err(OpError::invalid_input(
+            "the cache directory's path is not valid UTF-8",
+        ));
+    };
+    let mut file = create_new_private(&path).map_err(|error| write_error("creating", &error))?;
+    if let Err(error) = write_synced(&mut file, bytes) {
+        drop(file);
+        remove_written(&path);
+        return Err(write_error("writing", &error));
+    }
+    Ok(text)
+}
+
+/// Remove every file under `attachments_dir()` last changed before `now - STALE_AFTER`, then
+/// every token directory that is left empty; how many files went. Each entry's own type is
+/// checked, so a symlink is never followed and nothing outside the directory is touched. No
+/// directory yet means nothing to do.
+fn sweep(paths: &Paths, now: SystemTime) -> std::io::Result<usize> {
+    let root = paths.attachments_dir();
+    let tokens = match std::fs::read_dir(&root) {
+        Ok(tokens) => tokens,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let cutoff = now
+        .checked_sub(STALE_AFTER)
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let mut removed = 0;
+    for token in tokens {
+        let token = token?;
+        if !token.file_type()?.is_dir() {
+            continue;
+        }
+        removed += sweep_token(&token.path(), cutoff)?;
+        drop_if_empty(&token.path());
+    }
+    Ok(removed)
+}
+
+/// Remove the regular files in one token directory last changed before `cutoff`; how many.
+fn sweep_token(dir: &Path, cutoff: SystemTime) -> std::io::Result<usize> {
+    let mut removed = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        if entry.metadata()?.modified()? < cutoff {
+            std::fs::remove_file(entry.path())?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// Remove `dir` when nothing is left in it. A directory still holding a fresh copy, and one
+/// already gone, are both fine.
+fn drop_if_empty(dir: &Path) {
+    use std::io::ErrorKind;
+    match std::fs::remove_dir(dir) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::NotFound | ErrorKind::DirectoryNotEmpty
+            ) => {}
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "an opened attachment's directory stayed");
+        }
+    }
+}
+
+/// The start-up sweep, in the background: a copy a crashed terminal left behind does not
+/// survive until the next open. Nothing to do without the directory.
+pub(crate) async fn sweep_at_start(ctx: std::sync::Arc<DaemonContext>) {
+    if !ctx.paths.attachments_dir().exists() {
+        return;
+    }
+    let _opens = OPENS.lock().await;
+    let paths = ctx.paths.clone();
+    match ctx
+        .blocking(move || Ok(sweep(&paths, SystemTime::now())))
+        .await
+    {
+        Ok(Ok(removed)) => tracing::info!(removed, "opened attachments swept"),
+        Ok(Err(error)) => {
+            tracing::warn!(kind = ?error.kind(), "the opened attachments were not swept");
+        }
+        Err(error) => tracing::warn!(code = ?error.code, "the opened attachments were not swept"),
     }
 }
