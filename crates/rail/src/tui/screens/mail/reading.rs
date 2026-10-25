@@ -522,7 +522,7 @@ impl MailScreen {
             }
             ModalOutcome::Run(Command::SaveAllAttachments(target)) => {
                 self.modal = None;
-                return self.save_all_attachments(target);
+                return self.save_all_attachments(&target);
             }
             ModalOutcome::Run(Command::OpenLink(url)) => {
                 self.modal = None;

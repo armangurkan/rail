@@ -44,7 +44,7 @@ impl DaemonLink {
             }),
             #[cfg(test)]
             Link::Fake(fake) => job(move |sink| async move {
-                fake.attachment_save(&sink, account, message_id, part_ids, dir, single);
+                fake.attachment_save(&sink, account, message_id, &part_ids, dir, single);
             }),
         }
     }
@@ -93,7 +93,7 @@ impl super::FakeDaemon {
         sink: &crate::tui::app::TaskSink,
         account: String,
         message_id: String,
-        part_ids: Vec<String>,
+        part_ids: &[String],
         dir: String,
         single: bool,
     ) {
@@ -101,7 +101,7 @@ impl super::FakeDaemon {
         self.record(super::FakeCall::AttachmentSave {
             account: account.clone(),
             message_id,
-            part_ids: part_ids.clone(),
+            part_ids: part_ids.to_vec(),
             dir: dir.clone(),
         });
         let result = self.save_answer.lock().unwrap().take().unwrap_or_else(|| {

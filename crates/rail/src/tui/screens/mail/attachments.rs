@@ -51,7 +51,7 @@ impl MailScreen {
 
     /// The list's `S`: save every attachment of the highlighted row's message, not of the
     /// thread.
-    pub(super) fn save_all_attachments(&mut self, target: AttachmentTarget) -> Vec<Effect> {
+    pub(super) fn save_all_attachments(&mut self, target: &AttachmentTarget) -> Vec<Effect> {
         self.send_save(&target.account, &target.message, Vec::new(), None, None)
     }
 
