@@ -267,6 +267,18 @@ impl StoreReader {
         })
     }
 
+    /// The `From` of this thread's newest message, for a select-by-sender. One row, so it goes
+    /// through the ungated read like every other one-off.
+    pub fn sender(&self, seq: u64, thread_id: i64) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader
+                .read(move |store| store.newest_sender(thread_id))
+                .await;
+            send(&sink, MailEvent::Sender { seq, result });
+        })
+    }
+
     pub fn sidebar(&self, seq: u64, addresses: Vec<String>) -> Effect {
         let reader = self.clone();
         job(move |sink| async move {

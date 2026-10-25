@@ -18,6 +18,7 @@ use rail_core::ops::{
     BodyFetchResponse, DraftId, DraftImportResponse, DraftPushResponse, DraftSaveResponse,
     DraftSendResponse, OpError, OutboxId,
 };
+use rail_core::provider::Mailbox;
 use rail_core::store::AddressEntry;
 use rail_core::store::drafts::{Draft, ReplySource};
 use rail_core::store::drafts_folder::DraftsRow;
@@ -195,10 +196,9 @@ pub enum MailEvent {
         result: Result<Vec<(ThreadKey, i64, bool, bool)>, ReadError>,
     },
     /// `Store::newest_sender` answered for the select-by-sender with this `seq`.
-    #[cfg(test)]
     Sender {
         seq: u64,
-        result: Result<Option<rail_core::provider::Mailbox>, ReadError>,
+        result: Result<Option<Mailbox>, ReadError>,
     },
 }
 
@@ -367,7 +367,6 @@ impl fmt::Debug for MailEvent {
                 .field("len", &result.as_ref().map_or(0, Vec::len))
                 .finish(),
             // `Mailbox` derives `Debug` over its name and address: neither is named here.
-            #[cfg(test)]
             Self::Sender { seq, result } => f
                 .debug_struct("Sender")
                 .field("seq", seq)

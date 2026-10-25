@@ -3,6 +3,8 @@
 //! large archive, star or mark-read asks before it is sent.
 
 use rail_core::ops::{Action as MailAction, MAX_UNDO_ROWS, RowToken};
+use rail_core::provider::Mailbox;
+use rail_core::store::filter::Filter;
 use rail_core::store::view::ThreadKey;
 
 use super::header::thousands;
@@ -29,6 +31,8 @@ pub(crate) struct BulkState {
     pub(super) more: bool,
     /// The newest `* a` read's sequence number: an older answer is dropped.
     pub(super) latest_match: u64,
+    /// The newest `* f` read's sequence number.
+    pub(super) latest_sender: u64,
 }
 
 impl BulkState {
@@ -202,6 +206,63 @@ impl MailScreen {
         // answered are the flags the selection keeps.
         Vec::new()
     }
+
+    /// `* f`: read the `From` of the cursor thread's newest message, to filter by.
+    pub(super) fn select_sender(&mut self) -> Vec<Effect> {
+        let Some(thread_id) = self.list.selected().map(|row| row.key.thread_id) else {
+            return Vec::new();
+        };
+        let seq = self.next_seq();
+        self.bulk.latest_sender = seq;
+        vec![self.ctx.store.sender(seq, thread_id)]
+    }
+
+    /// `Store::newest_sender` answered: put the address in the filter line as the exact form
+    /// and select everything it matches. An answer a newer press superseded is dropped.
+    pub(super) fn sender_read(
+        &mut self,
+        seq: u64,
+        result: Result<Option<Mailbox>, ReadError>,
+    ) -> Vec<Effect> {
+        if seq != self.bulk.latest_sender {
+            return Vec::new();
+        }
+        let sender = match result {
+            Ok(sender) => sender,
+            Err(error) => {
+                self.side_read_failed(error, "sender");
+                return Vec::new();
+            }
+        };
+        // No address, or one the filter grammar cannot carry: the filter and the selection are
+        // left alone and no matching read is sent.
+        let Some(text) = sender.and_then(|mailbox| filter_term(&mailbox.address)) else {
+            self.status
+                .notify("This thread has no sender to select by.", self.tick);
+            return Vec::new();
+        };
+        self.filter_text = text;
+        let mut effects = self.apply_filter();
+        effects.extend(self.select_all());
+        effects
+    }
+}
+
+/// `from:<address>` when `address` survives the round trip through the filter grammar: the
+/// text has to parse back to exactly that one `from_exact` term and nothing else.
+///
+/// The address is sender-controlled input to a mini-language. `tokens()` splits at white space
+/// and toggles on every `"`, so `"dana reyes"@example.com` would parse as `from:dana` plus a
+/// word; and an empty value turns `from:` into a word, which `fts_query` then runs as a phrase
+/// over every message's subject, sender, recipients and body — a large part of the mailbox,
+/// one key from being archived. Checking the round trip is what rules all of that out.
+fn filter_term(address: &str) -> Option<String> {
+    let text = format!("from:<{address}>");
+    let wanted = Filter {
+        from_exact: vec![address.to_string()],
+        ..Filter::default()
+    };
+    (rail_core::store::filter::parse(&text) == wanted).then_some(text)
 }
 
 #[cfg(test)]

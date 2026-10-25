@@ -84,6 +84,10 @@ impl fmt::Display for Day {
 pub struct Filter {
     pub words: Vec<String>,
     pub from: Vec<String>,
+    /// `from:<addr>`: senders whose address is exactly this, stored without the brackets.
+    /// `from:` alone is a substring match over the sender's display name *or* address, which
+    /// a select-by-sender must not use — it would reach other people's mail.
+    pub from_exact: Vec<String>,
     pub to: Vec<String>,
     pub subject: Vec<String>,
     pub has_attachment: bool,
@@ -149,7 +153,10 @@ impl Filter {
         }
         let lower = value.to_ascii_lowercase();
         match op.to_ascii_lowercase().as_str() {
-            "from" => self.from.push(value.to_string()),
+            "from" => match angled(value) {
+                Some(address) => self.from_exact.push(address.to_string()),
+                None => self.from.push(value.to_string()),
+            },
             "to" => self.to.push(value.to_string()),
             "subject" => self.subject.push(value.to_string()),
             "has" if lower == "attachment" => self.has_attachment = true,
@@ -180,6 +187,7 @@ impl Filter {
     pub fn describe(&self) -> Vec<String> {
         let mut parts: Vec<String> = Vec::new();
         parts.extend(self.from.iter().map(|v| format!("from:{v}")));
+        parts.extend(self.from_exact.iter().map(|v| format!("from:<{v}>")));
         parts.extend(self.to.iter().map(|v| format!("to:{v}")));
         parts.extend(self.subject.iter().map(|v| format!("subject:{v}")));
         for (on, name) in [
@@ -216,6 +224,10 @@ impl Filter {
         for value in &self.from {
             conds.push(mailbox_like(&["m.from_json"]));
             params.extend(std::iter::repeat_n(Value::Text(pattern(value)), 2));
+        }
+        for value in &self.from_exact {
+            conds.push(mailbox_is("m.from_json"));
+            params.push(Value::Text(value.clone()));
         }
         for value in &self.to {
             conds.push(mailbox_like(&["m.to_json", "m.cc_json", "m.bcc_json"]));
@@ -275,6 +287,24 @@ fn mailbox_like(columns: &[&str]) -> String {
         .collect::<Vec<_>>()
         .join(" OR ");
     format!("({any})")
+}
+
+/// `value` without its angle brackets when it is shaped `<addr>`: one leading `<`, one
+/// trailing `>`, nothing else of either, and something between them.
+fn angled(value: &str) -> Option<&str> {
+    let inner = value.strip_prefix('<')?.strip_suffix('>')?;
+    let clean = !inner.is_empty() && !inner.contains('<') && !inner.contains('>');
+    clean.then_some(inner)
+}
+
+/// A condition that some mailbox in the JSON `column` has exactly this address (one `?`).
+/// Equality, not `LIKE`: `from:<a@b.co>` must not also match `a@b.co.evil`, `xa@b.co` or a
+/// display name that contains the address.
+fn mailbox_is(column: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid({column}) THEN {column} \
+         ELSE '[]' END) j WHERE json_extract(j.value, '$.address') = ? COLLATE NOCASE)"
+    )
 }
 
 /// `value` as a `LIKE` pattern matching it anywhere, its own `%`, `_` and `\` escaped.
@@ -404,6 +434,46 @@ mod tests {
             "",
         ] {
             assert_eq!(Day::parse(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_angled_from_matches_that_address_and_no_other_sender() {
+        let f = parse("from:<dana@example.com>");
+        assert_eq!(
+            f.from_exact,
+            ["dana@example.com"],
+            "the brackets are the form"
+        );
+        assert!(f.from.is_empty(), "not also the substring match");
+        assert_eq!(f.describe(), ["from:<dana@example.com>"]);
+        let (sql, params) = f.message_sql(0).expect("a condition");
+        assert!(
+            sql.contains("json_extract(j.value, '$.address') = ? COLLATE NOCASE"),
+            "equality, not LIKE: {sql}"
+        );
+        assert!(!sql.contains("LIKE"), "{sql}");
+        assert_eq!(params.len(), 1, "one parameter, the bare address");
+        assert_eq!(
+            params,
+            vec![rusqlite::types::Value::Text("dana@example.com".into())]
+        );
+
+        // Both forms together, each as itself.
+        let both = parse("from:<a@x> from:dana");
+        assert_eq!(both.from_exact, ["a@x"]);
+        assert_eq!(both.from, ["dana"]);
+
+        // Not the form: a stray bracket, nothing inside, or brackets elsewhere.
+        for text in [
+            "from:<dana@example.com",
+            "from:dana@example.com>",
+            "from:<>",
+            "from:<a@x><b@y>",
+            "from:a<b@x>",
+        ] {
+            let f = parse(text);
+            assert!(f.from_exact.is_empty(), "{text}: {:?}", f.from_exact);
         }
     }
 

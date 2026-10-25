@@ -583,6 +583,19 @@ while you change the filter or the mailbox. In the reader, the keys act on the o
 the selection, which stays as it was (`Space` still pages down, and selecting is for the list);
 archive, trash and move close the reader.
 
+`* a` selects every thread this mailbox and filter match — newest first, at most 10,000, and the
+header then reads `10,000 selected (more match)`. `* f` puts the sender of the thread under the
+cursor into the filter line as `from:<address>` and selects those: in the filter line that form
+matches that address exactly, where a plain `from:dana` matches every thread whose sender's name
+*or* address contains `dana`. A thread whose newest message has no readable sender, or one whose
+address the filter cannot carry, says `This thread has no sender to select by.` and changes
+nothing. Over 50 threads (`bulk_confirm` under `[general]`) `e`, `s` and `u` ask first, naming the
+count, for example `Archive 1,234 threads?`; `d` always asks.
+
+A bulk action goes out as one request per 200 threads per account, and one `z` takes the whole set
+back, reporting `undone` once; an undo that could take only part of it back says `undone in part:
+some were already sent`.
+
 After an action the status bar says what happened, in place of the key hints, for example `archived 3 · z undoes`. For ten
 seconds `z` takes it back; afterwards it says `Too late to undo.`, and with nothing done,
 `Nothing to undo.` If the daemon has not answered yet, `z` says `undoing…` and finishes when it
