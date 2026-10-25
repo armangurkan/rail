@@ -291,6 +291,8 @@ pub struct SidebarCounts {
     pub folders: Vec<FolderCount>,
     /// Starred and Drafts under UNIFIED.
     pub unified: UnifiedCounts,
+    /// One per saved search asked for, in that order; empty when counts are off.
+    pub saved: Vec<u64>,
 }
 
 const THREAD_COLUMNS: &str = "t.id, t.last_date, t.account_id, t.subject, t.participants,
@@ -312,11 +314,11 @@ pub(super) fn int(n: usize) -> Value {
     Value::Integer(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
-fn ids_json(ids: &[i64]) -> String {
+pub(super) fn ids_json(ids: &[i64]) -> String {
     serde_json::Value::from(ids.to_vec()).to_string()
 }
 
-fn count(n: i64) -> u64 {
+pub(super) fn count(n: i64) -> u64 {
     u64::try_from(n).unwrap_or(0)
 }
 
@@ -647,9 +649,18 @@ impl Store {
         }))
     }
 
-    /// Inbox counts for each of `accounts` (in that order), every folder's counts, and the merged
-    /// mailboxes' counts.
-    pub fn sidebar_counts(&self, accounts: &[i64]) -> Result<SidebarCounts, StoreError> {
+    /// Inbox counts for each of `accounts` (in that order), every folder's counts, the merged
+    /// mailboxes' counts, and one unread count per saved search in `saved` (also in order).
+    /// With `saved` empty no saved-search query runs at all.
+    ///
+    /// # Errors
+    /// The store could not be read.
+    pub fn sidebar_counts(
+        &self,
+        accounts: &[i64],
+        saved: &[(Filter, AccountFilter)],
+        utc_offset: i32,
+    ) -> Result<SidebarCounts, StoreError> {
         let ids = ids_json(accounts);
         let drafts_by_account = accounts
             .iter()
@@ -687,6 +698,7 @@ impl Store {
                 drafts_by_account,
                 snoozed: self.snoozed(&ids)?,
             },
+            saved: self.saved_counts(&ids, saved, utc_offset)?,
         })
     }
 

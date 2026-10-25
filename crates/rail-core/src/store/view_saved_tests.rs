@@ -184,3 +184,112 @@ fn account_filter_narrows_a_saved_search() {
         "an `account:` naming no configured account matches nothing",
     );
 }
+
+/// AC-25 (FR-8, FR-13): one count per saved search, unread threads only, each narrowed by the
+/// `AccountFilter` its own `account:` resolved to — so a saved `account:home` search's count
+/// and its list agree instead of the sidebar over-counting it.
+#[test]
+fn saved_counts_counts_unread_threads_per_filter() {
+    let mut store = two_accounts();
+    // work: one read Dana thread and three unread others.
+    put(
+        &mut store,
+        1,
+        vec![
+            mail("wr", "INBOX", 0, true, true),
+            mail("o1", "INBOX", 1, false, false),
+            mail("o2", "ARCHIVE", 2, false, false),
+            mail("o3", "TRASH", 3, false, false),
+        ],
+    );
+    // home: the one unread Dana thread.
+    put(&mut store, 2, vec![mail("hd", "INBOX", 4, true, false)]);
+
+    let ids = ids_json(&[1, 2]);
+    let dana = parse("from:dana");
+    let any = |filter: &Filter| vec![(filter.clone(), AccountFilter::Any)];
+
+    assert_eq!(
+        store
+            .saved_counts(&ids, &[(dana.clone(), AccountFilter::Any)], 0)
+            .unwrap(),
+        [1],
+        "one unread Dana thread; the read one does not count",
+    );
+    assert_eq!(
+        store
+            .saved_counts(&ids, &any(&Filter::default()), 0)
+            .unwrap(),
+        [4],
+        "an empty saved filter counts every unread thread",
+    );
+    assert_eq!(
+        store
+            .saved_counts(
+                &ids,
+                &[
+                    (dana.clone(), AccountFilter::Any),
+                    (Filter::default(), AccountFilter::Any),
+                ],
+                0,
+            )
+            .unwrap(),
+        [1, 4],
+        "one count per filter, in order",
+    );
+
+    // The resolved `account:` narrows each count on its own: home holds the unread Dana
+    // thread, work's is read.
+    assert_eq!(
+        store
+            .saved_counts(&ids, &[(dana.clone(), AccountFilter::Only(2))], 0)
+            .unwrap(),
+        [1],
+    );
+    assert_eq!(
+        store
+            .saved_counts(&ids, &[(dana.clone(), AccountFilter::Only(1))], 0)
+            .unwrap(),
+        [0],
+    );
+    assert_eq!(
+        store
+            .saved_counts(&ids, &[(dana.clone(), AccountFilter::Nobody)], 0)
+            .unwrap(),
+        [0],
+        "`account:` naming no configured account counts nothing, without a query",
+    );
+
+    // An account with no row in the store contributes 0 rather than failing.
+    let with_ghost = ids_json(&[1, 2, 99]);
+    assert_eq!(
+        store
+            .saved_counts(&with_ghost, &[(dana, AccountFilter::Any)], 0)
+            .unwrap(),
+        [1],
+    );
+    assert!(
+        store.saved_counts(&ids, &[], 0).unwrap().is_empty(),
+        "no filters, no queries",
+    );
+
+    // The sidebar read fills them positionally, and runs nothing when counts are off.
+    let counts = store
+        .sidebar_counts(
+            &[1, 2],
+            &[
+                (parse("from:dana"), AccountFilter::Any),
+                (Filter::default(), AccountFilter::Any),
+            ],
+            0,
+        )
+        .unwrap();
+    assert_eq!(counts.saved, [1, 4]);
+    assert!(
+        store
+            .sidebar_counts(&[1, 2], &[], 0)
+            .unwrap()
+            .saved
+            .is_empty()
+    );
+}

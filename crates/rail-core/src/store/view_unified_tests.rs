@@ -241,7 +241,7 @@ fn sidebar_counts_the_starred_unread_threads_and_the_drafts() {
     let mut other = in_folder("as", "infra-id", 5);
     other.is_starred = true;
     put(&mut store, 2, vec![other]);
-    let counts = store.sidebar_counts(&[1, 2]).unwrap();
+    let counts = store.sidebar_counts(&[1, 2], &[], 0).unwrap();
     assert_eq!(
         counts.unified,
         UnifiedCounts {
@@ -251,5 +251,8 @@ fn sidebar_counts_the_starred_unread_threads_and_the_drafts() {
             snoozed: 0,
         }
     );
-    assert_eq!(store.sidebar_counts(&[2]).unwrap().unified.drafts, 0);
+    assert_eq!(
+        store.sidebar_counts(&[2], &[], 0).unwrap().unified.drafts,
+        0
+    );
 }

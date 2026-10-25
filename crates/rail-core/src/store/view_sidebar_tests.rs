@@ -45,7 +45,7 @@ fn the_folder_cap_applies_to_each_account_on_its_own() {
         };
         store.apply(&batch, NOW).unwrap();
     }
-    let counts = store.sidebar_counts(&[1, 2]).unwrap();
+    let counts = store.sidebar_counts(&[1, 2], &[], 0).unwrap();
     let of = |account: i64| {
         counts
             .folders

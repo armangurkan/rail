@@ -666,6 +666,7 @@ pub(super) mod fixtures {
             .collect();
         SidebarOutcome {
             counts: SidebarCounts {
+                saved: vec![],
                 accounts: vec![
                     AccountCounts {
                         account_id: 1,

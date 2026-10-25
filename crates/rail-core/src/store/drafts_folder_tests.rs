@@ -493,7 +493,10 @@ fn the_sidebar_counts_each_accounts_drafts_a_local_only_one_included() {
     sync(&mut store, account, vec![gmail_draft("dm2", 2_000)], vec![]);
     let other = second_account(&store);
     local(&mut store, other, 3, 4_000);
-    let unified = store.sidebar_counts(&[account, other]).unwrap().unified;
+    let unified = store
+        .sidebar_counts(&[account, other], &[], 0)
+        .unwrap()
+        .unified;
     assert_eq!(
         unified.drafts_by_account,
         [(account, 2), (other, 1)],

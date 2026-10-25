@@ -48,6 +48,7 @@ pub mod view;
 #[cfg(test)]
 mod view_attachments_tests;
 mod view_labels;
+mod view_saved;
 #[cfg(test)]
 mod view_saved_tests;
 #[cfg(test)]

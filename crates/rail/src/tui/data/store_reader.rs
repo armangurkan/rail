@@ -502,7 +502,8 @@ fn open(db: &std::path::Path) -> Result<Store, ReadError> {
 fn sidebar(store: &Store, addresses: &[String]) -> Result<SidebarOutcome, StoreError> {
     let account_ids = store.account_ids(addresses)?;
     let known: Vec<i64> = account_ids.iter().flatten().copied().collect();
-    let counts = store.sidebar_counts(&known)?;
+    // Step 7 passes the saved filters, the account names and the offset here.
+    let counts = store.sidebar_counts(&known, &[], 0)?;
     Ok(SidebarOutcome {
         counts,
         account_ids,

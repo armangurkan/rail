@@ -619,7 +619,7 @@ fn sidebar_counts_threads_and_unread_per_inbox_and_folder() {
     let mut labelled = envelope("m3", "t3", BASE_MS + 2);
     labelled.folders = vec!["INBOX".into(), "Label_1".into()];
     put(&mut store, 1, vec![read, unread, labelled]);
-    let counts = store.sidebar_counts(&[1, 2]).unwrap();
+    let counts = store.sidebar_counts(&[1, 2], &[], 0).unwrap();
     assert_eq!(
         counts.accounts,
         [
