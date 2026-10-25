@@ -468,6 +468,9 @@ pub struct FakeDaemon {
     /// `Paths` and `attachment_open` carries no directory, so unset — and with no
     /// `open_answer` — the fake answers `Err(OpError::internal("open_dir unset"))`.
     pub open_dir: std::sync::Mutex<Option<std::path::PathBuf>>,
+    /// Numbers the token directories the default `attachment.open` answer writes, so two
+    /// opens never share one.
+    pub next_token: std::sync::atomic::AtomicI64,
 }
 
 #[cfg(test)]

@@ -233,10 +233,6 @@ pub enum MailEvent {
         dir: String,
         single: bool,
     },
-    #[expect(
-        dead_code,
-        reason = "sent once the open keys are wired to the daemon link"
-    )]
     /// `attachment.open` answered; `filename` names the part in a failure's line.
     AttachmentOpened {
         result: Result<AttachmentOpenResponse, OpError>,

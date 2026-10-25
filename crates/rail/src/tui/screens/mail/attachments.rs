@@ -6,20 +6,25 @@
 //! all three are the sender's or the user's own text. The stored line is **unfitted** — the
 //! hint bar fits it to its room when it draws.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rail_core::config::AccountKind;
-use rail_core::ops::{AttachmentOutcome, AttachmentResult, AttachmentSaveResponse, OpError};
+use rail_core::ops::{
+    AttachmentOpenResponse, AttachmentOutcome, AttachmentResult, AttachmentSaveResponse, ErrorCode,
+    OpError, openable,
+};
 use rail_core::provider::graph::REFERENCE_ATTACHMENT;
 
 use super::MailScreen;
 use crate::tui::app::Effect;
-use crate::tui::modals::AttachmentTarget;
+use crate::tui::modals::{AttachmentTarget, Command, Confirm, Modal};
 use crate::tui::text::escape;
 
 /// What the attachment keys are waiting on.
 #[derive(Default)]
 pub(super) struct AttachmentState {
+    /// The open question was answered yes this session, so it is not asked again.
+    confirmed: bool,
     /// The file the save in flight named, when one part was asked for: a failure's line names
     /// it, and a whole message's save has no one file to name.
     name: Option<String>,
@@ -235,6 +240,87 @@ impl MailScreen {
         }
     }
 
+    /// The list's `Enter`/`o`, and the question's own yes: hand this part to the system
+    /// opener. A type outside the openable table is saved instead and says so (FR-6), and the
+    /// session's first open asks first. `answered` is true when this call **is** that answer.
+    pub(super) fn open_attachment(
+        &mut self,
+        target: AttachmentTarget,
+        answered: bool,
+    ) -> Vec<Effect> {
+        if answered {
+            self.attachment.confirmed = true;
+        }
+        if openable(&target.mime_type).is_none() {
+            let mime = target.mime_type.clone();
+            return self.save_attachment(target, Some(mime));
+        }
+        if !self.attachment.confirmed {
+            self.modal = Some(Modal::Confirm(Confirm::new(
+                "Open this attachment?",
+                open_lines(),
+                Command::OpenAttachment(target),
+            )));
+            return Vec::new();
+        }
+        self.status.notify("Opening…", self.tick);
+        vec![self.ctx.link.attachment_open(
+            target.account,
+            target.message,
+            target.part_id,
+            target.filename,
+        )]
+    }
+
+    /// `attachment.open` answered: the path becomes a `file://` URL for the opener, and the
+    /// copy is remembered so closing the reader removes it.
+    pub(super) fn attachment_opened(
+        &mut self,
+        result: Result<AttachmentOpenResponse, OpError>,
+        account: &str,
+        filename: &str,
+    ) -> Vec<Effect> {
+        let answer = match result {
+            Ok(answer) => answer,
+            Err(error) => {
+                tracing::warn!(code = ?error.code, "an attachment could not be opened");
+                let text = self.open_failure(&error, account, filename);
+                self.status.error(text, self.ctx.clock.now(), self.tick);
+                return Vec::new();
+            }
+        };
+        let path = PathBuf::from(&answer.path);
+        let Ok(url) = url::Url::from_file_path(&path) else {
+            let text = "Could not open the attachment: its path is not absolute".to_string();
+            self.status.error(text, self.ctx.clock.now(), self.tick);
+            return Vec::new();
+        };
+        self.opened_attachments.add(path);
+        if let Err(error) = (self.ctx.opener)(&url) {
+            tracing::warn!(error = %error, "could not start the opener");
+            let text = format!("Could not start the opener: {}", escape(&error.to_string()));
+            self.status.error(text, self.ctx.clock.now(), self.tick);
+        }
+        Vec::new()
+    }
+
+    /// Why an open was refused: Rail's own words for a type it does not open and for a part
+    /// the provider no longer has, else the error's own message beside the file asked for.
+    fn open_failure(&self, error: &OpError, account: &str, filename: &str) -> String {
+        match error.code {
+            ErrorCode::Unsupported => "Rail does not open this attachment's type.".to_string(),
+            ErrorCode::NotFound => format!(
+                "This attachment is no longer in {}.",
+                self.provider_of(account)
+            ),
+            _ => format!(
+                "Could not open {}: {}",
+                escape(filename),
+                escape(&error.message)
+            ),
+        }
+    }
+
     /// The provider of the account with this name, as Rail's messages call it.
     pub(super) fn provider_of(&self, account: &str) -> &'static str {
         self.accounts
@@ -243,6 +329,18 @@ impl MailScreen {
             .map_or(AccountKind::Gmail, |entry| entry.kind)
             .provider_name()
     }
+}
+
+/// The question asked before the session's first open: the file is written for a program of
+/// the system's choosing, and the bytes came from the sender (§6 slot 1).
+fn open_lines() -> Vec<String> {
+    vec![
+        "Rail writes this attachment to a private temporary file and hands it to your system opener."
+            .to_string(),
+        "Which program runs is your system's choice, and the file came from the sender, not from Rail."
+            .to_string(),
+        "Rail asks once per session; the files are removed when you close the reader.".to_string(),
+    ]
 }
 
 /// The file name a `Saved` outcome's path ends in; `None` for a part that did not land.

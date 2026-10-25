@@ -235,6 +235,7 @@ impl MailScreen {
         self.reader = None;
         self.modal = None;
         self.open_files.remove_all();
+        self.opened_attachments.remove_all();
         self.pending_open = None;
         // An answer to a read still in flight must not reopen the thread.
         self.latest_thread = self.next_seq();
@@ -506,6 +507,14 @@ impl MailScreen {
                 self.modal = None;
                 self.html_confirmed = true;
                 return vec![self.ctx.store.html(message_id)];
+            }
+            ModalOutcome::Run(Command::OpenAttachment(target)) => {
+                // The question's yes is the same command the list sends, and it arrives while
+                // the question is still the open modal: that is what tells the two apart, as
+                // `OpenHtml`'s own arm sets `html_confirmed`.
+                let answered = matches!(self.modal, Some(Modal::Confirm(_)));
+                self.modal = None;
+                return self.open_attachment(target, answered);
             }
             ModalOutcome::Run(Command::SaveAttachment(target)) => {
                 self.modal = None;

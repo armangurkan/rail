@@ -87,6 +87,11 @@ impl MailScreen {
                 dir,
                 single,
             } => self.attachment_saved(result, &account, &dir, single),
+            MailEvent::AttachmentOpened {
+                result,
+                account,
+                filename,
+            } => self.attachment_opened(result, &account, &filename),
             MailEvent::Daemon(event) => self.on_daemon(event),
             MailEvent::Timer {
                 token,

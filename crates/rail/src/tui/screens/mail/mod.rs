@@ -80,7 +80,7 @@ use crate::tui::data::{DaemonLink, ListRequest, MailEvent, ScopeChoice, StoreRea
 use crate::tui::effects::Opener;
 use crate::tui::keys::{Action, Chord, Keymap, Resolved, View};
 use crate::tui::modals::{FilterLine, Help, Modal, Palette};
-use crate::tui::open::{OpenFiles, older_than, sweep_dir};
+use crate::tui::open::{OpenFiles, OpenedAttachments, older_than, sweep_dir};
 use crate::tui::screen::Screen;
 use crate::tui::screens::compose::Composer;
 use crate::tui::screens::reader::Reader;
@@ -246,6 +246,9 @@ pub struct MailScreen {
     html_confirmed: bool,
     /// What the attachment keys are waiting on.
     attachment: attachments::AttachmentState,
+    /// The copies `attachment.open` wrote this session, removed when the reader closes and on
+    /// drop, so quitting takes them too.
+    opened_attachments: OpenedAttachments,
     /// The message `o` is waiting on a body fetch for.
     pending_open: Option<i64>,
     /// The message being written, drawn between the header and the hint bar.
@@ -315,6 +318,7 @@ impl MailScreen {
             open_files,
             html_confirmed: false,
             attachment: attachments::AttachmentState::default(),
+            opened_attachments: OpenedAttachments::default(),
             pending_open: None,
             compose: None,
             composing: composing::ComposeState::default(),

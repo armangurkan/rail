@@ -70,6 +70,78 @@ impl OpenFiles {
     }
 }
 
+/// The copies `attachment.open` wrote this session. Each sits alone in a token directory
+/// under the cache, so removing one never touches another's.
+#[derive(Default)]
+pub struct OpenedAttachments {
+    written: Vec<PathBuf>,
+}
+
+impl OpenedAttachments {
+    /// Remember a path the daemon answered, so closing the reader removes it.
+    pub fn add(&mut self, path: PathBuf) {
+        self.written.push(path);
+    }
+
+    /// Remove every copy written so far, each with the directory it was alone in. A file or
+    /// directory already gone is fine, and a directory still holding something is left alone.
+    /// A failure is logged by error kind and a count only — never by name, because unlike the
+    /// random tokens `OpenFiles` writes, these names are the sender's.
+    pub fn remove_all(&mut self) {
+        let count = self.written.len();
+        for path in std::mem::take(&mut self.written) {
+            if let Err(error) = remove_copy(&path) {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    count,
+                    "could not remove an opened attachment"
+                );
+            }
+        }
+    }
+}
+
+/// `path`, then the token directory it was alone in.
+fn remove_copy(path: &Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let Some(dir) = path.parent() else {
+        return Ok(());
+    };
+    match std::fs::remove_dir(dir) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Quitting removes the copies even though the mail screen has no `Drop` of its own, as
+/// `OpenFiles` does for the HTML files `o` writes.
+impl Drop for OpenedAttachments {
+    fn drop(&mut self) {
+        self.remove_all();
+    }
+}
+
+/// A count only: every path here ends in a name the sender chose.
+impl std::fmt::Debug for OpenedAttachments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenedAttachments")
+            .field("written", &self.written.len())
+            .finish()
+    }
+}
+
 /// `now - age`, or the epoch when that is before it.
 pub fn older_than(now: SystemTime, age: Duration) -> SystemTime {
     now.checked_sub(age).unwrap_or(SystemTime::UNIX_EPOCH)
