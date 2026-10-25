@@ -222,6 +222,7 @@ impl MailScreen {
             ReaderOutcome::Back => return self.close_reader(),
             ReaderOutcome::FollowLink => self.follow_link(),
             ReaderOutcome::Attachments => self.attachments(),
+            ReaderOutcome::SaveAttachments => return self.save_cursor_attachments(),
             ReaderOutcome::OpenBrowser => return self.open_html(),
         }
         Vec::new()
@@ -505,6 +506,14 @@ impl MailScreen {
                 self.modal = None;
                 self.html_confirmed = true;
                 return vec![self.ctx.store.html(message_id)];
+            }
+            ModalOutcome::Run(Command::SaveAttachment(target)) => {
+                self.modal = None;
+                return self.save_attachment(target, None);
+            }
+            ModalOutcome::Run(Command::SaveAllAttachments(target)) => {
+                self.modal = None;
+                return self.save_all_attachments(target);
             }
             ModalOutcome::Run(Command::OpenLink(url)) => {
                 self.modal = None;

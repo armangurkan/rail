@@ -149,6 +149,7 @@ actions! {
     ReaderHeaders => "reader.headers", [Reader], ["H"], "Show or hide the headers";
     ReaderOpenBrowser => "reader.open_browser", [Reader], ["o"], "Open the message in the browser";
     ReaderAttachments => "reader.attachments", [Reader], ["a"], "List the attachments";
+    ReaderSaveAttachments => "reader.save_attachments", [Reader], ["w"], "Save this message's attachments";
     ReaderFollowLink => "reader.follow_link", [Reader], ["g x"], "Open a link";
     ReaderBack => "reader.back", [Reader], ["q", "esc"], "Close the thread";
     ReaderDown => "reader.down", [Reader], ["j", "down"], "Next line";

@@ -50,6 +50,8 @@ pub enum ReaderOutcome {
     FollowLink,
     OpenBrowser,
     Attachments,
+    /// `w`: save the cursor message's attachments, without the list.
+    SaveAttachments,
 }
 
 /// The thread's account as the title block shows it.
@@ -493,6 +495,7 @@ impl Reader {
             Action::ReaderFollowLink => return ReaderOutcome::FollowLink,
             Action::ReaderOpenBrowser => return ReaderOutcome::OpenBrowser,
             Action::ReaderAttachments => return ReaderOutcome::Attachments,
+            Action::ReaderSaveAttachments => return ReaderOutcome::SaveAttachments,
             _ => {}
         }
         self.scroll = crate::tui::screens::mail::visible_offset(self.scroll, self.cursor, page);

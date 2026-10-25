@@ -72,11 +72,12 @@ impl std::fmt::Debug for SaveCall {
 
 #[derive(Clone)]
 pub struct DaemonLink {
-    link: Link,
+    /// Shared with `attachments_link`, which holds the two attachment calls.
+    pub(super) link: Link,
 }
 
 #[derive(Clone)]
-enum Link {
+pub(super) enum Link {
     Daemon(Connector),
     #[cfg(test)]
     Fake(std::sync::Arc<FakeDaemon>),
@@ -537,7 +538,7 @@ pub enum FakeCall {
 
 #[cfg(test)]
 impl FakeDaemon {
-    fn record(&self, call: FakeCall) {
+    pub(super) fn record(&self, call: FakeCall) {
         self.calls.lock().unwrap().push(call);
     }
 

@@ -5,6 +5,7 @@
 
 mod actions;
 mod actions_pick;
+mod attachments;
 mod bulk;
 mod clock_toggle;
 mod composing;
@@ -129,10 +130,6 @@ pub struct MailContext {
     /// Where `s`, `S` and `w` save attachments, resolved once at startup from
     /// `[general] attachment_dir` and the user's download directory. `None` means neither
     /// answered, and the three keys say so instead of sending anything.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the save keys, which a later step wires")
-    )]
     pub attachment_dir: Option<PathBuf>,
 }
 
@@ -247,6 +244,8 @@ pub struct MailScreen {
     open_files: OpenFiles,
     /// The browser confirmation was answered yes this session.
     html_confirmed: bool,
+    /// What the attachment keys are waiting on.
+    attachment: attachments::AttachmentState,
     /// The message `o` is waiting on a body fetch for.
     pending_open: Option<i64>,
     /// The message being written, drawn between the header and the hint bar.
@@ -315,6 +314,7 @@ impl MailScreen {
             show_clock,
             open_files,
             html_confirmed: false,
+            attachment: attachments::AttachmentState::default(),
             pending_open: None,
             compose: None,
             composing: composing::ComposeState::default(),

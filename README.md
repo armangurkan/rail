@@ -301,6 +301,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `reader.headers` | reader | `H` | Show or hide the headers. |
 | `reader.open_browser` | reader | `o` | Open the message in the browser. |
 | `reader.attachments` | reader | `a` | List the attachments. |
+| `reader.save_attachments` | reader | `w` | Save this message's attachments. |
 | `reader.follow_link` | reader | `g x` | Open a link. |
 | `reader.back` | reader | `q` `esc` | Close the thread. |
 | `reader.down` | reader | `j` `down` | Next line. |

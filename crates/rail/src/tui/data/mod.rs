@@ -2,6 +2,7 @@
 //! the store, read on blocking tasks (`StoreReader`), and the daemon (`DaemonLink`). Debounce
 //! timers are jobs too, so nothing runs while nothing happens.
 
+mod attachments_link;
 #[cfg(test)]
 mod bulk_tests;
 mod daemon_link;
@@ -223,12 +224,6 @@ pub enum MailEvent {
         count: usize,
         subject: Result<Option<String>, ReadError>,
     },
-    // Sent by `DaemonLink::attachment_save`, which the save-wiring step adds: this half of
-    // the feature is the daemon's, and the enum is the pinned surface both halves share.
-    #[expect(
-        dead_code,
-        reason = "sent once the save keys are wired to the daemon link"
-    )]
     /// `attachment.save` answered. `account` lets the screen name the provider in a
     /// `Missing` line; `dir` is what the status line says the files landed in; `single` is
     /// true when one part was asked for (`s` or an `Enter` Rail would not open).

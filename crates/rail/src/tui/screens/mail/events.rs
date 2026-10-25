@@ -81,6 +81,12 @@ impl MailScreen {
                 effects
             }
             MailEvent::Html { message_id, result } => self.html_read(message_id, result),
+            MailEvent::AttachmentSaved {
+                result,
+                account,
+                dir,
+                single,
+            } => self.attachment_saved(result, &account, &dir, single),
             MailEvent::Daemon(event) => self.on_daemon(event),
             MailEvent::Timer {
                 token,
