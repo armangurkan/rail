@@ -592,13 +592,13 @@ impl MailScreen {
             Target::Time => self.toggle_time(),
             Target::ThreadOrder => self.toggle_thread_order(),
             Target::DimRead => self.cycle_dim_read(),
-            // Step 0 skeleton: step 10 opens the save prompt, step 11 the rename prompt and
-            // the removal question, step 13 flips and saves the counts setting. Nothing emits
-            // these entries until step 12, so none is reachable yet.
-            Target::SaveSearch
-            | Target::RenameSearch(_)
-            | Target::RemoveSearch(_)
-            | Target::SearchCounts => Vec::new(),
+            Target::SaveSearch => self.save_search_prompt(),
+            // Indexed, not the sidebar cursor's row: the palette has no cursor, so each
+            // entry names its own search.
+            Target::RenameSearch(index) => self.rename_search_prompt(index),
+            Target::RemoveSearch(index) => self.remove_search_confirm(index),
+            // Step 13 flips and saves it.
+            Target::SearchCounts => Vec::new(),
             Target::Scope(scope) => {
                 let mut effects = self.close_reader();
                 effects.extend(self.set_scope(scope));

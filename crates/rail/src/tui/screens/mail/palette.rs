@@ -17,8 +17,18 @@ impl MailScreen {
         let views = self.views();
         let mut entries: Vec<PaletteEntry> = Action::ALL
             .iter()
-            // `compose` below stands for `c` in every view.
-            .filter(|&&a| a != Action::ListCompose)
+            // `compose` below stands for `c` in every view, and each saved-search action has
+            // a command entry of its own — the rename and remove ones one per search, since
+            // the palette has no cursor to say which search an index names.
+            .filter(|&&a| {
+                !matches!(
+                    a,
+                    Action::ListCompose
+                        | Action::ListSaveSearch
+                        | Action::SidebarRenameSearch
+                        | Action::SidebarRemoveSearch
+                )
+            })
             .filter(|a| a.views().iter().any(|v| views.contains(v)))
             .map(|&a| PaletteEntry {
                 text: a.description().to_string(),
@@ -38,8 +48,46 @@ impl MailScreen {
             target: Target::Scope(ScopeChoice::Account(i)),
         }));
         entries.extend(mailbox_entries());
+        entries.extend(self.saved_entries());
         entries.extend(self.label_entries());
         entries
+    }
+
+    /// `Search: <name>` for each saved search, and the `Rename search:` / `Remove search:`
+    /// pair that carries its position. `text` is raw — the draw site escapes it, as it does
+    /// every label.
+    fn saved_entries(&self) -> Vec<PaletteEntry> {
+        let key = |a: Action| self.ctx.keymap.label(a);
+        self.saved
+            .iter()
+            .enumerate()
+            .flat_map(|(index, search)| {
+                let name = search.name.clone();
+                [
+                    PaletteEntry {
+                        text: format!("Search: {name}"),
+                        search: format!("search {name}"),
+                        key: String::new(),
+                        target: Target::Scope(ScopeChoice::Saved {
+                            index,
+                            name: name.clone(),
+                        }),
+                    },
+                    PaletteEntry {
+                        text: format!("Rename search: {name}"),
+                        search: format!("rename-search {name}"),
+                        key: key(Action::SidebarRenameSearch),
+                        target: Target::RenameSearch(index),
+                    },
+                    PaletteEntry {
+                        text: format!("Remove search: {name}"),
+                        search: format!("remove-search {name}"),
+                        key: key(Action::SidebarRemoveSearch),
+                        target: Target::RemoveSearch(index),
+                    },
+                ]
+            })
+            .collect()
     }
 
     /// Rail's own commands; `compose` carries the key of `c`, and `hints`, `time` and
@@ -68,6 +116,14 @@ impl MailScreen {
                 Target::Accent,
             ),
         ];
+        if !self.filter.is_empty() {
+            commands.push((
+                Action::ListSaveSearch.description(),
+                "save-search",
+                self.ctx.keymap.label(Action::ListSaveSearch),
+                Target::SaveSearch,
+            ));
+        }
         commands.extend(
             self.toggles()
                 .map(|(text, id, target)| (text, id, String::new(), target)),
@@ -84,7 +140,7 @@ impl MailScreen {
     }
 
     /// Display settings, each saying what it will do next.
-    fn toggles(&self) -> [(&'static str, &'static str, Target); 5] {
+    fn toggles(&self) -> [(&'static str, &'static str, Target); 6] {
         let hints = if self.hints {
             "Turn the key hints off"
         } else {
@@ -108,12 +164,18 @@ impl MailScreen {
             DimRead::Subject => "Dim all read row text",
             DimRead::All => "Dim only the read dot",
         };
+        let counts = if self.search_counts {
+            "Hide saved-search counts"
+        } else {
+            "Show saved-search counts"
+        };
         [
             (dim_read, "dim-read", Target::DimRead),
             (hints, "hints", Target::Hints),
             (time, "time", Target::Time),
             (order, "thread-order", Target::ThreadOrder),
             (clock, "clock", Target::Clock),
+            (counts, "search-counts", Target::SearchCounts),
         ]
     }
 
