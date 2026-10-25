@@ -429,6 +429,35 @@ async fn the_badge_shows_in_merged_mailboxes_and_not_in_an_accounts_inbox() {
     assert!(first(&f).starts_with("●  W  Sender"), "{}", first(&f));
 }
 
+/// `(more match)` belongs to the capped select-all that set it, so every other way the
+/// selection changes takes it off again: it would otherwise claim that one hand-picked row is
+/// the first of ten thousand.
+#[tokio::test]
+async fn the_capped_select_all_note_goes_when_the_selection_changes_another_way() {
+    let mut f = fixture(3).await;
+    f.screen.bulk.more = true;
+    press(&mut f, KeyCode::Char(' ')).await;
+    assert_eq!(f.screen.actions.selection.len(), 1);
+    assert!(!f.screen.bulk.more, "`Space` picked one row");
+    assert!(
+        !f.screen.header_left().contains("more match"),
+        "{}",
+        f.screen.header_left()
+    );
+
+    f.screen.bulk.more = true;
+    press(&mut f, KeyCode::Char('e')).await;
+    assert!(
+        f.screen.actions.selection.is_empty(),
+        "the action took the selection"
+    );
+    assert!(!f.screen.bulk.more, "and the note with it");
+
+    f.screen.bulk.more = true;
+    press(&mut f, KeyCode::Esc).await;
+    assert!(!f.screen.bulk.more, "`Esc` clears both");
+}
+
 #[tokio::test]
 async fn the_grouped_list_in_ascii() {
     let f = grouped_with(2, 2, Icons::Ascii).await;

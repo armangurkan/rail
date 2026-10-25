@@ -180,6 +180,8 @@ impl MailScreen {
     fn toggle_selected(&mut self) -> Vec<Effect> {
         if let Some(row) = self.list.selected().cloned() {
             self.actions.selection.toggle(&row);
+            // `(more match)` belongs to the capped select-all that set it.
+            self.bulk.more = false;
         }
         self.list_action(Action::ListDown)
     }
@@ -273,6 +275,7 @@ impl MailScreen {
             self.replace_last(LastAction::new(seq, targets.len(), until, selected));
             if from_selection {
                 self.actions.selection.clear();
+                self.bulk.more = false;
             }
         }
         let leaves = matches!(
