@@ -3,11 +3,13 @@
 //! large archive, star or mark-read asks before it is sent.
 
 use rail_core::ops::{Action as MailAction, MAX_UNDO_ROWS, RowToken};
+use rail_core::store::view::ThreadKey;
 
 use super::header::thousands;
 use super::selection::Picked;
 use super::{MailScreen, Modal};
 use crate::tui::app::Effect;
+use crate::tui::data::ReadError;
 use crate::tui::modals::{Command, Confirm};
 use crate::tui::text::{escape, fit};
 
@@ -16,7 +18,6 @@ const SHOWN_SUBJECT_CHARS: usize = 120;
 
 /// Threads one bulk select takes at most: ~50 `action.apply` chunks and ~1 undo chunk per
 /// account, about 300 KB of ids and flags.
-#[cfg(test)]
 pub(crate) const MAX_SELECTION: usize = 10_000;
 
 /// What the three bulk keys keep between presses.
@@ -27,7 +28,6 @@ pub(crate) struct BulkState {
     /// The last select-all was capped: the header says `(more match)`.
     pub(super) more: bool,
     /// The newest `* a` read's sequence number: an older answer is dropped.
-    #[cfg(test)]
     pub(super) latest_match: u64,
 }
 
@@ -139,12 +139,67 @@ impl MailScreen {
 
     /// `Esc` in the list: end range mode, keeping the range; else clear the selection
     /// (the filter line, when open, took the key before this).
-    pub(super) fn clear_selection_or_range(&mut self) -> Vec<crate::tui::app::Effect> {
+    pub(super) fn clear_selection_or_range(&mut self) -> Vec<Effect> {
         if self.bulk.range_on() {
             self.bulk.anchor = None;
             return Vec::new();
         }
         self.actions.selection.clear();
+        self.bulk.more = false;
+        Vec::new()
+    }
+
+    /// `* a`: read every thread this mailbox and filter match, up to one over the cap, so the
+    /// answer says whether more match. One read per press, the older one dropped by its `seq`.
+    pub(super) fn select_all(&mut self) -> Vec<Effect> {
+        let request = self.match_request();
+        self.status.notify("selecting…", self.tick);
+        vec![self.ctx.store.matching_targets(request, MAX_SELECTION + 1)]
+    }
+
+    /// `Store::matching_targets` answered: add the newest `MAX_SELECTION` to the selection and
+    /// say so, or report the read's error. An answer a newer press superseded is dropped.
+    pub(super) fn matched(
+        &mut self,
+        seq: u64,
+        result: Result<Vec<(ThreadKey, i64, bool, bool)>, ReadError>,
+    ) -> Vec<Effect> {
+        if seq != self.bulk.latest_match {
+            return Vec::new();
+        }
+        let answer = match result {
+            Ok(answer) => answer,
+            // `Stale` and a store that is not set up say nothing here: a newer press is on its
+            // way, and the list already says the store is not ready. A failure names no thread.
+            Err(error) => {
+                self.side_read_failed(error, "selection");
+                return Vec::new();
+            }
+        };
+        if answer.is_empty() {
+            self.status.notify("Nothing matches.", self.tick);
+            return Vec::new();
+        }
+        let over_the_cap = answer.len() > MAX_SELECTION;
+        let targets: Vec<(i64, Picked)> = answer
+            .into_iter()
+            .map(|(key, account_id, starred, unread)| {
+                (
+                    key.thread_id,
+                    Picked {
+                        account_id,
+                        starred,
+                        unread,
+                    },
+                )
+            })
+            .collect();
+        let truncated = self.actions.selection.add(&targets);
+        self.bulk.more = over_the_cap || truncated;
+        let count = thousands(u64::try_from(self.actions.selection.len()).unwrap_or(u64::MAX));
+        self.status.notify(format!("{count} selected"), self.tick);
+        // A selection change is not a store change: no re-read, so the flags the read
+        // answered are the flags the selection keeps.
         Vec::new()
     }
 }

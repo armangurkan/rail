@@ -161,6 +161,7 @@ impl MailScreen {
             Action::ListClearSelection if self.focus == Focus::List => {
                 self.clear_selection_or_range()
             }
+            Action::ListSelectAll if self.focus == Focus::List => self.select_all(),
             Action::ListArchive
             | Action::ListTrash
             | Action::ListStar
@@ -477,6 +478,7 @@ impl MailScreen {
                 self.dirty()
             }
             MailEvent::ActionFailed(failure) => self.action_failed(*failure),
+            MailEvent::Matched { seq, result } => self.matched(seq, result),
             MailEvent::Labels { seq, result } => self.labels_read(seq, result),
             MailEvent::ThemeSaved { result } => self.setting_saved("theme", result),
             MailEvent::HintsSaved { result } => self.setting_saved("hints setting", result),

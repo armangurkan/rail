@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 
 use rail_core::store::view::ThreadRow;
 
-#[cfg(test)]
 use super::bulk::MAX_SELECTION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +41,6 @@ impl Selection {
     /// Add `targets` in the given order until the selection holds `MAX_SELECTION`; later ones
     /// are dropped. True when anything was left out. The cap is on the whole selection, which
     /// survives a scope change, so repeated select-alls can never take it over `MAX_SELECTION`.
-    #[cfg(test)]
     pub fn add(&mut self, targets: &[(i64, Picked)]) -> bool {
         for (id, picked) in targets {
             // An id already selected is overwritten rather than counted again.

@@ -346,10 +346,9 @@ impl MailScreen {
             .unwrap_or_else(|| layout::sidebar_by_default(self.size.get().1))
     }
 
-    fn list_request(&mut self, at: PageAt, place: Place) -> ListRequest {
-        let seq = self.next_seq();
-        self.latest_list = seq;
-        self.place = place;
+    /// The screen's only `ListRequest` literal: what it reads the store with, whichever read
+    /// asks. A second copy would let the list and a select-all drift apart.
+    fn request(&self, seq: u64, at: PageAt) -> ListRequest {
         ListRequest {
             seq,
             scope: self.scope.clone(),
@@ -359,6 +358,21 @@ impl MailScreen {
             at,
             utc_offset: self.ctx.clock.utc_offset(),
         }
+    }
+
+    fn list_request(&mut self, at: PageAt, place: Place) -> ListRequest {
+        let seq = self.next_seq();
+        self.latest_list = seq;
+        self.place = place;
+        self.request(seq, at)
+    }
+
+    /// The request a select-all reads with. It leaves `place` alone, so a list read in flight
+    /// is not cancelled; `at` is unused by the query.
+    fn match_request(&mut self) -> ListRequest {
+        let seq = self.next_seq();
+        self.bulk.latest_match = seq;
+        self.request(seq, PageAt::First)
     }
 
     fn read_list(&mut self, at: PageAt, place: Place) -> Effect {

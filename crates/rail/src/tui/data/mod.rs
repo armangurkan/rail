@@ -21,9 +21,7 @@ use rail_core::ops::{
 use rail_core::store::AddressEntry;
 use rail_core::store::drafts::{Draft, ReplySource};
 use rail_core::store::drafts_folder::DraftsRow;
-#[cfg(test)]
-use rail_core::store::view::ThreadKey;
-use rail_core::store::view::{HtmlBody, LabelChoices, ThreadDetail};
+use rail_core::store::view::{HtmlBody, LabelChoices, ThreadDetail, ThreadKey};
 
 pub use daemon_link::SaveCall;
 pub use daemon_link::{ApplyCall, DaemonLink};
@@ -192,10 +190,15 @@ pub enum MailEvent {
     /// The editor exited: its exit code, or why it could not run.
     EditorDone(Result<i32, String>),
     /// `Store::matching_targets` answered for the select-all with this `seq`.
-    #[cfg(test)]
     Matched {
         seq: u64,
         result: Result<Vec<(ThreadKey, i64, bool, bool)>, ReadError>,
+    },
+    /// `Store::newest_sender` answered for the select-by-sender with this `seq`.
+    #[cfg(test)]
+    Sender {
+        seq: u64,
+        result: Result<Option<rail_core::provider::Mailbox>, ReadError>,
     },
 }
 
@@ -357,12 +360,18 @@ impl fmt::Debug for MailEvent {
                 .field("ok", &result.is_ok())
                 .finish(),
             // The tuples hold thread ids, so only how many came back is named.
-            #[cfg(test)]
             Self::Matched { seq, result } => f
                 .debug_struct("Matched")
                 .field("seq", seq)
                 .field("ok", &result.is_ok())
                 .field("len", &result.as_ref().map_or(0, Vec::len))
+                .finish(),
+            // `Mailbox` derives `Debug` over its name and address: neither is named here.
+            #[cfg(test)]
+            Self::Sender { seq, result } => f
+                .debug_struct("Sender")
+                .field("seq", seq)
+                .field("ok", &result.is_ok())
                 .finish(),
         }
     }

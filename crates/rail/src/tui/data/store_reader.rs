@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rail_core::ops::{DraftId, OpError};
 use rail_core::provider::FolderKind;
 use rail_core::store::filter::Filter;
-use rail_core::store::view::{AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadPage};
+use rail_core::store::view::{
+    AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadKey, ThreadPage,
+};
 use rail_core::store::{Store, StoreError};
 
 /// How many address matches the recipient prompt shows at most.
@@ -152,6 +154,9 @@ pub struct StoreReader {
     conn: Arc<Mutex<Option<Store>>>,
     /// The newest list read's sequence number: an older one skips its query.
     latest_list: Arc<AtomicU64>,
+    /// The newest select-all read's sequence number: an older one skips its query. Its own
+    /// gate, so a select-all and the list never cancel each other.
+    latest_match: Arc<AtomicU64>,
     /// Reads that reached the store (tests).
     #[cfg(test)]
     queries: Arc<AtomicUsize>,
@@ -163,6 +168,7 @@ impl StoreReader {
             db,
             conn: Arc::default(),
             latest_list: Arc::default(),
+            latest_match: Arc::default(),
             #[cfg(test)]
             queries: Arc::default(),
         }
@@ -182,19 +188,22 @@ impl StoreReader {
         self.read_unless_stale(None, read).await
     }
 
-    /// `read`, unless `list_seq` is given and a newer list read was asked for by the time the
-    /// connection is free: then it answers `Stale` without querying.
+    /// `read`, unless `gate` is given and a newer read of the same kind was asked for by the
+    /// time the connection is free: then it answers `Stale` without querying. The repeated
+    /// reads (the list, a select-all) each carry their own counter.
     async fn read_unless_stale<T: Send + 'static>(
         &self,
-        list_seq: Option<u64>,
+        gate: Option<(Arc<AtomicU64>, u64)>,
         read: impl FnOnce(&Store) -> Result<T, StoreError> + Send + 'static,
     ) -> Result<T, ReadError> {
-        let (db, slot, latest) = (self.db.clone(), self.conn.clone(), self.latest_list.clone());
+        let (db, slot) = (self.db.clone(), self.conn.clone());
         #[cfg(test)]
         let queries = self.queries.clone();
         tokio::task::spawn_blocking(move || {
             let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
-            if list_seq.is_some_and(|seq| seq < latest.load(Ordering::SeqCst)) {
+            if let Some((latest, seq)) = &gate
+                && *seq < latest.load(Ordering::SeqCst)
+            {
                 return Err(ReadError::Stale);
             }
             #[cfg(test)]
@@ -217,22 +226,41 @@ impl StoreReader {
         })
     }
 
-    /// Record `seq` as the newest list read, so any older one still waiting skips itself.
-    fn newest_list(&self, seq: u64) {
-        self.latest_list.fetch_max(seq, Ordering::SeqCst);
+    /// Record `seq` as the newest read of `counter`, so any older one still waiting skips
+    /// itself.
+    fn newest(counter: &AtomicU64, seq: u64) {
+        counter.fetch_max(seq, Ordering::SeqCst);
     }
 
     /// The list read of `request`, or `Stale` when a newer one was asked for meanwhile.
     async fn read_list(&self, request: ListRequest) -> MailEvent {
         let seq = request.seq;
+        let gate = Some((self.latest_list.clone(), seq));
         let result = self
-            .read_unless_stale(Some(seq), move |store| list(store, &request))
+            .read_unless_stale(gate, move |store| list(store, &request))
             .await;
         MailEvent::Listed { seq, result }
     }
 
+    /// The threads `request` matches, at most `limit`, for a select-all; `Stale` when a newer
+    /// select-all was asked for meanwhile. Gated because every `* a` runs a `LIMIT limit` scan
+    /// on the one read connection the list, the sidebar and the reader share, and an answer a
+    /// newer press has superseded is thrown away at the screen anyway.
+    pub fn matching_targets(&self, request: ListRequest, limit: usize) -> Effect {
+        Self::newest(&self.latest_match, request.seq);
+        let reader = self.clone();
+        job(move |sink| async move {
+            let seq = request.seq;
+            let gate = Some((reader.latest_match.clone(), seq));
+            let result = reader
+                .read_unless_stale(gate, move |store| matching(store, &request, limit))
+                .await;
+            send(&sink, MailEvent::Matched { seq, result });
+        })
+    }
+
     pub fn list(&self, request: ListRequest) -> Effect {
-        self.newest_list(request.seq);
+        Self::newest(&self.latest_list, request.seq);
         let reader = self.clone();
         job(move |sink| async move {
             send(&sink, reader.read_list(request).await);
@@ -257,7 +285,7 @@ impl StoreReader {
         thread: Option<(u64, i64)>,
         end: u64,
     ) -> Effect {
-        self.newest_list(list.seq);
+        Self::newest(&self.latest_list, list.seq);
         let reader = self.clone();
         refresh_job(end, move |sink| async move {
             let addresses = list.addresses.clone();
@@ -438,11 +466,12 @@ fn store_scope(scope: &ScopeChoice, account_ids: &[Option<i64>]) -> Option<Scope
     }
 }
 
-/// The page `request` asks for, its scope and `account:` resolved to store ids.
-fn list(store: &Store, request: &ListRequest) -> Result<ListOutcome, StoreError> {
+/// The `ListQuery` `request` asks for, its scope and `account:` resolved to store ids; `None`
+/// when the scope's account has no row in the store yet (nothing synced). The one place a
+/// `ListQuery` is built, so the list and a select-all can never disagree on what matches.
+fn list_query(store: &Store, request: &ListRequest) -> Result<Option<ListQuery>, StoreError> {
     let account_ids = store.account_ids(&request.addresses)?;
     let id_of = |index: usize| account_ids.get(index).copied().flatten();
-    let scope = store_scope(&request.scope, &account_ids);
     let account = match &request.filter.account {
         None => AccountFilter::Any,
         Some(name) => request
@@ -452,16 +481,21 @@ fn list(store: &Store, request: &ListRequest) -> Result<ListOutcome, StoreError>
             .and_then(id_of)
             .map_or(AccountFilter::Nobody, AccountFilter::Only),
     };
-    let page = match scope {
-        Some(scope) => {
-            let query = ListQuery {
-                scope,
-                filter: request.filter.clone(),
-                account,
-                utc_offset: request.utc_offset,
-            };
-            store.thread_page(&query, request.at)?
-        }
+    Ok(
+        store_scope(&request.scope, &account_ids).map(|scope| ListQuery {
+            scope,
+            filter: request.filter.clone(),
+            account,
+            utc_offset: request.utc_offset,
+        }),
+    )
+}
+
+/// The page `request` asks for, its scope and `account:` resolved to store ids.
+fn list(store: &Store, request: &ListRequest) -> Result<ListOutcome, StoreError> {
+    let account_ids = store.account_ids(&request.addresses)?;
+    let page = match list_query(store, request)? {
+        Some(query) => store.thread_page(&query, request.at)?,
         // The account has no row in the store yet: nothing synced, nothing to list.
         None => ThreadPage::default(),
     };
@@ -470,4 +504,17 @@ fn list(store: &Store, request: &ListRequest) -> Result<ListOutcome, StoreError>
         at: request.at,
         account_ids,
     })
+}
+
+/// The threads `request` matches, at most `limit`, newest first: keys and flags only. Built on
+/// the same `ListQuery` the list reads, so a select-all takes exactly the rows the list draws.
+fn matching(
+    store: &Store,
+    request: &ListRequest,
+    limit: usize,
+) -> Result<Vec<(ThreadKey, i64, bool, bool)>, StoreError> {
+    match list_query(store, request)? {
+        Some(query) => store.matching_targets(&query, limit),
+        None => Ok(Vec::new()),
+    }
 }
