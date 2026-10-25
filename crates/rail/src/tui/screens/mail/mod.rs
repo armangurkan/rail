@@ -433,7 +433,14 @@ impl MailScreen {
         let seq = self.next_seq();
         self.latest_sidebar = seq;
         let addresses = self.accounts.iter().map(|a| a.address.clone()).collect();
-        self.ctx.store.sidebar(seq, addresses)
+        let names = self.accounts.iter().map(|a| a.name.clone()).collect();
+        self.ctx.store.sidebar(
+            seq,
+            addresses,
+            names,
+            self.saved_filters(),
+            self.ctx.clock.utc_offset(),
+        )
     }
 
     /// Show `scope`. The old rows stay drawn until the new ones arrive (spec §3); a page

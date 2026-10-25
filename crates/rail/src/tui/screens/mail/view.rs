@@ -260,6 +260,9 @@ impl MailScreen {
                 name: folder,
                 ..
             } => format!("{} · {}", name(*account), escape(folder)),
+            // Named here rather than in `header.rs`: `scope_left` only joins what this
+            // returns, and the `merged` arm below would give a saved search an empty title.
+            ScopeChoice::Saved { name, .. } => format!("Search: {}", escape(name)),
             merged => merged.unified_name().unwrap_or_default().to_string(),
         }
     }

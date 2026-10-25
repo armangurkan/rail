@@ -224,7 +224,13 @@ async fn sidebar_thread_and_html_queries_report_back() {
     seed_store(&paths, &[("work", "w@example.com")], &envelopes);
     let reader = StoreReader::new(paths.db_file());
     let got = events(
-        reader.sidebar(3, vec!["w@example.com".into()]),
+        reader.sidebar(
+            3,
+            vec!["w@example.com".into()],
+            vec!["work".into()],
+            vec![],
+            0,
+        ),
         1,
         Duration::from_secs(5),
     )
