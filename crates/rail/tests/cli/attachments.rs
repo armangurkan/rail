@@ -189,16 +189,22 @@ async fn pressing_a_then_s_in_the_reader_saves_the_attachment_to_the_configured_
     press(b"a");
     wait_until("the attachment list", &output, seen("Attachments"));
     press(b"s");
+    // The status line is the barrier, not `file.exists()`: the handler creates the file with
+    // `create_new` before it writes and fsyncs it (§7), so a poll between the two would read a
+    // short file. The status is printed only after the op answered.
+    wait_until("the status line", &output, seen("Saved plan.pdf to"));
     let file = saved.join("plan.pdf");
-    wait_until("the saved file", &output, || file.exists());
     assert_eq!(std::fs::read(&file).unwrap(), b"hello", "the served bytes");
     assert_eq!(
         std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
         0o600,
         "owner-only"
     );
-    wait_until("the status line", &output, seen("Saved plan.pdf to"));
 
+    // `s` closes the list and leaves the reader open, where `q` is `reader.back` (a view's own
+    // binding beats `Global`), so the first `q` closes the thread and the second quits. Measured
+    // on Linux at this anchor: after the first `q` alone the process was still running.
+    press(b"q");
     press(b"q");
     let status = {
         let running = child.0.as_mut().unwrap();

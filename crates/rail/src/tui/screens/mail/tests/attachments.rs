@@ -650,8 +650,15 @@ async fn attachments_modal_survives_tiny_areas() {
 /// dropped with the reader still open.
 #[tokio::test]
 async fn closing_the_reader_removes_what_it_opened() {
-    let (mut f, opened) = confirmed_fixture().await;
+    // Two attachments, as AC-28 asks: the first answers the session's open question, the second
+    // goes straight through. Each gets its own token directory, so a `remove_all` that removed
+    // only the last path would fail here.
+    let (mut f, opened) = attachment_fixture().await;
     press(&mut f, KeyCode::Char('a')).await;
+    press(&mut f, KeyCode::Enter).await;
+    press(&mut f, KeyCode::Char('y')).await;
+    press(&mut f, KeyCode::Char('a')).await;
+    highlight(&mut f, "logo.png").await;
     press(&mut f, KeyCode::Char('o')).await;
     let written: Vec<PathBuf> = opened
         .lock()
@@ -659,14 +666,22 @@ async fn closing_the_reader_removes_what_it_opened() {
         .iter()
         .map(|url| url.to_file_path().expect("a file URL"))
         .collect();
-    assert_eq!(written.len(), 1, "{written:?}");
-    assert!(written[0].is_file(), "the fake wrote {written:?}");
+    assert_eq!(written.len(), 2, "{written:?}");
+    for path in &written {
+        assert!(path.is_file(), "the fake wrote {written:?}");
+    }
+    let dirs: Vec<&std::path::Path> = written
+        .iter()
+        .map(|path| path.parent().expect("a token directory"))
+        .collect();
+    assert_ne!(dirs[0], dirs[1], "a token directory each: {written:?}");
     press(&mut f, KeyCode::Char('q')).await;
-    assert!(!written[0].exists(), "the file stayed: {written:?}");
-    assert!(
-        !written[0].parent().expect("a token directory").exists(),
-        "the token directory stayed: {written:?}"
-    );
+    for path in &written {
+        assert!(!path.exists(), "the file stayed: {path:?}");
+    }
+    for dir in &dirs {
+        assert!(!dir.exists(), "the token directory stayed: {dir:?}");
+    }
 
     let (mut f, opened) = confirmed_fixture().await;
     press(&mut f, KeyCode::Char('a')).await;
