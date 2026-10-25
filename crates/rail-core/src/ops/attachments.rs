@@ -205,11 +205,12 @@ pub fn not_absolute_dir() -> OpError {
     OpError::invalid_input("dir: not an absolute path")
 }
 
-/// The refusal a destination Rail cannot write gets: a configuration problem, so permanent.
-/// The operating system's own words go to `detail`, which is outside text.
+/// The refusal a destination Rail cannot write gets: a configuration problem, so permanent
+/// rather than a retry. The operating system's own words, when there are any, go on with
+/// `with_detail`, which keeps outside text apart from Rail's.
 #[must_use]
-pub fn unwritable_dir(detail: &str) -> OpError {
-    OpError::invalid_input("dir: cannot be written").with_detail(detail)
+pub fn unwritable_dir() -> OpError {
+    OpError::invalid_input("dir: cannot be written")
 }
 
 /// Counts only: a request names an account, a message and its parts, all of which are mail.
