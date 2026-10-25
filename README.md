@@ -448,8 +448,15 @@ parameters): up to five, then a count of the rest. It warns when the address has
 `mailto` link adds recipients, or when a `mailto` link carries a parameter other than `to`, `cc`,
 `bcc`, `subject` and `body` (some mail clients have acted on `attach=`); the warning names up to
 five such parameters. Rail opens only `http`, `https` and `mailto` links of at most 2,048 bytes.
-`a` lists the thread's attachments (name, type, size); opening and saving them is not possible in
-this version.
+`a` lists the thread's attachments (name, type, size) with a cursor: `j` and `k` move it, and each
+message's rows sit under a `MESSAGE <n>` heading when more than one message carries attachments.
+`Enter` or `o` opens the highlighted one with the program your system uses for it — Rail asks once
+a session before the first open, and only for the common document and image types it hands over;
+anything else is saved instead and says so. `s` saves the highlighted attachment, `S` saves every
+attachment of its message, and `Esc`, `q` or `a` closes the list. From the reader itself, `w`
+saves the cursor message's attachments without opening the list. Saves land in `[general]
+attachment_dir` (below), your download directory by default, and never replace a file you have: a
+name already there becomes `2-name.pdf`.
 
 `o` opens the message's original HTML in your browser, for a Microsoft 365 account too (the HTML
 Rail stored). Rail writes it to a private (0600) file in
@@ -1205,8 +1212,15 @@ so they must still be there then). A draft saved to Gmail also lives in Gmail's 
 brings in like other mail. Opening a Gmail draft copies its attachments into private files owned by
 the daemon (the `draft-files` folder of the data directory, 0600 files in 0700 folders; see
 [Writing mail](#writing-mail)); discarding the draft removes them, and the daemon removes any no
-draft refers to when it starts. The editor's working file lives in the `compose`
-folder of the cache directory until a save succeeds, and one a crash left behind is removed when
+draft refers to when it starts. Saving an attachment (`s`, `S`, `w`) writes a private (0600) file
+into `attachment_dir` — your download directory unless you set one — and never replaces a file
+that is there: a clash becomes `2-name.pdf`, and a name beginning with a dot loses it, so a save
+cannot hide a file in that directory. Opening an attachment writes a 0600 copy in a 0700 directory
+of its own under the cache directory (`~/.cache/rail/attachments/` on Linux), removed when you
+close the reader or quit; any copy older than 24 hours is swept when the daemon starts and before
+each open. On macOS, files Rail writes are quarantined like downloads. The editor's working file
+lives in the `compose` folder of the cache directory until a save succeeds, and one a crash left
+behind is removed when
 the mail screen next starts, once it is seven days old. HTML bodies
 are converted to text by Rail's own scanner without running scripts or loading anything remote, so
 syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
@@ -1282,6 +1296,7 @@ running syncs carry on unchanged.
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 | `bulk_confirm` | `50` | How many threads an archive, star or mark-read may cover before Rail asks first; `0` never asks. Trash always asks. |
+| `attachment_dir` | unset | Where `s`, `S` and `w` save attachments. Unset is your download directory (the `XDG_DOWNLOAD_DIR` entry of `~/.config/user-dirs.dirs` on Linux, else `~/Downloads`). `~` is expanded; a relative path is refused. |
 
 ### `[[accounts]]`
 
@@ -1399,6 +1414,7 @@ in concealed fields. Values reach `op` only on its standard input, never as comm
 | Store | `~/.local/share/rail/rail.db` | `~/Library/Application Support/rail/rail.db` |
 | Token file (`secrets = "file"`) | `~/.local/share/rail/secrets.json` | `~/Library/Application Support/rail/secrets.json` |
 | Attachments of imported Gmail drafts | `~/.local/share/rail/draft-files/` | `~/Library/Application Support/rail/draft-files/` |
+| Attachments opened from the reader | `~/.cache/rail/attachments/` | `~/Library/Caches/rail/attachments/` |
 | Log | `~/.local/state/rail/rail.log` | `~/Library/Application Support/rail/rail.log` |
 | Last time typed into the snooze chooser | `~/.local/state/rail/snooze-last` | `~/Library/Application Support/rail/snooze-last` |
 | Daemon socket | `$XDG_RUNTIME_DIR/rail/rail.sock` (the state directory when there is no runtime directory) | `~/Library/Application Support/rail/rail.sock` |
