@@ -191,6 +191,7 @@ fn icon(row: &SidebarRow, glyphs: &Glyphs) -> String {
             FolderKind::Spam => glyphs.icon_spam,
             FolderKind::Label | FolderKind::User => "",
         },
+        RowKind::Saved { .. } => glyphs.icon_search,
         RowKind::More { .. } | RowKind::Parent { .. } => glyphs.icon_folder,
         RowKind::Heading(_) | RowKind::Rule | RowKind::Account { .. } => "",
     };

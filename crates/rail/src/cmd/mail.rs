@@ -103,6 +103,8 @@ fn context(
             rail_core::paths::download_dir().as_deref(),
         )
         .filter(|dir| dir.to_str().is_some()),
+        saved_searches: config.saved_searches.clone(),
+        saved_search_counts: config.general.saved_search_counts,
     }
 }
 

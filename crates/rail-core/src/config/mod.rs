@@ -6,6 +6,7 @@ pub mod lock;
 #[cfg(test)]
 mod lock_tests;
 pub mod model;
+pub mod saved;
 
 pub use edit::{
     append_account, default_account_name, remove_account, set_general, set_general_bool,
@@ -17,5 +18,6 @@ pub use model::{
     General, Icons, Layout, OnePasswordConfig, SecretsBackend, SyncSettings, ThreadOrder,
     TimeFormat, is_format_char, is_plain, not_plain,
 };
+pub use saved::{MAX_SAVED_SEARCH_NAME_CHARS, MAX_SAVED_SEARCHES, SavedSearch};
 /// A config value with its byte range in the file (for line numbers).
 pub use toml::Spanned;

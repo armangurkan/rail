@@ -23,6 +23,12 @@ const SYSTEM: [FolderKind; 6] = [
     FolderKind::Trash,
 ];
 /// Gmail's category labels (`Category: Social`) gather under `Categories`.
+/// The heading over the saved searches, and the key of the rule above it.
+#[expect(
+    dead_code,
+    reason = "step 0 skeleton; step 8 brings it to life (refs #81)"
+)]
+pub const SEARCHES: &str = "SEARCHES";
 const CATEGORY: &str = "Category: ";
 const CATEGORIES: &str = "Categories";
 /// The merged mailboxes, in the order UNIFIED lists them.
@@ -60,6 +66,12 @@ pub enum RowKind {
         path: String,
         scope: Option<ScopeChoice>,
     },
+    /// A saved search, at its position in `config.toml`; `label` is its name.
+    #[expect(
+        dead_code,
+        reason = "step 0 skeleton; step 8 brings it to life (refs #81)"
+    )]
+    Saved { index: usize },
 }
 
 /// A row's identity across rebuilds: the cursor and the fold state are kept by it. Accounts are
@@ -73,6 +85,15 @@ pub enum RowKey {
     Unified(&'static str),
     Account(String),
     More(String),
+    /// A saved search by its name, so the cursor keeps its row across a rebuild.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "step 0 skeleton; step 8 brings it to life (refs #81)"
+        )
+    )]
+    Saved(String),
     /// A folder by its store id: a renamed label keeps its row.
     Folder {
         account: String,
@@ -136,6 +157,10 @@ impl SidebarRow {
             RowKind::Unified(scope) | RowKind::Folder { scope, .. } => Some(scope.clone()),
             RowKind::Parent { scope, .. } => scope.clone(),
             RowKind::Account { index } => Some(ScopeChoice::Account(*index)),
+            RowKind::Saved { index } => Some(ScopeChoice::Saved {
+                index: *index,
+                name: self.label.clone(),
+            }),
             RowKind::Heading(_) | RowKind::Rule | RowKind::More { .. } => None,
         }
     }
@@ -148,7 +173,9 @@ impl SidebarRow {
             RowKind::Folder { account, .. }
             | RowKind::More { account, .. }
             | RowKind::Parent { account, .. } => Some(*account),
-            RowKind::Heading(_) | RowKind::Rule | RowKind::Unified(_) => None,
+            RowKind::Heading(_) | RowKind::Rule | RowKind::Unified(_) | RowKind::Saved { .. } => {
+                None
+            }
         }
     }
 

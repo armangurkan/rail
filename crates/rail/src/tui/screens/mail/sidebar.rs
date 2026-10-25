@@ -286,6 +286,8 @@ impl Sidebar {
             ScopeChoice::Sent | ScopeChoice::Trash | ScopeChoice::Drafts | ScopeChoice::Snoozed => {
                 0
             }
+            // Step 0 skeleton: step 6 adds `SidebarCounts.saved` and reads it here.
+            ScopeChoice::Saved { .. } => 0,
         }
     }
 }

@@ -58,6 +58,8 @@ pub struct Glyphs {
     pub icon_spam: &'static str,
     /// `More folders` and a path with folders under it.
     pub icon_folder: &'static str,
+    /// The sidebar's saved-search rows.
+    pub icon_search: &'static str,
     /// A sidebar rule's line.
     pub rule: &'static str,
 }
@@ -89,6 +91,7 @@ impl Glyphs {
                 icon_archive: "▣",
                 icon_spam: "⊘",
                 icon_folder: "📁",
+                icon_search: "🔍",
                 rule: "─",
             },
             Icons::Ascii => Self {
@@ -115,6 +118,7 @@ impl Glyphs {
                 icon_archive: "a",
                 icon_spam: "s",
                 icon_folder: "/",
+                icon_search: "?",
                 rule: "-",
             },
         }

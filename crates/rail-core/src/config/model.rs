@@ -5,6 +5,7 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::saved::SavedSearch;
 use crate::provider::FolderKind;
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
@@ -12,6 +13,10 @@ use crate::provider::FolderKind;
 pub struct Config {
     #[serde(default)]
     pub general: General,
+    /// `[[saved_searches]]`: named filters the sidebar lists. Rail rewrites these tables when
+    /// one is saved, renamed or removed, keeping the rest of the file.
+    #[serde(default)]
+    pub saved_searches: Vec<SavedSearch>,
     #[serde(default)]
     pub accounts: Vec<AccountConfig>,
     /// `[keys]`: action id to key name. The values keep their position in the file, so the
@@ -75,6 +80,10 @@ pub struct General {
     /// client expands a leading `~` and refuses a relative path, because the daemon's working
     /// directory is `/`. Unset is the user's download directory.
     pub attachment_dir: Option<PathBuf>,
+    /// `general.saved_search_counts`: the unread count beside each saved search in the
+    /// sidebar. `false` leaves them out and skips the count queries. `:search-counts`
+    /// toggles it.
+    pub saved_search_counts: bool,
 }
 
 impl Default for General {
@@ -97,6 +106,7 @@ impl Default for General {
             dim_read: DimRead::Dot,
             bulk_confirm: 50,
             attachment_dir: None,
+            saved_search_counts: true,
         }
     }
 }

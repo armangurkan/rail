@@ -47,6 +47,8 @@ pub(super) fn request(seq: u64, at: PageAt) -> ListRequest {
         addresses: vec!["w@example.com".into()],
         names: vec!["work".into()],
         filter: parse(""),
+        saved: None,
+        saved_all: vec![],
         at,
         utc_offset: 0,
     }

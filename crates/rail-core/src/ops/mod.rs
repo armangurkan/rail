@@ -14,6 +14,7 @@ pub mod guide;
 pub mod op;
 pub mod pending;
 pub mod presets;
+pub mod saved;
 pub mod secrets;
 pub mod snooze;
 pub mod status;
@@ -73,6 +74,7 @@ pub use presets::{
     PresetFetchRequest, PresetFetchResponse, PresetListing, PresetSummary, PresetsListRequest,
     PresetsListResponse,
 };
+pub use saved::{SavedSearchListResponse, SavedSearchPutRequest, SavedSearchRemoveRequest};
 pub use secrets::{SecretsConfigureRequest, SecretsConfigureResponse};
 pub use snooze::{
     MAX_SNOOZE_SECS, MIN_SNOOZE_SECS, NOT_IN_INBOX, SnoozeClearRequest, SnoozeClearResponse,

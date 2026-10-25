@@ -45,6 +45,42 @@ pub enum Target {
     Compose,
     /// `:drafts`: the drafts picker.
     Drafts,
+    /// `:save-search`: name the filter in force and save it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "step 0 skeleton; step 12 brings it to life (refs #81)"
+        )
+    )]
+    SaveSearch,
+    /// `rename-search <name>`: rename the saved search at this position.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "step 0 skeleton; step 12 brings it to life (refs #81)"
+        )
+    )]
+    RenameSearch(usize),
+    /// `remove-search <name>`: remove the saved search at this position.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "step 0 skeleton; step 12 brings it to life (refs #81)"
+        )
+    )]
+    RemoveSearch(usize),
+    /// `:search-counts`: show or hide the unread count beside each saved search.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "step 0 skeleton; step 12 brings it to life (refs #81)"
+        )
+    )]
+    SearchCounts,
 }
 
 /// One entry: what it shows (raw: label names are outside text), what it is matched by, and

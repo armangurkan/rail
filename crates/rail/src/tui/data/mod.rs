@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use futures_util::FutureExt;
 
+use rail_core::config::SavedSearch;
 use rail_core::ops::{
     AccountSyncStatus, ActionApplyResponse, ActionFailed, ActionRetryResponse, ActionUndoResponse,
     AttachmentOpenResponse, AttachmentSaveResponse, BodyFetchResponse, DraftId,
@@ -244,6 +245,23 @@ pub enum MailEvent {
         account: String,
         filename: String,
     },
+    /// `saved_search.put` or `saved_search.remove` answered: the whole new list.
+    #[expect(
+        dead_code,
+        reason = "step 0 skeleton; step 10 brings it to life (refs #81)"
+    )]
+    SavedSearchesChanged {
+        result: Result<Vec<SavedSearch>, OpError>,
+    },
+    /// `config.toml` was written for `:search-counts`; the error is a config or IO error's
+    /// text, never a name and never a query.
+    #[expect(
+        dead_code,
+        reason = "step 0 skeleton; step 13 brings it to life (refs #81)"
+    )]
+    SearchCountsSaved {
+        result: Result<(), String>,
+    },
 }
 
 /// Names and numbers only: a `MailEvent` carries mail, which must never reach a log.
@@ -451,6 +469,15 @@ impl fmt::Debug for MailEvent {
                 .finish(),
             Self::AttachmentOpened { result, .. } => f
                 .debug_struct("AttachmentOpened")
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::SavedSearchesChanged { result } => f
+                .debug_struct("SavedSearchesChanged")
+                .field("ok", &result.is_ok())
+                .field("len", &result.as_ref().map_or(0, Vec::len))
+                .finish(),
+            Self::SearchCountsSaved { result } => f
+                .debug_struct("SearchCountsSaved")
                 .field("ok", &result.is_ok())
                 .finish(),
         }

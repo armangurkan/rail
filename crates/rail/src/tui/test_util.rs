@@ -504,6 +504,8 @@ pub fn mail_ctx(paths: &Paths, fake: Arc<FakeDaemon>) -> MailContext {
         editor: vec!["fake".into()],
         signatures: vec![Some(Ok("work sig".into())), None],
         attachment_dir: Some(paths.cache_dir.join("saved")),
+        saved_searches: vec![],
+        saved_search_counts: true,
     }
 }
 

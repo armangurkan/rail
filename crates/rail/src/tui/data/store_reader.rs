@@ -56,6 +56,19 @@ pub enum ScopeChoice {
         name: String,
         kind: FolderKind,
     },
+    /// A saved search: every folder of every account narrowed by its filter. `index` is its
+    /// position in `config.toml`, which is its identity; `name` labels the header.
+    Saved {
+        index: usize,
+        #[cfg_attr(
+            not(test),
+            expect(
+                dead_code,
+                reason = "step 0 skeleton; step 7 brings it to life (refs #81)"
+            )
+        )]
+        name: String,
+    },
 }
 
 impl PartialEq for ScopeChoice {
@@ -80,6 +93,7 @@ impl PartialEq for ScopeChoice {
                     ..
                 },
             ) => a == b && x == y,
+            (Self::Saved { index: a, .. }, Self::Saved { index: b, .. }) => a == b,
             _ => false,
         }
     }
@@ -95,7 +109,7 @@ impl ScopeChoice {
             Self::Drafts => Some("Drafts"),
             Self::Sent => Some("Sent"),
             Self::Trash => Some("Trash"),
-            Self::Account(_) | Self::Folder { .. } => None,
+            Self::Account(_) | Self::Folder { .. } | Self::Saved { .. } => None,
         }
     }
 
@@ -113,7 +127,7 @@ impl ScopeChoice {
                 kind,
                 FolderKind::Sent | FolderKind::Trash | FolderKind::Drafts
             ),
-            Self::Unified | Self::Starred | Self::Account(_) => true,
+            Self::Unified | Self::Starred | Self::Account(_) | Self::Saved { .. } => true,
         }
     }
 }
@@ -127,6 +141,18 @@ pub struct ListRequest {
     pub addresses: Vec<String>,
     pub names: Vec<String>,
     pub filter: Filter,
+    /// The open saved search's own filter, ANDed under the live one.
+    #[expect(
+        dead_code,
+        reason = "step 0 skeleton; step 5 brings it to life (refs #81)"
+    )]
+    pub saved: Option<Filter>,
+    /// Every saved search's filter, parsed, in config order: the sidebar's counts.
+    #[expect(
+        dead_code,
+        reason = "step 0 skeleton; step 6 brings it to life (refs #81)"
+    )]
+    pub saved_all: Vec<Filter>,
     pub at: PageAt,
     pub utc_offset: i32,
 }
@@ -508,6 +534,8 @@ fn store_scope(scope: &ScopeChoice, account_ids: &[Option<i64>]) -> Option<Scope
             account_id,
             folder_id: *folder_id,
         }),
+        // Step 0 skeleton: step 5 adds `Scope::All { accounts }` and returns it here.
+        ScopeChoice::Saved { .. } => None,
     }
 }
 

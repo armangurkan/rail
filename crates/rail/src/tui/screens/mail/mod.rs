@@ -54,6 +54,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossterm::event::KeyEvent;
+use rail_core::config::SavedSearch;
 use rail_core::config::{AccountKind, Config, DimRead, Icons, ThreadOrder};
 use rail_core::ops::OpError;
 use rail_core::paths::Paths;
@@ -131,6 +132,10 @@ pub struct MailContext {
     /// `[general] attachment_dir` and the user's download directory. `None` means neither
     /// answered, and the three keys say so instead of sending anything.
     pub attachment_dir: Option<PathBuf>,
+    /// `[[saved_searches]]` in config order; the ops answer a whole new list.
+    pub saved_searches: Vec<SavedSearch>,
+    /// `general.saved_search_counts`: the unread count beside each saved search.
+    pub saved_search_counts: bool,
 }
 
 /// One configured account, in `config.toml`'s order.
@@ -240,6 +245,10 @@ pub struct MailScreen {
     hints: bool,
     /// The header's clock is shown: from the config, then whatever `:clock` chose this session.
     show_clock: bool,
+    /// The saved searches, from the config and then from every `SavedSearchesChanged`.
+    saved: Vec<SavedSearch>,
+    /// Saved-search counts are shown: from the config, then whatever `:search-counts` chose.
+    search_counts: bool,
     /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
     open_files: OpenFiles,
     /// The browser confirmation was answered yes this session.
@@ -287,6 +296,8 @@ impl MailScreen {
         let themes = themes::ThemeState::new(ctx.theme_choice);
         let hints = ctx.hints;
         let show_clock = ctx.show_clock;
+        let saved = ctx.saved_searches.clone();
+        let search_counts = ctx.saved_search_counts;
         Self {
             ctx,
             account_ids: vec![None; accounts.len()],
@@ -315,6 +326,8 @@ impl MailScreen {
             themes,
             hints,
             show_clock,
+            saved,
+            search_counts,
             open_files,
             html_confirmed: false,
             attachment: attachments::AttachmentState::default(),
@@ -371,6 +384,8 @@ impl MailScreen {
             addresses: self.accounts.iter().map(|a| a.address.clone()).collect(),
             names: self.accounts.iter().map(|a| a.name.clone()).collect(),
             filter: self.filter.clone(),
+            saved: self.saved_filter(),
+            saved_all: self.saved_filters(),
             at,
             utc_offset: self.ctx.clock.utc_offset(),
         }
@@ -389,6 +404,23 @@ impl MailScreen {
         let seq = self.next_seq();
         self.bulk.latest_match = seq;
         self.request(seq, PageAt::First)
+    }
+
+    /// The open scope's saved filter, re-derived on every read and never cached (FR-10).
+    fn saved_filter(&self) -> Option<Filter> {
+        match &self.scope {
+            ScopeChoice::Saved { index, .. } => self.saved.get(*index).map(|s| parse(&s.query)),
+            _ => None,
+        }
+    }
+
+    /// Every saved search's filter, in config order; empty while the counts are off (FR-19).
+    fn saved_filters(&self) -> Vec<Filter> {
+        if self.search_counts {
+            self.saved.iter().map(|s| parse(&s.query)).collect()
+        } else {
+            Vec::new()
+        }
     }
 
     fn read_list(&mut self, at: PageAt, place: Place) -> Effect {
