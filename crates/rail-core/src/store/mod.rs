@@ -45,6 +45,8 @@ mod targets;
 #[cfg(test)]
 mod targets_tests;
 pub mod view;
+#[cfg(test)]
+mod view_attachments_tests;
 mod view_labels;
 #[cfg(test)]
 mod view_sidebar_tests;

@@ -565,16 +565,29 @@ impl Store {
     /// The store could not be read.
     pub fn listed_attachments(
         &self,
-        _account_id: i64,
-        _remote: &str,
+        account_id: i64,
+        remote: &str,
     ) -> Result<Vec<AttachmentView>, StoreError> {
-        Ok(Vec::new())
+        let mut stmt = self.conn.prepare(
+            "SELECT a.remote_part_id, a.filename, a.mime_type, a.size
+             FROM attachments a JOIN messages m ON m.id = a.message_id
+             WHERE m.account_id = ?1 AND m.remote_id = ?2 ORDER BY a.id",
+        )?;
+        let rows = stmt.query_map(params![account_id, remote], |r| {
+            Ok(AttachmentView {
+                part_id: r.get(0)?,
+                filename: r.get(1)?,
+                mime_type: r.get(2)?,
+                size: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     fn attach(&self, messages: &mut [MessageView]) -> Result<(), StoreError> {
         let ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
         let mut stmt = self.conn.prepare(
-            "SELECT message_id, filename, mime_type, size FROM attachments
+            "SELECT message_id, remote_part_id, filename, mime_type, size FROM attachments
              WHERE message_id IN (SELECT value FROM json_each(?1)) ORDER BY id",
         )?;
         let mut by_message: HashMap<i64, Vec<AttachmentView>> = HashMap::new();
@@ -582,10 +595,10 @@ impl Store {
             Ok((
                 r.get::<_, i64>(0)?,
                 AttachmentView {
-                    part_id: String::new(),
-                    filename: r.get(1)?,
-                    mime_type: r.get(2)?,
-                    size: r.get(3)?,
+                    part_id: r.get(1)?,
+                    filename: r.get(2)?,
+                    mime_type: r.get(3)?,
+                    size: r.get(4)?,
                 },
             ))
         })?;
