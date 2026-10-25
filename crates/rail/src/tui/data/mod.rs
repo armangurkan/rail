@@ -2,6 +2,8 @@
 //! the store, read on blocking tasks (`StoreReader`), and the daemon (`DaemonLink`). Debounce
 //! timers are jobs too, so nothing runs while nothing happens.
 
+#[cfg(test)]
+mod bulk_tests;
 mod daemon_link;
 mod store_reader;
 #[cfg(test)]
