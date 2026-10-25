@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/bulk.rs
+expression: shot
+---
+|Rail | All inboxes · 2 accounts · 5 unread · 1,234 selected        * Synced 12:39 | 12:40
+YESTERDAY
+>  W  Sender                      subject wm2                                        08:55
+>  H  Sender                      subject hm1                                        08:54
+>  W  Sender                      subject wm1                                        08:54
+>  H  Sender                      subject hm0                                        08:53
+>  W  Sender                      subject wm0                                        08:53
+
+
+
+         ┌ Archive? ────────────────────────────────────────────────────────────┐
+         │Archive 1,234 threads?                                                │
+         │                                                                      │
+         │y yes · n or Esc no                                                   │
+         └──────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+Enter open  j/k move  r reply  c compose  e archive  ? help          * work ok · * home ok
