@@ -353,12 +353,18 @@ impl MailScreen {
         let provider = self.compose.as_ref().map_or("", |c| {
             self.kind_at(c.composing().account_index).provider_name()
         });
-        let hints = hints(
-            self.pane(),
-            &self.ctx.keymap,
-            self.sidebar_visible(),
-            provider,
-        );
+        let pane = self.pane();
+        let mut hints = hints(pane, &self.ctx.keymap, self.sidebar_visible(), provider);
+        // Range mode's lasting cue, once its notice has expired. First, because `fit_hints`
+        // keeps whole hints from the left and trims the rest, so an appended entry would be
+        // drawn at neither snapshot size. Only in the list: `list.clear_selection` is bound
+        // there alone, so the hint would name a key that does something else in another pane.
+        if pane == Pane::List && self.bulk.range_on() {
+            hints.insert(
+                0,
+                hint(self.ctx.keymap.label(Action::ListClearSelection), "range"),
+            );
+        }
         let right = self
             .accounts
             .iter()

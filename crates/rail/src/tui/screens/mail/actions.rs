@@ -163,6 +163,7 @@ impl MailScreen {
             }
             Action::ListSelectAll if self.focus == Focus::List => self.select_all(),
             Action::ListSelectSender if self.focus == Focus::List => self.select_sender(),
+            Action::ListSelectRange if self.focus == Focus::List => self.select_range(),
             Action::ListArchive
             | Action::ListTrash
             | Action::ListStar

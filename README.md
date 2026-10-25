@@ -565,7 +565,9 @@ first, `Trash "subject"?` or `Trash 3 threads?`, and says what the trash does: G
 mail in its Trash for 30 days, and on Microsoft 365 it `Moves to Deleted Items.`; Rail never
 deletes mail for good), `s` stars or unstars (it stars unless every thread is already
 starred), `u` marks read or unread (it marks read if any thread is unread). An action applies to
-the whole thread, as in Gmail. The list changes at once; the daemon sends the change to the account's server (Gmail or
+the whole thread, as in Gmail. Over 50 threads (`bulk_confirm` under `[general]`) `e`, `s` and `u`
+ask first too, naming the count, for example `Archive 1,234 threads?`; `d` always asks. The list
+changes at once; the daemon sends the change to the account's server (Gmail or
 Microsoft 365) in the background, so it also goes through if you quit Rail.
 
 `l` opens the account's labels: type to filter, `Space` ticks or unticks, `Enter` applies (labels
@@ -589,8 +591,13 @@ cursor into the filter line as `from:<address>` and selects those: in the filter
 matches that address exactly, where a plain `from:dana` matches every thread whose sender's name
 *or* address contains `dana`. A thread whose newest message has no readable sender, or one whose
 address the filter cannot carry, says `This thread has no sender to select by.` and changes
-nothing. Over 50 threads (`bulk_confirm` under `[general]`) `e`, `s` and `u` ask first, naming the
-count, for example `Archive 1,234 threads?`; `d` always asks.
+nothing.
+
+`v` starts a range at the thread under the cursor: the bar says `range from here`, and while the
+range is open its first key hint is `Esc range`. Move as usual, then `v` or `Esc` ends the range
+and keeps every thread it covered; `Esc` again clears the selection, as before. If the thread you
+started from has left the list by then, Rail says `The range start is no longer in the list.` and
+selects nothing.
 
 A bulk action goes out as one request per 200 threads per account, and one `z` takes the whole set
 back, reporting `undone` once; an undo that could take only part of it back says `undone in part:

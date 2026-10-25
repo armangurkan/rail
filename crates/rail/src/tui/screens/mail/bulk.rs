@@ -145,10 +145,52 @@ impl MailScreen {
     /// (the filter line, when open, took the key before this).
     pub(super) fn clear_selection_or_range(&mut self) -> Vec<Effect> {
         if self.bulk.range_on() {
-            self.bulk.anchor = None;
-            return Vec::new();
+            return self.end_range();
         }
         self.actions.selection.clear();
+        self.bulk.more = false;
+        Vec::new()
+    }
+
+    /// `v`: anchor a range on the cursor thread, or end a mode already on. The lasting cue is
+    /// the `Esc range` hint the bar draws first while the mode lasts; the notice expires like
+    /// every other one.
+    pub(super) fn select_range(&mut self) -> Vec<Effect> {
+        if self.bulk.range_on() {
+            return self.end_range();
+        }
+        let Some(thread_id) = self.list.selected().map(|row| row.key.thread_id) else {
+            return Vec::new();
+        };
+        self.bulk.anchor = Some(thread_id);
+        self.status.notify("range from here", self.tick);
+        Vec::new()
+    }
+
+    /// End range mode, keeping the rows from the anchor to the cursor inclusive. The anchor is
+    /// a thread id, so a re-read that drops it out of the window leaves nothing to measure
+    /// from: the mode ends, nothing is added, and the bar says so.
+    fn end_range(&mut self) -> Vec<Effect> {
+        let anchor = self.bulk.anchor.take();
+        let at = anchor.and_then(|id| {
+            self.list
+                .rows()
+                .iter()
+                .position(|row| row.key.thread_id == id)
+        });
+        let Some(at) = at else {
+            self.status
+                .notify("The range start is no longer in the list.", self.tick);
+            return Vec::new();
+        };
+        let cursor = self.list.selected_index();
+        let (first, last) = (at.min(cursor), at.max(cursor));
+        let targets: Vec<(i64, Picked)> = self.list.rows()[first..=last]
+            .iter()
+            .map(|row| (row.key.thread_id, Picked::of(row)))
+            .collect();
+        self.actions.selection.add(&targets);
+        // `(more match)` belongs to the capped select-all that set it.
         self.bulk.more = false;
         Vec::new()
     }
