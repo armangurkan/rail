@@ -26,7 +26,7 @@ fn shape(rows: &[SidebarRow]) -> Vec<String> {
 }
 
 fn shown(outcome: &SidebarOutcome, folds: &Folds) -> Vec<String> {
-    shape(&visible(&build(&accounts(), outcome, folds), folds))
+    shape(&visible(&build(&accounts(), &[], outcome, folds), folds))
 }
 
 fn unfolded(keys: &[RowKey]) -> Folds {
@@ -195,7 +195,7 @@ fn a_path_deeper_than_six_segments_is_joined_at_the_sixth() {
             .map(|p| prefix(0, p)),
     );
     let folds = unfolded(&keys);
-    let rows = visible(&build(&accounts(), &outcome, &folds), &folds);
+    let rows = visible(&build(&accounts(), &[], &outcome, &folds), &folds);
     let deep: Vec<(&str, u8)> = rows
         .iter()
         .skip_while(|r| r.label != "a")
@@ -211,7 +211,7 @@ fn a_path_deeper_than_six_segments_is_joined_at_the_sixth() {
 #[test]
 fn rows_open_their_scopes_and_keep_their_keys() {
     let folds = unfolded(&[RowKey::More(acct(0))]);
-    let rows = visible(&build(&accounts(), &two_accounts(), &folds), &folds);
+    let rows = visible(&build(&accounts(), &[], &two_accounts(), &folds), &folds);
     let find = |label: &str| rows.iter().find(|r| r.label == label).expect(label);
     assert_eq!(find("Personal").scope(), Some(ScopeChoice::Account(0)));
     let inbox = rows
@@ -311,18 +311,18 @@ fn the_cursor_stays_on_its_row_or_moves_to_the_nearest_one_above() {
         folder_id: 17,
     };
     let folds = unfolded(&[RowKey::More(acct(0)), shopping.clone()]);
-    let old = visible(&build(&accounts(), &two_accounts(), &folds), &folds);
+    let old = visible(&build(&accounts(), &[], &two_accounts(), &folds), &folds);
     assert_eq!(refind(&old, Some(&dhgate), &old), Some(dhgate.clone()));
     let mut outcome = two_accounts();
     outcome.counts.folders.retain(|f| f.folder_id != 17);
-    let new = visible(&build(&accounts(), &outcome, &folds), &folds);
+    let new = visible(&build(&accounts(), &[], &outcome, &folds), &folds);
     assert_eq!(
         refind(&old, Some(&dhgate), &new),
         Some(shopping),
         "gone: Shopping, just above it"
     );
     let folded = Folds::default();
-    let hidden = visible(&build(&accounts(), &two_accounts(), &folded), &folded);
+    let hidden = visible(&build(&accounts(), &[], &two_accounts(), &folded), &folded);
     assert_eq!(
         refind(&old, Some(&dhgate), &hidden),
         Some(RowKey::More(acct(0))),

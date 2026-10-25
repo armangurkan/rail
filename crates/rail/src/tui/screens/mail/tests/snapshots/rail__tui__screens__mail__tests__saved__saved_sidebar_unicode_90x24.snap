@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/saved.rs
+expression: "shot(f, 90, 24)"
+---
+▍Rail │ Search: needs-reply · 1 unread  │ 🔍  / Search               ● Synced 12:39 │ 12:40
+UNIFIED                  │YESTERDAY
+✉  All inboxes          2│● Dana Reyes            subject d1                         08:53
+★  Starred               │
+✎  Drafts                │
+➤  Sent                  │
+✕  Trash                 │
+─────────────────────────│
+ACCOUNTS                 │
+▸  W  work              2│
+▸  H  home               │
+─────────────────────────│
+SEARCHES                 │
+  🔍  needs-reply        1│
+  🔍  big-attachments     │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+Enter open  Space fold  j/k move  Tab list  ? help                     ● work ✓ · ● home ✓

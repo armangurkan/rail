@@ -22,13 +22,9 @@ const SYSTEM: [FolderKind; 6] = [
     FolderKind::Spam,
     FolderKind::Trash,
 ];
-/// Gmail's category labels (`Category: Social`) gather under `Categories`.
 /// The heading over the saved searches, and the key of the rule above it.
-#[expect(
-    dead_code,
-    reason = "step 0 skeleton; step 8 brings it to life (refs #81)"
-)]
 pub const SEARCHES: &str = "SEARCHES";
+/// Gmail's category labels (`Category: Social`) gather under `Categories`.
 const CATEGORY: &str = "Category: ";
 const CATEGORIES: &str = "Categories";
 /// The merged mailboxes, in the order UNIFIED lists them.
@@ -67,10 +63,6 @@ pub enum RowKind {
         scope: Option<ScopeChoice>,
     },
     /// A saved search, at its position in `config.toml`; `label` is its name.
-    #[expect(
-        dead_code,
-        reason = "step 0 skeleton; step 8 brings it to life (refs #81)"
-    )]
     Saved { index: usize },
 }
 
@@ -86,13 +78,6 @@ pub enum RowKey {
     Account(String),
     More(String),
     /// A saved search by its name, so the cursor keeps its row across a rebuild.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "step 0 skeleton; step 8 brings it to life (refs #81)"
-        )
-    )]
     Saved(String),
     /// A folder by its store id: a renamed label keeps its row.
     Folder {
@@ -208,8 +193,13 @@ fn folded_by_default(key: &RowKey) -> bool {
     !matches!(key, RowKey::Account(_))
 }
 
-/// Every row, folded away or not, in order; `accounts` in config order.
-pub fn build(accounts: &[TreeAccount], outcome: &SidebarOutcome, folds: &Folds) -> Vec<SidebarRow> {
+/// Every row, folded away or not, in order; `accounts` and `saved` in config order.
+pub fn build(
+    accounts: &[TreeAccount],
+    saved: &[String],
+    outcome: &SidebarOutcome,
+    folds: &Folds,
+) -> Vec<SidebarRow> {
     let mut rows = unified_rows(outcome);
     rows.push(heading(ACCOUNTS));
     for (index, account) in accounts.iter().enumerate() {
@@ -233,6 +223,38 @@ pub fn build(accounts: &[TreeAccount], outcome: &SidebarOutcome, folds: &Folds) 
         rows.extend(system_rows(owner, &own, drafts_of(outcome, id)));
         rows.extend(more_rows(owner, &own, folds));
     }
+    rows.extend(saved_rows(saved, outcome));
+    rows
+}
+
+/// The rule closing ACCOUNTS, the `SEARCHES` heading and one row per saved search, in config
+/// order; nothing at all with none saved, so a sidebar without them is byte-identical to
+/// before (FR-7). No rule under the last search: the pattern here is rows, then a rule, then
+/// the next heading, and nothing follows these rows.
+fn saved_rows(saved: &[String], outcome: &SidebarOutcome) -> Vec<SidebarRow> {
+    if saved.is_empty() {
+        return Vec::new();
+    }
+    let mut rows = vec![
+        row(
+            RowKind::Rule,
+            RowKey::Rule(Some(SEARCHES.to_string())),
+            String::new(),
+            0,
+            None,
+        ),
+        heading(SEARCHES),
+    ];
+    rows.extend(saved.iter().enumerate().map(|(index, name)| {
+        row(
+            RowKind::Saved { index },
+            RowKey::Saved(name.clone()),
+            name.clone(),
+            0,
+            // Positional, and 0 draws nothing — a folder's count behaves the same way.
+            outcome.counts.saved.get(index).copied().filter(|&n| n > 0),
+        )
+    }));
     rows
 }
 

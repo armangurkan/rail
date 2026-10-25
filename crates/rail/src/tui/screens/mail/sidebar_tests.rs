@@ -17,7 +17,7 @@ fn accounts() -> Vec<AccountEntry> {
 
 fn sidebar() -> Sidebar {
     let mut sidebar = Sidebar::default();
-    sidebar.rebuild(&accounts(), &two_accounts());
+    sidebar.rebuild(&accounts(), &[], &two_accounts());
     sidebar
 }
 
@@ -209,7 +209,7 @@ fn a_rebuild_keeps_the_folds_and_the_cursor_or_the_nearest_row_above() {
         .counts
         .folders
         .push(folder(1, 23, "Shopping/aliexpress", "user", 1));
-    s.rebuild(&accounts(), &outcome);
+    s.rebuild(&accounts(), &[], &outcome);
     assert_eq!(
         here(&s),
         Some("dhgate"),
@@ -223,7 +223,7 @@ fn a_rebuild_keeps_the_folds_and_the_cursor_or_the_nearest_row_above() {
         .counts
         .folders
         .retain(|f| f.name != "Shopping/dhgate");
-    s.rebuild(&accounts(), &outcome);
+    s.rebuild(&accounts(), &[], &outcome);
     assert_eq!(here(&s), Some("aliexpress"), "gone: the nearest row above");
 }
 
@@ -288,7 +288,7 @@ fn a_reload_that_reorders_the_accounts_keeps_every_fold_and_the_cursor() {
     reordered.reverse();
     let mut outcome = two_accounts();
     outcome.account_ids.reverse();
-    s.rebuild(&reordered, &outcome);
+    s.rebuild(&reordered, &[], &outcome);
     assert_eq!(here(&s), Some("AXON"), "the cursor stays on its account");
     let row = |label: &str| {
         s.rows()
