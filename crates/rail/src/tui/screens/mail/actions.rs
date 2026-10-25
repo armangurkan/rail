@@ -535,6 +535,9 @@ impl MailScreen {
             MailEvent::ThemeSaved { result } => self.setting_saved("theme", result),
             MailEvent::HintsSaved { result } => self.setting_saved("hints setting", result),
             MailEvent::ClockSaved { result } => self.setting_saved("clock setting", result),
+            MailEvent::SearchCountsSaved { result } => {
+                self.setting_saved("saved-search counts setting", result)
+            }
             MailEvent::TimeSaved { result } => self.setting_saved("time setting", result),
             MailEvent::ThreadOrderSaved { result } => self.setting_saved("thread order", result),
             MailEvent::DimReadSaved { result } => {

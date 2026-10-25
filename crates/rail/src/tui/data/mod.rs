@@ -252,10 +252,6 @@ pub enum MailEvent {
     },
     /// `config.toml` was written for `:search-counts`; the error is a config or IO error's
     /// text, never a name and never a query.
-    #[expect(
-        dead_code,
-        reason = "step 0 skeleton; step 13 brings it to life (refs #81)"
-    )]
     SearchCountsSaved {
         result: Result<(), String>,
     },

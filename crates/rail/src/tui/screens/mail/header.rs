@@ -11,6 +11,7 @@ use ratatui::widgets::Paragraph;
 use super::layout;
 use super::view::Glyphs;
 use super::{MailScreen, Summary};
+use crate::tui::data::ScopeChoice;
 use crate::tui::keys::Action;
 use crate::tui::modals::Modal;
 use crate::tui::text::{escape, fit, width};
@@ -312,7 +313,11 @@ impl MailScreen {
             let plural = if n == 1 { "" } else { "s" };
             left.push_str(&format!(" · {} account{plural}", thousands(n)));
         }
-        if self.scope.counts_unread() {
+        // FR-19: `counts_unread` takes no arguments and so cannot see the setting; with the
+        // saved-search counts off the segment is dropped rather than showing a `0 unread`
+        // from a count that was never run.
+        let counted = !matches!(self.scope, ScopeChoice::Saved { .. }) || self.search_counts;
+        if self.scope.counts_unread() && counted {
             let unread = self.sidebar.unread(&self.scope);
             left.push_str(&format!(" · {} unread", thousands(unread)));
         }

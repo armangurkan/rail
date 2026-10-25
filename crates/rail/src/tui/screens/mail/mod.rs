@@ -29,6 +29,7 @@ mod modal_tests;
 mod palette;
 mod reading;
 mod saved;
+mod search_counts_toggle;
 mod selection;
 mod sidebar;
 #[cfg(test)]

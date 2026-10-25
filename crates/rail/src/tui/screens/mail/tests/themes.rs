@@ -290,6 +290,48 @@ fn a_save_waits_while_another_process_holds_the_config_lock() {
     assert!(text.contains("theme = \"Dracula\""), "{text}");
 }
 
+/// FR-23: the TUI's own `[general]` write holds the cross-process config lock, so a daemon
+/// write of `config.toml` in the same window cannot lose one of the two changes. The lock is
+/// taken in this process, which is enough: fs4's unix lock conflicts between two file
+/// descriptions of one process, the idiom `daemon/connect_tests.rs`'s `hold_daemon_lock` uses.
+#[cfg(unix)]
+#[test]
+fn a_general_write_waits_for_the_config_lock() {
+    use std::time::{Duration, Instant};
+
+    use rail_core::config::lock::lock_config;
+
+    use crate::tui::screens::mail::themes::{Saved, write_general};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[general]\n").unwrap();
+
+    let lock = lock_config(&path).unwrap();
+    let writing = path.clone();
+    let write =
+        std::thread::spawn(move || write_general(&writing, "hints", Saved::Bool(Some(false))));
+    let deadline = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < deadline {
+        assert!(!write.is_finished(), "it wrote while the lock was held");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // What a daemon write would have left behind, written while the lock is ours.
+    std::fs::write(&path, "[general]\neditor = \"vi\" # mine\n").unwrap();
+    drop(lock);
+
+    write.join().unwrap().unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("hints = false"), "{text}");
+    assert!(
+        text.contains("editor = \"vi\" # mine"),
+        "the blocked write re-read the text it waited for: {text}"
+    );
+    assert!(
+        !dir.path().join("config.toml.tmp").exists(),
+        "the temporary file carries the process id"
+    );
+}
+
 /// The last row of the screen drawn at 90x24.
 fn bottom_row(f: &Fixture) -> String {
     let lines = crate::tui::test_util::render_lines(90, 24, |frame| {

@@ -597,8 +597,7 @@ impl MailScreen {
             // entry names its own search.
             Target::RenameSearch(index) => self.rename_search_prompt(index),
             Target::RemoveSearch(index) => self.remove_search_confirm(index),
-            // Step 13 flips and saves it.
-            Target::SearchCounts => Vec::new(),
+            Target::SearchCounts => self.toggle_search_counts(),
             Target::Scope(scope) => {
                 let mut effects = self.close_reader();
                 effects.extend(self.set_scope(scope));
