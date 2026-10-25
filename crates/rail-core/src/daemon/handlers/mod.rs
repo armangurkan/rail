@@ -15,6 +15,7 @@ mod login;
 mod pending;
 mod presets;
 mod remove;
+mod saved;
 mod secrets;
 mod snooze;
 mod status;
@@ -57,5 +58,7 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::SnoozeClear, _, _>(snooze::clear);
     registry.register::<op::AttachmentSave, _, _>(attachments::save);
     registry.register::<op::AttachmentOpen, _, _>(attachments::open);
+    registry.register::<op::SavedSearchPut, _, _>(saved::put);
+    registry.register::<op::SavedSearchRemove, _, _>(saved::remove);
     registry
 }

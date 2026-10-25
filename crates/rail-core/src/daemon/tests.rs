@@ -50,6 +50,8 @@ fn the_registry_serves_exactly_the_implemented_operations() {
         names::PENDING_WAIT,
         names::PRESET_FETCH,
         names::PRESETS_LIST,
+        names::SAVED_SEARCH_PUT,
+        names::SAVED_SEARCH_REMOVE,
         names::SEARCH,
         names::SECRETS_CONFIGURE,
         names::SNOOZE_CLEAR,

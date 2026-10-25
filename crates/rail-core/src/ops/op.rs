@@ -30,6 +30,7 @@ use super::pending::{CancelRequest, WaitRequest, WaitResponse};
 use super::presets::{
     PresetFetchRequest, PresetFetchResponse, PresetsListRequest, PresetsListResponse,
 };
+use super::saved::{SavedSearchListResponse, SavedSearchPutRequest, SavedSearchRemoveRequest};
 use super::secrets::{SecretsConfigureRequest, SecretsConfigureResponse};
 use super::snooze::{SnoozeClearRequest, SnoozeClearResponse, SnoozeSetRequest, SnoozeSetResponse};
 use super::status::{AccountsListRequest, AccountsListResponse, StatusRequest, StatusResponse};
@@ -68,9 +69,11 @@ pub mod names {
     pub const SNOOZE_CLEAR: &str = "snooze.clear";
     pub const ATTACHMENT_SAVE: &str = "attachment.save";
     pub const ATTACHMENT_OPEN: &str = "attachment.open";
+    pub const SAVED_SEARCH_PUT: &str = "saved_search.put";
+    pub const SAVED_SEARCH_REMOVE: &str = "saved_search.remove";
 
     /// Every user operation, in the order of the specs' tables.
-    pub const ALL: [&str; 28] = [
+    pub const ALL: [&str; 30] = [
         STATUS,
         ACCOUNTS_LIST,
         PRESETS_LIST,
@@ -99,6 +102,8 @@ pub mod names {
         SNOOZE_CLEAR,
         ATTACHMENT_SAVE,
         ATTACHMENT_OPEN,
+        SAVED_SEARCH_PUT,
+        SAVED_SEARCH_REMOVE,
     ];
 
     /// The daemon's own methods: the handshake and its lifecycle. Not user operations.
@@ -243,6 +248,15 @@ operation!(
     /// Write one attachment into a private cache directory for the system opener; answers its
     /// path, never bytes. Terminal-only.
     AttachmentOpen, names::ATTACHMENT_OPEN, AttachmentOpenRequest, AttachmentOpenResponse
+);
+operation!(
+    /// Save a search, or rename one, in `config.toml`; answers the whole new list.
+    /// Terminal-only.
+    SavedSearchPut, names::SAVED_SEARCH_PUT, SavedSearchPutRequest, SavedSearchListResponse
+);
+operation!(
+    /// Remove a saved search; the mail it finds is not touched. Terminal-only.
+    SavedSearchRemove, names::SAVED_SEARCH_REMOVE, SavedSearchRemoveRequest, SavedSearchListResponse
 );
 operation!(
     /// The handshake: protocol and Rail versions.

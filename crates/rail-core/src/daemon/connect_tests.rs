@@ -725,6 +725,8 @@ fn only_reads_and_idempotent_operations_are_resent() {
         // first try's file (FR-20).
         names::ATTACHMENT_SAVE,
         names::ATTACHMENT_OPEN,
+        names::SAVED_SEARCH_PUT,
+        names::SAVED_SEARCH_REMOVE,
     ] {
         assert!(!super::connect::retry_safe(unsafe_op), "{unsafe_op}");
     }
