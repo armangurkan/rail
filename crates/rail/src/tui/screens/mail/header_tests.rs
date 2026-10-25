@@ -21,6 +21,7 @@ fn header(left: &str, slot: Slot, right: &str) -> Header {
     Header {
         left: left.to_string(),
         selected: None,
+        more: false,
         slot,
         right: Summary {
             text: right.to_string(),
@@ -40,6 +41,7 @@ fn thousands_separators() {
     assert_eq!(thousands(1_234_567), "1,234,567");
     let h = Header {
         selected: Some(1_234),
+        more: false,
         ..header("▍Rail │ All inboxes", Slot::None, "x")
     };
     assert_eq!(h.joined(), "▍Rail │ All inboxes · 1,234 selected");
@@ -106,6 +108,7 @@ fn under_sixty_columns_the_slot_goes_and_under_forty_the_right_part_goes() {
 fn the_summary_outranks_the_scope_title_when_both_do_not_fit() {
     let h = Header {
         selected: Some(3),
+        more: false,
         ..header(
             "▍Rail │ All inboxes · 2 accounts · 22,853 unread",
             Slot::Idle("/ Search".into()),
@@ -255,6 +258,7 @@ fn ascii_icons_draw_the_search_region_with_a_bar() {
 fn the_selection_count_is_drawn_in_the_text_style_not_the_accent() {
     let h = Header {
         selected: Some(3),
+        more: false,
         ..header("▍Rail │ All inboxes", Slot::None, "● Synced 11:40")
     };
     let theme = Theme {

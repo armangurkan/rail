@@ -6,7 +6,7 @@ expression: text
      ┌ Keys (* set in config.toml) ─────────────────────────────────────────────────┐
      │Thread list                                                                   │
      │  Enter                Open the thread                                        │
-     │  v *                  Filter the list as you type                            │
+     │  x *                  Filter the list as you type                            │
      │  b                    Show or hide the sidebar                               │
      │  1                    Go to account 1's inbox                                │
      │  2                    Go to account 2's inbox                                │

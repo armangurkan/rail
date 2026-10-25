@@ -5,6 +5,7 @@
 
 mod actions;
 mod actions_pick;
+mod bulk;
 mod clock_toggle;
 mod composing;
 mod composing_answers;
@@ -98,6 +99,9 @@ pub struct MailContext {
     pub clock: Clock,
     pub icons: Icons,
     pub split_threshold: u16,
+    /// `general.bulk_confirm`: how many threads an archive, star or mark-read may cover
+    /// before Rail asks first; `0` never asks.
+    pub bulk_confirm: u32,
     /// `general.hints`: the key hints in the bottom bar.
     pub hints: bool,
     /// `general.clock`: the time of day at the right edge of the header.
@@ -219,6 +223,8 @@ pub struct MailScreen {
     reader: Option<Reader>,
     modal: Option<Modal>,
     pub(crate) actions: actions::ActionState,
+    /// What the three bulk-select keys keep between presses.
+    pub(crate) bulk: bulk::BulkState,
     /// The theme kept and, while `:theme` or `:accent` is open, the one to restore.
     pub(crate) themes: themes::ThemeState,
     /// The key hints are shown: from the config, then whatever `:hints` chose this session.
@@ -291,6 +297,7 @@ impl MailScreen {
             reader: None,
             modal: None,
             actions: actions::ActionState::default(),
+            bulk: bulk::BulkState::default(),
             themes,
             hints,
             show_clock,

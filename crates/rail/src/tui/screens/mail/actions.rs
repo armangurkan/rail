@@ -92,8 +92,8 @@ pub(crate) struct ActionState {
     seq: u64,
     /// Threads whose action failed: the row and the escaped line on their list row.
     pub(crate) failures: BTreeMap<i64, (RowToken, String)>,
-    /// What `y` on the trash confirmation applies to.
-    trashing: Vec<(i64, Picked)>,
+    /// What `y` on a thread-action confirmation applies: the action and its targets.
+    confirming: Option<(MailAction, Vec<(i64, Picked)>)>,
     /// The picker waiting for its labels, then open: what its answer applies to.
     pub(super) picking: Option<super::actions_pick::Picking>,
 }
@@ -148,8 +148,7 @@ impl MailScreen {
             Action::GlobalUndo => self.undo(),
             Action::ListSelect if self.focus == Focus::List => self.toggle_selected(),
             Action::ListClearSelection if self.focus == Focus::List => {
-                self.actions.selection.clear();
-                Vec::new()
+                self.clear_selection_or_range()
             }
             Action::ListArchive
             | Action::ListTrash
@@ -207,21 +206,38 @@ impl MailScreen {
         if matches!(action, Action::ListLabels) && self.refuse_m365_labels(&targets) {
             return Vec::new();
         }
-        match action {
-            Action::ListArchive => self.send_action(MailAction::Archive {}, &targets, true),
-            Action::ListTrash => self.confirm_trash(targets),
-            Action::ListStar => {
-                let on = !targets.iter().all(|(_, p)| p.starred);
-                self.send_action(MailAction::Star { on }, &targets, true)
+        let mail = match action {
+            Action::ListArchive => MailAction::Archive {},
+            Action::ListTrash => return self.confirm_trash(targets),
+            Action::ListStar => MailAction::Star {
+                on: !targets.iter().all(|(_, p)| p.starred),
+            },
+            Action::ListRead => MailAction::Read {
+                on: targets.iter().any(|(_, p)| p.unread),
+            },
+            Action::ListLabels => {
+                return self.open_picker(crate::tui::modals::PickerKind::Labels, targets);
             }
-            Action::ListRead => {
-                let on = targets.iter().any(|(_, p)| p.unread);
-                self.send_action(MailAction::Read { on }, &targets, true)
+            Action::ListMove => {
+                return self.open_picker(crate::tui::modals::PickerKind::Move, targets);
             }
-            Action::ListLabels => self.open_picker(crate::tui::modals::PickerKind::Labels, targets),
-            Action::ListMove => self.open_picker(crate::tui::modals::PickerKind::Move, targets),
-            _ => Vec::new(),
+            _ => return Vec::new(),
+        };
+        // A large set is asked about first; the picker's own `Enter` is `l`/`m`'s confirmation.
+        if super::bulk::needs_confirm(&mail, targets.len(), self.ctx.bulk_confirm) {
+            return self.confirm_action(mail, targets);
         }
+        self.send_action(mail, &targets, true)
+    }
+
+    /// Ask before applying `action` to this many threads: the fixed question and count of
+    /// `bulk`, over the list.
+    fn confirm_action(&mut self, action: MailAction, targets: Vec<(i64, Picked)>) -> Vec<Effect> {
+        let lines = vec![super::bulk::question(&action, targets.len())];
+        let head = super::bulk::title(&action);
+        self.actions.confirming = Some((action, targets));
+        self.modal = Some(Modal::Confirm(Confirm::new(head, lines, Command::Trash)));
+        Vec::new()
     }
 
     fn account_name(&self, account_id: i64) -> Option<String> {
@@ -357,7 +373,7 @@ impl MailScreen {
         };
         let mut lines = vec![line];
         lines.extend(self.trash_notes(&targets));
-        self.actions.trashing = targets;
+        self.actions.confirming = Some((MailAction::Trash {}, targets));
         self.modal = Some(Modal::Confirm(Confirm::new(
             "Trash?",
             lines,
@@ -426,8 +442,10 @@ impl MailScreen {
     pub(super) fn action_command(&mut self, command: Command) -> Vec<Effect> {
         match command {
             Command::Trash => {
-                let targets = std::mem::take(&mut self.actions.trashing);
-                self.send_action(MailAction::Trash {}, &targets, true)
+                let Some((action, targets)) = self.actions.confirming.take() else {
+                    return Vec::new();
+                };
+                self.send_action(action, &targets, true)
             }
             Command::Retry(row) => {
                 self.status.retried(row.row);

@@ -129,6 +129,9 @@ actions! {
     ListForward => "list.forward", [List, Reader], ["f"], "Forward the latest message";
     ListSelect => "list.select", [List], ["space"], "Select or unselect the thread";
     ListClearSelection => "list.clear_selection", [List], ["esc"], "Clear the selection";
+    ListSelectAll => "list.select_all", [List], ["* a"], "Select every thread this mailbox and filter match";
+    ListSelectSender => "list.select_sender", [List], ["* f"], "Select every thread from this sender";
+    ListSelectRange => "list.select_range", [List], ["v"], "Select a range of threads";
     SidebarFocus => "sidebar.focus", [List, Sidebar], ["tab"], "Move between the sidebar and the list";
     SidebarDown => "sidebar.down", [Sidebar], ["j", "down"], "Next mailbox";
     SidebarUp => "sidebar.up", [Sidebar], ["k", "up"], "Previous mailbox";

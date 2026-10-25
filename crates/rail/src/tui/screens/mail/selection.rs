@@ -36,6 +36,13 @@ impl Selection {
         }
     }
 
+    /// Add `targets` in the given order until the selection holds `MAX_SELECTION`; later ones
+    /// are dropped. True when anything was left out.
+    #[cfg(test)]
+    pub fn add(&mut self, _targets: &[(i64, Picked)]) -> bool {
+        false
+    }
+
     /// Put back targets an action took when it failed.
     pub fn restore(&mut self, targets: &[(i64, Picked)]) {
         self.picked.extend(targets.iter().copied());

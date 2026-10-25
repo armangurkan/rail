@@ -54,9 +54,10 @@ fn entries() -> Vec<PaletteEntry> {
     ]
 }
 
-/// The default keys with `list.filter` moved to `v`, so help shows the override marker.
+/// The default keys with `list.filter` moved to `x` (a key the list binds to nothing), so help
+/// shows the override marker.
 fn overridden_keymap() -> Keymap {
-    let text = "[keys]\n\"list.filter\" = \"v\"\n";
+    let text = "[keys]\n\"list.filter\" = \"x\"\n";
     let path = std::path::Path::new("/c/config.toml");
     let config = rail_core::config::parse(text, path).unwrap();
     Keymap::from_config(&config.keys, text, path).unwrap()
@@ -119,7 +120,7 @@ fn help_lists_the_view_and_the_global_keys_and_marks_overrides() {
         "{text}"
     );
     assert!(
-        text.contains("v *") && text.contains("Filter the list as you type"),
+        text.contains("x *") && text.contains("Filter the list as you type"),
         "{text}"
     );
     assert_eq!(help.title(), "Keys (* set in config.toml)");

@@ -493,6 +493,7 @@ pub fn mail_ctx(paths: &Paths, fake: Arc<FakeDaemon>) -> MailContext {
         clock: Clock::fixed(NOW, jiff::tz::TimeZone::UTC),
         icons: Icons::Unicode,
         split_threshold: 140,
+        bulk_confirm: 50,
         hints: true,
         show_clock: true,
         thread_order: ThreadOrder::Oldest,

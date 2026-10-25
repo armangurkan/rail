@@ -43,7 +43,7 @@ pub enum Command {
     ClearFilter,
     /// Run what a palette entry stands for.
     Palette(Target),
-    /// The trash confirmation was answered yes.
+    /// A thread-action confirmation was answered yes: apply the pending action.
     Trash,
     /// Send this failed outbox row again.
     Retry(rail_core::ops::RowToken),

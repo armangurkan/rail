@@ -280,6 +280,9 @@ are in, with `*` after the ones set in `config.toml`.
 | `list.forward` | list, reader | `f` | Forward the latest message. |
 | `list.select` | list | `space` | Select or unselect the thread. |
 | `list.clear_selection` | list | `esc` | Clear the selection. |
+| `list.select_all` | list | `* a` | Select every thread this mailbox and filter match. |
+| `list.select_sender` | list | `* f` | Select every thread from this sender. |
+| `list.select_range` | list | `v` | Select a range of threads. |
 | `sidebar.focus` | list, sidebar | `tab` | Move between the sidebar and the list. |
 | `sidebar.down` | sidebar | `j` `down` | Next mailbox. |
 | `sidebar.up` | sidebar | `k` `up` | Previous mailbox. |

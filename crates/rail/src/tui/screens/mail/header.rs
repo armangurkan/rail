@@ -56,6 +56,8 @@ pub(super) struct Header {
     pub left: String,
     /// The selected threads, drawn after `left` in the text style.
     pub selected: Option<u64>,
+    /// The last select-all was capped: ` (more match)` follows the count.
+    pub more: bool,
     pub slot: Slot,
     pub right: Summary,
     /// The time of day at the right edge; `None` when `:clock` (or `clock = false`) hid it.
@@ -68,7 +70,10 @@ impl Header {
     /// `left` and the selection count, joined: what the width rules measure.
     pub(super) fn joined(&self) -> String {
         match self.selected {
-            Some(n) => format!("{} · {} selected", self.left, thousands(n)),
+            Some(n) => {
+                let capped = if self.more { " (more match)" } else { "" };
+                format!("{} · {} selected{capped}", self.left, thousands(n))
+            }
             None => self.left.clone(),
         }
     }
@@ -271,6 +276,7 @@ impl MailScreen {
         Header {
             left: self.scope_left(!boxed),
             selected: self.selected_count(),
+            more: self.bulk.more,
             slot: self.slot(),
             right: self.status.summary(
                 &self.accounts,
@@ -291,6 +297,7 @@ impl MailScreen {
         Header {
             left: self.scope_left(true),
             selected: self.selected_count(),
+            more: self.bulk.more,
             slot: Slot::None,
             right: Summary {
                 text: String::new(),

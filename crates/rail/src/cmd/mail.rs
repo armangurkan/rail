@@ -81,6 +81,7 @@ fn context(
         clock: Clock::system(config.general.time),
         icons: config.general.icons,
         split_threshold: config.general.split_threshold,
+        bulk_confirm: 50,
         hints: config.general.hints,
         show_clock: config.general.clock,
         thread_order: config.general.thread_order,

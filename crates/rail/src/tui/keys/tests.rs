@@ -200,10 +200,11 @@ fn a_view_key_shadows_a_global_one_and_chords_resolve() {
 
 #[test]
 fn an_override_replaces_the_defaults() {
-    let map = configured("[keys]\n\"list.filter\" = \"v\"\n").unwrap();
+    // `x`, a key the list binds to nothing; `v` is `list.select_range`'s own default.
+    let map = configured("[keys]\n\"list.filter\" = \"x\"\n").unwrap();
     let list = [View::List, View::Global];
     assert_eq!(
-        resolve(&map, &list, &[press(KeyCode::Char('v'))]),
+        resolve(&map, &list, &[press(KeyCode::Char('x'))]),
         [Resolved::Action(Action::ListFilter)]
     );
     assert_eq!(
@@ -289,13 +290,14 @@ fn hostile_text_in_keys_is_escaped_in_the_error() {
 
 #[test]
 fn help_reflects_an_override_and_labels_read_as_the_wizard_showed_them() {
-    let map = configured("[keys]\n\"list.filter\" = \"v\"\n").unwrap();
+    // `x`, a key the list binds to nothing; `v` is `list.select_range`'s own default.
+    let map = configured("[keys]\n\"list.filter\" = \"x\"\n").unwrap();
     let rows = map.help(View::List);
     let filter = rows
         .iter()
         .find(|r| r.action == Action::ListFilter)
         .unwrap();
-    assert_eq!(filter.keys, "v");
+    assert_eq!(filter.keys, "x");
     assert!(filter.overridden);
     let open = rows.iter().find(|r| r.action == Action::ListOpen).unwrap();
     assert_eq!((open.keys.as_str(), open.overridden), ("Enter", false));
