@@ -67,6 +67,10 @@ pub struct General {
     pub thread_order: ThreadOrder,
     /// How read threads are dimmed in the list; `:dim-read` cycles the modes.
     pub dim_read: DimRead,
+    /// `general.bulk_confirm`: how many threads an archive, star or mark-read may cover before
+    /// Rail asks first; `0` never asks. Trash asks at every size. A number, not a two-state
+    /// choice, so it has no palette command (CONTRIBUTING's opinionated-defaults rule).
+    pub bulk_confirm: u32,
 }
 
 impl Default for General {
@@ -87,6 +91,7 @@ impl Default for General {
             time: TimeFormat::H24,
             thread_order: ThreadOrder::Oldest,
             dim_read: DimRead::Dot,
+            bulk_confirm: 50,
         }
     }
 }

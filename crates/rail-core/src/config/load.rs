@@ -265,6 +265,27 @@ archive = "e"
     }
 
     #[test]
+    fn bulk_confirm_defaults_to_fifty_and_zero_turns_the_question_off() {
+        assert_eq!(crate::config::General::default().bulk_confirm, 50);
+        assert_eq!(p("").unwrap().general.bulk_confirm, 50);
+        assert_eq!(
+            p("[general]\nbulk_confirm = 0\n")
+                .unwrap()
+                .general
+                .bulk_confirm,
+            0,
+            "`0` is a value, not an omission"
+        );
+        assert_eq!(
+            p("[general]\nbulk_confirm = 2000\n")
+                .unwrap()
+                .general
+                .bulk_confirm,
+            2000
+        );
+    }
+
+    #[test]
     fn time_defaults_to_24h_and_takes_12h() {
         use crate::config::TimeFormat;
         assert_eq!(p("").unwrap().general.time, TimeFormat::H24);
