@@ -188,6 +188,11 @@ mod tests {
 
     /// FR-4/FR-5: `Enter` runs the check first, so a refused name never leaves the prompt;
     /// the box stays open with the text kept, and the next edit clears the refusal.
+    ///
+    /// The refusal's drawing is asserted whole, at both mail-screen sizes (§6 slot 2). FR-5's
+    /// sentence is 64 cells against the 54-cell inner row, so an unwrapped row cut by `fit`
+    /// would still hold its opening words: only the tail, the absence of an ellipsis and the
+    /// box's second refusal row tell a wrapped drawing from a cut one.
     #[test]
     fn a_refused_name_keeps_the_prompt_open_and_is_shown() {
         let mut prompt = prompt("bad name");
@@ -196,20 +201,37 @@ mod tests {
             prompt.refusal(),
             Some("A saved search name must be 1 to 40 letters, digits, '-' or '_'.")
         );
-        let shown = render_lines(90, 24, |frame| {
-            prompt.render(frame, frame.area(), &Theme::default());
-        })
-        .join("\n");
-        assert!(shown.contains("Save this filter as a search"), "{shown}");
-        assert!(shown.contains("Name: bad name"), "{shown}");
-        assert!(
-            shown.contains("A saved search name must be 1 to 40 letters,"),
-            "the refusal wraps rather than ending in an ellipsis: {shown}"
-        );
-        assert!(
-            !shown.contains("Esc cancel"),
-            "it replaces the hint: {shown}"
-        );
+        for (width, height) in [(90_u16, 24_u16), (150, 40)] {
+            let rows = render_lines(width, height, |frame| {
+                prompt.render(frame, frame.area(), &Theme::default());
+            });
+            let shown = rows.join("\n");
+            let row_with = |mark: char| {
+                rows.iter()
+                    .position(|row| row.contains(mark))
+                    .unwrap_or_else(|| panic!("no {mark} row at {width}x{height}: {shown}"))
+            };
+            assert!(shown.contains("Save this filter as a search"), "{shown}");
+            assert!(shown.contains("Name: bad name"), "{shown}");
+            assert!(
+                shown.contains("A saved search name must be 1 to 40 letters,"),
+                "the refusal starts on its own row: {shown}"
+            );
+            assert!(
+                shown.contains("'-' or '_'."),
+                "and its tail is drawn too, on the second row: {shown}"
+            );
+            assert!(!shown.contains('…'), "nothing is cut: {shown}");
+            assert_eq!(
+                row_with('└') - row_with('┌'),
+                5,
+                "the box grew by the refusal's second row: {shown}"
+            );
+            assert!(
+                !shown.contains("Esc cancel"),
+                "it replaces the hint: {shown}"
+            );
+        }
         prompt.key(key(KeyCode::Backspace));
         assert_eq!(prompt.refusal(), None, "an edit clears it");
     }
