@@ -32,7 +32,7 @@ impl DaemonLink {
             }),
             #[cfg(test)]
             Link::Fake(fake) => job(move |sink| async move {
-                fake.saved_search_put(&sink, name, query, replaces);
+                fake.saved_search_put(&sink, name, query, replaces.as_deref());
             }),
         }
     }
@@ -47,7 +47,7 @@ impl DaemonLink {
             }),
             #[cfg(test)]
             Link::Fake(fake) => job(move |sink| async move {
-                fake.saved_search_remove(&sink, name);
+                fake.saved_search_remove(&sink, &name);
             }),
         }
     }
@@ -70,18 +70,17 @@ impl super::FakeDaemon {
         sink: &crate::tui::app::TaskSink,
         name: String,
         query: String,
-        replaces: Option<String>,
+        replaces: Option<&str>,
     ) {
         self.record(FakeCall::SavedSearchPut {
             name: name.clone(),
             query: query.clone(),
-            replaces: replaces.clone(),
+            replaces: replaces.map(str::to_string),
         });
         let answer = self.saved_answer.lock().unwrap().take();
         let result = answer.unwrap_or_else(|| {
             let mut saved = self.saved.lock().unwrap();
             let at = replaces
-                .as_deref()
                 .and_then(|old| saved.iter().position(|s| s.name.eq_ignore_ascii_case(old)));
             let entry = rail_core::config::SavedSearch { name, query };
             match at {
@@ -97,12 +96,14 @@ impl super::FakeDaemon {
 
     /// Record the call and answer: `saved_answer` when a test set one, else the fake's own
     /// list with `name` deleted.
-    pub(super) fn saved_search_remove(&self, sink: &crate::tui::app::TaskSink, name: String) {
-        self.record(FakeCall::SavedSearchRemove { name: name.clone() });
+    pub(super) fn saved_search_remove(&self, sink: &crate::tui::app::TaskSink, name: &str) {
+        self.record(FakeCall::SavedSearchRemove {
+            name: name.to_string(),
+        });
         let answer = self.saved_answer.lock().unwrap().take();
         let result = answer.unwrap_or_else(|| {
             let mut saved = self.saved.lock().unwrap();
-            saved.retain(|s| !s.name.eq_ignore_ascii_case(&name));
+            saved.retain(|s| !s.name.eq_ignore_ascii_case(name));
             Ok(SavedSearchListResponse {
                 searches: saved.clone(),
             })
