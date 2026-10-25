@@ -369,7 +369,11 @@ impl Worker {
             Ok(OutboxOutcome::Failed {
                 gave_up: true,
                 row: Some(failed),
-            }) => self.notify(failed, result.err()),
+            }) => {
+                // A client reading `sync.status` on `action.failed` must already see the row.
+                self.publish().await;
+                self.notify(failed, result.err());
+            }
             Ok(OutboxOutcome::Done) if landed => {
                 self.sync_wake.notify_one();
                 if let (Some(dir), Some(draft)) = (files, row.action.draft_id()) {

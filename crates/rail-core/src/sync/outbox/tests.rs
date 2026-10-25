@@ -314,6 +314,27 @@ async fn a_permanent_failure_reverts_and_notifies() {
     assert_eq!(rig.board.get(ADDRESS).unwrap().outbox.failed, 1);
 }
 
+/// A client that reads `sync.status` as soon as `action.failed` arrives must see the row counted.
+#[tokio::test]
+async fn the_failed_count_is_published_before_the_failure_is_reported() {
+    let rig = rig().await;
+    let t1 = t(&rig.store(), "t1");
+    rig.enqueue(Action::Archive {}, vec![t1], "a").await;
+    let worker = rig.worker();
+    let claimed = worker
+        .writer
+        .outbox(OutboxWrite::Claim {
+            account_id: worker.account_id,
+        })
+        .await;
+    let Ok(OutboxOutcome::Claimed(Some(row))) = claimed else {
+        panic!("no row to claim: {claimed:?}");
+    };
+    worker.settle(row, Err(ProviderError::NotFound)).await;
+    assert_eq!(rig.failures.lock().unwrap().len(), 1, "reported");
+    assert_eq!(rig.board.get(ADDRESS).unwrap().outbox.failed, 1);
+}
+
 #[tokio::test]
 async fn needs_auth_pauses_the_worker_until_it_is_woken() {
     let mut rig = rig().await;
