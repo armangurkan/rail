@@ -6,6 +6,11 @@ All notable changes to Rail are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `sync.status` now counts a refused change as failed by the time `action.failed` arrives, so
+  a client that checks the status on the notice no longer sees the old count.
+
 ## [0.2.3] - 2026-10-25
 
 ### Added
