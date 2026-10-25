@@ -6,6 +6,8 @@ All notable changes to Rail are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-25
+
 ### Added
 
 - Release binaries for Linux ARM64 and for macOS on Apple Silicon and Intel, built by GitHub
