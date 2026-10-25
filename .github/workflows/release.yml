@@ -10,6 +10,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/package-release.sh
+      - scripts/release-notes.sh
 
 permissions:
   contents: read
@@ -123,16 +124,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          version="${TAG#v}"
-          # The changelog section for this version is the draft's notes.
-          awk -v head="## [${version}]" '
-            index($0, head) == 1 { on = 1; next }
-            on && /^## \[/ { exit }
-            on { print }
-          ' CHANGELOG.md > notes.md
-          if [ ! -s notes.md ]; then
-            echo "error: CHANGELOG.md has no section for ${version}" >&2
-            exit 1
-          fi
+          # The changelog section and the download instructions are the draft's notes.
+          scripts/release-notes.sh "${TAG#v}" > notes.md
           gh release create "$TAG" --draft --verify-tag --title "Rail ${TAG}" \
             --notes-file notes.md dist/*.tar.gz dist/SHA256SUMS
