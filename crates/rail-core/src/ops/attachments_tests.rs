@@ -108,3 +108,113 @@ fn debug_prints_counts_only() {
     assert!(printed[6].contains("Missing"), "{}", printed[6]);
     assert!(printed[7].contains("Failed"), "{}", printed[7]);
 }
+
+/// A save of `part_ids` into an absolute destination.
+fn save_of(message_id: &str, part_ids: &[&str]) -> AttachmentSaveRequest {
+    AttachmentSaveRequest {
+        account: "work".into(),
+        message_id: message_id.into(),
+        part_ids: part_ids.iter().map(|p| (*p).to_string()).collect(),
+        dir: "/x".into(),
+    }
+}
+
+fn refused(error: &OpError) -> bool {
+    error.code == super::ErrorCode::InvalidInput
+        && error.class == crate::error::ErrorClass::Permanent
+}
+
+/// AC-30: the part-id rule takes both providers' ids and refuses the rest, on a part id and
+/// on the message id alike, and a part named twice is kept once.
+#[test]
+fn part_id_validation_accepts_both_providers_and_refuses_the_rest() {
+    let graph = "AAMkAGI2THVSAAA=";
+    let long = "a".repeat(MAX_PART_ID_BYTES + 1);
+    let many: Vec<String> = (0..=MAX_SAVE_PARTS).map(|n| format!("0.{n}")).collect();
+    let named: Vec<&str> = many.iter().map(String::as_str).collect();
+    for bad in [long.as_str(), "bell\u{7}", "zero\u{200b}width", ""] {
+        let error = save_of("m1", &[bad])
+            .checked_parts()
+            .expect_err("a part id Rail does not pass on");
+        assert!(refused(&error), "{bad:?}: {error:?}");
+        assert!(
+            bad.is_empty() || !error.message.contains(bad),
+            "the id is never quoted: {error:?}"
+        );
+        let open = AttachmentOpenRequest {
+            account: "work".into(),
+            message_id: "m1".into(),
+            part_id: bad.to_string(),
+        };
+        assert!(refused(&open.checked().expect_err("the same rule")));
+    }
+    let error = save_of("m1", &named)
+        .checked_parts()
+        .expect_err("too many parts");
+    assert!(refused(&error), "{error:?}");
+
+    assert_eq!(
+        save_of("m1", &["0.1", graph]).checked_parts().unwrap(),
+        ["0.1", graph]
+    );
+    assert_eq!(save_of(graph, &["0.1"]).checked_parts().unwrap(), ["0.1"]);
+    assert!(
+        AttachmentOpenRequest {
+            account: "work".into(),
+            message_id: graph.into(),
+            part_id: "0.1".into(),
+        }
+        .checked()
+        .is_ok()
+    );
+    for bad in [long.as_str(), ""] {
+        let error = save_of(bad, &["0.1"])
+            .checked_parts()
+            .expect_err("a message id Rail does not pass on");
+        assert!(refused(&error), "{bad:?}: {error:?}");
+    }
+
+    // FR-13: one result per distinct part, first occurrence kept.
+    assert_eq!(
+        save_of("m1", &["0.1", "0.1", "0.2"])
+            .checked_parts()
+            .unwrap(),
+        ["0.1", "0.2"]
+    );
+
+    // The destination is checked before anything else is asked of the store or the provider.
+    for dir in ["relative/path", "", "~/Downloads"] {
+        let mut request = save_of("m1", &["0.1"]);
+        request.dir = dir.to_string();
+        let error = request.checked_parts().expect_err("not an absolute path");
+        assert!(refused(&error), "{dir:?}: {error:?}");
+        assert_eq!(error.message, "dir: not an absolute path");
+    }
+    let mut request = save_of("m1", &["0.1"]);
+    request.dir = format!("/{}", "d".repeat(MAX_DIR_BYTES));
+    assert!(refused(&request.checked_parts().expect_err("too long")));
+}
+
+/// AC-31: `openable` strips the parameters, ignores case, and leaves every scripted format
+/// out.
+#[test]
+fn openable_strips_parameters_and_ignores_case() {
+    assert_eq!(openable("application/pdf"), Some("pdf"));
+    assert_eq!(openable("text/plain; charset=utf-8"), Some("txt"));
+    assert_eq!(openable("IMAGE/PNG"), Some("png"));
+    assert_eq!(
+        openable("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        Some("xlsx")
+    );
+    for closed in [
+        "text/html",
+        "image/svg+xml",
+        "text/markdown",
+        "application/zip",
+        "",
+        "application/octet-stream",
+    ] {
+        assert_eq!(openable(closed), None, "{closed}");
+    }
+    assert_eq!(OPENABLE.len(), 21);
+}

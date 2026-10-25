@@ -4,7 +4,9 @@
 //! writes the file and the front end is told where it landed. Nothing here prints a filename,
 //! a part id, a directory or a path: every `Debug` is hand-written and counts only.
 
+use std::collections::HashSet;
 use std::fmt;
+use std::path::Path;
 use std::time::Duration;
 
 use schemars::JsonSchema;
@@ -69,8 +71,28 @@ pub const OPENABLE: [(&str, &str); 21] = [
 /// The extension `OPENABLE` gives for `mime_type`, parameters stripped and case ignored
 /// (`text/plain; charset=utf-8` matches `text/plain`). `None` means Rail does not open it.
 #[must_use]
-pub fn openable(_mime_type: &str) -> Option<&'static str> {
-    None
+pub fn openable(mime_type: &str) -> Option<&'static str> {
+    let base = mime_type.split(';').next().unwrap_or_default().trim();
+    OPENABLE
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(base))
+        .map(|(_, extension)| *extension)
+}
+
+/// One id's own rule: 1 to `MAX_PART_ID_BYTES` bytes, with no control and no format
+/// character, so an unbounded or invisible id never reaches SQLite or a provider URL. The
+/// provider's own gate decides after this one. `what` names the field; the value is never
+/// quoted.
+fn checked_id(value: &str, what: &str) -> Result<(), OpError> {
+    let plain = !value
+        .chars()
+        .any(|c| c.is_control() || crate::config::is_format_char(c));
+    if value.is_empty() || value.len() > MAX_PART_ID_BYTES || !plain {
+        return Err(OpError::invalid_input(format!(
+            "{what}: 1 to {MAX_PART_ID_BYTES} bytes, with no control or format characters"
+        )));
+    }
+    Ok(())
 }
 
 /// `attachment.save`: write the named parts of one message into `dir`.
@@ -140,7 +162,29 @@ impl AttachmentSaveRequest {
     /// `InvalidInput`/`Permanent`, quoting nothing of the request, when the destination is not
     /// absolute, too many parts are named, or a part or message id breaks the part-id rule.
     pub fn checked_parts(&self) -> Result<Vec<String>, OpError> {
-        Ok(self.part_ids.clone())
+        if !Path::new(&self.dir).is_absolute() {
+            return Err(not_absolute_dir());
+        }
+        if self.dir.len() > MAX_DIR_BYTES {
+            return Err(OpError::invalid_input(format!(
+                "dir: at most {MAX_DIR_BYTES} bytes"
+            )));
+        }
+        checked_id(&self.message_id, "message_id")?;
+        if self.part_ids.len() > MAX_SAVE_PARTS {
+            return Err(OpError::invalid_input(format!(
+                "attachment.save takes at most {MAX_SAVE_PARTS} part ids"
+            )));
+        }
+        let mut seen = HashSet::new();
+        let mut parts = Vec::with_capacity(self.part_ids.len());
+        for id in &self.part_ids {
+            checked_id(id, "a part id")?;
+            if seen.insert(id.as_str()) {
+                parts.push(id.clone());
+            }
+        }
+        Ok(parts)
     }
 }
 
@@ -150,7 +194,8 @@ impl AttachmentOpenRequest {
     /// # Errors
     /// `InvalidInput`/`Permanent`, quoting neither id.
     pub fn checked(&self) -> Result<(), OpError> {
-        Ok(())
+        checked_id(&self.message_id, "message_id")?;
+        checked_id(&self.part_id, "a part id")
     }
 }
 
