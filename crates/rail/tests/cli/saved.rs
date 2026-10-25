@@ -32,7 +32,14 @@ fn doctor_accepts_a_saved_search_and_names_a_bad_one() {
     write_config(&dir, &with_searches(DANA));
     let out = rail_cmd(&dir).arg("doctor").output().unwrap();
     let text = stdout_of(&out);
-    assert_eq!(out.status.code(), Some(0), "a saved search loads: {text}");
+    // The config row, not the exit code: `WORK_FILE_BACKEND` has no tokens, so the sync check
+    // fails and `rail doctor` exits 1 whatever the config holds — it exits 0 only when
+    // `status.doctor.is_healthy() && sync_ok` (`cmd/doctor.rs`), and nothing in this feature
+    // touches the sync check. `doctor_says_1_account` (`tests/cli.rs`) asserts the same row on
+    // the same config, and its exit code not at all, for this reason.
+    assert!(text.contains("ok   config"), "a saved search loads: {text}");
+    assert!(text.contains("(1 account)"), "{text}");
+    assert!(!text.contains("FAIL config"), "{text}");
 
     write_config(
         &dir,

@@ -156,6 +156,23 @@ fn saved_rows(f: &Fixture) -> Vec<(String, Option<u64>)> {
         .collect()
 }
 
+/// The drawn sidebar slice of the row holding `label` at 90×24, trailing spaces trimmed —
+/// what the user sees, whichever side of the draw FR-19's counts-off guard sits on: §6 slot 9
+/// and §12 step 13 pin a draw guard, FR-19 also says `Store::saved_counts` is not run, and
+/// `SidebarRow.count` alone cannot tell a guarded draw from a re-read list. Panics with the
+/// whole frame when no sidebar row holds `label`, so the assertion is never vacuous. Callers
+/// have been through `sidebar_to`, which presses `Tab` and so shows the sidebar at 90 columns
+/// (`SIDEBAR_MIN_COLUMNS = 100`); the slice is the AC-17 idiom.
+fn drawn_saved_row(f: &Fixture, label: &str) -> String {
+    let shown = drawn(f, 90, 24);
+    shown
+        .lines()
+        .map(|line| line.split('│').next().unwrap_or(line).trim_end())
+        .find(|slice| slice.contains(label))
+        .unwrap_or_else(|| panic!("no drawn sidebar row for {label:?}: {shown}"))
+        .to_string()
+}
+
 /// `/` then `text` then Enter: the live filter in force, the line closed.
 async fn set_filter(f: &mut Fixture, text: &str) {
     press(f, KeyCode::Char('/')).await;
@@ -748,6 +765,8 @@ async fn search_counts_toggles_and_saves() {
     sidebar_to(&mut f, None, "dana").await;
     press(&mut f, KeyCode::Enter).await;
     assert_eq!(saved_rows(&f), [("dana".to_string(), Some(1))]);
+    let row = drawn_saved_row(&f, "dana");
+    assert!(row.ends_with('1'), "the count is drawn: {row:?}");
     assert!(
         f.screen.header_left().contains(" unread"),
         "{}",
@@ -759,7 +778,11 @@ async fn search_counts_toggles_and_saves() {
     assert!(text.contains("[general]"), "{text}");
     assert!(text.contains("saved_search_counts = false"), "{text}");
     assert!(text.contains("editor = \"vi\" # mine"), "{text}");
-    assert_eq!(saved_rows(&f), [("dana".to_string(), None)]);
+    let row = drawn_saved_row(&f, "dana");
+    assert!(
+        !row.chars().any(|c| c.is_ascii_digit()),
+        "no count is drawn: {row:?}"
+    );
     assert!(
         !f.screen.header_left().contains(" unread"),
         "{}",
@@ -772,7 +795,13 @@ async fn search_counts_toggles_and_saves() {
         !text.contains("saved_search_counts"),
         "true is the default: {text}"
     );
-    assert_eq!(saved_rows(&f), [("dana".to_string(), Some(1))]);
+    let row = drawn_saved_row(&f, "dana");
+    assert!(row.ends_with('1'), "the count is back: {row:?}");
+    assert!(
+        f.screen.header_left().contains(" unread"),
+        "{}",
+        f.screen.header_left()
+    );
 }
 
 /// §6 slot 10 / §10: the four `save_search_prompt_*` snapshots AC-4 leans on.
