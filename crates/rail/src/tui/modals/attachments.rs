@@ -39,10 +39,12 @@ pub struct AttachmentRow {
 }
 
 /// The part a `Command` names, with what the status line has to say about it.
-// The modal's own keys build it in the modal step; `AC-32` already pins its `Debug`.
+// The modal's own keys build it in the modal step; AC-32 already pins its `Debug`. `allow`
+// rather than `expect`: rustc 1.88 (the MSRV) does not call this struct dead while 1.99 does,
+// so an expectation would be unfulfilled on one of the two toolchains CI checks.
 #[cfg_attr(
     not(test),
-    expect(
+    allow(
         dead_code,
         reason = "built by the modal's save and open keys, a later step"
     )
