@@ -180,8 +180,59 @@ fn write_part(
         remove_written(&path);
         return (taken, Err(write_error("writing", &error)));
     }
+    drop(file);
+    if let Err(error) = quarantine(&path) {
+        remove_written(&path);
+        return (taken, Err(quarantine_error(&error)));
+    }
     let size = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
     (taken, Ok((text, size)))
+}
+
+/// Mark `path` as a download, so the system treats it as content that arrived from elsewhere
+/// rather than as a file the user made: the flags, the time in lower-case hex and Rail as the
+/// agent, written by `xattr` as an argument vector — never through a shell, and with no new
+/// dependency and no `unsafe`.
+#[cfg(target_os = "macos")]
+fn quarantine(path: &Path) -> std::io::Result<()> {
+    let value = format!("0083;{:x};Rail;", crate::auth::unix_now());
+    let status = std::process::Command::new("/usr/bin/xattr")
+        .arg("-w")
+        .arg("com.apple.quarantine")
+        .arg(&value)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(std::io::Error::other(
+        "xattr could not write the quarantine attribute",
+    ))
+}
+
+/// Nothing to do: only macOS reads a quarantine attribute, so elsewhere a written file is
+/// already as marked as it is going to be.
+#[cfg(not(target_os = "macos"))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "one signature on both platforms, so the call sites do not branch"
+)]
+fn quarantine(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// A file Rail wrote that could not be marked as a download. Permanent: the next try would run
+/// the same command against the same system. The file is never named.
+fn quarantine_error(error: &std::io::Error) -> OpError {
+    OpError::new(
+        ErrorCode::Internal,
+        ErrorClass::Permanent,
+        "an attachment could not be marked as a download",
+    )
+    .with_detail(error.to_string())
 }
 
 /// A fresh 0600 file in `dir` for `name`, by `file_name`'s `2-`, `3-`… dedup over `taken`
@@ -374,6 +425,11 @@ fn write_open_copy(paths: &Paths, name: &str, bytes: &[u8]) -> Result<String, Op
         drop(file);
         remove_written(&path);
         return Err(write_error("writing", &error));
+    }
+    drop(file);
+    if let Err(error) = quarantine(&path) {
+        remove_written(&path);
+        return Err(quarantine_error(&error));
     }
     Ok(text)
 }
