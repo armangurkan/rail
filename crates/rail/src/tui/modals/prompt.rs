@@ -1,35 +1,33 @@
 //! The one-line name prompt: `S` saves the filter in force under a name, `r` renames a saved
 //! search. `Enter` runs `check` and refuses in place, so a clashing or malformed name never
 //! reaches the daemon; `Esc` cancels.
-//!
-//! **Skeleton only (§12 step 0).** The type, its fields and `refusal()` exist so the
-//! acceptance tests compile. Key handling and drawing are **step 9**, against the design
-//! brief's slot 2: the `┌ Title ─` box, `PROMPT_WIDTH`, and the refusal wrapped through
-//! `tui::text::wrap` with the box growing by the wrapped rows. Every `expect(dead_code)` below
-//! fails the build the moment its item goes live, so step 9 cannot forget to remove it.
 
 use std::fmt;
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
+use rail_core::store::filter::MAX_FILTER_CHARS;
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 
-use super::{Command, ModalOutcome};
+use super::{Command, ModalOutcome, boxed};
+use crate::tui::text::{escape, input_row, wrap};
 use crate::tui::theme::Theme;
 use crate::tui::widgets::text_input::TextInput;
 
 /// What `Enter` runs before the prompt closes: `Err(reason)` refuses in place.
 pub type Check = Box<dyn Fn(&str) -> Result<(), String> + Send>;
+/// What a valid line becomes. Boxed, not a bare `fn(String) -> Command`, because a rename's
+/// command carries the row's index and so has to be closed over.
+pub type Make = Box<dyn Fn(String) -> Command + Send>;
 
 /// The prompt box's width, its border included.
-#[expect(dead_code, reason = "step 0 skeleton; step 9 draws the box (refs #81)")]
 pub const PROMPT_WIDTH: u16 = 56;
+/// The hint under the line, replaced by a refusal.
+const HINT: &str = "Enter save · Esc cancel";
 
 /// A one-line text prompt that validates before it closes.
-#[expect(
-    dead_code,
-    reason = "step 0 skeleton; step 10 opens the prompt (refs #81)"
-)]
 pub struct TextPrompt {
     title: String,
     label: String,
@@ -37,7 +35,7 @@ pub struct TextPrompt {
     /// Runs on `Enter`: `Err(reason)` keeps the box open showing `reason`.
     check: Check,
     /// What a valid name becomes.
-    make: fn(String) -> Command,
+    make: Make,
     /// The last refusal, shown in place of the hint row.
     refusal: Option<String>,
 }
@@ -54,17 +52,11 @@ impl fmt::Debug for TextPrompt {
 }
 
 impl TextPrompt {
-    #[expect(
-        dead_code,
-        reason = "step 0 skeleton; step 10 opens the prompt (refs #81)"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "step 10 opens the prompt (refs #81)")
     )]
-    pub fn new(
-        title: &str,
-        label: &str,
-        start: &str,
-        check: Check,
-        make: fn(String) -> Command,
-    ) -> Self {
+    pub fn new(title: &str, label: &str, start: &str, check: Check, make: Make) -> Self {
         let mut input = TextInput::default();
         input.set_value(start);
         Self {
@@ -78,10 +70,6 @@ impl TextPrompt {
     }
 
     /// Show `reason` in place of the hint row and keep the box open.
-    #[expect(
-        dead_code,
-        reason = "step 0 skeleton; step 9 refuses in place (refs #81)"
-    )]
     pub fn refuse(&mut self, reason: String) {
         self.refusal = Some(reason);
     }
@@ -92,19 +80,154 @@ impl TextPrompt {
         self.refusal.as_deref()
     }
 
-    /// Step 9: edit the line, `Enter` validates through `check`, `Esc` cancels.
-    #[expect(
-        clippy::unused_self,
-        reason = "step 0 skeleton; step 9 edits the input and runs the check (refs #81)"
-    )]
-    pub fn key(&mut self, _key: KeyEvent) -> ModalOutcome {
-        ModalOutcome::Stay
+    /// Edit the line; `Enter` validates through `check` and only a valid line leaves the
+    /// prompt, so FR-4's and FR-5's refusals happen before any call; `Esc` cancels.
+    ///
+    /// Typing stops at `MAX_FILTER_CHARS`, far above the name cap, so a held key cannot grow
+    /// the line without bound while an over-long name still reaches `check` and is refused in
+    /// the wording §8 pins.
+    pub fn key(&mut self, key: KeyEvent) -> ModalOutcome {
+        match key.code {
+            KeyCode::Enter => match (self.check)(self.input.value()) {
+                Ok(()) => ModalOutcome::Run((self.make)(self.input.value().to_string())),
+                Err(reason) => {
+                    self.refuse(reason);
+                    ModalOutcome::Stay
+                }
+            },
+            KeyCode::Esc => ModalOutcome::Close,
+            _ => {
+                let before = self.input.clone();
+                if !self.input.handle_key(key) {
+                    return ModalOutcome::Stay;
+                }
+                if self.input.value().chars().count() > MAX_FILTER_CHARS {
+                    self.input = before;
+                    return ModalOutcome::Stay;
+                }
+                // The refusal was about the text that was sent; this is different text.
+                self.refusal = None;
+                ModalOutcome::Stay
+            }
+        }
     }
 
-    /// Step 9: the box, its label and the hint or refusal row.
-    #[expect(
-        clippy::unused_self,
-        reason = "step 0 skeleton; step 9 draws title, label and refusal (refs #81)"
-    )]
-    pub fn render(&self, _frame: &mut Frame, _area: Rect, _theme: &Theme) {}
+    /// The box, the line with its cursor, and the hint or the refusal. A refusal is wrapped
+    /// and the box grows by its rows, as a confirmation's body does: the longest refusal is
+    /// 79 cells against a 54-cell row, so one row would end it in an ellipsis.
+    pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        let cols = usize::from(area.width.min(PROMPT_WIDTH).saturating_sub(2)).max(1);
+        let (hint, style) = match &self.refusal {
+            Some(reason) => (wrap(&escape(reason), cols), theme.error),
+            None => (vec![HINT.to_string()], theme.muted),
+        };
+        let height = u16::try_from(hint.len() + 4).unwrap_or(u16::MAX);
+        let inner = boxed(frame, area, PROMPT_WIDTH, height, &self.title, theme);
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+        let (typed, column) = input_row(
+            &self.label,
+            self.input.value(),
+            self.input.cursor(),
+            usize::from(inner.width),
+        );
+        let mut lines = vec![Line::styled(typed, theme.text), Line::default()];
+        lines.extend(hint.into_iter().map(|row| Line::styled(row, style)));
+        frame.render_widget(Paragraph::new(lines), inner);
+        let x = inner
+            .x
+            .saturating_add(u16::try_from(column).unwrap_or(u16::MAX));
+        frame.set_cursor_position(Position::new(x, inner.y));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::KeyCode;
+
+    use super::*;
+    use crate::tui::modals::ModalOutcome;
+    use crate::tui::test_util::{key, render_lines};
+
+    /// A prompt over `start` that refuses anything holding a space, as the saved-search
+    /// prompt refuses a malformed name.
+    fn prompt(start: &str) -> TextPrompt {
+        TextPrompt::new(
+            "Save this filter as a search",
+            "Name: ",
+            start,
+            Box::new(|name: &str| {
+                if name.contains(' ') {
+                    Err("A saved search name must be 1 to 40 letters, digits, '-' or '_'.".into())
+                } else {
+                    Ok(())
+                }
+            }),
+            Box::new(|name| Command::SaveSearch { name }),
+        )
+    }
+
+    fn typed(prompt: &mut TextPrompt, text: &str) {
+        for c in text.chars() {
+            prompt.key(key(KeyCode::Char(c)));
+        }
+    }
+
+    /// FR-1: the line is edited in place, `Enter` makes the command and `Esc` cancels.
+    #[test]
+    fn the_prompt_edits_a_line_and_enter_makes_the_command() {
+        let mut prompt = prompt("");
+        typed(&mut prompt, "needs-reply!");
+        assert_eq!(prompt.key(key(KeyCode::Backspace)), ModalOutcome::Stay);
+        assert_eq!(
+            prompt.key(key(KeyCode::Enter)),
+            ModalOutcome::Run(Command::SaveSearch {
+                name: "needs-reply".into()
+            })
+        );
+        assert_eq!(prompt.refusal(), None);
+        assert_eq!(prompt.key(key(KeyCode::Esc)), ModalOutcome::Close);
+    }
+
+    /// FR-4/FR-5: `Enter` runs the check first, so a refused name never leaves the prompt;
+    /// the box stays open with the text kept, and the next edit clears the refusal.
+    #[test]
+    fn a_refused_name_keeps_the_prompt_open_and_is_shown() {
+        let mut prompt = prompt("bad name");
+        assert_eq!(prompt.key(key(KeyCode::Enter)), ModalOutcome::Stay);
+        assert_eq!(
+            prompt.refusal(),
+            Some("A saved search name must be 1 to 40 letters, digits, '-' or '_'.")
+        );
+        let shown = render_lines(90, 24, |frame| {
+            prompt.render(frame, frame.area(), &Theme::default());
+        })
+        .join("\n");
+        assert!(shown.contains("Save this filter as a search"), "{shown}");
+        assert!(shown.contains("Name: bad name"), "{shown}");
+        assert!(
+            shown.contains("A saved search name must be 1 to 40 letters,"),
+            "the refusal wraps rather than ending in an ellipsis: {shown}"
+        );
+        assert!(
+            !shown.contains("Esc cancel"),
+            "it replaces the hint: {shown}"
+        );
+        prompt.key(key(KeyCode::Backspace));
+        assert_eq!(prompt.refusal(), None, "an edit clears it");
+    }
+
+    /// AC-26 (slot 10): nothing panics at sizes smaller than the box.
+    #[test]
+    fn the_prompt_degrades_at_tiny_sizes() {
+        let mut prompt = prompt(&"n".repeat(40));
+        prompt.refuse("A saved search named \"x\" already exists.".into());
+        for (width, height) in [(0_u16, 24_u16), (1, 24), (20, 3), (3, 2)] {
+            let rows = render_lines(width, height, |frame| {
+                prompt.render(frame, frame.area(), &Theme::default());
+            });
+            assert_eq!(rows.len(), usize::from(height), "{width}x{height}");
+        }
+    }
 }

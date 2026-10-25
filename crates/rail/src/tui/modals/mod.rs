@@ -89,9 +89,12 @@ pub enum Command {
     /// Save every attachment of this part's message (the list's `S`).
     SaveAllAttachments(AttachmentTarget),
     /// The name prompt's answer: save the filter in force as a search called `name`.
-    #[expect(
-        dead_code,
-        reason = "step 0 skeleton; step 10 brings it to life (refs #81)"
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "step 0 skeleton; step 10 brings it to life (refs #81)"
+        )
     )]
     SaveSearch {
         name: String,
