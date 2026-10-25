@@ -33,6 +33,23 @@ pub(super) struct AttachmentState {
 }
 
 impl MailScreen {
+    /// One of the three attachment commands a modal answered with, from `run_command`.
+    ///
+    /// The open question's yes is the same command the list sends, and it arrives while the
+    /// question is still the open modal: that is what tells the two apart, as `OpenHtml`'s own
+    /// arm sets `html_confirmed`. So the modal is read here, before it is closed.
+    pub(super) fn attachment_command(&mut self, command: Command) -> Vec<Effect> {
+        let answered = matches!(self.modal, Some(Modal::Confirm(_)));
+        self.modal = None;
+        match command {
+            Command::OpenAttachment(target) => self.open_attachment(target, answered),
+            Command::SaveAttachment(target) => self.save_attachment(target, None),
+            Command::SaveAllAttachments(target) => self.save_all_attachments(&target),
+            // `run_command` sends only the three above; no other command belongs here.
+            _ => Vec::new(),
+        }
+    }
+
     /// The list's `s`: save the highlighted part alone. `unopenable` is set when an `Enter`
     /// on a type Rail does not open became this save.
     pub(super) fn save_attachment(

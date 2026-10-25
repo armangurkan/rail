@@ -477,54 +477,50 @@ impl MailScreen {
 
     pub(super) fn modal_outcome(&mut self, outcome: ModalOutcome) -> Vec<Effect> {
         match outcome {
-            ModalOutcome::Stay => {}
-            ModalOutcome::Close => return self.close_modal(),
-            ModalOutcome::Preview(Command::Theme(index)) => return self.preview_theme(index),
-            ModalOutcome::Preview(Command::Accent(accent)) => return self.preview_accent(accent),
-            ModalOutcome::Preview(_) => {}
-            ModalOutcome::Run(Command::Theme(index)) => return self.keep_scheme(index),
-            ModalOutcome::Run(Command::Accent(answer)) => return self.keep_accent(answer),
+            ModalOutcome::Close => self.close_modal(),
+            ModalOutcome::Preview(Command::Theme(index)) => self.preview_theme(index),
+            ModalOutcome::Preview(Command::Accent(accent)) => self.preview_accent(accent),
+            // The modal keeps the key, and only the two pickers above preview anything.
+            ModalOutcome::Stay | ModalOutcome::Preview(_) => Vec::new(),
             ModalOutcome::Typed(text) => {
                 self.filter_text = text;
                 self.filter_token += 1;
-                return vec![timer(FILTER_DEBOUNCE, self.filter_token, Timer::Filter)];
+                vec![timer(FILTER_DEBOUNCE, self.filter_token, Timer::Filter)]
             }
-            ModalOutcome::Run(Command::ClearFilter) => {
+            ModalOutcome::Run(command) => self.run_command(command),
+        }
+    }
+
+    /// A modal answered with a command. Each arm closes the modal itself rather than one clear
+    /// up here: the theme and accent arms close it where they write what was kept, and the
+    /// attachment arms read which modal was open before it goes.
+    fn run_command(&mut self, command: Command) -> Vec<Effect> {
+        match command {
+            Command::Theme(index) => return self.keep_scheme(index),
+            Command::Accent(answer) => return self.keep_accent(answer),
+            Command::OpenAttachment(_)
+            | Command::SaveAttachment(_)
+            | Command::SaveAllAttachments(_) => return self.attachment_command(command),
+            Command::ClearFilter => {
                 self.modal = None;
                 self.filter_text.clear();
                 self.filter_token += 1;
                 return self.apply_filter();
             }
-            ModalOutcome::Run(Command::Palette(target)) => {
+            Command::Palette(target) => {
                 self.modal = None;
                 return self.run_palette(target);
             }
-            ModalOutcome::Run(Command::ChooseLink { links, number }) => {
+            Command::ChooseLink { links, number } => {
                 self.modal = None;
                 self.confirm_link(&links, number);
             }
-            ModalOutcome::Run(Command::OpenHtml(message_id)) => {
+            Command::OpenHtml(message_id) => {
                 self.modal = None;
                 self.html_confirmed = true;
                 return vec![self.ctx.store.html(message_id)];
             }
-            ModalOutcome::Run(Command::OpenAttachment(target)) => {
-                // The question's yes is the same command the list sends, and it arrives while
-                // the question is still the open modal: that is what tells the two apart, as
-                // `OpenHtml`'s own arm sets `html_confirmed`.
-                let answered = matches!(self.modal, Some(Modal::Confirm(_)));
-                self.modal = None;
-                return self.open_attachment(target, answered);
-            }
-            ModalOutcome::Run(Command::SaveAttachment(target)) => {
-                self.modal = None;
-                return self.save_attachment(target, None);
-            }
-            ModalOutcome::Run(Command::SaveAllAttachments(target)) => {
-                self.modal = None;
-                return self.save_all_attachments(&target);
-            }
-            ModalOutcome::Run(Command::OpenLink(url)) => {
+            Command::OpenLink(url) => {
                 self.modal = None;
                 if let Err(error) = (self.ctx.opener)(&url) {
                     tracing::warn!(error = %error, "could not start the browser");
@@ -535,7 +531,7 @@ impl MailScreen {
                     self.status.error(text, self.ctx.clock.now(), self.tick);
                 }
             }
-            ModalOutcome::Run(command) => {
+            command => {
                 self.modal = None;
                 return self.action_command(command);
             }
