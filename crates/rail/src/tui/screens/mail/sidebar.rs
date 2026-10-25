@@ -253,6 +253,15 @@ impl Sidebar {
         self.relayout();
     }
 
+    /// A renamed saved search keeps the cursor. A saved row's key **is** its name, so the
+    /// cursor's key is renamed before the rows are built again; otherwise `refind` would read
+    /// the rename as a removal and drop the cursor to the row above it.
+    pub fn rename_cursor(&mut self, old: &str, new: &str) {
+        if self.cursor.as_ref() == Some(&RowKey::Saved(old.to_string())) {
+            self.cursor = Some(RowKey::Saved(new.to_string()));
+        }
+    }
+
     /// `scope` as the sidebar has it now (a renamed label's new name), shown or folded away.
     pub fn find(&self, scope: &ScopeChoice) -> Option<ScopeChoice> {
         self.all

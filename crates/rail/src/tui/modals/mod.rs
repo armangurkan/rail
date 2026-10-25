@@ -93,19 +93,11 @@ pub enum Command {
         name: String,
     },
     /// The name prompt's answer: the saved search at `index` is renamed to `name`.
-    #[expect(
-        dead_code,
-        reason = "step 0 skeleton; step 11 brings it to life (refs #81)"
-    )]
     RenameSearch {
         index: usize,
         name: String,
     },
     /// The removal question was answered yes for the saved search at `index`.
-    #[expect(
-        dead_code,
-        reason = "step 0 skeleton; step 11 brings it to life (refs #81)"
-    )]
     RemoveSearch {
         index: usize,
     },

@@ -143,6 +143,8 @@ actions! {
     SidebarPageUp => "sidebar.page_up", [Sidebar], ["pageup", "ctrl-u"], "One page up";
     SidebarOpen => "sidebar.open", [Sidebar], ["enter"], "Show this mailbox";
     SidebarFold => "sidebar.fold", [Sidebar], ["space", "left", "right"], "Fold or unfold this account or folder";
+    SidebarRenameSearch => "sidebar.rename_search", [Sidebar], ["r"], "Rename this saved search";
+    SidebarRemoveSearch => "sidebar.remove_search", [Sidebar], ["d"], "Remove this saved search (asks first)";
     ReaderNext => "reader.next", [Reader], ["n"], "Next message";
     ReaderPrev => "reader.prev", [Reader], ["p"], "Previous message";
     ReaderExpand => "reader.expand", [Reader], ["tab"], "Expand or collapse the message";

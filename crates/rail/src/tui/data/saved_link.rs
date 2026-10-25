@@ -38,7 +38,6 @@ impl DaemonLink {
     }
 
     /// Remove the search named `name`. The mail it finds is not touched.
-    #[expect(dead_code, reason = "step 11 binds `d` to it (refs #81)")]
     pub fn saved_search_remove(&self, name: String) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
@@ -98,7 +97,6 @@ impl super::FakeDaemon {
 
     /// Record the call and answer: `saved_answer` when a test set one, else the fake's own
     /// list with `name` deleted.
-    #[expect(dead_code, reason = "step 11 binds `d` to it (refs #81)")]
     pub(super) fn saved_search_remove(&self, sink: &crate::tui::app::TaskSink, name: String) {
         self.record(FakeCall::SavedSearchRemove { name: name.clone() });
         let answer = self.saved_answer.lock().unwrap().take();
