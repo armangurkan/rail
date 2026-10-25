@@ -503,8 +503,8 @@ impl MailScreen {
                 vec![self.ctx.link.retry(row)]
             }
             Command::SaveSearch { name } => self.save_search(name),
-            Command::RenameSearch { index, name } => self.rename_search(index, name),
-            Command::RemoveSearch { index } => self.remove_search(index),
+            Command::RenameSearch { index, old, name } => self.rename_search(index, &old, name),
+            Command::RemoveSearch { index, name } => self.remove_search(index, &name),
             other => match self.compose_command(other) {
                 Ok(effects) => effects,
                 Err(other) => self.picker_command(other),

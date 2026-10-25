@@ -504,7 +504,10 @@ every account narrowed by that filter, so it finds archived mail an inbox view w
 narrows a saved search further, and `Esc` on the reopened filter line clears only that live
 filter; it never removes a saved search. An `account:<name>` inside a saved query still narrows
 to that account. A saved `before:`/`after:` keeps the date you typed, so a saved date ages: a
-search for `after:2026-01-01` means that one day for ever, not "since a year ago". Rail keeps at
+search for `after:2026-01-01` means that one day for ever, not "since a year ago". `r` and `d`
+always act on the search the prompt or the question named: if the list changed while one of them
+was open — an earlier save or removal was answered underneath it — Rail says `The saved searches
+changed; try again.` and changes nothing. Rail keeps at
 most 20 saved searches, in `[[saved_searches]]` in `config.toml`, where they are yours to read,
 edit and share.
 

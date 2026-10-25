@@ -26,6 +26,8 @@ const RENAME_TITLE: &str = "Rename this saved search";
 const REMOVE_TITLE: &str = "Remove a saved search";
 /// The prompt's label, before the typed name.
 const NAME_LABEL: &str = "Name: ";
+/// What a rename or a removal says when the row it named is no longer where it was.
+const MOVED_NOTICE: &str = "The saved searches changed; try again.";
 
 impl MailScreen {
     /// There is filter text to name. The gate is the **text**, not the parsed filter: the
@@ -78,14 +80,24 @@ impl MailScreen {
     /// `r` and `:rename-search`: the name prompt over the row, pre-filled with its name. The
     /// query is not shown and does not change.
     pub(super) fn rename_search_prompt(&mut self, index: usize) -> Vec<Effect> {
-        let Some(entry) = self.saved.get(index) else {
+        let Some((name, query)) = self
+            .saved
+            .get(index)
+            .map(|entry| (entry.name.clone(), entry.query.clone()))
+        else {
             return Vec::new();
         };
-        let (name, query) = (entry.name.clone(), entry.query.clone());
         // FR-4's carve-out: the entry being renamed is skipped by the duplicate test, so the
         // same name, or the same name in another case, is accepted.
         let check = self.name_check(query, Some(name.clone()));
-        let make: Make = Box::new(move |name| Command::RenameSearch { index, name });
+        // The name the prompt was opened on travels with the index, so `Enter` can only ever
+        // rename the search the prompt named, however long the typing took.
+        let old = name.clone();
+        let make: Make = Box::new(move |typed| Command::RenameSearch {
+            index,
+            old: old.clone(),
+            name: typed,
+        });
         self.modal = Some(Modal::Prompt(TextPrompt::new(
             RENAME_TITLE,
             NAME_LABEL,
@@ -96,19 +108,20 @@ impl MailScreen {
         Vec::new()
     }
 
-    /// `d` and `:remove-search`: the confirmation, which says the mail is not touched.
+    /// `d` and `:remove-search`: the confirmation, which says the mail is not touched. The
+    /// name it shows is the name it carries, so `y` cannot remove anything else.
     pub(super) fn remove_search_confirm(&mut self, index: usize) -> Vec<Effect> {
-        let Some(entry) = self.saved.get(index) else {
+        let Some(name) = self.saved.get(index).map(|entry| entry.name.clone()) else {
             return Vec::new();
         };
         let line = format!(
             "Remove the saved search \"{}\"? The mail it finds is not touched.",
-            escape(&entry.name)
+            escape(&name)
         );
         self.modal = Some(Modal::Confirm(Confirm::new(
             REMOVE_TITLE,
             vec![line],
-            Command::RemoveSearch { index },
+            Command::RemoveSearch { index, name },
         )));
         Vec::new()
     }
@@ -129,24 +142,44 @@ impl MailScreen {
         }
     }
 
-    /// Rename the search at `index` to `name`, keeping its query. The rename is remembered
-    /// until the answer arrives, so the open scope and the sidebar cursor can follow the row
-    /// instead of reading a changed name as a removal.
-    pub(super) fn rename_search(&mut self, index: usize, name: String) -> Vec<Effect> {
-        let Some(entry) = self.saved.get(index) else {
-            return Vec::new();
+    /// The entry at `index`, but only while it is still the one called `name` — the identity
+    /// the daemon keys on, compared the way the daemon compares it. `None` means the list was
+    /// replaced under the open prompt or question (an earlier write's answer landing, FR-17),
+    /// so the index no longer names what the user was shown.
+    fn entry_at(&self, index: usize, name: &str) -> Option<&SavedSearch> {
+        self.saved
+            .get(index)
+            .filter(|entry| entry.name.eq_ignore_ascii_case(name))
+    }
+
+    /// The row moved under the open prompt or question: say so, and send nothing. Never
+    /// silently nothing, as FR-16 requires of `r` and `d`.
+    fn searches_moved(&mut self) -> Vec<Effect> {
+        self.status.notify(MOVED_NOTICE, self.tick);
+        Vec::new()
+    }
+
+    /// Rename the search the prompt named — `old`, at `index` when it opened — to `name`,
+    /// keeping its query. The rename is remembered until the answer arrives, so the open
+    /// scope and the sidebar cursor can follow the row instead of reading a changed name as a
+    /// removal.
+    pub(super) fn rename_search(&mut self, index: usize, old: &str, name: String) -> Vec<Effect> {
+        let Some((old, query)) = self
+            .entry_at(index, old)
+            .map(|entry| (entry.name.clone(), entry.query.clone()))
+        else {
+            return self.searches_moved();
         };
-        let (old, query) = (entry.name.clone(), entry.query.clone());
         self.pending_rename = Some((old.clone(), name.clone()));
         vec![self.ctx.link.saved_search_put(name, query, Some(old))]
     }
 
-    /// Remove the search at `index`.
-    pub(super) fn remove_search(&mut self, index: usize) -> Vec<Effect> {
-        let Some(entry) = self.saved.get(index) else {
-            return Vec::new();
+    /// Remove the search the question named — `name`, at `index` when it was asked.
+    pub(super) fn remove_search(&mut self, index: usize, name: &str) -> Vec<Effect> {
+        let Some(found) = self.entry_at(index, name).map(|entry| entry.name.clone()) else {
+            return self.searches_moved();
         };
-        vec![self.ctx.link.saved_search_remove(entry.name.clone())]
+        vec![self.ctx.link.saved_search_remove(found)]
     }
 
     /// `saved_search.put` or `.remove` answered. On `Ok`, in FR-17's order: a rename in
@@ -212,5 +245,146 @@ impl MailScreen {
                 self.set_scope(ScopeChoice::Unified)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crossterm::event::KeyCode;
+    use rail_core::paths::Paths;
+
+    use super::*;
+    use crate::tui::data::{FakeCall, FakeDaemon};
+    use crate::tui::modals::ModalOutcome;
+    use crate::tui::screens::mail::MailContext;
+    use crate::tui::test_util::{key, mail_ctx, seed_store, settle, work_and_home};
+
+    /// One saved search per name, each with a query of its own so a mix-up shows.
+    fn searches(names: &[&str]) -> Vec<SavedSearch> {
+        names
+            .iter()
+            .map(|n| SavedSearch {
+                name: (*n).into(),
+                query: format!("from:{n}@example.com"),
+            })
+            .collect()
+    }
+
+    /// A screen holding `names` as its saved searches, and the fake daemon behind it. The
+    /// flows are driven directly, the way the palette's indexed targets drive them, so no
+    /// list is ever read and `start()` is not needed.
+    fn screen_with(names: &[&str]) -> (tempfile::TempDir, Arc<FakeDaemon>, MailScreen) {
+        let saved = searches(names);
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::all_in(tmp.path());
+        seed_store(
+            &paths,
+            &[("work", "w@example.com"), ("home", "h@example.com")],
+            &[],
+        );
+        let fake = Arc::new(FakeDaemon::default());
+        fake.saved.lock().unwrap().clone_from(&saved);
+        let ctx = MailContext {
+            saved_searches: saved,
+            ..mail_ctx(&paths, fake.clone())
+        };
+        (tmp, fake, MailScreen::new(ctx, work_and_home()))
+    }
+
+    /// Every `SavedSearchPut` / `SavedSearchRemove` the fake daemon took, in order.
+    fn saved_calls(fake: &FakeDaemon) -> Vec<FakeCall> {
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c,
+                    FakeCall::SavedSearchPut { .. } | FakeCall::SavedSearchRemove { .. }
+                )
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// The open confirmation's body lines.
+    fn confirm_body(screen: &MailScreen) -> Vec<String> {
+        match &screen.modal {
+            Some(Modal::Confirm(confirm)) => confirm.lines().to_vec(),
+            _ => panic!("no confirmation is open"),
+        }
+    }
+
+    /// The command an open modal answers `key` with.
+    fn answer(screen: &mut MailScreen, code: KeyCode) -> Command {
+        let outcome = screen
+            .modal
+            .as_mut()
+            .expect("the modal is still open")
+            .key(key(code));
+        match outcome {
+            ModalOutcome::Run(command) => command,
+            other => panic!("{code:?} did not answer the modal: {other:?}"),
+        }
+    }
+
+    /// A confirmed removal can only ever remove the search the question named. `d` resolves
+    /// the row, then the answer to a write already in flight replaces the list underneath the
+    /// open question — `MailEvent::SavedSearchesChanged` runs whatever modal is up — so an
+    /// index read at `y` time would name the next search along and remove a search the user
+    /// never confirmed.
+    #[tokio::test]
+    async fn a_confirmed_removal_never_hits_a_search_that_moved() {
+        let (_tmp, fake, mut screen) = screen_with(&["a-list", "b-list", "c-list"]);
+        screen.remove_search_confirm(0);
+        let asked = confirm_body(&screen);
+        assert!(asked[0].contains("\"a-list\""), "{asked:?}");
+
+        let effects = screen.saved_searches_changed(Ok(searches(&["b-list", "c-list"])));
+        settle(&mut screen, effects).await;
+
+        let command = answer(&mut screen, KeyCode::Char('y'));
+        let effects = screen.action_command(command);
+        settle(&mut screen, effects).await;
+
+        assert_eq!(saved_calls(&fake), Vec::new(), "nothing was removed");
+        assert!(
+            screen
+                .status_line()
+                .contains("The saved searches changed; try again."),
+            "{}",
+            screen.status_line()
+        );
+    }
+
+    /// The same for a rename, whose window is far wider: the prompt stays open while the name
+    /// is typed, so an earlier write's answer has seconds in which to land.
+    #[tokio::test]
+    async fn a_rename_never_hits_a_search_that_moved() {
+        let (_tmp, fake, mut screen) = screen_with(&["a-list", "b-list", "c-list"]);
+        screen.rename_search_prompt(0);
+        let effects = screen.saved_searches_changed(Ok(searches(&["b-list", "c-list"])));
+        settle(&mut screen, effects).await;
+
+        screen
+            .modal
+            .as_mut()
+            .expect("the prompt is still open")
+            .key(key(KeyCode::Char('s')));
+        let command = answer(&mut screen, KeyCode::Enter);
+        let effects = screen.action_command(command);
+        settle(&mut screen, effects).await;
+
+        assert_eq!(saved_calls(&fake), Vec::new(), "nothing was renamed");
+        assert_eq!(screen.pending_rename, None, "no rename is remembered");
+        assert!(
+            screen
+                .status_line()
+                .contains("The saved searches changed; try again."),
+            "{}",
+            screen.status_line()
+        );
     }
 }

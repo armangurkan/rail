@@ -92,14 +92,20 @@ pub enum Command {
     SaveSearch {
         name: String,
     },
-    /// The name prompt's answer: the saved search at `index` is renamed to `name`.
+    /// The name prompt's answer: the saved search `old` — at `index` when the prompt opened —
+    /// is renamed to `name`. The old name travels with the index because the list can be
+    /// replaced under an open prompt, and an index resolved at `Enter` time would then name a
+    /// different search.
     RenameSearch {
         index: usize,
+        old: String,
         name: String,
     },
-    /// The removal question was answered yes for the saved search at `index`.
+    /// The removal question was answered yes for the saved search `name`, at `index` when the
+    /// question was asked. Both are carried for the reason `RenameSearch` gives.
     RemoveSearch {
         index: usize,
+        name: String,
     },
 }
 
