@@ -148,6 +148,7 @@ fn validate(config: &Config) -> Result<(), String> {
         return Err("general.poll_interval must be at least 5s".to_string());
     }
     validate_labels(config)?;
+    super::saved::validate_saved_searches(config)?;
     validate_onepassword(config)
 }
 
@@ -656,5 +657,95 @@ client_id = "2"
                 .contains("accounts[1].label: at most 40 characters"),
             "{err}"
         );
+    }
+
+    /// AC-23 (FR-21): a hand-written `[[saved_searches]]` is checked like an account name, the
+    /// error names the offending entry, and **no loader text ever quotes a query** — a
+    /// `ConfigError::Invalid` message lands in `OpError.detail`, which the MCP `rail_status`
+    /// tool hands to an agent.
+    #[test]
+    fn saved_searches_are_validated_like_account_names() {
+        use crate::config::saved::{MAX_SAVED_SEARCHES, SavedSearch};
+
+        let table = |name: &str, query: &str| {
+            format!("[[saved_searches]]\nname = \"{name}\"\nquery = \"{query}\"\n")
+        };
+
+        assert!(
+            p("").unwrap().saved_searches.is_empty(),
+            "no table, no saved searches"
+        );
+        let one = p(&table("needs-reply", "from:dana is:unread")).unwrap();
+        assert_eq!(
+            one.saved_searches,
+            [SavedSearch {
+                name: "needs-reply".into(),
+                query: "from:dana is:unread".into(),
+            }]
+        );
+
+        let many: String = (0..=MAX_SAVED_SEARCHES)
+            .map(|i| table(&format!("s{i}"), "is:unread"))
+            .collect();
+        let err = p(&many).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        assert!(
+            err.to_string().contains("at most 20 saved searches"),
+            "{err}"
+        );
+
+        // The query is reported by position and name, never by value: the marker proves it.
+        let marker = "uniq-marker-zzz";
+        let long = format!("from:{}", marker.repeat(1025 / marker.len() + 1));
+        assert!(long.chars().count() > 1024);
+        let err = p(&table("big", &long)).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        let text = err.to_string();
+        assert!(text.contains("saved_searches[0]"), "{text}");
+        assert!(text.contains("longer than 1024 characters"), "{text}");
+        assert!(!text.contains(marker), "a query is never quoted: {text}");
+
+        let err = p(&table("", "is:unread")).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        assert!(
+            err.to_string()
+                .contains("saved search name \"\" must be 1 to 40 letters, digits, '-' or '_'"),
+            "{err}"
+        );
+        let err = p(&table("two words", "is:unread")).unwrap_err();
+        assert!(
+            err.to_string().contains("saved search name \"two words\""),
+            "{err}"
+        );
+        let fits = table(&"x".repeat(40), "is:unread");
+        assert!(p(&fits).is_ok(), "40 characters is the cap, not 39");
+        let over = table(&"x".repeat(41), "is:unread");
+        assert!(p(&over).is_err(), "41 is over it");
+
+        let duplicate = format!(
+            "{}{}",
+            table("Dana", "from:dana"),
+            table("dana", "is:unread")
+        );
+        let err = p(&duplicate).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        assert!(
+            err.to_string().contains("duplicate saved search name"),
+            "{err}"
+        );
+
+        // `Config` derives `Debug`, so a derived one here would print every saved query.
+        let shown = format!(
+            "{:?}",
+            SavedSearch {
+                name: "x".into(),
+                query: "from:dana@corp.example".into(),
+            }
+        );
+        assert!(
+            shown.contains('x') && shown.contains("query_chars"),
+            "{shown}"
+        );
+        assert!(!shown.contains("dana"), "{shown}");
     }
 }

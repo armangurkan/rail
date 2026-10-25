@@ -18,6 +18,9 @@ pub use model::{
     General, Icons, Layout, OnePasswordConfig, SecretsBackend, SyncSettings, ThreadOrder,
     TimeFormat, is_format_char, is_plain, not_plain,
 };
-pub use saved::{MAX_SAVED_SEARCH_NAME_CHARS, MAX_SAVED_SEARCHES, SavedSearch};
+pub use saved::{
+    MAX_SAVED_SEARCH_NAME_CHARS, MAX_SAVED_SEARCHES, NameProblem, SavedSearch, check_name,
+    check_put, duplicate_name,
+};
 /// A config value with its byte range in the file (for line numbers).
 pub use toml::Spanned;
