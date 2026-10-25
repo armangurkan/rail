@@ -51,6 +51,10 @@ pub enum NameProblem {
 /// FR-5's rule: 1 to `MAX_SAVED_SEARCH_NAME_CHARS` ASCII letters, digits, `-` or `_`. The
 /// charset leaves no quote, newline or control character in a name, so it is safe in TOML and
 /// in a 26-column sidebar.
+///
+/// # Errors
+/// Which rule the name breaks, so the caller can word it: the loader quotes the offending
+/// value, the prompt and the daemon show `name_rule`'s fixed sentence.
 pub fn check_name(name: &str) -> Result<(), NameProblem> {
     if name.is_empty() {
         return Err(NameProblem::Empty);
@@ -70,6 +74,7 @@ pub fn check_name(name: &str) -> Result<(), NameProblem> {
 /// The entry `name` would clash with, ignoring ASCII case, skipping the one `replaces` names
 /// (also ignoring case) — FR-4's carve-out, which is what lets a rename keep its own name or
 /// change only its case.
+#[must_use]
 pub fn duplicate_name<'a>(
     existing: &'a [SavedSearch],
     name: &str,

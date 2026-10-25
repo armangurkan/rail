@@ -1,5 +1,6 @@
-//! What a saved search reads: `Scope::All` (every folder of the accounts asked for), the saved
-//! filter ANDed under the live one, the resolved `account:` and the sidebar's unread counts.
+//! What a saved search reads: `Scope::All` (every folder of the accounts asked for), the
+//! saved filter and the live one intersecting, the resolved `account:`, and the sidebar's
+//! unread counts.
 //! AC-12, AC-13, AC-25.
 
 use super::Store;

@@ -144,13 +144,13 @@ pub struct ListRequest {
     /// The open saved search's own filter, ANDed under the live one.
     #[expect(
         dead_code,
-        reason = "step 0 skeleton; step 5 brings it to life (refs #81)"
+        reason = "step 0 skeleton; step 7 brings it to life (refs #81)"
     )]
     pub saved: Option<Filter>,
     /// Every saved search's filter, parsed, in config order: the sidebar's counts.
     #[expect(
         dead_code,
-        reason = "step 0 skeleton; step 6 brings it to life (refs #81)"
+        reason = "step 0 skeleton; step 7 brings it to life (refs #81)"
     )]
     pub saved_all: Vec<Filter>,
     pub at: PageAt,

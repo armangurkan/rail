@@ -49,7 +49,7 @@ impl fmt::Debug for TextPrompt {
             .field("title", &self.title)
             .field("len", &self.input.value().chars().count())
             .field("refused", &self.refusal.is_some())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -93,10 +93,18 @@ impl TextPrompt {
     }
 
     /// Step 9: edit the line, `Enter` validates through `check`, `Esc` cancels.
+    #[expect(
+        clippy::unused_self,
+        reason = "step 0 skeleton; step 9 edits the input and runs the check (refs #81)"
+    )]
     pub fn key(&mut self, _key: KeyEvent) -> ModalOutcome {
         ModalOutcome::Stay
     }
 
     /// Step 9: the box, its label and the hint or refusal row.
+    #[expect(
+        clippy::unused_self,
+        reason = "step 0 skeleton; step 9 draws title, label and refusal (refs #81)"
+    )]
     pub fn render(&self, _frame: &mut Frame, _area: Rect, _theme: &Theme) {}
 }

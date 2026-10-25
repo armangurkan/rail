@@ -241,22 +241,15 @@ pub fn put_saved_search(
         .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
         .as_array_of_tables_mut()
         .ok_or_else(|| not_an_array_of_tables(path, "saved_searches"))?;
-    let table = match replaces {
-        Some(old) => {
-            let index =
-                saved_search_at(searches, old).ok_or_else(|| no_such_saved_search(path, old))?;
-            searches
-                .get_mut(index)
-                .ok_or_else(|| no_such_saved_search(path, old))?
-        }
-        None => {
-            searches.push(Table::new());
-            let last = searches.len() - 1;
-            searches
-                .get_mut(last)
-                .ok_or_else(|| not_an_array_of_tables(path, "saved_searches"))?
-        }
+    let index = if let Some(old) = replaces {
+        saved_search_at(searches, old).ok_or_else(|| no_such_saved_search(path, old))?
+    } else {
+        searches.push(Table::new());
+        searches.len() - 1
     };
+    let table = searches
+        .get_mut(index)
+        .ok_or_else(|| not_an_array_of_tables(path, "saved_searches"))?;
     table["name"] = value(name);
     table["query"] = value(query);
     let out = doc.to_string();
