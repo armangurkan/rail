@@ -251,6 +251,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `global.undo` | global | `z` | Undo the last action. |
 | `list.open` | list | `enter` | Open the thread. |
 | `list.filter` | list | `/` | Filter the list as you type. |
+| `list.save_search` | list | `S` | Save the filter as a search. |
 | `list.sidebar` | list, sidebar | `b` | Show or hide the sidebar. |
 | `list.account_1` | list, sidebar | `1` | Go to account 1's inbox. |
 | `list.account_2` | list, sidebar | `2` | Go to account 2's inbox. |
@@ -294,6 +295,8 @@ are in, with `*` after the ones set in `config.toml`.
 | `sidebar.page_up` | sidebar | `pageup` `ctrl-u` | One page up. |
 | `sidebar.open` | sidebar | `enter` | Show this mailbox. |
 | `sidebar.fold` | sidebar | `space` `left` `right` | Fold or unfold this account or folder. |
+| `sidebar.rename_search` | sidebar | `r` | Rename this saved search. |
+| `sidebar.remove_search` | sidebar | `d` | Remove this saved search (asks first). |
 | `reader.next` | reader | `n` | Next message. |
 | `reader.prev` | reader | `p` | Previous message. |
 | `reader.expand` | reader | `tab` | Expand or collapse the message. |
@@ -493,12 +496,27 @@ header's search slot shows how Rail read your filter (`/ is:unread · words: for
 such as `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears it. The filter
 searches the local store only (`rail search` also asks each account's server).
 
+`S` saves the filter in force under a name, so you never type it again: the prompt asks for a
+name of 1 to 40 letters, digits, `-` or `_`, `Enter` saves it and `Esc` cancels. A saved search
+then behaves like a mailbox — its own row in the sidebar under `SEARCHES`, an unread count, a
+`Search: <name>` palette entry, a header title, paging and `Esc` — and lists every folder of
+every account narrowed by that filter, so it finds archived mail an inbox view would not. `/`
+narrows a saved search further, and `Esc` on the reopened filter line clears only that live
+filter; it never removes a saved search. An `account:<name>` inside a saved query still narrows
+to that account. A saved `before:`/`after:` keeps the date you typed, so a saved date ages: a
+search for `after:2026-01-01` means that one day for ever, not "since a year ago". Rail keeps at
+most 20 saved searches, in `[[saved_searches]]` in `config.toml`, where they are yours to read,
+edit and share.
+
 `:` opens the command palette: type a few letters of a key action for the current view, an account,
 a label or a merged mailbox (`Mailbox: Starred`, `Mailbox: Drafts`, `Mailbox: Sent`,
 `Mailbox: Trash`: that mailbox of every account together, newest first) and press `Enter`; the
 key bound to each command is shown beside it. A label is listed as
 `Label: AXON · Inbox/Infrastructure/Linode`: the account's label and the folder's whole path,
-folded away in the sidebar or not. `:errors` lists the session's recent errors; every sync pass
+folded away in the sidebar or not. Each saved search is listed as `Search: needs-reply`, and
+beside it a `Rename search: needs-reply` and a `Remove search: needs-reply` entry, which open
+the same prompt and the same question as `r` and `d` on its sidebar row.
+`:errors` lists the session's recent errors; every sync pass
 that failed for good (one a retry will not mend) is listed there once, after its account's name,
 while `:errors` still holds it. While one of them is an action Gmail refused, `j`/`k` or `↓`/`↑`
 highlight an entry and `Enter` sends that action again. `:hints` turns the key hints off
@@ -525,6 +543,15 @@ account badges, selection marks and action errors keep their colours. The comman
 `dim read: dot`, `dim read: subject` or `dim read: all` and saves `dim_read` under `[general]`;
 returning to `dot` removes the key. A save that fails says
 `Could not save the read dimming setting: …` and keeps the choice for this session.
+
+`save-search` names the filter in force and saves it, exactly as `S` does; it is offered only
+while a filter is set. `rename-search <name>` and `remove-search <name>` rename or remove one
+saved search — one entry each, per search, so the palette says which — and are offered only once
+there is one. `search-counts` hides the unread count beside each saved search
+(`saved-search counts: off`), or shows it again (`saved-search counts: on`), and saves the choice
+(`saved_search_counts = false` under `[general]`; showing them removes the key); a save that
+fails says `Could not save the saved-search counts setting: …` and keeps the choice for this
+session.
 
 `?` shows the keys of the view you are in, marking with `*` the ones set in
 `config.toml`; `?` again (or whatever `global.help` is bound to), `Esc` or `q` closes it. Help and
@@ -1298,6 +1325,32 @@ running syncs carry on unchanged.
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 | `bulk_confirm` | `50` | How many threads an archive, star or mark-read may cover before Rail asks first; `0` never asks. Trash always asks. |
 | `attachment_dir` | unset | Where `s`, `S` and `w` save attachments. Unset is your download directory (the `XDG_DOWNLOAD_DIR` entry of `~/.config/user-dirs.dirs` on Linux, else `~/Downloads`). `~` is expanded; a relative path is refused, as is one inside Rail's own attachment cache (`attachments` in the cache directory), whose files Rail sweeps a day after it writes them. |
+| `saved_search_counts` | `true` | Unread counts beside each saved search in the sidebar. `false` leaves them out and skips the count queries, the one thing saved searches cost on a large mailbox. `:search-counts` toggles it and saves it. |
+
+### `[[saved_searches]]`
+
+One table per saved search, in the order the sidebar lists them. `S` on the mail screen writes
+them, and so do `rename-search` and `remove-search`; your comments, formatting and other tables
+survive each write, and a rename edits the table where it stands, so its row keeps its place.
+
+| Key | Required | Meaning |
+|---|---|---|
+| `name` | yes | 1 to 40 ASCII letters, digits, `-` or `_`; unique among saved searches, compared ignoring case. It is what the sidebar, the palette and the header show. |
+| `query` | yes | Filter text, exactly as you would type it after `/`; at most 1024 characters. |
+
+Rail keeps at most 20 saved searches. A name with a space or an accent in it, a duplicate name,
+an over-long query or a 21st table makes `config.toml` invalid, and `rail doctor` says which
+entry is wrong — by name and position, never by quoting the query, which is yours.
+
+```toml
+[[saved_searches]]
+name = "needs-reply"
+query = "from:dana is:unread"
+
+[[saved_searches]]
+name = "big-attachments"
+query = "has:attachment"
+```
 
 ### `[[accounts]]`
 
