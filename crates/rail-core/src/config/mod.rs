@@ -9,8 +9,8 @@ pub mod model;
 pub mod saved;
 
 pub use edit::{
-    append_account, default_account_name, remove_account, set_general, set_general_bool,
-    set_general_number, set_general_text, set_secrets,
+    append_account, default_account_name, put_saved_search, remove_account, remove_saved_search,
+    set_general, set_general_bool, set_general_number, set_general_text, set_secrets,
 };
 pub use load::{ConfigError, MAX_ADDRESS_CHARS, line_col, load, load_text_or_empty, parse};
 pub use model::{

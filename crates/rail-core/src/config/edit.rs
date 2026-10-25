@@ -220,6 +220,91 @@ fn no_such_account(path: &Path, name: &str) -> ConfigError {
     }
 }
 
+/// Return `text` with a saved search written. With `replaces`, the `[[saved_searches]]` table
+/// of that name is edited **in place**, keeping its position in the file and the comments
+/// around it, so the sidebar row does not move; otherwise a new table is appended. Names are
+/// matched ignoring ASCII case, the rule the loader makes them unique by. Validates the result.
+///
+/// # Errors
+/// The text is not valid TOML, `saved_searches` is not an array of tables, `replaces` names no
+/// entry, or the result would not load.
+pub fn put_saved_search(
+    text: &str,
+    path: &Path,
+    name: &str,
+    query: &str,
+    replaces: Option<&str>,
+) -> Result<String, ConfigError> {
+    let mut doc = document(text, path)?;
+    let searches = doc
+        .entry("saved_searches")
+        .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
+        .as_array_of_tables_mut()
+        .ok_or_else(|| not_an_array_of_tables(path, "saved_searches"))?;
+    let table = match replaces {
+        Some(old) => {
+            let index =
+                saved_search_at(searches, old).ok_or_else(|| no_such_saved_search(path, old))?;
+            searches
+                .get_mut(index)
+                .ok_or_else(|| no_such_saved_search(path, old))?
+        }
+        None => {
+            searches.push(Table::new());
+            let last = searches.len() - 1;
+            searches
+                .get_mut(last)
+                .ok_or_else(|| not_an_array_of_tables(path, "saved_searches"))?
+        }
+    };
+    table["name"] = value(name);
+    table["query"] = value(query);
+    let out = doc.to_string();
+    parse(&out, path)?;
+    Ok(out)
+}
+
+/// Return `text` without the `[[saved_searches]]` table named `name` (ignoring ASCII case).
+/// Other searches, other tables and comments stay. Validates the result.
+///
+/// # Errors
+/// The text is not valid TOML, there is no such entry, or the result would not load.
+pub fn remove_saved_search(text: &str, path: &Path, name: &str) -> Result<String, ConfigError> {
+    let mut doc = document(text, path)?;
+    let searches = doc
+        .get_mut("saved_searches")
+        .and_then(Item::as_array_of_tables_mut)
+        .ok_or_else(|| no_such_saved_search(path, name))?;
+    let index = saved_search_at(searches, name).ok_or_else(|| no_such_saved_search(path, name))?;
+    searches.remove(index);
+    let out = doc.to_string();
+    parse(&out, path)?;
+    Ok(out)
+}
+
+/// The position of the `[[saved_searches]]` table named `name`, ignoring ASCII case.
+fn saved_search_at(searches: &ArrayOfTables, name: &str) -> Option<usize> {
+    searches.iter().position(|t| {
+        t.get("name")
+            .and_then(Item::as_str)
+            .is_some_and(|n| n.eq_ignore_ascii_case(name))
+    })
+}
+
+fn no_such_saved_search(path: &Path, name: &str) -> ConfigError {
+    ConfigError::Invalid {
+        path: path.to_path_buf(),
+        message: format!("no [[saved_searches]] entry named {name:?}"),
+    }
+}
+
+fn not_an_array_of_tables(path: &Path, key: &str) -> ConfigError {
+    ConfigError::Invalid {
+        path: path.to_path_buf(),
+        message: format!("`{key}` must be an array of tables ([[{key}]])"),
+    }
+}
+
 /// `dana.reyes+x@corp.com` -> `dana_reyes_x`, suffixed `-2`, `-3`... if taken.
 pub fn default_account_name(address: &str, config: &Config) -> String {
     let local = address
@@ -534,5 +619,79 @@ mod tests {
                 "{message:?}"
             );
         }
+    }
+
+    /// AC-24 (FR-20): the user's comments and every other table survive a save, a rename and a
+    /// removal, and a rename edits its table **in place** so the sidebar row keeps its
+    /// position (D-5).
+    #[test]
+    fn saved_search_edits_keep_comments() {
+        let path = Path::new("c.toml");
+        let text = "# my rail config\n[general]\neditor = \"nvim\" # the good one\n\n# the one that matters\n[[saved_searches]]\nname = \"needs-reply\"\nquery = \"from:dana is:unread\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"g\"\n";
+        assert_eq!(parse(text, path).unwrap().saved_searches.len(), 1);
+
+        let added = put_saved_search(text, path, "big", "has:attachment", None).unwrap();
+        assert!(added.contains("# my rail config"), "{added}");
+        assert!(
+            added.contains("editor = \"nvim\" # the good one"),
+            "{added}"
+        );
+        assert!(added.contains("# the one that matters"), "{added}");
+        let config = parse(&added, path).unwrap();
+        let names: Vec<_> = config
+            .saved_searches
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, ["needs-reply", "big"], "a new search is appended");
+        assert_eq!(config.saved_searches[1].query, "has:attachment");
+        assert_eq!(config.accounts.len(), 1, "other tables are untouched");
+
+        // A rename keeps the entry's position, its query and the comment above it.
+        let renamed = put_saved_search(
+            &added,
+            path,
+            "later",
+            "from:dana is:unread",
+            Some("needs-reply"),
+        )
+        .unwrap();
+        assert!(renamed.contains("# the one that matters"), "{renamed}");
+        let config = parse(&renamed, path).unwrap();
+        let names: Vec<_> = config
+            .saved_searches
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, ["later", "big"], "renamed in place, not re-appended");
+        assert_eq!(config.saved_searches[0].query, "from:dana is:unread");
+
+        let gone = remove_saved_search(&renamed, path, "later").unwrap();
+        assert!(gone.contains("# my rail config"), "{gone}");
+        assert!(gone.contains("editor = \"nvim\" # the good one"), "{gone}");
+        let config = parse(&gone, path).unwrap();
+        let names: Vec<_> = config
+            .saved_searches
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, ["big"]);
+
+        let last = remove_saved_search(&gone, path, "big").unwrap();
+        let config = parse(&last, path).unwrap();
+        assert!(config.saved_searches.is_empty());
+        assert!(!last.contains("[[saved_searches]]"), "{last}");
+        assert_eq!(config.accounts.len(), 1);
+
+        let err = remove_saved_search(&last, path, "big").unwrap_err();
+        assert!(
+            err.to_string().contains("no [[saved_searches]] entry"),
+            "{err}"
+        );
+        let err = put_saved_search(&last, path, "x", "is:unread", Some("gone")).unwrap_err();
+        assert!(
+            err.to_string().contains("no [[saved_searches]] entry"),
+            "{err}"
+        );
     }
 }
