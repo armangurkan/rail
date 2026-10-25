@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/attachments.rs
+expression: "draw(&f, width, height)"
+---
+▍Rail │ All inboxes · 1 account · 1 unread  │ 🔍  / Search           ● Synced 12:39 │ 12:40
+subject m1
+Sender  Thu 08:54   W  WORK
+/  2 messages
+──────────────────────────────────────────────────────────────────────────────────────────
+
+the body of m2
+📎  Q4 numbers.xlsx
+       ┌ Attachments ─────────────────────────────────────────────────────────────┐
+───────│MESSAGE 1                                                                 │───────
+▸   1  │▸ plan.pdf                               application/pdf            2.0 KB│u 08:53
+       │  logo.png                               image/png                   512 B│
+───────│MESSAGE 2                                                                 │───────
+       │  Q4 numbers.xlsx                        application/vnd.openxml…  18.4 KB│
+       │                                                                          │
+       │Enter or o opens · s saves · S saves all · j/k move · Esc closes          │
+       └──────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+n/p message  Tab fold  h headers  r reply  e archive  q back  ? help              ● work ✓

@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/attachments.rs
+expression: "draw(&f, 90, 24)"
+---
+|Rail |┌ Attachments ─────────────────────────────────────────────────────────────┐| 12:40
+subject│^ more                                                                    │
+Sender │  attachment-4.pdf                       application/pdf            2.0 KB│
+/  1 me│  attachment-5.pdf                       application/pdf            2.0 KB│
+-------│  attachment-6.pdf                       application/pdf            2.0 KB│-------
+       │  attachment-7.pdf                       application/pdf            2.0 KB│
+the bod│  attachment-8.pdf                       application/pdf            2.0 KB│
+@ attac│  attachment-9.pdf                       application/pdf            2.0 KB│t-5.pd…
+       │  attachment-10.pdf                      application/pdf            2.0 KB│
+-------│  attachment-11.pdf                      application/pdf            2.0 KB│-------
+       │  attachment-12.pdf                      application/pdf            2.0 KB│
+       │  attachment-13.pdf                      application/pdf            2.0 KB│
+       │  attachment-14.pdf                      application/pdf            2.0 KB│
+       │  attachment-15.pdf                      application/pdf            2.0 KB│
+       │  attachment-16.pdf                      application/pdf            2.0 KB│
+       │  attachment-17.pdf                      application/pdf            2.0 KB│
+       │  attachment-18.pdf                      application/pdf            2.0 KB│
+       │  attachment-19.pdf                      application/pdf            2.0 KB│
+       │  attachment-20.pdf                      application/pdf            2.0 KB│
+       │  attachment-21.pdf                      application/pdf            2.0 KB│
+       │> attachment-22.pdf                      application/pdf            2.0 KB│
+       │                                                                          │
+       │Enter or o opens · s saves · S saves all · j/k move · Esc closes          │
+n/p mes└──────────────────────────────────────────────────────────────────────────┘work ok

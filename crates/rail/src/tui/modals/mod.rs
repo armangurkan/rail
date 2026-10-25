@@ -20,16 +20,7 @@ use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Clear};
 use url::Url;
 
-pub use attachments::{AttachmentList, AttachmentRow};
-// Named by `Command`'s attachment variants, which the modal step adds.
-#[cfg_attr(
-    not(test),
-    expect(
-        unused_imports,
-        reason = "re-exported for Command's attachment variants"
-    )
-)]
-pub use attachments::AttachmentTarget;
+pub use attachments::{AttachmentList, AttachmentRow, AttachmentTarget};
 pub use confirm::{Confirm, LinkPrompt};
 pub use errors::{ErrorList, ErrorRow};
 pub use filter::FilterLine;
@@ -87,6 +78,14 @@ pub enum Command {
     },
     /// The snooze chooser's "Return to inbox now": put its snoozed threads back.
     SnoozeReturn,
+    /// Open this attachment with the system opener, asking first once a session. From the
+    /// list's `Enter`/`o`, and from the question's own yes.
+    OpenAttachment(AttachmentTarget),
+    /// Save this attachment alone (the list's `s`, and an `Enter` on a type Rail does not
+    /// open).
+    SaveAttachment(AttachmentTarget),
+    /// Save every attachment of this part's message (the list's `S`).
+    SaveAllAttachments(AttachmentTarget),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

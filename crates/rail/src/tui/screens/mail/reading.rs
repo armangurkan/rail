@@ -467,7 +467,10 @@ impl MailScreen {
                 .notify("No attachments in this thread.", self.tick);
             return;
         }
-        self.modal = Some(Modal::Attachments(AttachmentList::new(rows)));
+        self.modal = Some(Modal::Attachments(AttachmentList::new(
+            rows,
+            self.ctx.icons,
+        )));
     }
 
     pub(super) fn modal_outcome(&mut self, outcome: ModalOutcome) -> Vec<Effect> {
