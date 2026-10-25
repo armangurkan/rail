@@ -558,6 +558,8 @@ fn list_query(request: &ListRequest, account_ids: &[Option<i64>]) -> Option<List
     store_scope(&request.scope, account_ids).map(|scope| ListQuery {
         scope,
         filter: request.filter.clone(),
+        // Step 7 maps `request.saved` here, in this one builder.
+        saved: None,
         account,
         utc_offset: request.utc_offset,
     })

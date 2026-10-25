@@ -47,6 +47,9 @@ pub enum Scope {
     /// Threads a snooze holds in any of these accounts: waiting for its archive, or archived
     /// until its time.
     Snoozed { accounts: Vec<i64> },
+    /// Every thread of these accounts, in any folder: a saved search's base scope, narrowed by
+    /// `ListQuery.saved`.
+    All { accounts: Vec<i64> },
 }
 
 /// The filter's `account:`, resolved by the caller.
@@ -63,6 +66,9 @@ pub enum AccountFilter {
 pub struct ListQuery {
     pub scope: Scope,
     pub filter: Filter,
+    /// The open saved search's filter, ANDed under `filter` as its own condition. Re-derived
+    /// by `filter::parse` on every read and never cached.
+    pub saved: Option<Filter>,
     pub account: AccountFilter,
     /// Seconds east of UTC.
     pub utc_offset: i32,
@@ -345,6 +351,16 @@ pub(super) fn where_clause(query: &ListQuery) -> (String, Vec<Value>) {
         conds.push("t.account_id = ?".to_string());
         params.push(Value::Integer(id));
     }
+    // The saved filter is its own condition, pushed before the live one, so the two intersect
+    // instead of one replacing the other.
+    if let Some((sql, values)) = query
+        .saved
+        .as_ref()
+        .and_then(|saved| saved.message_sql(query.utc_offset))
+    {
+        conds.push(sql);
+        params.extend(values);
+    }
     if let Some((sql, values)) = query.filter.message_sql(query.utc_offset) {
         conds.push(sql);
         params.extend(values);
@@ -392,6 +408,8 @@ fn scope_condition(scope: &Scope) -> (String, Vec<Value>) {
             format!("{accounts} AND {HELD}"),
             vec![Value::Text(ids_json(ids))],
         ),
+        // No folder join at all: any folder of these accounts.
+        Scope::All { accounts: ids } => (accounts.to_string(), vec![Value::Text(ids_json(ids))]),
     }
 }
 

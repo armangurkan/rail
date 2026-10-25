@@ -14,6 +14,7 @@ pub(super) fn snoozed(store: &Store) -> Vec<i64> {
     let query = ListQuery {
         scope: Scope::Snoozed { accounts: vec![1] },
         filter: parse(""),
+        saved: None,
         account: AccountFilter::Any,
         utc_offset: 0,
     };

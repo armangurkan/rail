@@ -76,6 +76,7 @@ fn query(scope: Scope, filter: &str) -> ListQuery {
     ListQuery {
         scope,
         filter: parse(filter),
+        saved: None,
         account: AccountFilter::Any,
         utc_offset: 0,
     }
