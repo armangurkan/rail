@@ -1,0 +1,138 @@
+name: release
+
+# A pushed v* tag builds rail on each supported platform and opens a draft release with the
+# archives, SHA256SUMS and build provenance attestations; publishing the draft stays a human
+# step. A pull request that touches the release files builds and packages without releasing.
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/package-release.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # The compiler release binaries are built with. It overrides rust-toolchain.toml, which
+  # follows stable for development.
+  RUSTUP_TOOLCHAIN: 1.99.1
+
+jobs:
+  linux:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # Debian Bookworm keeps the binary's glibc floor at 2.36, as for v0.2.2.
+    container: docker.io/library/rust:1.99.1-bookworm
+    timeout-minutes: 30
+    env:
+      BUILD_ENVIRONMENT: docker.io/library/rust:1.99.1-bookworm on ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Trust the checkout inside the container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Build
+        run: cargo build --release --locked --workspace
+      - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
+        run: scripts/package-release.sh "$TARGET" dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rail-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  macos:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      BUILD_ENVIRONMENT: GitHub-hosted ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the release compiler
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Build
+        run: cargo build --release --locked --workspace
+      - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
+        run: scripts/package-release.sh "$TARGET" dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rail-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: draft release
+    needs: [linux, macos]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: rail-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- *.tar.gz | tee SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # The changelog section for this version is the draft's notes.
+          awk -v head="## [${version}]" '
+            index($0, head) == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "error: CHANGELOG.md has no section for ${version}" >&2
+            exit 1
+          fi
+          gh release create "$TAG" --draft --verify-tag --title "Rail ${TAG}" \
+            --notes-file notes.md dist/*.tar.gz dist/SHA256SUMS

@@ -6,6 +6,11 @@ All notable changes to Rail are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Release binaries for Linux ARM64 and for macOS on Apple Silicon and Intel, built by GitHub
+  Actions from the release tag with build provenance attestations.
+
 ### Fixed
 
 - `sync.status` now counts a refused change as failed by the time `action.failed` arrives, so
