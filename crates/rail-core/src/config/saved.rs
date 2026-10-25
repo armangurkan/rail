@@ -82,6 +82,16 @@ pub fn duplicate_name<'a>(
         .map(|s| s.name.as_str())
 }
 
+/// Section 8's row for FR-5: the one sentence the prompt and the daemon both show when a name
+/// is refused. Named once so the two cannot drift; the loader says something else on purpose,
+/// quoting the offending value the way it does for an account name.
+#[must_use]
+pub fn name_rule() -> String {
+    format!(
+        "A saved search name must be 1 to {MAX_SAVED_SEARCH_NAME_CHARS} letters, digits, '-' or '_'."
+    )
+}
+
 /// FR-4, FR-5 and FR-6 for one `saved_search.put`, as the prompt and the daemon both see it.
 /// The text is §8's matching row verbatim, so the prompt's refusal and the daemon's error
 /// cannot drift apart.

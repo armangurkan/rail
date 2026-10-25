@@ -20,7 +20,7 @@ pub use model::{
 };
 pub use saved::{
     MAX_SAVED_SEARCH_NAME_CHARS, MAX_SAVED_SEARCHES, NameProblem, SavedSearch, check_name,
-    check_put, duplicate_name,
+    check_put, duplicate_name, name_rule,
 };
 /// A config value with its byte range in the file (for line numbers).
 pub use toml::Spanned;
