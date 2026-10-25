@@ -73,6 +73,8 @@ impl std::fmt::Debug for SaveCall {
 #[derive(Clone)]
 pub struct DaemonLink {
     /// Shared with `attachments_link`, which holds the two attachment calls.
+    /// `pub(super)` so a sibling module can add an op's method without this file growing past
+    /// the 800-line cap.
     pub(super) link: Link,
 }
 

@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/tests/saved.rs
+expression: "shot(&f, width, height)"
+---
+|Rail | All inboxes · 2 accounts · 5 …  | / from:dana               * Synced 12:39 | 12:40
+No threads match the filter.
+
+
+
+
+
+
+
+
+                 ┌ Save this filter as a search ────────────────────────┐
+                 │Name: needs-reply                                     │
+                 │                                                      │
+                 │Enter save · Esc cancel                               │
+                 └──────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+Enter open  j/k move  r reply  c compose  e archive  ? help          * work ok · * home ok

@@ -7,6 +7,7 @@ expression: text
                                    │Thread list                                                                   │
                                    │  Enter                Open the thread                                        │
                                    │  x *                  Filter the list as you type                            │
+                                   │  S                    Save the filter as a search                            │
                                    │  b                    Show or hide the sidebar                               │
                                    │  1                    Go to account 1's inbox                                │
                                    │  2                    Go to account 2's inbox                                │

@@ -6,6 +6,7 @@ mod attachments_link;
 #[cfg(test)]
 mod bulk_tests;
 mod daemon_link;
+mod saved_link;
 mod store_reader;
 #[cfg(test)]
 mod tests;
@@ -246,10 +247,6 @@ pub enum MailEvent {
         filename: String,
     },
     /// `saved_search.put` or `saved_search.remove` answered: the whole new list.
-    #[expect(
-        dead_code,
-        reason = "step 0 skeleton; step 10 brings it to life (refs #81)"
-    )]
     SavedSearchesChanged {
         result: Result<Vec<SavedSearch>, OpError>,
     },

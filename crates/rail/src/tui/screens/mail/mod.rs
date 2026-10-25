@@ -28,6 +28,7 @@ mod m365;
 mod modal_tests;
 mod palette;
 mod reading;
+mod saved;
 mod selection;
 mod sidebar;
 #[cfg(test)]
@@ -507,6 +508,9 @@ impl MailScreen {
             Action::ListFilter if self.focus == Focus::List => {
                 self.modal = Some(Modal::Filter(FilterLine::new(&self.filter_text)));
                 return Vec::new();
+            }
+            Action::ListSaveSearch if self.focus == Focus::List => {
+                return self.save_search_prompt();
             }
             _ => {}
         }

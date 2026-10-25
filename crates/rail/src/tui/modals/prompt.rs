@@ -52,10 +52,6 @@ impl fmt::Debug for TextPrompt {
 }
 
 impl TextPrompt {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "step 10 opens the prompt (refs #81)")
-    )]
     pub fn new(title: &str, label: &str, start: &str, check: Check, make: Make) -> Self {
         let mut input = TextInput::default();
         input.set_value(start);

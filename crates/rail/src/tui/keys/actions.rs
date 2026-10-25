@@ -99,6 +99,7 @@ actions! {
     GlobalUndo => "global.undo", [Global], ["z"], "Undo the last action";
     ListOpen => "list.open", [List], ["enter"], "Open the thread";
     ListFilter => "list.filter", [List], ["/"], "Filter the list as you type";
+    ListSaveSearch => "list.save_search", [List], ["S"], "Save the filter as a search";
     ListSidebar => "list.sidebar", [List, Sidebar], ["b"], "Show or hide the sidebar";
     ListAccount1 => "list.account_1", [List, Sidebar], ["1"], "Go to account 1's inbox";
     ListAccount2 => "list.account_2", [List, Sidebar], ["2"], "Go to account 2's inbox";

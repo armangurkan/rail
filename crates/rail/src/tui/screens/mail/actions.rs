@@ -502,6 +502,7 @@ impl MailScreen {
                 self.actions.failures.retain(|_, (r, _)| r.row != row.row);
                 vec![self.ctx.link.retry(row)]
             }
+            Command::SaveSearch { name } => self.save_search(name),
             other => match self.compose_command(other) {
                 Ok(effects) => effects,
                 Err(other) => self.picker_command(other),

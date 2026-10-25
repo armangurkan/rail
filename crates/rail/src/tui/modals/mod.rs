@@ -89,13 +89,6 @@ pub enum Command {
     /// Save every attachment of this part's message (the list's `S`).
     SaveAllAttachments(AttachmentTarget),
     /// The name prompt's answer: save the filter in force as a search called `name`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "step 0 skeleton; step 10 brings it to life (refs #81)"
-        )
-    )]
     SaveSearch {
         name: String,
     },
@@ -139,10 +132,6 @@ pub enum Modal {
     Help(Help),
     Errors(ErrorList),
     /// The one-line name prompt behind `S` and `r`.
-    #[expect(
-        dead_code,
-        reason = "step 0 skeleton; step 10 brings it to life (refs #81)"
-    )]
     Prompt(TextPrompt),
 }
 
