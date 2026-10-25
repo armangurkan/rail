@@ -22,6 +22,8 @@ mod connect_build_tests;
 #[cfg(test)]
 mod connect_tests;
 #[cfg(test)]
+mod context_tests;
+#[cfg(test)]
 mod draft_files_tests;
 #[cfg(test)]
 mod draft_gmail_tests;

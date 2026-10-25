@@ -15,6 +15,11 @@ All notable changes to Rail are recorded here. The format follows
 
 - `sync.status` now counts a refused change as failed by the time `action.failed` arrives, so
   a client that checks the status on the notice no longer sees the old count.
+- A config save from the TUI (`:theme`, `:time`, `:hints`, ...) and a daemon edit of the
+  config (adding or removing an account, changing where tokens are stored) at the same moment
+  could lose one of the two changes. Every edit of `config.toml` now holds a lock on
+  `config.lock` beside it, and each write uses its own temporary file. Reported by
+  @armangurkan.
 
 ## [0.2.3] - 2026-10-25
 

@@ -2,6 +2,9 @@
 
 pub mod edit;
 pub mod load;
+pub mod lock;
+#[cfg(test)]
+mod lock_tests;
 pub mod model;
 
 pub use edit::{
