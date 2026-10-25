@@ -28,10 +28,18 @@ const REMOVE_TITLE: &str = "Remove a saved search";
 const NAME_LABEL: &str = "Name: ";
 
 impl MailScreen {
+    /// There is filter text to name. The gate is the **text**, not the parsed filter: the
+    /// text is what is saved, and the parsed filter lags it by the filter debounce, so `S`
+    /// pressed straight after `Enter` on a line that plainly had text must not answer that
+    /// there is no filter. Whitespace alone is no filter.
+    pub(super) fn has_filter_text(&self) -> bool {
+        !self.filter_text.trim().is_empty()
+    }
+
     /// `S` and `:save-search`: the empty name prompt over the list, or FR-2's notice when
     /// there is no filter to name.
     pub(super) fn save_search_prompt(&mut self) -> Vec<Effect> {
-        if self.filter.is_empty() {
+        if !self.has_filter_text() {
             self.status
                 .notify("Set a filter with / first, then save it.", self.tick);
             return Vec::new();

@@ -116,7 +116,7 @@ impl MailScreen {
                 Target::Accent,
             ),
         ];
-        if !self.filter.is_empty() {
+        if self.has_filter_text() {
             commands.push((
                 Action::ListSaveSearch.description(),
                 "save-search",
