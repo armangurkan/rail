@@ -131,12 +131,11 @@ fn ids_of(f: &Fixture, account_id: i64) -> Vec<i64> {
         .conn()
         .prepare("SELECT id FROM threads WHERE account_id = ?1 ORDER BY id")
         .unwrap();
-    let ids = statement
+    statement
         .query_map([account_id], |row| row.get(0))
         .unwrap()
         .collect::<Result<Vec<i64>, _>>()
-        .unwrap();
-    ids
+        .unwrap()
 }
 
 /// The name of the account the thread belongs to.
