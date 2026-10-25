@@ -56,6 +56,8 @@ fn every_operation_name_is_unique_and_matches_its_marker() {
         DraftImport::NAME,
         SnoozeSet::NAME,
         SnoozeClear::NAME,
+        AttachmentSave::NAME,
+        AttachmentOpen::NAME,
     ];
     assert_eq!(markers, names::ALL);
     for internal in [Hello::NAME, DaemonInfoOp::NAME, DaemonStop::NAME] {

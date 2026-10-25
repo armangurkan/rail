@@ -721,6 +721,10 @@ fn only_reads_and_idempotent_operations_are_resent() {
         names::ACCOUNT_REMOVE,
         names::SECRETS_CONFIGURE,
         names::DAEMON_STOP,
+        // Neither carries a client token, so a resend would write `2-name.pdf` beside the
+        // first try's file (FR-20).
+        names::ATTACHMENT_SAVE,
+        names::ATTACHMENT_OPEN,
     ] {
         assert!(!super::connect::retry_safe(unsafe_op), "{unsafe_op}");
     }

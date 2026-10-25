@@ -12,6 +12,9 @@ use super::actions::{
     ActionApplyRequest, ActionApplyResponse, ActionRetryRequest, ActionRetryResponse,
     ActionUndoRequest, ActionUndoResponse,
 };
+use super::attachments::{
+    AttachmentOpenRequest, AttachmentOpenResponse, AttachmentSaveRequest, AttachmentSaveResponse,
+};
 use super::body::{BodyFetchRequest, BodyFetchResponse};
 use super::daemon::{
     DaemonInfo, DaemonInfoRequest, DaemonStopRequest, DaemonStopResponse, HelloRequest,
@@ -63,9 +66,11 @@ pub mod names {
     pub const DRAFT_IMPORT: &str = "draft.import";
     pub const SNOOZE_SET: &str = "snooze.set";
     pub const SNOOZE_CLEAR: &str = "snooze.clear";
+    pub const ATTACHMENT_SAVE: &str = "attachment.save";
+    pub const ATTACHMENT_OPEN: &str = "attachment.open";
 
     /// Every user operation, in the order of the specs' tables.
-    pub const ALL: [&str; 26] = [
+    pub const ALL: [&str; 28] = [
         STATUS,
         ACCOUNTS_LIST,
         PRESETS_LIST,
@@ -92,6 +97,8 @@ pub mod names {
         DRAFT_IMPORT,
         SNOOZE_SET,
         SNOOZE_CLEAR,
+        ATTACHMENT_SAVE,
+        ATTACHMENT_OPEN,
     ];
 
     /// The daemon's own methods: the handshake and its lifecycle. Not user operations.
@@ -226,6 +233,16 @@ operation!(
 operation!(
     /// Make a local draft of a Gmail draft, keeping its Gmail ids. Terminal-only.
     DraftImport, names::DRAFT_IMPORT, DraftImportRequest, DraftImportResponse
+);
+operation!(
+    /// Write a message's attachments into a directory the client resolved; answers one outcome
+    /// and a path per part, never bytes. Terminal-only.
+    AttachmentSave, names::ATTACHMENT_SAVE, AttachmentSaveRequest, AttachmentSaveResponse
+);
+operation!(
+    /// Write one attachment into a private cache directory for the system opener; answers its
+    /// path, never bytes. Terminal-only.
+    AttachmentOpen, names::ATTACHMENT_OPEN, AttachmentOpenRequest, AttachmentOpenResponse
 );
 operation!(
     /// The handshake: protocol and Rail versions.

@@ -17,8 +17,9 @@ use futures_util::FutureExt;
 
 use rail_core::ops::{
     AccountSyncStatus, ActionApplyResponse, ActionFailed, ActionRetryResponse, ActionUndoResponse,
-    BodyFetchResponse, DraftId, DraftImportResponse, DraftPushResponse, DraftSaveResponse,
-    DraftSendResponse, OpError, OutboxId, SnoozeClearResponse, SnoozeWoke,
+    AttachmentOpenResponse, AttachmentSaveResponse, BodyFetchResponse, DraftId,
+    DraftImportResponse, DraftPushResponse, DraftSaveResponse, DraftSendResponse, OpError,
+    OutboxId, SnoozeClearResponse, SnoozeWoke,
 };
 use rail_core::provider::Mailbox;
 use rail_core::store::AddressEntry;
@@ -222,6 +223,31 @@ pub enum MailEvent {
         count: usize,
         subject: Result<Option<String>, ReadError>,
     },
+    // Sent by `DaemonLink::attachment_save`, which the save-wiring step adds: this half of
+    // the feature is the daemon's, and the enum is the pinned surface both halves share.
+    #[expect(
+        dead_code,
+        reason = "sent once the save keys are wired to the daemon link"
+    )]
+    /// `attachment.save` answered. `account` lets the screen name the provider in a
+    /// `Missing` line; `dir` is what the status line says the files landed in; `single` is
+    /// true when one part was asked for (`s` or an `Enter` Rail would not open).
+    AttachmentSaved {
+        result: Result<AttachmentSaveResponse, OpError>,
+        account: String,
+        dir: String,
+        single: bool,
+    },
+    #[expect(
+        dead_code,
+        reason = "sent once the open keys are wired to the daemon link"
+    )]
+    /// `attachment.open` answered; `filename` names the part in a failure's line.
+    AttachmentOpened {
+        result: Result<AttachmentOpenResponse, OpError>,
+        account: String,
+        filename: String,
+    },
 }
 
 /// Names and numbers only: a `MailEvent` carries mail, which must never reach a log.
@@ -415,6 +441,21 @@ impl fmt::Debug for MailEvent {
                 .debug_struct("WokeRead")
                 .field("count", count)
                 .field("ok", &subject.is_ok())
+                .finish(),
+            // Never `dir`, `filename` or `account`: a sender-chosen name and a user's own
+            // directory must not reach a log.
+            Self::AttachmentSaved { result, single, .. } => f
+                .debug_struct("AttachmentSaved")
+                .field("ok", &result.is_ok())
+                .field("single", single)
+                .field(
+                    "results",
+                    &result.as_ref().map_or(0, |answer| answer.results.len()),
+                )
+                .finish(),
+            Self::AttachmentOpened { result, .. } => f
+                .debug_struct("AttachmentOpened")
+                .field("ok", &result.is_ok())
                 .finish(),
         }
     }

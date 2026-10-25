@@ -174,6 +174,9 @@ impl fmt::Debug for BodyState {
 /// An attachment's listing data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentView {
+    /// The provider's own id for this part, which names it to `attachment.save` and
+    /// `attachment.open`.
+    pub part_id: String,
     pub filename: String,
     pub mime_type: String,
     pub size: i64,
@@ -553,6 +556,21 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Every attachment the store lists for that account's message, in `attachments.id`
+    /// order; empty when the account has no such message. The only source of a part's
+    /// filename, type and size for `attachment.save` and `attachment.open`: Graph's `$value`
+    /// answers bytes with no metadata.
+    ///
+    /// # Errors
+    /// The store could not be read.
+    pub fn listed_attachments(
+        &self,
+        _account_id: i64,
+        _remote: &str,
+    ) -> Result<Vec<AttachmentView>, StoreError> {
+        Ok(Vec::new())
+    }
+
     fn attach(&self, messages: &mut [MessageView]) -> Result<(), StoreError> {
         let ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
         let mut stmt = self.conn.prepare(
@@ -564,6 +582,7 @@ impl Store {
             Ok((
                 r.get::<_, i64>(0)?,
                 AttachmentView {
+                    part_id: String::new(),
                     filename: r.get(1)?,
                     mime_type: r.get(2)?,
                     size: r.get(3)?,

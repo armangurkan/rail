@@ -1,4 +1,5 @@
-//! Yes-or-no confirmations, the link number prompt, and the read-only attachment list.
+//! Yes-or-no confirmations and the link number prompt. The attachment list lives in
+//! `modals::attachments`; `human_size` stays here, where the composer's review reads it too.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
@@ -8,7 +9,7 @@ use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{Command, ModalOutcome, boxed};
-use crate::tui::text::{fit, pad, width, wrap};
+use crate::tui::text::{width, wrap};
 use crate::tui::theme::Theme;
 
 /// A confirmation's width, its border included.
@@ -135,64 +136,6 @@ impl LinkPrompt {
             ),
             Line::styled("Enter open · Esc cancel", theme.muted),
         ];
-        frame.render_widget(Paragraph::new(lines), inner);
-    }
-}
-
-/// One attachment as listed: name and type are outside text, escaped when drawn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AttachmentRow {
-    pub name: String,
-    pub mime_type: String,
-    pub size: i64,
-}
-
-pub struct AttachmentList {
-    rows: Vec<AttachmentRow>,
-}
-
-impl AttachmentList {
-    pub fn new(rows: Vec<AttachmentRow>) -> Self {
-        Self { rows }
-    }
-
-    pub(super) fn key(&mut self, key: KeyEvent) -> ModalOutcome {
-        match key.code {
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q' | 'a') => ModalOutcome::Close,
-            _ => ModalOutcome::Stay,
-        }
-    }
-
-    pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let height = u16::try_from(self.rows.len())
-            .unwrap_or(u16::MAX)
-            .saturating_add(4);
-        let inner = boxed(frame, area, 76, height, "Attachments", theme);
-        let cols = usize::from(inner.width);
-        let mut lines: Vec<Line> = self
-            .rows
-            .iter()
-            .map(|row| {
-                let size = human_size(row.size);
-                let name_cols = cols.saturating_sub(30 + size.len());
-                Line::styled(
-                    format!(
-                        "{} {} {size}",
-                        pad(&row.name, name_cols),
-                        pad(&row.mime_type, 28)
-                    ),
-                    theme.text,
-                )
-            })
-            .collect();
-        lines.push(Line::default());
-        lines.push(Line::styled(
-            fit(
-                "Rail lists attachments; opening and saving them comes in a later version.",
-                cols,
-            ),
-            theme.muted,
-        ));
         frame.render_widget(Paragraph::new(lines), inner);
     }
 }

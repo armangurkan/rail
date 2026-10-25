@@ -95,7 +95,18 @@ fn context(
             .iter()
             .map(|a| a.signature.as_deref().map(read_signature))
             .collect(),
+        // The daemon's working directory is `/`, so the client resolves the destination.
+        attachment_dir: rail_core::paths::attachment_target(
+            config.general.attachment_dir.as_deref(),
+            home_dir().as_deref(),
+            rail_core::paths::download_dir().as_deref(),
+        ),
     }
+}
+
+/// This process's home directory, read and never mutated.
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(std::path::PathBuf::from)
 }
 
 /// A signature file's text (a leading `~` is the home directory), trailing whitespace

@@ -211,6 +211,36 @@ pub fn canonical_dir(dir: &Path) -> PathBuf {
     resolved
 }
 
+/// The user's download directory from an injected environment: `xdg_download` when given,
+/// else `home/Downloads`. `None` without either. On Linux `xdg_download` is the value of the
+/// `XDG_DOWNLOAD_DIR` **entry of `~/.config/user-dirs.dirs`** — not an environment variable —
+/// which `directories` reads; the argument keeps this function pure so tests never mutate the
+/// environment (`unsafe` is forbidden, so `std::env::set_var` is not available).
+#[must_use]
+pub fn download_dir_from(_home: Option<&Path>, _xdg_download: Option<&Path>) -> Option<PathBuf> {
+    None
+}
+
+/// `download_dir_from` over this process's environment, through `directories::UserDirs`.
+#[must_use]
+pub fn download_dir() -> Option<PathBuf> {
+    None
+}
+
+/// Where a save lands. `configured` being `~` alone, or starting `~/`, is resolved against
+/// `home`; an empty `configured` counts as unset, as an empty `RAIL_*_DIR` does. Anything
+/// else is returned **as typed** and never made absolute against a working directory, so a
+/// relative or `~user/...` value reaches the daemon unchanged and is refused by name. Unset
+/// falls back to `download_dir_from`.
+#[must_use]
+pub fn attachment_target(
+    _configured: Option<&Path>,
+    _home: Option<&Path>,
+    _xdg_download: Option<&Path>,
+) -> Option<PathBuf> {
+    None
+}
+
 /// Create `dir` (and missing parents) readable by the owner only. On unix a
 /// directory that already exists is tightened to 0700.
 #[cfg(unix)]

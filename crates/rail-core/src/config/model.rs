@@ -71,6 +71,10 @@ pub struct General {
     /// Rail asks first; `0` never asks. Trash asks at every size. A number, not a two-state
     /// choice, so it has no palette command (CONTRIBUTING's opinionated-defaults rule).
     pub bulk_confirm: u32,
+    /// `general.attachment_dir`: where `s`, `S` and `w` save attachments. Read verbatim: the
+    /// client expands a leading `~` and refuses a relative path, because the daemon's working
+    /// directory is `/`. Unset is the user's download directory.
+    pub attachment_dir: Option<PathBuf>,
 }
 
 impl Default for General {
@@ -92,6 +96,7 @@ impl Default for General {
             thread_order: ThreadOrder::Oldest,
             dim_read: DimRead::Dot,
             bulk_confirm: 50,
+            attachment_dir: None,
         }
     }
 }
@@ -545,6 +550,21 @@ mod tests {
             "[general]\n{general}\n[[accounts]]\nname = \"w\"\nkind = \"gmail\"\naddress = \"w@example.com\"\nclient_id = \"c\"\n{account}"
         );
         crate::config::parse(&text, std::path::Path::new("c.toml")).unwrap()
+    }
+
+    /// AC-34: `attachment_dir` reaches `General` exactly as it was typed — the client expands
+    /// `~` and absolutizes, not the parser — and an unknown key still refuses the file.
+    #[test]
+    fn attachment_dir_is_read_verbatim() {
+        let config = with_account("attachment_dir = \"~/mail\"", "");
+        assert_eq!(
+            config.general.attachment_dir,
+            Some(std::path::PathBuf::from("~/mail"))
+        );
+        assert_eq!(with_account("", "").general.attachment_dir, None);
+        assert_eq!(General::default().attachment_dir, None);
+        let text = "[general]\nattachement_dir = \"~/mail\"\n";
+        assert!(crate::config::parse(text, std::path::Path::new("c.toml")).is_err());
     }
 
     #[test]

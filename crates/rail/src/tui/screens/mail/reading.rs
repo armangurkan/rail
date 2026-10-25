@@ -443,15 +443,23 @@ impl MailScreen {
         let Some(reader) = self.reader.as_ref() else {
             return;
         };
-        let rows: Vec<AttachmentRow> = reader
-            .detail()
+        let detail = reader.detail();
+        let account = self.account_name(detail.account_id).unwrap_or_default();
+        let rows: Vec<AttachmentRow> = detail
             .messages
             .iter()
-            .flat_map(|m| m.attachments.iter())
-            .map(|a| AttachmentRow {
-                name: a.filename.clone(),
-                mime_type: a.mime_type.clone(),
-                size: a.size,
+            .enumerate()
+            .flat_map(|(index, m)| {
+                let account = account.clone();
+                m.attachments.iter().map(move |a| AttachmentRow {
+                    account: account.clone(),
+                    message: m.remote_id.clone(),
+                    part_id: a.part_id.clone(),
+                    name: a.filename.clone(),
+                    mime_type: a.mime_type.clone(),
+                    size: a.size,
+                    message_index: index,
+                })
             })
             .collect();
         if rows.is_empty() {

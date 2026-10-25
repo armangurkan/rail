@@ -2,6 +2,7 @@
 //! attachment list, the filter line, the palette, the label and theme pickers, help and `:errors`.
 //! Modal keys are fixed (Enter, Esc, `y`/`n`, arrows): they are not keymap actions.
 
+pub mod attachments;
 pub mod confirm;
 pub mod errors;
 pub mod filter;
@@ -19,7 +20,17 @@ use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Clear};
 use url::Url;
 
-pub use confirm::{AttachmentList, AttachmentRow, Confirm, LinkPrompt};
+pub use attachments::{AttachmentList, AttachmentRow};
+// Named by `Command`'s attachment variants, which the modal step adds.
+#[cfg_attr(
+    not(test),
+    expect(
+        unused_imports,
+        reason = "re-exported for Command's attachment variants"
+    )
+)]
+pub use attachments::AttachmentTarget;
+pub use confirm::{Confirm, LinkPrompt};
 pub use errors::{ErrorList, ErrorRow};
 pub use filter::FilterLine;
 pub use help::Help;

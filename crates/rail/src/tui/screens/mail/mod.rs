@@ -49,6 +49,7 @@ mod view;
 mod view_tests;
 
 use std::cell::Cell;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossterm::event::KeyEvent;
@@ -125,6 +126,14 @@ pub struct MailContext {
     /// Each account's signature (in `config.toml`'s order): the file's text, why it could not
     /// be read, or `None` when none is set.
     pub signatures: Vec<Option<Result<String, String>>>,
+    /// Where `s`, `S` and `w` save attachments, resolved once at startup from
+    /// `[general] attachment_dir` and the user's download directory. `None` means neither
+    /// answered, and the three keys say so instead of sending anything.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read by the save keys, which a later step wires")
+    )]
+    pub attachment_dir: Option<PathBuf>,
 }
 
 /// One configured account, in `config.toml`'s order.
