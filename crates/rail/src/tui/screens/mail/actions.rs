@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use rail_core::ops::{
-    Action as MailAction, ActionApplyResponse, ActionFailed, OpError, OutboxId, RowToken,
-    client_token,
+    Action as MailAction, ActionApplyResponse, ActionFailed, MAX_ACTION_THREADS, OpError, OutboxId,
+    RowToken, client_token,
 };
 use rail_core::store::view::ThreadDetail;
 
@@ -17,12 +17,10 @@ use super::{Focus, MailScreen, error_line};
 use crate::tui::app::Effect;
 use crate::tui::data::{ApplyCall, MailEvent};
 use crate::tui::keys::Action;
-use crate::tui::modals::{Command, Confirm, Modal};
-use crate::tui::text::{escape, fit};
+use crate::tui::modals::Command;
 
 /// Ticks the undo notice stays: `UNDO_GRACE` (10 s) at one tick per 250 ms.
 pub const UNDO_TICKS: usize = 40;
-const SHOWN_SUBJECT_CHARS: usize = 120;
 
 /// The newest action with grace, while `z` can take it back.
 #[derive(Debug)]
@@ -43,6 +41,9 @@ pub(super) struct LastAction {
     undos: usize,
     /// Some undo answered `too_late`.
     too_late: bool,
+    /// Some undo took rows back. Over a bulk action's chunks an answer can hold both, and
+    /// `too late to undo` would then report the opposite of what mostly happened.
+    some_undone: bool,
     /// The targets that came from the selection, put back if a call fails.
     selected: Vec<(i64, Picked)>,
     /// Some failed call already put its targets back.
@@ -51,6 +52,15 @@ pub(super) struct LastAction {
     undid: bool,
     /// What the record is: undoing a send reopens its review.
     kind: Record,
+}
+
+/// What one `action.undo` answered. Both can hold at once over a bulk action's chunks.
+#[derive(Debug, Clone, Copy, Default)]
+struct Undone {
+    /// Some rows were already sent, being sent, failed or unknown.
+    too_late: bool,
+    /// Some rows came back.
+    some: bool,
 }
 
 /// What an undo record took: thread actions, a `draft.send` or a `draft.push`.
@@ -73,6 +83,7 @@ impl LastAction {
             undo_wanted: false,
             undos: 0,
             too_late: false,
+            some_undone: false,
             selected,
             restored: false,
             undid: false,
@@ -93,7 +104,7 @@ pub(crate) struct ActionState {
     /// Threads whose action failed: the row and the escaped line on their list row.
     pub(crate) failures: BTreeMap<i64, (RowToken, String)>,
     /// What `y` on a thread-action confirmation applies: the action and its targets.
-    confirming: Option<(MailAction, Vec<(i64, Picked)>)>,
+    pub(super) confirming: Option<(MailAction, Vec<(i64, Picked)>)>,
     /// The picker waiting for its labels, then open: what its answer applies to.
     pub(super) picking: Option<super::actions_pick::Picking>,
 }
@@ -230,16 +241,6 @@ impl MailScreen {
         self.send_action(mail, &targets, true)
     }
 
-    /// Ask before applying `action` to this many threads: the fixed question and count of
-    /// `bulk`, over the list.
-    fn confirm_action(&mut self, action: MailAction, targets: Vec<(i64, Picked)>) -> Vec<Effect> {
-        let lines = vec![super::bulk::question(&action, targets.len())];
-        let head = super::bulk::title(&action);
-        self.actions.confirming = Some((action, targets));
-        self.modal = Some(Modal::Confirm(Confirm::new(head, lines, Command::Trash)));
-        Vec::new()
-    }
-
     fn account_name(&self, account_id: i64) -> Option<String> {
         let index = self
             .account_ids
@@ -318,7 +319,8 @@ impl MailScreen {
         by_account
     }
 
-    /// One `action.apply` per account.
+    /// One `action.apply` per account per `MAX_ACTION_THREADS` threads, in thread-id order,
+    /// each under its own client token so a failed chunk is retried on its own.
     fn dispatch(
         &mut self,
         seq: u64,
@@ -333,14 +335,16 @@ impl MailScreen {
                     .notify("This account is no longer configured.", self.tick);
                 continue;
             };
-            effects.push(self.ctx.link.apply(ApplyCall {
-                seq,
-                account,
-                threads,
-                action: action.clone(),
-                grace,
-                client_token: client_token(),
-            }));
+            for chunk in threads.chunks(MAX_ACTION_THREADS) {
+                effects.push(self.ctx.link.apply(ApplyCall {
+                    seq,
+                    account: account.clone(),
+                    threads: chunk.to_vec(),
+                    action: action.clone(),
+                    grace,
+                    client_token: client_token(),
+                }));
+            }
         }
         effects
     }
@@ -354,32 +358,6 @@ impl MailScreen {
                 .iter()
                 .map(|(id, _)| id)
                 .eq(targets.iter().map(|(id, _)| id))
-    }
-
-    fn confirm_trash(&mut self, targets: Vec<(i64, Picked)>) -> Vec<Effect> {
-        let first = targets.first().map(|(id, _)| *id);
-        let subject = self
-            .list
-            .rows()
-            .iter()
-            .find(|r| Some(r.key.thread_id) == first)
-            .map(|r| r.subject.clone())
-            .or_else(|| self.reader.as_ref().map(|r| r.detail().subject.clone()));
-        let line = match (targets.len(), subject) {
-            (1, Some(subject)) => {
-                format!("Trash \"{}\"?", fit(&escape(&subject), SHOWN_SUBJECT_CHARS))
-            }
-            (n, _) => super::bulk::question(&MailAction::Trash {}, n),
-        };
-        let mut lines = vec![line];
-        lines.extend(self.trash_notes(&targets));
-        self.actions.confirming = Some((MailAction::Trash {}, targets));
-        self.modal = Some(Modal::Confirm(Confirm::new(
-            "Trash?",
-            lines,
-            Command::Trash,
-        )));
-        Vec::new()
     }
 
     /// `z`: take back the newest action. Calls still unanswered are undone as they answer.
@@ -410,11 +388,16 @@ impl MailScreen {
             }
             return Vec::new();
         }
-        last.undos += 1;
+        let batches = super::bulk::undo_batches(rows);
+        last.undos += batches.len();
+        let seq = last.seq;
         if waiting {
             self.status.notify("undoing…", tick);
         }
-        vec![self.ctx.link.undo(last.seq, rows)]
+        batches
+            .into_iter()
+            .map(|batch| self.ctx.link.undo(seq, batch))
+            .collect()
     }
 
     /// Mark-read on open: no grace, no notice, nothing to undo.
@@ -463,14 +446,20 @@ impl MailScreen {
         match event {
             MailEvent::Applied { call, result } => self.applied(&call, result),
             MailEvent::Undone { seq, result } => {
-                let (too_late, failed) = match &result {
-                    Ok(answer) => (!answer.too_late.is_empty(), false),
+                let (answered, failed) = match &result {
+                    Ok(answer) => (
+                        Undone {
+                            too_late: !answer.too_late.is_empty(),
+                            some: !answer.undone.is_empty(),
+                        },
+                        false,
+                    ),
                     Err(error) => {
                         self.action_error("undo", error);
-                        (false, true)
+                        (Undone::default(), true)
                     }
                 };
-                if self.undone(seq, too_late, failed) {
+                if self.undone(seq, answered, failed) {
                     self.reopen_sent();
                 }
                 self.dirty()
@@ -544,13 +533,19 @@ impl MailScreen {
                 self.finish_undo(true);
                 return Vec::new();
             }
-            last.undos += 1;
-            return vec![self.ctx.link.undo(last.seq, rows)];
+            let batches = super::bulk::undo_batches(rows);
+            last.undos += batches.len();
+            let seq = last.seq;
+            return batches
+                .into_iter()
+                .map(|batch| self.ctx.link.undo(seq, batch))
+                .collect();
         }
         last.rows.extend(rows);
         let (done, _) = verbs(&call.action);
         let key = self.ctx.keymap.label(Action::GlobalUndo);
-        let text = format!("{done} {} · {key} undoes", last.count);
+        let count = super::header::thousands(u64::try_from(last.count).unwrap_or(u64::MAX));
+        let text = format!("{done} {count} · {key} undoes");
         let left = last.until.saturating_sub(self.tick);
         self.status.notify_for(text, self.tick, left);
         Vec::new()
@@ -645,10 +640,12 @@ impl MailScreen {
             return false;
         };
         if last.undid {
-            let text = match (last.too_late, last.kind) {
-                (true, _) => "too late to undo",
-                (false, Record::Pushed) => "kept on this computer",
-                (false, Record::Threads | Record::Sent) => "undone",
+            // A bulk action's chunks can answer both ways at once: say which it was.
+            let text = match (last.too_late, last.some_undone, last.kind) {
+                (true, true, _) => "undone in part: some were already sent",
+                (true, false, _) => "too late to undo",
+                (false, _, Record::Pushed) => "kept on this computer",
+                (false, _, Record::Threads | Record::Sent) => "undone",
             };
             self.status.notify(text, tick);
         } else if say_nothing {
@@ -659,8 +656,8 @@ impl MailScreen {
 
     /// An `action.undo` answered. An answer for a replaced record says only `too late to
     /// undo`; one for no known record is stale and ignored. True when a send was undone.
-    fn undone(&mut self, seq: u64, too_late: bool, failed: bool) -> bool {
-        if self.older_undone(seq, too_late, failed) {
+    fn undone(&mut self, seq: u64, answered: Undone, failed: bool) -> bool {
+        if self.older_undone(seq, answered.too_late, failed) {
             return false;
         }
         let Some(last) = self.actions.last.as_mut().filter(|l| l.seq == seq) else {
@@ -669,7 +666,8 @@ impl MailScreen {
         last.undos = last.undos.saturating_sub(1);
         if !failed {
             last.undid = true;
-            last.too_late |= too_late;
+            last.too_late |= answered.too_late;
+            last.some_undone |= answered.some;
         }
         self.finish_undo(false)
     }
