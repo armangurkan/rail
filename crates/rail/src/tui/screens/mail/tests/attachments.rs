@@ -198,6 +198,27 @@ fn box_left(top: &str) -> usize {
         .expect("the box's top border")
 }
 
+/// The rows inside the attachments box that carry the cursor marker, cut from the box's left
+/// border: the reader drawn behind the box marks a collapsed card with the same glyph at the
+/// frame's first column, outside the box.
+fn marked_in_box(rows: &[String]) -> Vec<String> {
+    let top = rows
+        .iter()
+        .position(|row| row.contains("┌ Attachments "))
+        .expect("the box's top border");
+    let bottom = rows[top + 1..]
+        .iter()
+        .position(|row| row.contains('└'))
+        .map(|at| top + 1 + at)
+        .expect("the box's bottom border");
+    let left = box_left(&rows[top]);
+    rows[top + 1..bottom]
+        .iter()
+        .map(|row| row.chars().skip(left).collect::<String>())
+        .filter(|inside| inside.contains("▸ "))
+        .collect()
+}
+
 fn calls(f: &Fixture) -> Vec<FakeCall> {
     f.fake.calls.lock().unwrap().clone()
 }
@@ -320,17 +341,11 @@ async fn j_and_k_move_the_cursor_over_parts_and_skip_headings() {
     press(&mut f, KeyCode::Char('j')).await;
     press(&mut f, KeyCode::Char('j')).await;
     press(&mut f, KeyCode::Char('k')).await;
-    let marked: Vec<String> = rows(&f, 90, 24)
-        .into_iter()
-        .filter(|row| row.contains("▸ "))
-        .collect();
+    let marked = marked_in_box(&rows(&f, 90, 24));
     assert_eq!(marked.len(), 1, "{marked:?}");
     assert!(marked[0].contains("logo.png"), "{marked:?}");
     press(&mut f, KeyCode::Char('j')).await;
-    let marked: Vec<String> = rows(&f, 90, 24)
-        .into_iter()
-        .filter(|row| row.contains("▸ "))
-        .collect();
+    let marked = marked_in_box(&rows(&f, 90, 24));
     assert_eq!(marked.len(), 1, "{marked:?}");
     assert!(
         marked[0].contains("Q4 numbers.xlsx"),

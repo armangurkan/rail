@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::pty::{LIMIT, collect, script_available, text, wait_until};
+use super::pty::{LIMIT, collect, drawn_row, script_available, text, wait_until};
 use super::{KillsChild, StopsDaemon, WORK_FILE_BACKEND, rail_env, write_config};
 
 const API: &str = "/gmail/v1/users/me";
@@ -192,7 +192,13 @@ async fn pressing_a_then_s_in_the_reader_saves_the_attachment_to_the_configured_
     // The status line is the barrier, not `file.exists()`: the handler creates the file with
     // `create_new` before it writes and fsyncs it (§7), so a poll between the two would read a
     // short file. The status is printed only after the op answered.
-    wait_until("the status line", &output, seen("Saved plan.pdf to"));
+    // ratatui redraws only the cells that changed: `Saving…` already put `Sav` on the status
+    // row, so the stream carries a cursor move and `ed plan.pdf to …`, never the whole phrase.
+    // Read the row it was drawn on instead.
+    let status = output.clone();
+    wait_until("the status line", &output, move || {
+        drawn_row(&text(&status), "ed plan.pdf to") == Some(30)
+    });
     let file = saved.join("plan.pdf");
     assert_eq!(std::fs::read(&file).unwrap(), b"hello", "the served bytes");
     assert_eq!(
