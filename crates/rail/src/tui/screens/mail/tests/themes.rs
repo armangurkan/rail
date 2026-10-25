@@ -265,6 +265,31 @@ fn two_saves_at_once_both_land_in_the_file() {
     }
 }
 
+#[test]
+fn a_save_waits_while_another_process_holds_the_config_lock() {
+    use crate::tui::screens::mail::themes::{Saved, write_general};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[general]\n").unwrap();
+    let held = rail_core::config::lock::lock_config(&path).unwrap();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let save = std::thread::spawn({
+        let path = path.clone();
+        move || {
+            let result = write_general(&path, "theme", Saved::Text(Some("Dracula".into())));
+            let _ = done_tx.send(());
+            result
+        }
+    });
+    let waited = done_rx.recv_timeout(std::time::Duration::from_millis(200));
+    assert!(waited.is_err(), "the save waits for the lock");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "[general]\n");
+    drop(held);
+    save.join().unwrap().unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("theme = \"Dracula\""), "{text}");
+}
+
 /// The last row of the screen drawn at 90x24.
 fn bottom_row(f: &Fixture) -> String {
     let lines = crate::tui::test_util::render_lines(90, 24, |frame| {

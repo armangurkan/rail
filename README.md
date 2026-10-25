@@ -1284,6 +1284,7 @@ in concealed fields. Values reach `op` only on its standard input, never as comm
 | What | Linux | macOS |
 |---|---|---|
 | Config | `~/.config/rail/config.toml` | `~/Library/Application Support/rail/config.toml` |
+| Config lock (held while Rail edits the config) | `~/.config/rail/config.lock` | `~/Library/Application Support/rail/config.lock` |
 | Presets | `~/.config/rail/presets/*.toml`, `/etc/rail/presets/*.toml` | `~/Library/Application Support/rail/presets/*.toml`, `/etc/rail/presets/*.toml` |
 | Store | `~/.local/share/rail/rail.db` | `~/Library/Application Support/rail/rail.db` |
 | Token file (`secrets = "file"`) | `~/.local/share/rail/secrets.json` | `~/Library/Application Support/rail/secrets.json` |
@@ -1299,7 +1300,9 @@ and `RAIL_RUNTIME_DIR` (the directory that holds the daemon's socket). Give each
 ### The background daemon
 
 Every operation (logins, saves, sync, search, `rail doctor`) runs in one background process, so two
-commands never race on the store, the config or a login. You never start it yourself: the first
+commands never race on the store, the config or a login. The TUI's own config saves (`:theme`,
+`:time`, `:hints` and the like) take the same config lock, so no edit is lost. You never start it
+yourself: the first
 command that needs it starts `rail daemon run` in the background, or your login does after
 `rail daemon install`. While any account is configured it keeps running and syncs; with none it
 exits after ten minutes idle. A login you begin keeps waiting in the daemon until you finish it,

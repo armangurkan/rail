@@ -1,8 +1,8 @@
 //! `:theme` and `:accent`: the pickers, the preview, the save (which `:hints` shares).
 
 use std::path::Path;
-use std::sync::Mutex;
 
+use rail_core::config::lock::lock_config;
 use rail_core::config::{
     load_text_or_empty, set_general_bool, set_general_number, set_general_text,
 };
@@ -265,14 +265,12 @@ pub(super) enum Saved {
     Bool(Option<bool>),
 }
 
-/// Held across a read-edit-rename so two saves never share the temporary file.
-static WRITE: Mutex<()> = Mutex::new(());
-
-/// Read, edit and replace `config.toml` (an owner-only sibling, synced, then renamed). A symlinked
-/// file is replaced where it points, so the link survives. The directory is created when missing
-/// and otherwise left as it is.
+/// Read, edit and replace `config.toml` (an owner-only sibling, synced, then renamed) under the
+/// config lock, which the daemon and other TUIs hold for their own edits. A symlinked file is
+/// replaced where it points, so the link survives. The directory is created when missing and
+/// otherwise left as it is.
 pub(super) fn write_general(path: &Path, key: &str, value: Saved) -> Result<(), String> {
-    let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = lock_config(path).map_err(|e| e.to_string())?;
     let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
     let target = if is_link {
         std::fs::canonicalize(path).map_err(|e| e.to_string())?

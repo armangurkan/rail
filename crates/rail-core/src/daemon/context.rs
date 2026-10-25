@@ -7,7 +7,8 @@ use url::Url;
 
 use super::pending::PendingTable;
 use crate::auth::{ItemIdCache, http_client};
-use crate::ops::{BrowserEnv, OpError};
+use crate::config::lock::lock_config;
+use crate::ops::{BrowserEnv, ErrorCode, OpError};
 use crate::paths::Paths;
 use crate::sync::SyncManager;
 
@@ -227,6 +228,9 @@ impl DaemonContext {
                 .config_lock
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
+            // The file lock shuts out TUIs editing `config.toml` too.
+            let _file = lock_config(&ctx.paths.config_file())
+                .map_err(|e| OpError::io(ErrorCode::Config, "locking the config file", &e))?;
             work(&ctx)
         })
         .await

@@ -4,6 +4,7 @@
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use directories::ProjectDirs;
 
@@ -268,15 +269,22 @@ pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// own permissions as they are.
 pub fn replace_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = parent_of(path);
-    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
-    tmp_name.push(".tmp");
-    let tmp = parent.join(tmp_name);
+    let tmp = temp_sibling(path);
     let result = write_synced_private(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
     result?;
     sync_dir(parent)
+}
+
+/// `<name>.<pid>-<n>.tmp` beside `path`: no two writes, in this process or another, share one.
+fn temp_sibling(path: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}-{n}.tmp", std::process::id()));
+    parent_of(path).join(name)
 }
 
 /// The directory `path` is in (`.` for a bare file name).
@@ -513,7 +521,8 @@ mod tests {
         write_private_atomic(&file, b"new").unwrap();
         assert_eq!(mode(&file), 0o600);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
-        assert!(!stale_tmp.exists());
+        // A leftover from an older build's fixed temp name is never written through.
+        assert_eq!(std::fs::read_to_string(&stale_tmp).unwrap(), "stale");
     }
 
     #[cfg(unix)]
@@ -532,6 +541,21 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
         let missing = dir.path().join("missing").join("f");
         assert!(replace_private_atomic(&missing, b"x").is_err());
+    }
+
+    #[test]
+    fn every_atomic_write_gets_its_own_temp_file_beside_the_target() {
+        let file = Path::new("/somewhere/config.toml");
+        let (a, b) = (temp_sibling(file), temp_sibling(file));
+        assert_ne!(a, b, "two writers never share a temp file");
+        for tmp in [&a, &b] {
+            assert_eq!(tmp.parent(), file.parent());
+            let name = tmp.file_name().unwrap().to_string_lossy();
+            assert!(
+                name.starts_with("config.toml.") && name.ends_with(".tmp"),
+                "{name}"
+            );
+        }
     }
 
     #[test]
