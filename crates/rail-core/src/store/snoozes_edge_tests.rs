@@ -240,8 +240,8 @@ fn a_woken_thread_archived_elsewhere_is_dated_by_its_mail_again() {
     assert_eq!(last_date(&store, t1), 2, "its newest message's");
 }
 
-/// t1 and t2 snoozed together, their one archive refused.
-fn failed_pair(store: &mut Store) -> i64 {
+/// t1 and t2 snoozed together, their one archive refused: t1, and that archive's row.
+fn refused_pair(store: &mut Store) -> (i64, i64) {
     let (t1, t2) = (thread(store, "t1"), thread(store, "t2"));
     let (rows, _) = snooze(store, vec![t1, t2], NOW + HOUR, "a");
     store
@@ -252,7 +252,80 @@ fn failed_pair(store: &mut Store) -> i64 {
         failure: Failure::Permanent("Gmail refused the change".into()),
     };
     store.outbox_write(&refuse, NOW + 10).unwrap();
-    t1
+    (t1, rows[0])
+}
+
+fn failed_pair(store: &mut Store) -> i64 {
+    refused_pair(store).0
+}
+
+/// The refused archive `row` of `refused_pair` sent again from `:errors`.
+fn retry(store: &mut Store, row: i64, at: i64) {
+    let retry = OutboxWrite::Retry {
+        id: row,
+        client_token: "a".into(),
+    };
+    store.outbox_write(&retry, at).unwrap();
+}
+
+#[test]
+fn retrying_a_pairs_archive_after_one_thread_went_back_leaves_that_thread_alone() {
+    let mut store = seeded();
+    let (t1, row) = refused_pair(&mut store);
+    let clear = OutboxWrite::Unsnooze {
+        account_id: 1,
+        threads: vec![t1],
+    };
+    store.outbox_write(&clear, NOW + 20).unwrap();
+    retry(&mut store, row, NOW + 30);
+    assert_eq!(folders_of(&store, "m1"), names(&["INBOX"]));
+    assert_eq!(folders_of(&store, "m2"), names(&["INBOX"]));
+    assert_eq!(
+        folders_of(&store, "m3"),
+        Vec::<String>::new(),
+        "t2 is archived"
+    );
+}
+
+#[test]
+fn retrying_a_pairs_archive_after_one_thread_was_snoozed_again_keeps_the_new_snooze_whole() {
+    let mut store = seeded();
+    let (t1, row) = refused_pair(&mut store);
+    snooze(&mut store, vec![t1], NOW + 2 * HOUR, "b");
+    retry(&mut store, row, NOW + 30);
+    send_next(&mut store, NOW + 40);
+    send_next(&mut store, NOW + 40);
+    let mut all: Vec<(String, SnoozeState, Vec<String>)> = snoozes(&store)
+        .into_iter()
+        .map(|s| (s.0, s.2, s.4))
+        .collect();
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        all,
+        [
+            ("t1".to_string(), SnoozeState::Active, names(&["m1", "m2"])),
+            ("t2".to_string(), SnoozeState::Active, names(&["m3"])),
+        ]
+    );
+}
+
+#[test]
+fn a_thread_whose_snoozed_mail_was_all_trashed_is_refused_another_snooze() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    snooze(&mut store, vec![t1], NOW + HOUR, "a");
+    send_next(&mut store, NOW + 10);
+    let trashed = vec![
+        in_folders("m1", "t1", 1_000, &["TRASH"]),
+        in_folders("m2", "t1", 2_000, &["TRASH"]),
+    ];
+    sync(&mut store, trashed, NOW + 20);
+    assert_eq!(store.unsnoozable(1, &[t1]).unwrap(), 1, "nothing held");
+    assert_eq!(
+        snooze(&mut store, vec![t1], NOW + 2 * HOUR, "b"),
+        (vec![], 0)
+    );
+    assert_eq!(snoozes(&store), [], "the snooze that held nothing is gone");
 }
 
 /// Each snooze's thread and state, by thread.

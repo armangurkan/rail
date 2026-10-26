@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 
 use super::accounts::folder_model_in;
-use super::outbox::{live_rows_touching, save_threads_and_reversal};
+use super::outbox::{OutboxRow, live_rows_touching, save_threads_and_reversal};
 use super::{StoreError, rollup};
 use crate::config::FolderModel;
 use crate::ops::{Action, OutboxId};
@@ -523,28 +523,33 @@ pub(crate) fn forget_threads(tx: &Transaction, touched: &BTreeSet<i64>) -> Resul
     if gone.is_empty() {
         return Ok(());
     }
-    let mut by_row: BTreeMap<OutboxId, (Vec<i64>, Vec<Prior>)> = BTreeMap::new();
     for row in super::outbox::rows_touching(tx, &gone)? {
-        let threads = row
-            .thread_ids
-            .iter()
-            .copied()
-            .filter(|t| !gone.contains(t))
-            .collect();
-        let reversal = row
-            .reversal
-            .into_iter()
-            .filter(|p| !gone.contains(&p.thread))
-            .collect();
-        by_row.insert(row.id, (threads, reversal));
-    }
-    for (id, (threads, reversal)) in by_row {
-        if threads.is_empty() {
-            // Nothing left to send or revert.
-            tx.execute("DELETE FROM outbox WHERE id = ?1", [id])?;
-        } else {
-            save_threads_and_reversal(tx, id, &threads, &reversal)?;
-        }
+        prune(tx, row, &gone)?;
     }
     Ok(())
+}
+
+/// `thread` leaves outbox row `id`, as a forgotten thread leaves every row (`prune`): a snooze
+/// giving up the failed archive it shares with other threads.
+pub(crate) fn leave_row(tx: &Transaction, id: OutboxId, thread: i64) -> Result<(), StoreError> {
+    match super::outbox::one(tx, id)? {
+        Some(row) => prune(tx, row, &BTreeSet::from([thread])),
+        None => Ok(()),
+    }
+}
+
+/// The threads of `gone` leave `row`, with their reversal entries; a row left with no thread is
+/// deleted, as there is nothing left to send or revert.
+fn prune(tx: &Transaction, row: OutboxRow, gone: &BTreeSet<i64>) -> Result<(), StoreError> {
+    let threads: Vec<i64> = (row.thread_ids.iter().copied())
+        .filter(|t| !gone.contains(t))
+        .collect();
+    if threads.is_empty() {
+        tx.execute("DELETE FROM outbox WHERE id = ?1", [row.id])?;
+        return Ok(());
+    }
+    let reversal: Vec<Prior> = (row.reversal.into_iter())
+        .filter(|p| !gone.contains(&p.thread))
+        .collect();
+    save_threads_and_reversal(tx, row.id, &threads, &reversal)
 }

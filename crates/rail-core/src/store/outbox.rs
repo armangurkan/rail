@@ -240,7 +240,7 @@ fn read_row(r: &Row<'_>) -> rusqlite::Result<OutboxRow> {
     })
 }
 
-fn one(tx: &Transaction, id: OutboxId) -> Result<Option<OutboxRow>, StoreError> {
+pub(super) fn one(tx: &Transaction, id: OutboxId) -> Result<Option<OutboxRow>, StoreError> {
     Ok(tx
         .query_row(
             &format!("SELECT {COLUMNS} FROM outbox WHERE id = ?1"),

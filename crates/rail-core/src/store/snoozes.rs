@@ -216,14 +216,22 @@ fn again(
     };
     match old.state {
         SnoozeState::Pending => set_until(tx, old.id, new.until)?,
-        SnoozeState::Active if !in_inbox(tx, thread)? => set_until(tx, old.id, new.until)?,
+        SnoozeState::Active if !in_inbox(tx, thread)? => {
+            if !holds_now(tx, old.id)? {
+                // Its mail was all trashed or moved since: nothing is snoozed, and a thread out of
+                // the inbox is not snoozed afresh.
+                tx.execute("DELETE FROM snoozes WHERE id = ?1", [old.id])?;
+                return Ok(false);
+            }
+            set_until(tx, old.id, new.until)?;
+        }
         SnoozeState::Active => {
             return_thread(tx, new.account_id, old.id, remote, now)?;
             forget_woken(tx, new.account_id, remote)?;
             return Ok(false);
         }
         SnoozeState::Failed => {
-            drop_failed(tx, old.id, archive)?;
+            drop_failed(tx, (old.id, thread), archive)?;
             return Ok(false);
         }
         SnoozeState::Woken => {
@@ -249,6 +257,22 @@ fn current(
         .optional()?)
 }
 
+/// Whether snooze `snooze` still holds its thread (`holds!`).
+fn holds_now(tx: &Transaction, snooze: i64) -> Result<bool, StoreError> {
+    Ok(tx.query_row(
+        concat!(
+            "SELECT EXISTS (SELECT 1 FROM snoozes s
+             JOIN threads ht ON ht.account_id = s.account_id AND ht.remote_id = s.thread_remote
+             LEFT JOIN outbox o ON o.id = s.archive_row
+             WHERE s.id = ?1 AND ",
+            holds!(),
+            ")"
+        ),
+        [snooze],
+        |r| r.get(0),
+    )?)
+}
+
 fn set_until(tx: &Transaction, snooze: i64, until: i64) -> Result<(), StoreError> {
     tx.execute(
         "UPDATE snoozes SET until = ?2 WHERE id = ?1",
@@ -260,15 +284,23 @@ fn set_until(tx: &Transaction, snooze: i64, until: i64) -> Result<(), StoreError
 /// A failed snooze given up on (snoozed again or cleared) leaves its refused archive: the row
 /// goes, and the snooze with it (the row's cascade), so neither a retry nor the next sync can send
 /// that archive any more. Its local change was reverted when it failed.
-fn drop_failed(tx: &Transaction, snooze: i64, archive: Option<OutboxId>) -> Result<(), StoreError> {
+fn drop_failed(
+    tx: &Transaction,
+    (snooze, thread): (i64, i64),
+    archive: Option<OutboxId>,
+) -> Result<(), StoreError> {
     // Threads snoozed together share one archive row: while another snooze waits on it, only
-    // this snooze leaves, and the row stays with the other's failure.
+    // this snooze and its thread leave the row, so a retry of the other's failure leaves this
+    // thread be.
     let shared: bool = tx.query_row(
         "SELECT EXISTS (SELECT 1 FROM snoozes WHERE archive_row = ?1 AND id <> ?2)",
         params![archive, snooze],
         |r| r.get(0),
     )?;
     if shared {
+        if let Some(row) = archive {
+            super::apply_local::leave_row(tx, row, thread)?;
+        }
         tx.execute("DELETE FROM snoozes WHERE id = ?1", [snooze])?;
     } else {
         tx.execute(
@@ -422,7 +454,7 @@ pub(super) fn clear(
                 1
             }
             SnoozeState::Failed => {
-                drop_failed(tx, snooze.id, archive)?;
+                drop_failed(tx, (snooze.id, thread), archive)?;
                 0
             }
             SnoozeState::Woken => 0,
@@ -693,19 +725,27 @@ impl Store {
     }
 
     /// How many of `threads` (the account's) a snooze must refuse: no mail in the inbox and no
-    /// snooze still waiting (a snoozed thread may take a new time).
+    /// snooze holding it (`holds!`; a snoozed thread may take a new time).
     ///
     /// # Errors
     /// The database's, as a `StoreError`.
     pub fn unsnoozable(&self, account_id: i64, threads: &[i64]) -> Result<usize, StoreError> {
         let refused: i64 = self.conn.query_row(
-            "SELECT count(*) FROM threads t
-             WHERE t.account_id = ?1 AND t.id IN (SELECT value FROM json_each(?2))
-               AND NOT EXISTS (SELECT 1 FROM messages m JOIN message_folders mf ON mf.message_id = m.id
-                               JOIN folders f ON f.id = mf.folder_id
-                               WHERE m.thread_id = t.id AND f.kind = 'inbox')
-               AND NOT EXISTS (SELECT 1 FROM snoozes s WHERE s.account_id = t.account_id
-                               AND s.thread_remote = t.remote_id AND s.woken_at IS NULL)",
+            concat!(
+                "SELECT count(*) FROM threads t
+                 WHERE t.account_id = ?1 AND t.id IN (SELECT value FROM json_each(?2))
+                   AND NOT EXISTS (SELECT 1 FROM messages m
+                                   JOIN message_folders mf ON mf.message_id = m.id
+                                   JOIN folders f ON f.id = mf.folder_id
+                                   WHERE m.thread_id = t.id AND f.kind = 'inbox')
+                   AND NOT EXISTS (SELECT 1 FROM snoozes s
+                                   JOIN threads ht ON ht.account_id = s.account_id
+                                     AND ht.remote_id = s.thread_remote
+                                   LEFT JOIN outbox o ON o.id = s.archive_row
+                                   WHERE ht.id = t.id AND ",
+                holds!(),
+                ")"
+            ),
             params![account_id, json(&threads)],
             |r| r.get(0),
         )?;
