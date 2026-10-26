@@ -5,8 +5,8 @@
 use serde_json::json;
 
 use super::{
-    COST_MESSAGES_BATCH_MODIFY, COST_THREAD_MODIFY, COST_THREAD_TRASH, GmailProvider,
-    MAX_IDS_PER_BATCH_MODIFY, MAX_LABELS_PER_MODIFY, safe_id,
+    COST_MESSAGE_MODIFY, COST_MESSAGES_BATCH_MODIFY, COST_THREAD_MODIFY, COST_THREAD_TRASH,
+    GmailProvider, MAX_IDS_PER_BATCH_MODIFY, MAX_LABELS_PER_MODIFY, safe_id,
 };
 use crate::provider::{
     Change, INBOX_LABEL, ProviderError, RemoteId, STARRED_LABEL, ThreadTarget, UNREAD_LABEL,
@@ -83,13 +83,39 @@ impl GmailProvider {
         checked(messages, "message")?;
         for chunk in messages.chunks(MAX_IDS_PER_BATCH_MODIFY) {
             let body = json!({"ids": chunk, "addLabelIds": [INBOX_LABEL]});
-            self.api
+            let sent = self
+                .api
                 .post_json(
                     "messages/batchModify",
                     Some(&body),
                     COST_MESSAGES_BATCH_MODIFY,
                 )
-                .await?;
+                .await;
+            match sent {
+                // Gmail's reference does not say what a gone id does to the call; should it
+                // refuse the whole call, the chunk goes back one message at a time.
+                Err(ProviderError::NotFound) => self.return_each(chunk).await?,
+                other => {
+                    other?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `messages.modify` adding `INBOX` to each of `messages`; a message that is gone is done.
+    async fn return_each(&self, messages: &[RemoteId]) -> Result<(), ProviderError> {
+        let body = json!({"addLabelIds": [INBOX_LABEL]});
+        for id in messages {
+            let path = format!("messages/{id}/modify");
+            match self
+                .api
+                .post_json(&path, Some(&body), COST_MESSAGE_MODIFY)
+                .await
+            {
+                Ok(()) | Err(ProviderError::NotFound) => {}
+                Err(error) => return Err(error),
+            }
         }
         Ok(())
     }

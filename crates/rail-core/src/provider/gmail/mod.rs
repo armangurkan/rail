@@ -75,6 +75,8 @@ pub(crate) const COST_ATTACHMENT: u32 = 5;
 pub(crate) const COST_THREAD_MODIFY: u32 = 10;
 pub(crate) const COST_THREAD_TRASH: u32 = 20;
 pub(crate) const COST_MESSAGES_BATCH_MODIFY: u32 = 50;
+/// `messages.modify`, a snooze's return one message at a time.
+pub(crate) const COST_MESSAGE_MODIFY: u32 = 5;
 /// Gmail's limit on the ids of one `messages.batchModify`.
 pub(crate) const MAX_IDS_PER_BATCH_MODIFY: usize = 1_000;
 pub(crate) const COST_MESSAGE_SEND: u32 = 100;
