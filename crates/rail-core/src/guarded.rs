@@ -1,19 +1,31 @@
 //! Reading a file a request named, safely: only a regular file is opened (checked by path
 //! before the open and again on the handle, in case the path was swapped between), the open
 //! cannot block on a FIFO or take a terminal, and at most a fixed number of bytes is read.
-//! Client secret JSON files and preset files both go through `read_capped`.
+//! Client secret JSON files and preset files both go through `read_capped`, and so does the
+//! TUI's last typed snooze time.
 
 use std::io::Read;
 use std::path::Path;
 
+use crate::error::ErrorClass;
+
 /// Why `read_capped` read nothing. None of these carries a byte of the file.
 #[derive(Debug)]
-pub(crate) enum GuardedReadError {
+pub enum GuardedReadError {
     /// A directory, a device, a FIFO, a socket: never read.
     NotRegular,
     /// More than the cap.
     TooLarge,
+    /// The file could not be opened or read.
     Io(std::io::Error),
+}
+
+impl GuardedReadError {
+    /// A local file: reading it again finds the same thing.
+    #[must_use]
+    pub fn class(&self) -> ErrorClass {
+        ErrorClass::Permanent
+    }
 }
 
 /// `O_NONBLOCK | O_NOCTTY` for the platforms whose values are known (checked against the
@@ -77,7 +89,12 @@ fn open_guarded(path: &Path) -> std::io::Result<std::fs::File> {
 /// of the same user could exploit it, and such a process can read the user's files anyway.
 /// Closing it fully needs an `openat2(RESOLVE_NO_SYMLINKS)` or per-component `O_NOFOLLOW`
 /// walk, left for later.
-pub(crate) fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>, GuardedReadError> {
+///
+/// # Errors
+///
+/// `NotRegular` for anything but a regular file, `TooLarge` past `cap`, `Io` when the file
+/// cannot be opened or read (a missing one included).
+pub fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>, GuardedReadError> {
     // By path first, so nothing that is not a regular file (a device, a FIFO) is ever opened.
     if !std::fs::metadata(path)
         .map_err(GuardedReadError::Io)?

@@ -7,7 +7,7 @@ pub mod config;
 pub mod daemon;
 pub mod doctor;
 pub mod error;
-mod guarded;
+pub mod guarded;
 pub mod guide;
 pub mod onboarding;
 pub mod ops;
