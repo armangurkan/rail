@@ -56,6 +56,9 @@ fn change_for(store: &Store, account: i64, action: &Action) -> Result<Option<Cha
             Some(to) => Change::Move { to },
             None => return Ok(None),
         },
+        Action::Unsnooze { messages } => Change::Unsnooze {
+            messages: messages.clone(),
+        },
         Action::Send { .. } | Action::PushDraft { .. } | Action::DeleteDraft { .. } => {
             return Ok(None);
         }

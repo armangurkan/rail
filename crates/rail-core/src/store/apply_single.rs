@@ -32,6 +32,12 @@ fn planned(
             .map(|remote| (Change::Move { to: remote }, Some(*to))),
         Action::Star { on } => Some((Change::Star { on: *on }, None)),
         Action::Read { on } => Some((Change::Read { on: *on }, None)),
+        Action::Unsnooze { messages } => system_folder(tx, account, "inbox")?.map(|f| {
+            let change = Change::Unsnooze {
+                messages: messages.clone(),
+            };
+            (change, Some(f))
+        }),
         Action::Labels { .. }
         | Action::Send { .. }
         | Action::PushDraft { .. }
@@ -82,7 +88,10 @@ pub(super) fn apply(
                     set_flag(tx, "is_starred", prior.message, prior.thread, *on)?;
                     prior.starred = Some(facts.starred);
                 }
-                (Change::Archive | Change::Trash | Change::Move { .. }, Some(folder)) => {
+                (
+                    Change::Archive | Change::Trash | Change::Move { .. } | Change::Unsnooze { .. },
+                    Some(folder),
+                ) => {
                     replace_folder(tx, &mut prior, folder)?;
                 }
                 _ => {}

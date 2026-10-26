@@ -19,6 +19,7 @@ pub const MOVE_TARGET_GONE: &str = "the folder for this move no longer exists in
 /// A target with no stored messages: nothing Rail could name to Graph.
 const NO_STORED_MESSAGES: &str = "Rail holds no messages of this Microsoft 365 conversation";
 const NO_DELETED_ITEMS: &str = "This mailbox has no Deleted Items folder.";
+const NO_INBOX: &str = "This mailbox has no Inbox folder.";
 
 fn unsendable(what: &str) -> ProviderError {
     ProviderError::permanent(&format!(
@@ -34,7 +35,11 @@ fn patch_body(change: &Change) -> Option<Value> {
             let status = if *on { "flagged" } else { "notFlagged" };
             Some(json!({"flag": {"flagStatus": status}}))
         }
-        Change::Archive | Change::Trash | Change::Move { .. } | Change::Labels { .. } => None,
+        Change::Archive
+        | Change::Trash
+        | Change::Move { .. }
+        | Change::Labels { .. }
+        | Change::Unsnooze { .. } => None,
     }
 }
 
@@ -135,6 +140,7 @@ impl GraphProvider {
         let id = match change {
             Change::Archive => of_kind(FolderKind::Archive, M365_NO_ARCHIVE)?,
             Change::Trash => of_kind(FolderKind::Trash, NO_DELETED_ITEMS)?,
+            Change::Unsnooze { .. } => of_kind(FolderKind::Inbox, NO_INBOX)?,
             Change::Move { to } if folders.iter().any(|f| &f.remote_id == to) => to.clone(),
             Change::Move { .. } => return Err(ProviderError::permanent(MOVE_TARGET_GONE)),
             Change::Star { .. } | Change::Read { .. } | Change::Labels { .. } => {

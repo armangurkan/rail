@@ -12,9 +12,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, include_str!("migrations/0007_compose.sql")),
     (8, include_str!("migrations/0008_draft_source.sql")),
     (9, include_str!("migrations/0009_action_folders.sql")),
+    (10, include_str!("migrations/0010_snoozes.sql")),
 ];
 
-pub const LATEST_VERSION: i64 = 9;
+pub const LATEST_VERSION: i64 = 10;
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {

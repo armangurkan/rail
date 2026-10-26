@@ -103,11 +103,37 @@ fn change_for(tx: &Transaction, account: i64, action: &Action) -> Result<Change,
             remove: inbox,
             ..Change::default()
         },
+        // Only the messages `returned` picks (`apply_labels`).
+        Action::Unsnooze { .. } => Change {
+            add: inbox,
+            ..Change::default()
+        },
         // Draft actions name no threads; the draft's state is the outbox's to set.
         Action::Send { .. } | Action::PushDraft { .. } | Action::DeleteDraft { .. } => {
             Change::default()
         }
     })
+}
+
+/// The messages of `threads` a snooze's return puts back: those named by `remotes` that are not
+/// in Trash or Spam (mail deleted or reported since the snooze stays where it is).
+fn returned(
+    tx: &Transaction,
+    account: i64,
+    threads: &[i64],
+    remotes: &[String],
+) -> Result<BTreeSet<i64>, StoreError> {
+    let threads = serde_json::to_string(threads).unwrap_or_else(|_| "[]".into());
+    let remotes = serde_json::to_string(remotes).unwrap_or_else(|_| "[]".into());
+    let mut stmt = tx.prepare(
+        "SELECT m.id FROM messages m JOIN threads t ON t.id = m.thread_id
+         WHERE t.account_id = ?1 AND m.thread_id IN (SELECT value FROM json_each(?2))
+           AND m.remote_id IN (SELECT value FROM json_each(?3))
+           AND NOT EXISTS (SELECT 1 FROM message_folders mf JOIN folders f ON f.id = mf.folder_id
+                           WHERE mf.message_id = m.id AND f.kind IN ('trash', 'spam'))",
+    )?;
+    let rows = stmt.query_map(params![account, threads, remotes], |r| r.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// `(message, thread, is_read, is_starred)` of every message of `threads` that are `account`'s.
@@ -260,8 +286,15 @@ fn apply_labels(
     threads: &[i64],
 ) -> Result<Vec<Prior>, StoreError> {
     let change = change_for(tx, account, action)?;
+    let picked = match action {
+        Action::Unsnooze { messages } => Some(returned(tx, account, threads, messages)?),
+        _ => None,
+    };
     let mut priors = Vec::new();
     for (message, thread, read, starred) in messages_of(tx, account, threads)? {
+        if picked.as_ref().is_some_and(|p| !p.contains(&message)) {
+            continue;
+        }
         let mut prior = Prior {
             message,
             thread,

@@ -16,7 +16,10 @@ const ROLLUP: &str = "UPDATE threads SET
     is_starred = EXISTS (SELECT 1 FROM messages WHERE thread_id = ?1 AND is_starred = 1),
     has_attachments = EXISTS (SELECT 1 FROM attachments a JOIN messages m ON m.id = a.message_id
                               WHERE m.thread_id = ?1),
-    last_date = COALESCE((SELECT max(internal_date) FROM messages WHERE thread_id = ?1), 0) / 1000,
+    last_date = max(COALESCE((SELECT max(internal_date) FROM messages WHERE thread_id = ?1), 0) / 1000,
+                    COALESCE((SELECT s.woken_at FROM snoozes s JOIN threads w
+                              ON w.account_id = s.account_id AND w.remote_id = s.thread_remote
+                              WHERE w.id = ?1 AND s.woken_at IS NOT NULL), 0)),
     subject = COALESCE((SELECT subject FROM messages WHERE thread_id = ?1
                         ORDER BY internal_date LIMIT 1), ''),
     participants = ?2

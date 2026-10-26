@@ -597,6 +597,8 @@ impl Provider for MockProvider {
         match super::gmail::actions::gmail_call(change) {
             GmailCall::Trash => self.trash(threads).await,
             GmailCall::Modify { add, remove } => self.modify(threads, &add, &remove).await,
+            // A snooze's return: `applied` above records it; failures come as a modify's do.
+            GmailCall::Return { .. } => self.enter(Call::Modify, None),
         }
     }
 

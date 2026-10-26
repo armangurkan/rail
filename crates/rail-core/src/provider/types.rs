@@ -443,6 +443,10 @@ pub enum Change {
     Move {
         to: RemoteId,
     },
+    /// Put exactly these messages back in the inbox (a snooze's wake).
+    Unsnooze {
+        messages: Vec<RemoteId>,
+    },
 }
 
 /// One stored message of a thread an action names, with what the scope rule

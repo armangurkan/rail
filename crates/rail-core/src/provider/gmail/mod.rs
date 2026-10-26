@@ -35,6 +35,8 @@ mod send_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod unsnooze_tests;
+#[cfg(test)]
 mod write_tests;
 
 use super::http::{ApiClient, is_bad_request};
@@ -72,6 +74,9 @@ pub(crate) const COST_HISTORY: u32 = 2;
 pub(crate) const COST_ATTACHMENT: u32 = 5;
 pub(crate) const COST_THREAD_MODIFY: u32 = 10;
 pub(crate) const COST_THREAD_TRASH: u32 = 20;
+pub(crate) const COST_MESSAGES_BATCH_MODIFY: u32 = 50;
+/// Gmail's limit on the ids of one `messages.batchModify`.
+pub(crate) const MAX_IDS_PER_BATCH_MODIFY: usize = 1_000;
 pub(crate) const COST_MESSAGE_SEND: u32 = 100;
 pub(crate) const COST_DRAFT_CREATE: u32 = 10;
 pub(crate) const COST_DRAFT_UPDATE: u32 = 15;

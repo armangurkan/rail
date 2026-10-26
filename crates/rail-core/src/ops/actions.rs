@@ -96,13 +96,21 @@ pub enum Action {
         draft: DraftId,
         remote_draft_id: String,
     },
+    /// Put these messages (provider ids) back in the inbox: a snooze's wake queues it, and
+    /// `action.apply` refuses it.
+    #[schemars(skip)]
+    Unsnooze {
+        messages: Vec<String>,
+    },
 }
 
 impl Action {
     /// The v1 `outbox.kind` value: its `CHECK` predates these actions (plan decision 2).
     pub fn kind_column(&self) -> &'static str {
         match self {
-            Self::Archive {} | Self::Labels { .. } | Self::Move { .. } => "move",
+            Self::Archive {} | Self::Labels { .. } | Self::Move { .. } | Self::Unsnooze { .. } => {
+                "move"
+            }
             Self::Star { .. } | Self::Read { .. } => "set_flags",
             Self::Trash {} => "trash",
             Self::Send { .. } => "send",
@@ -121,7 +129,8 @@ impl Action {
             | Self::Star { .. }
             | Self::Read { .. }
             | Self::Labels { .. }
-            | Self::Move { .. } => None,
+            | Self::Move { .. }
+            | Self::Unsnooze { .. } => None,
         }
     }
 
@@ -280,6 +289,11 @@ impl ActionApplyRequest {
                 "a draft action goes through draft.send",
             ));
         }
+        if matches!(self.action, Action::Unsnooze { .. }) {
+            return Err(OpError::invalid_input(
+                "a snooze's return is queued by the daemon",
+            ));
+        }
         check_labels(&self.action)?;
         let mut seen = HashSet::new();
         Ok(self
@@ -415,6 +429,22 @@ mod tests {
             let error = request(vec![1], draft).checked().unwrap_err();
             assert_eq!(error.message, "a draft action goes through draft.send");
         }
+    }
+
+    /// A snooze's return is queued by the daemon at the wake: its JSON and outbox kind are
+    /// fixed, and no client can queue one.
+    #[test]
+    fn an_unsnooze_has_its_wire_form_and_cannot_go_through_action_apply() {
+        let unsnooze = Action::Unsnooze {
+            messages: vec!["m1".into()],
+        };
+        assert_eq!(
+            serde_json::to_string(&unsnooze).unwrap(),
+            r#"{"kind":"unsnooze","messages":["m1"]}"#
+        );
+        assert_eq!(unsnooze.kind_column(), "move");
+        let error = request(vec![1], unsnooze).checked().unwrap_err();
+        assert_eq!(error.message, "a snooze's return is queued by the daemon");
     }
 
     /// A repeated label id inside one list is refused (not silently deduplicated).

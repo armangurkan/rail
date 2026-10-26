@@ -4,7 +4,10 @@
 
 use serde_json::json;
 
-use super::{COST_THREAD_MODIFY, COST_THREAD_TRASH, GmailProvider, MAX_LABELS_PER_MODIFY, safe_id};
+use super::{
+    COST_MESSAGES_BATCH_MODIFY, COST_THREAD_MODIFY, COST_THREAD_TRASH, GmailProvider,
+    MAX_IDS_PER_BATCH_MODIFY, MAX_LABELS_PER_MODIFY, safe_id,
+};
 use crate::provider::{
     Change, INBOX_LABEL, ProviderError, RemoteId, STARRED_LABEL, ThreadTarget, UNREAD_LABEL,
 };
@@ -30,14 +33,24 @@ pub(crate) enum GmailCall {
         add: Vec<RemoteId>,
         remove: Vec<RemoteId>,
     },
+    /// `messages.batchModify` adding `INBOX` to exactly these messages (a snooze's wake).
+    Return {
+        messages: Vec<RemoteId>,
+    },
 }
 
 /// Archive removes `INBOX`, read removes `UNREAD`, star adds `STARRED`, a move adds its label
-/// and removes `INBOX`; labels go as given; trash is `threads.trash`.
+/// and removes `INBOX`; labels go as given; trash is `threads.trash`; a snooze's return names
+/// messages, not threads.
 pub(crate) fn gmail_call(change: &Change) -> GmailCall {
     let one = |label: &str| vec![label.to_string()];
     let (add, remove) = match change {
         Change::Trash => return GmailCall::Trash,
+        Change::Unsnooze { messages } => {
+            return GmailCall::Return {
+                messages: messages.clone(),
+            };
+        }
         Change::Archive => (Vec::new(), one(INBOX_LABEL)),
         Change::Star { on: true } => (one(STARRED_LABEL), Vec::new()),
         Change::Star { on: false } => (Vec::new(), one(STARRED_LABEL)),
@@ -60,7 +73,25 @@ impl GmailProvider {
         match gmail_call(change) {
             GmailCall::Trash => self.trash(&ids).await,
             GmailCall::Modify { add, remove } => self.modify(&ids, &add, &remove).await,
+            GmailCall::Return { messages } => self.return_to_inbox(&messages).await,
         }
+    }
+
+    /// `messages.batchModify` adding `INBOX`, at most `MAX_IDS_PER_BATCH_MODIFY` ids a call;
+    /// nothing to return sends nothing.
+    pub(crate) async fn return_to_inbox(&self, messages: &[RemoteId]) -> Result<(), ProviderError> {
+        checked(messages, "message")?;
+        for chunk in messages.chunks(MAX_IDS_PER_BATCH_MODIFY) {
+            let body = json!({"ids": chunk, "addLabelIds": [INBOX_LABEL]});
+            self.api
+                .post_json(
+                    "messages/batchModify",
+                    Some(&body),
+                    COST_MESSAGES_BATCH_MODIFY,
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     pub(crate) async fn modify(

@@ -48,6 +48,8 @@ mod search_tests;
 #[cfg(test)]
 mod send_tests;
 #[cfg(test)]
+mod unsnooze_tests;
+#[cfg(test)]
 mod upload_tests;
 
 use std::collections::HashSet;

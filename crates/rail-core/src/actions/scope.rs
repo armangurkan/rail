@@ -29,6 +29,11 @@ pub fn touched(change: &Change, messages: &[TargetMessage]) -> Vec<usize> {
         Change::Star { on: true } => newest(messages).into_iter().collect(),
         Change::Star { on: false } => matching(messages, |m| m.starred),
         Change::Labels { .. } => Vec::new(),
+        // A snooze's wake: the recorded messages still in Archive, so mail the user deleted,
+        // filed or answered since stays where it is.
+        Change::Unsnooze { messages: ids } => matching(messages, |m| {
+            m.folder == Some(FolderKind::Archive) && ids.contains(&m.id)
+        }),
     }
 }
 

@@ -69,6 +69,7 @@ pub(super) fn title(action: &MailAction) -> &'static str {
         MailAction::Send { .. } => "Send?",
         MailAction::PushDraft { .. } => "Save the draft?",
         MailAction::DeleteDraft { .. } => "Discard the draft?",
+        MailAction::Unsnooze { .. } => "Return to the inbox?",
     }
 }
 
@@ -88,6 +89,7 @@ pub(super) fn question(action: &MailAction, count: usize) -> String {
         MailAction::Send { .. } => format!("Send {n} messages?"),
         MailAction::PushDraft { .. } => format!("Save {n} drafts?"),
         MailAction::DeleteDraft { .. } => format!("Discard {n} drafts?"),
+        MailAction::Unsnooze { .. } => format!("Return {n} threads to the inbox?"),
     }
 }
 
