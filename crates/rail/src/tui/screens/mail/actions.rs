@@ -1,9 +1,10 @@
-//! The mail screen's actions: the selection, the six thread actions from the list and the
+//! The mail screen's actions: the selection, the thread actions from the list and the
 //! reader, the trash confirmation, the undo notice and `z`, mark-read on open, failures on
 //! their rows and in `:errors`. Every call goes through the daemon link; the store change
 //! comes back as a re-read; the calls' answers are `answers`'.
 
 use std::collections::{BTreeMap, HashSet};
+use std::fmt;
 use std::time::Instant;
 
 use rail_core::ops::{
@@ -24,7 +25,6 @@ mod answers;
 pub const UNDO_TICKS: usize = 40;
 
 /// The newest action with grace, while `z` can take it back.
-#[derive(Debug)]
 pub(super) struct LastAction {
     seq: u64,
     /// The rows the daemon queued, each with the token it was queued under.
@@ -34,7 +34,7 @@ pub(super) struct LastAction {
     /// When `UNDO_GRACE` of wall time has passed: ticks are skipped while the terminal is
     /// suspended, so `until` alone could offer `z` long after the rows were sent.
     deadline: Instant,
-    /// `action.apply` calls (one per account) not answered yet.
+    /// `action.apply` calls (one per account per `MAX_ACTION_THREADS` threads) not answered yet.
     pending: usize,
     /// `z` was pressed: rows are undone as their calls answer.
     undo_wanted: bool,
@@ -70,6 +70,26 @@ enum Record {
     Threads,
     Sent,
     Pushed,
+}
+
+/// Counts and flags only: the record's thread ids and rows are not named.
+impl fmt::Debug for LastAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LastAction")
+            .field("seq", &self.seq)
+            .field("rows", &self.rows.len())
+            .field("count", &self.count)
+            .field("pending", &self.pending)
+            .field("undo_wanted", &self.undo_wanted)
+            .field("undos", &self.undos)
+            .field("selected", &self.selected.len())
+            .field("failed", &self.failed)
+            .field("kind", &self.kind)
+            .field("snoozed", &self.snoozed)
+            .field("left_out", &self.left_out)
+            .field("refused", &self.refused.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl LastAction {

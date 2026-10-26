@@ -18,7 +18,7 @@ use ratatui::widgets::Paragraph;
 use super::{Command, ModalOutcome, boxed};
 use crate::tui::clock::Clock;
 use crate::tui::snooze::{SnoozeChoice, ahead, parse_snooze};
-use crate::tui::text::{escape, input_row, pad, pad_left, thousands, width};
+use crate::tui::text::{count, escape, input_row, pad, pad_left, width};
 use crate::tui::theme::Theme;
 use crate::tui::theme::choice::Accent;
 use crate::tui::widgets::text_input::TextInput;
@@ -481,10 +481,7 @@ impl Picker {
                 clock,
                 ..
             }) => format!("Snoozed until {}", clock.long(*until)),
-            Some(s) if s.threads > 1 => {
-                let threads = thousands(u64::try_from(s.threads).unwrap_or(u64::MAX));
-                format!("Snooze {threads} threads until")
-            }
+            Some(s) if s.threads > 1 => format!("Snooze {} threads until", count(s.threads)),
             _ => self.words().0.to_string(),
         }
     }

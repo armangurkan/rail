@@ -146,7 +146,7 @@ async fn a_snooze_whose_every_call_was_refused_says_so_once_and_gives_the_select
 }
 
 #[tokio::test]
-async fn a_four_digit_count_keeps_the_undo_hint_at_90_columns() {
+async fn a_four_digit_count_keeps_the_undo_hint_and_a_narrow_bar_cuts_the_count() {
     let mut f = fixture(2).await;
     let picked = Picked {
         account_id: 1,
@@ -169,6 +169,13 @@ async fn a_four_digit_count_keeps_the_undo_hint_at_90_columns() {
         shown.contains("Snoozed 1,234 until Fri 18:00 · z undoes · 66 not in the inbox"),
         "{shown}"
     );
+    // At 70 columns the left-out count is what goes.
+    let narrow = render_lines(70, 24, |frame| f.screen.view(frame, &Theme::default())).join("\n");
+    assert!(
+        narrow.contains("Snoozed 1,234 until Fri 18:00 · z undoes"),
+        "{narrow}"
+    );
+    assert!(!narrow.contains("66 not in the inbox"), "{narrow}");
 }
 
 #[tokio::test]

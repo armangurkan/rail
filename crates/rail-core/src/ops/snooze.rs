@@ -17,7 +17,8 @@ pub const MAX_SNOOZE_SECS: i64 = 366 * 24 * 60 * 60;
 /// `snooze.set`'s refusal when none of its threads has mail in the inbox or a snooze to move.
 pub const NOT_IN_INBOX: &str = "Only a thread in the inbox can be snoozed.";
 
-/// `snooze.set`: one account's threads (the TUI sends one call per account).
+/// `snooze.set`: one account's threads, up to 200 (the TUI sends one call per account per 200
+/// threads).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SnoozeSetRequest {

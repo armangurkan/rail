@@ -31,7 +31,7 @@ mod snooze;
 const CLOSED_POLL: Duration = Duration::from_secs(1);
 
 /// One `action.apply` the mail screen sends: `seq` ties the calls of one key press together
-/// (one per account), so their rows make one undo.
+/// (one per account per `MAX_ACTION_THREADS` threads), so their rows make one undo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplyCall {
     pub seq: u64,

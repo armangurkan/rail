@@ -26,6 +26,11 @@ pub fn thousands(n: u64) -> String {
     out
 }
 
+/// `n` with thousands separators, as `thousands` writes it.
+pub fn count(n: usize) -> String {
+    thousands(u64::try_from(n).unwrap_or(u64::MAX))
+}
+
 /// Columns between tab stops in a body.
 pub const TAB_STOP: usize = 8;
 /// Quoted lines in a row that fold to one `[n quoted lines]` line.

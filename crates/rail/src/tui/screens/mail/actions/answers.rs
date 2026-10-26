@@ -12,6 +12,8 @@ use crate::tui::data::ApplyCall;
 use crate::tui::keys::Action;
 use crate::tui::screens::mail::MailScreen;
 use crate::tui::screens::mail::selection::Selection;
+use crate::tui::screens::mail::snooze_flow::SnoozeCount;
+use crate::tui::text::count;
 
 /// What one `action.undo` answered. Both can hold at once over a bulk action's chunks.
 #[derive(Debug, Clone, Copy, Default)]
@@ -125,17 +127,18 @@ impl MailScreen {
             return;
         };
         let undoable = !last.rows.is_empty();
-        let counts = (last.count, last.snoozed, last.left_out);
+        let counts = SnoozeCount {
+            sent: last.count,
+            snoozed: last.snoozed,
+            left_out: last.left_out,
+        };
         let left = last.until.saturating_sub(self.tick);
         let text = if let Some(until) = call.snooze {
             self.snoozed_notice(until, undoable, counts)
         } else {
             let (done, _) = verbs(&call.action);
             let key = self.ctx.keymap.label(Action::GlobalUndo);
-            let count = crate::tui::screens::mail::header::thousands(
-                u64::try_from(counts.0).unwrap_or(u64::MAX),
-            );
-            format!("{done} {count} · {key} undoes")
+            format!("{done} {} · {key} undoes", count(counts.sent))
         };
         self.status.notify_for(text, self.tick, left);
     }

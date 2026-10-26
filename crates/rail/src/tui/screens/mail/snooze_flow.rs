@@ -1,9 +1,10 @@
 //! `h`: the snooze chooser and what it sends. The chooser opens once the store says which of the
-//! threads are snoozed (its title then says until when, and "Return to inbox now" comes first);
-//! a time snoozes them with grace, one `snooze.set` per account, which `z` takes back like an
-//! archive; returning sends `snooze.clear`. `snooze.woke` reads the list again and says what came
-//! back.
+//! threads are snoozed (its title then says until when, or how many threads it snoozes, and
+//! "Return to inbox now" comes first); a time snoozes them with grace, `snooze.set` in calls of
+//! up to 200 threads per account, which `z` takes back like an archive; returning sends
+//! `snooze.clear` the same way. `snooze.woke` reads the list again and says what came back.
 
+use std::fmt;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
@@ -23,7 +24,7 @@ use crate::tui::data::{ReadError, job};
 use crate::tui::keys::Action;
 use crate::tui::modals::{Modal, Picker, PickerKind};
 use crate::tui::snooze::{parse_snooze, snooze_choices};
-use crate::tui::text::{escape, fit};
+use crate::tui::text::{count, escape, fit};
 
 /// The longest typed time kept for "Last used"; longer text is neither kept nor read back.
 const LAST_CHARS: usize = 100;
@@ -32,7 +33,6 @@ const LAST_BYTES: u64 = 4 * LAST_CHARS as u64;
 
 /// "Return to inbox now" while its calls answer: what they put back so far, and the threads it
 /// took from the selection, which a failed call gives back.
-#[derive(Debug)]
 pub(super) struct Returning {
     pending: usize,
     returned: usize,
@@ -41,6 +41,28 @@ pub(super) struct Returning {
     restored: bool,
     /// A call failed: its error stays on the bar while the others answer.
     failed: bool,
+}
+
+/// Counts and flags only: the threads' ids are not named.
+impl fmt::Debug for Returning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Returning")
+            .field("pending", &self.pending)
+            .field("returned", &self.returned)
+            .field("selected", &self.selected.len())
+            .field("restored", &self.restored)
+            .field("failed", &self.failed)
+            .finish()
+    }
+}
+
+/// What a snooze was sent for, and what its answered calls snoozed and left out (no mail in
+/// the inbox).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SnoozeCount {
+    pub(super) sent: usize,
+    pub(super) snoozed: usize,
+    pub(super) left_out: usize,
 }
 
 /// Where the last typed snooze time is kept, so the chooser offers it again after a restart.
@@ -62,7 +84,7 @@ impl MailScreen {
     }
 
     /// The store said when the threads' snoozes end: the chooser opens, its title naming the end
-    /// when the one thread chosen is snoozed.
+    /// when the one thread chosen is snoozed, or counting the threads chosen.
     pub(super) fn snoozes_read(
         &mut self,
         seq: u64,
@@ -192,7 +214,7 @@ impl MailScreen {
                 back.pending = back.pending.saturating_sub(1);
                 back.returned = back.returned.saturating_add(answer.returned);
                 if newest && !back.failed {
-                    let text = format!("returned {} to the inbox", counted(back.returned));
+                    let text = format!("returned {} to the inbox", count(back.returned));
                     self.status.notify(text, tick);
                 }
                 done = back.pending == 0;
@@ -225,13 +247,17 @@ impl MailScreen {
         &self,
         until: i64,
         undoable: bool,
-        (sent, snoozed, left_out): (usize, usize, usize),
+        SnoozeCount {
+            sent,
+            snoozed,
+            left_out,
+        }: SnoozeCount,
     ) -> String {
         let when = self.ctx.clock.ahead(until);
         let head = if sent == 1 {
             format!("Snoozed until {when}")
         } else {
-            format!("Snoozed {} until {when}", counted(snoozed))
+            format!("Snoozed {} until {when}", count(snoozed))
         };
         let undo = if undoable {
             format!(" · {} undoes", self.ctx.keymap.label(Action::GlobalUndo))
@@ -239,7 +265,7 @@ impl MailScreen {
             String::new()
         };
         let left = if left_out > 0 {
-            format!(" · {} not in the inbox", counted(left_out))
+            format!(" · {} not in the inbox", count(left_out))
         } else {
             String::new()
         };
@@ -297,11 +323,6 @@ pub(super) fn read_last(path: &Path) -> Option<String> {
     let text = String::from_utf8(bytes).ok()?;
     let text = text.trim();
     (!text.is_empty() && text.chars().count() <= LAST_CHARS).then(|| text.to_string())
-}
-
-/// `n` with thousands separators.
-fn counted(n: usize) -> String {
-    super::header::thousands(u64::try_from(n).unwrap_or(u64::MAX))
 }
 
 /// "1 thread back from snooze", "3 threads back from snooze".
