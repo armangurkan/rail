@@ -693,7 +693,9 @@ back, as with archive. On a thread that is already snoozed the chooser's title s
 choosing a time moves the snooze, and its first row, `Return to inbox now`, puts the thread back
 at once (`returned 1 to the inbox`). While anything is snoozed, `Snoozed` is listed under UNIFIED in
 the sidebar with the number of snoozed threads (`◷`, or `^` with `icons = "ascii"`); `:` and
-`Mailbox: Snoozed` open it at any time, and an empty one says `Nothing is snoozed.` The reader
+`Mailbox: Snoozed` open it at any time, and an empty one says `Nothing is snoozed.` A thread whose
+snoozed mail was all trashed, moved or put back in the inbox since has nothing left to bring back,
+so it is neither listed nor offered `Return to inbox now`. The reader
 shows `Snoozed until Mon 13 Oct 2025 08:00` under a snoozed thread's recipients. Drafts cannot be
 snoozed (`Not available on drafts`).
 

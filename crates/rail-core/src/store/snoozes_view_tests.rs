@@ -6,10 +6,10 @@ use super::Store;
 use super::apply_local_tests::{seeded, thread};
 use super::filter::parse;
 use super::outbox::{Failure, OutboxOutcome, OutboxWrite};
-use super::snoozes_tests::{HOUR, NOW, send_next, snooze, wake};
+use super::snoozes_tests::{HOUR, NOW, in_folders, send_next, snooze, sync, wake};
 use super::view::{AccountFilter, ListQuery, PageAt, Scope};
 
-fn snoozed(store: &Store) -> Vec<i64> {
+pub(super) fn snoozed(store: &Store) -> Vec<i64> {
     let query = ListQuery {
         scope: Scope::Snoozed { accounts: vec![1] },
         filter: parse(""),
@@ -26,8 +26,35 @@ fn counted(store: &Store) -> u64 {
     store.sidebar_counts(&[1]).unwrap().unified.snoozed
 }
 
-fn until(store: &Store, thread: i64) -> Option<i64> {
+pub(super) fn until(store: &Store, thread: i64) -> Option<i64> {
     store.thread_detail(thread).unwrap().unwrap().snoozed_until
+}
+
+#[test]
+fn a_snooze_holds_its_thread_only_while_some_of_its_mail_is_still_archived() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    snooze(&mut store, vec![t1], NOW + HOUR, "a");
+    send_next(&mut store, NOW + 10);
+    // Trashed on another device, m1 first, then m2.
+    sync(
+        &mut store,
+        vec![in_folders("m1", "t1", 1_000, &["TRASH"])],
+        NOW + 20,
+    );
+    assert_eq!(snoozed(&store), [t1], "m2 is still archived");
+    sync(
+        &mut store,
+        vec![in_folders("m2", "t1", 2_000, &["TRASH"])],
+        NOW + 30,
+    );
+    assert_eq!(
+        snoozed(&store),
+        Vec::<i64>::new(),
+        "nothing left to bring back"
+    );
+    assert_eq!(counted(&store), 0);
+    assert_eq!(until(&store, t1), None);
 }
 
 #[test]

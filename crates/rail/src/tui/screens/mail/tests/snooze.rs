@@ -57,11 +57,12 @@ fn cursor_thread(f: &Fixture) -> i64 {
 }
 
 /// An active snooze of work's `thread` until `until`, as the daemon records one once its archive
-/// was sent. The thread stays in the inbox here, so the list still shows it.
+/// was sent: the thread's mail out of the inbox and recorded. The list read before still shows
+/// the thread until the store is read again.
 fn snoozed_in_store(f: &Fixture, thread: i64, until: i64) {
     let store = writer(f);
-    let remote: String = store
-        .conn()
+    let conn = store.conn();
+    let remote: String = conn
         .query_row(
             "SELECT remote_id FROM threads WHERE id = ?1",
             [thread],
@@ -71,7 +72,20 @@ fn snoozed_in_store(f: &Fixture, thread: i64, until: i64) {
     let sql = format!(
         "INSERT INTO snoozes (account_id, thread_remote, until, created_at) VALUES (1, ?1, {until}, {NOW})"
     );
-    store.conn().execute(&sql, [remote]).unwrap();
+    conn.execute(&sql, [remote]).unwrap();
+    let snooze = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO snooze_messages (snooze_id, message_remote)
+         SELECT ?1, remote_id FROM messages WHERE thread_id = ?2",
+        [snooze, thread],
+    )
+    .unwrap();
+    conn.execute(
+        "DELETE FROM message_folders WHERE message_id IN (SELECT id FROM messages WHERE thread_id = ?1)
+           AND folder_id IN (SELECT id FROM folders WHERE kind = 'inbox')",
+        [thread],
+    )
+    .unwrap();
 }
 
 /// Take `thread`'s messages out of their inbox, or put them back (`back`), as a snooze and its
@@ -235,6 +249,33 @@ async fn a_snoozed_thread_is_offered_return_to_inbox_now_first() {
     );
     let line = f.screen.status_line();
     assert!(line.contains("returned 1 to the inbox"), "{line}");
+}
+
+/// Work's `thread` put back in the inbox by hand, as on another device.
+fn back_in_inbox(f: &Fixture, thread: i64) {
+    let store = writer(f);
+    store
+        .conn()
+        .execute(
+            "INSERT INTO message_folders (message_id, folder_id)
+             SELECT m.id, fo.id FROM messages m
+             JOIN folders fo ON fo.account_id = m.account_id AND fo.kind = 'inbox'
+             WHERE m.thread_id = ?1",
+            [thread],
+        )
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_snooze_whose_mail_came_back_by_hand_is_not_offered_back() {
+    let mut f = fixture(3).await;
+    let top = cursor_thread(&f);
+    snoozed_in_store(&f, top, MIDNIGHT + 3 * DAY + 8 * HOUR);
+    back_in_inbox(&f, top);
+    press(&mut f, KeyCode::Char('h')).await;
+    let shown = drawn(&f);
+    assert!(!shown.contains("Return to inbox now"), "{shown}");
+    assert!(!shown.contains("Snoozed until Mon"), "{shown}");
 }
 
 /// On a snoozed thread, `noon` typed, then `keys`, then Enter: what was sent, and the thread.
@@ -585,24 +626,18 @@ async fn the_snoozed_mailbox_opens_from_the_palette_and_lists_what_is_snoozed() 
 
 #[tokio::test]
 async fn the_reader_says_until_when_a_thread_is_snoozed_in_either_clock() {
-    let mut f = fixture(3).await;
-    let top = cursor_thread(&f);
-    snoozed_in_store(&f, top, MIDNIGHT + 3 * DAY + 8 * HOUR);
-    press(&mut f, KeyCode::Enter).await;
-    let text = reader_text(&f);
-    assert!(
-        text.contains("Snoozed until Mon 13 Oct 2025 08:00"),
-        "{text}"
-    );
-    press(&mut f, KeyCode::Char('q')).await;
-    f.screen
-        .ctx
-        .clock
-        .set_format(rail_core::config::TimeFormat::H12);
-    press(&mut f, KeyCode::Enter).await;
-    let text = reader_text(&f);
-    assert!(
-        text.contains("Snoozed until Mon 13 Oct 2025 8:00 am"),
-        "{text}"
-    );
+    use rail_core::config::TimeFormat;
+    for (format, line) in [
+        (TimeFormat::H24, "Snoozed until Mon 13 Oct 2025 08:00"),
+        (TimeFormat::H12, "Snoozed until Mon 13 Oct 2025 8:00 am"),
+    ] {
+        // A fresh screen each time: once the list is read again, the snoozed thread has left it.
+        let mut f = fixture(3).await;
+        f.screen.ctx.clock.set_format(format);
+        let top = cursor_thread(&f);
+        snoozed_in_store(&f, top, MIDNIGHT + 3 * DAY + 8 * HOUR);
+        press(&mut f, KeyCode::Enter).await;
+        let text = reader_text(&f);
+        assert!(text.contains(line), "{text}");
+    }
 }

@@ -25,23 +25,67 @@ pub(super) const NOT_SNOOZED: &str = "NOT EXISTS (SELECT 1 FROM threads st JOIN 
     ON s.account_id = st.account_id AND s.thread_remote = st.remote_id
     WHERE st.id = messages.thread_id)";
 
-/// The threads `t` a snooze holds (waiting for its archive, or archived until its time; not failed,
-/// not woken): the Snoozed mailbox, its count and the reader's line. Read from the snooze side,
-/// which is small, as the view's other folder-side conditions are.
-pub(super) const HELD: &str = "t.id IN (SELECT ht.id FROM snoozes s
+/// A message `m` where a snooze's archive left it, on Gmail: without INBOX and in neither Trash nor
+/// Spam (a label filed since still counts).
+macro_rules! archived_by_labels {
+    () => {
+        "NOT EXISTS (SELECT 1 FROM message_folders mf JOIN folders f ON f.id = mf.folder_id
+         WHERE mf.message_id = m.id AND f.kind IN ('inbox', 'trash', 'spam'))"
+    };
+}
+
+/// A message `m` where a snooze's archive left it, on Microsoft 365: in Archive.
+macro_rules! archived_in_folder {
+    () => {
+        "EXISTS (SELECT 1 FROM message_folders mf JOIN folders f ON f.id = mf.folder_id
+         WHERE mf.message_id = m.id AND f.kind = 'archive')"
+    };
+}
+
+/// Snooze `s` (its archive row joined as `o`) holds its thread `ht`: not woken, and either waiting
+/// for an archive that has not failed, or archived with some recorded message still where the
+/// archive left it, which a wake would bring back. Mail all trashed, moved or returned by hand
+/// since leaves nothing to hold.
+macro_rules! holds {
+    () => {
+        concat!(
+            "s.woken_at IS NULL AND ((s.archive_row IS NOT NULL AND o.state <> 'failed')
+             OR (s.archive_row IS NULL AND EXISTS (SELECT 1 FROM snooze_messages sm
+               JOIN messages m ON m.remote_id = sm.message_remote AND m.thread_id = ht.id
+               WHERE sm.snooze_id = s.id
+                 AND CASE (SELECT a.kind FROM accounts a WHERE a.id = s.account_id)
+                   WHEN 'm365' THEN ",
+            archived_in_folder!(),
+            " ELSE ",
+            archived_by_labels!(),
+            " END)))"
+        )
+    };
+}
+
+/// The threads `t` a snooze holds (`holds!`): the Snoozed mailbox, its count and the reader's
+/// line. Read from the snooze side, which is small, as the view's other folder-side conditions
+/// are.
+pub(super) const HELD: &str = concat!(
+    "t.id IN (SELECT ht.id FROM snoozes s
     JOIN threads ht ON ht.account_id = s.account_id AND ht.remote_id = s.thread_remote
     LEFT JOIN outbox o ON o.id = s.archive_row
-    WHERE s.woken_at IS NULL AND (s.archive_row IS NULL OR o.state <> 'failed'))";
+    WHERE ",
+    holds!(),
+    ")"
+);
 
 /// When the snooze holding `thread` ends, while one does (`HELD`).
 pub(super) fn held_until(conn: &Connection, thread: i64) -> Result<Option<i64>, StoreError> {
     Ok(conn
         .query_row(
-            "SELECT s.until FROM threads t
-             JOIN snoozes s ON s.account_id = t.account_id AND s.thread_remote = t.remote_id
-             LEFT JOIN outbox o ON o.id = s.archive_row
-             WHERE t.id = ?1 AND s.woken_at IS NULL
-               AND (s.archive_row IS NULL OR o.state <> 'failed')",
+            concat!(
+                "SELECT s.until FROM threads ht
+                 JOIN snoozes s ON s.account_id = ht.account_id AND s.thread_remote = ht.remote_id
+                 LEFT JOIN outbox o ON o.id = s.archive_row
+                 WHERE ht.id = ?1 AND ",
+                holds!()
+            ),
             [thread],
             |r| r.get(0),
         )
@@ -428,10 +472,8 @@ fn still_archived(
     thread: i64,
 ) -> Result<Vec<String>, StoreError> {
     let place = match folder_model_in(tx, account)? {
-        FolderModel::Labels => "NOT EXISTS (SELECT 1 FROM message_folders mf JOIN folders f
-             ON f.id = mf.folder_id WHERE mf.message_id = m.id AND f.kind IN ('inbox', 'trash', 'spam'))",
-        FolderModel::SingleFolder => "EXISTS (SELECT 1 FROM message_folders mf JOIN folders f
-             ON f.id = mf.folder_id WHERE mf.message_id = m.id AND f.kind = 'archive')",
+        FolderModel::Labels => archived_by_labels!(),
+        FolderModel::SingleFolder => archived_in_folder!(),
     };
     let mut stmt = tx.prepare(&format!(
         "SELECT sm.message_remote FROM snooze_messages sm
@@ -615,6 +657,15 @@ impl Store {
                 read_row,
             )
             .optional()?)
+    }
+
+    /// When the snooze holding a thread (the store's id) ends, while one holds it: the rule the
+    /// Snoozed mailbox and the reader's line follow (`HELD`).
+    ///
+    /// # Errors
+    /// The database's, as a `StoreError`.
+    pub fn snoozed_until(&self, thread_id: i64) -> Result<Option<i64>, StoreError> {
+        held_until(&self.conn, thread_id)
     }
 
     /// When the account's next active snooze is due.

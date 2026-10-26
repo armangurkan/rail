@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rail_core::ops::{DraftId, OpError};
 use rail_core::provider::FolderKind;
 use rail_core::store::filter::Filter;
-use rail_core::store::snoozes::SnoozeState;
 use rail_core::store::view::{
     AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadKey, ThreadPage,
 };
@@ -565,15 +564,12 @@ fn matching(
     }
 }
 
-/// When the snoozes holding `threads` end: the waiting and the holding ones, soonest first.
+/// When the snoozes holding `threads` end, soonest first: held as the Snoozed mailbox holds
+/// them, so a snooze with nothing left to bring back offers no return.
 fn snooze_ends(store: &Store, threads: &[i64]) -> Result<Vec<i64>, StoreError> {
     let mut ends = Vec::new();
     for thread in threads {
-        let row = store.snooze_of_thread(*thread)?;
-        ends.extend(
-            row.filter(|r| matches!(r.state, SnoozeState::Pending | SnoozeState::Active))
-                .map(|r| r.until),
-        );
+        ends.extend(store.snoozed_until(*thread)?);
     }
     ends.sort_unstable();
     Ok(ends)

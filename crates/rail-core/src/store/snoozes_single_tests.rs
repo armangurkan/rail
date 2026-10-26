@@ -7,6 +7,7 @@ use super::Store;
 use super::apply_local_tests::{state, thread};
 use super::outbox::{OutboxOutcome, OutboxWrite};
 use super::snoozes::SnoozeNew;
+use super::snoozes_view_tests::{snoozed, until};
 use crate::ops::Action;
 use crate::provider::mock::envelope;
 use crate::provider::{Envelope, FolderKind, RemoteFolder};
@@ -148,4 +149,29 @@ fn a_snooze_returns_exactly_the_archived_inbox_messages_to_the_inbox() {
             place("m-sent", "f-sent"),
         ]
     );
+}
+
+#[test]
+fn a_snooze_holds_its_conversation_only_while_some_of_its_mail_is_in_archive() {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let snooze = OutboxWrite::Snooze(SnoozeNew {
+        account_id: 1,
+        threads: vec![c1],
+        until: NOW + HOUR,
+        not_before: NOW + 10,
+        client_token: "a".into(),
+    });
+    write(&mut store, &snooze, NOW);
+    send_next(&mut store, NOW + 10);
+    let deleted = |id: &str, ms| Batch {
+        upserts: vec![message(id, ms, "f-del")],
+        ..Batch::new(1)
+    };
+    store.apply(&deleted("m-in", 2_000), NOW + 20).unwrap();
+    assert_eq!(snoozed(&store), [c1], "m-in2 is still in Archive");
+    // m-old was in Archive before the snooze, so it does not hold the conversation.
+    store.apply(&deleted("m-in2", 4_000), NOW + 30).unwrap();
+    assert_eq!(snoozed(&store), Vec::<i64>::new());
+    assert_eq!(until(&store, c1), None);
 }
