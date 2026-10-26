@@ -126,7 +126,7 @@ fn unreadable_key_names_are_refused() {
         "g x y",
         "g  x",
         "shift-1",
-        "shift-up",
+        "shift-left",
         "a\u{1b}",
         "\u{7}",
         "ab",
@@ -156,6 +156,43 @@ fn events_are_normalised_like_names() {
     assert_eq!(
         Binding::Single(shift_enter),
         parse_binding("enter").unwrap()
+    );
+}
+
+#[test]
+fn shift_up_and_down_are_keys_of_their_own() {
+    let shift = |code| Key::new(code, KeyModifiers::SHIFT);
+    assert_eq!(
+        parse_binding("shift-up"),
+        Some(Binding::Single(shift(KeyCode::Up)))
+    );
+    assert_eq!(
+        parse_binding("Shift-Down"),
+        Some(Binding::Single(shift(KeyCode::Down)))
+    );
+    assert_ne!(shift(KeyCode::Up), key(KeyCode::Up));
+    assert_eq!(shift(KeyCode::Up).to_string(), "Shift-↑");
+    assert_eq!(shift(KeyCode::Down).to_string(), "Shift-↓");
+    // Every other key drops Shift as before.
+    assert_eq!(shift(KeyCode::Left), key(KeyCode::Left));
+    assert_eq!(shift(KeyCode::PageDown), key(KeyCode::PageDown));
+}
+
+#[test]
+fn shift_arrows_extend_the_list_and_move_where_nothing_binds_them() {
+    let map = Keymap::defaults();
+    let down = with(KeyCode::Down, KeyModifiers::SHIFT);
+    let up = with(KeyCode::Up, KeyModifiers::SHIFT);
+    assert_eq!(
+        resolve(&map, &[View::List, View::Global], &[down, up]),
+        [
+            Resolved::Action(Action::ListExtendDown),
+            Resolved::Action(Action::ListExtendUp)
+        ]
+    );
+    assert_eq!(
+        resolve(&map, &[View::Reader, View::Global], &[down]),
+        [Resolved::Action(Action::ReaderDown)]
     );
 }
 

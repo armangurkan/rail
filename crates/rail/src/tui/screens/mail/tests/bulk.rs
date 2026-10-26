@@ -21,6 +21,7 @@ use crate::tui::modals::Target;
 use crate::tui::test_util::render_lines;
 
 mod chunks;
+mod shift_range;
 
 /// Press a two-key chord, e.g. `chord(f, '*', 'a')`.
 async fn chord(f: &mut Fixture, first: char, second: char) {
@@ -554,7 +555,7 @@ async fn answering_no_sends_nothing() {
     select(&mut f, 1, &work[..60]);
     press(&mut f, KeyCode::Char('e')).await;
     press(&mut f, KeyCode::Char('n')).await;
-    assert!(applies(&f).is_empty());
+    assert_eq!(applies(&f), Vec::<FakeCall>::new());
     assert_eq!(f.screen.actions.selection.len(), 60, "the selection stays");
     press(&mut f, KeyCode::Char('z')).await;
     assert!(
@@ -622,7 +623,7 @@ async fn labels_are_still_refused_across_accounts_and_on_m365() {
     assert_eq!(f.screen.actions.selection.len(), 300);
     press(&mut f, KeyCode::Char('l')).await;
     assert!(f.screen.modal.is_none());
-    assert!(applies(&f).is_empty());
+    assert_eq!(applies(&f), Vec::<FakeCall>::new());
     assert!(
         f.screen
             .status_line()
@@ -717,7 +718,7 @@ async fn snapshot_bulk_confirm_and_header_at_both_sizes_and_icon_sets() {
             select(&mut f, 1, &count_ids(1234));
             press(&mut f, KeyCode::Char('e')).await;
             let shot = crate::tui::test_util::snapshot(cols, rows, |frame| {
-                f.screen.view(frame, &Theme::default())
+                f.screen.view(frame, &Theme::default());
             });
             insta::assert_snapshot!(format!("bulk_confirm_{name}_{cols}x{rows}"), shot);
 
@@ -728,7 +729,7 @@ async fn snapshot_bulk_confirm_and_header_at_both_sizes_and_icon_sets() {
             press(&mut f, KeyCode::Char('v')).await;
             expire_notice(&mut f).await;
             let shot = crate::tui::test_util::snapshot(cols, rows, |frame| {
-                f.screen.view(frame, &Theme::default())
+                f.screen.view(frame, &Theme::default());
             });
             insta::assert_snapshot!(format!("bulk_header_{name}_{cols}x{rows}"), shot);
         }

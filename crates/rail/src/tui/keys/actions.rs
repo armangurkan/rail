@@ -132,6 +132,8 @@ actions! {
     ListSelectAll => "list.select_all", [List], ["* a"], "Select every thread this mailbox and filter match";
     ListSelectSender => "list.select_sender", [List], ["* f"], "Select every thread from this sender";
     ListSelectRange => "list.select_range", [List], ["v"], "Select a range of threads";
+    ListExtendDown => "list.extend_down", [List], ["J", "shift-down"], "Extend the selection down";
+    ListExtendUp => "list.extend_up", [List], ["K", "shift-up"], "Extend the selection up";
     SidebarFocus => "sidebar.focus", [List, Sidebar], ["tab"], "Move between the sidebar and the list";
     SidebarDown => "sidebar.down", [Sidebar], ["j", "down"], "Next mailbox";
     SidebarUp => "sidebar.up", [Sidebar], ["k", "up"], "Previous mailbox";

@@ -164,6 +164,8 @@ impl MailScreen {
             Action::ListSelectAll if self.focus == Focus::List => self.select_all(),
             Action::ListSelectSender if self.focus == Focus::List => self.select_sender(),
             Action::ListSelectRange if self.focus == Focus::List => self.select_range(),
+            Action::ListExtendDown if self.focus == Focus::List => self.extend_selection(true),
+            Action::ListExtendUp if self.focus == Focus::List => self.extend_selection(false),
             Action::ListArchive
             | Action::ListTrash
             | Action::ListStar
@@ -394,7 +396,7 @@ impl MailScreen {
             }
             return Vec::new();
         }
-        let batches = super::bulk::undo_batches(rows);
+        let batches = super::bulk::undo_batches(&rows);
         last.undos += batches.len();
         let seq = last.seq;
         if waiting {
@@ -541,7 +543,7 @@ impl MailScreen {
                 self.finish_undo(true);
                 return Vec::new();
             }
-            let batches = super::bulk::undo_batches(rows);
+            let batches = super::bulk::undo_batches(&rows);
             last.undos += batches.len();
             let seq = last.seq;
             return batches

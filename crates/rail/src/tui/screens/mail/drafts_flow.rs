@@ -115,6 +115,8 @@ impl MailScreen {
             | Action::ListSelectAll
             | Action::ListSelectSender
             | Action::ListSelectRange
+            | Action::ListExtendDown
+            | Action::ListExtendUp
             | Action::ListReply
             | Action::ListReplyAll
             | Action::ListForward

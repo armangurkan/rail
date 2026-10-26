@@ -2,6 +2,8 @@
 //! from one sender, `v` a range; the state those keys keep between presses, and the question a
 //! large archive, star or mark-read asks before it is sent.
 
+use std::collections::BTreeSet;
+
 use rail_core::ops::{Action as MailAction, MAX_UNDO_ROWS, RowToken};
 use rail_core::provider::Mailbox;
 use rail_core::store::filter::Filter;
@@ -12,6 +14,7 @@ use super::selection::Picked;
 use super::{MailScreen, Modal};
 use crate::tui::app::Effect;
 use crate::tui::data::ReadError;
+use crate::tui::keys::Action;
 use crate::tui::modals::{Command, Confirm};
 use crate::tui::text::{escape, fit};
 
@@ -33,6 +36,16 @@ pub(crate) struct BulkState {
     pub(super) latest_match: u64,
     /// The newest `* f` read's sequence number.
     pub(super) latest_sender: u64,
+    /// The Shift range under way: any key but `J`/`K` and Shift-↓/↑ ends it.
+    pub(super) extending: Option<Extending>,
+}
+
+/// A Shift range (`J`/`K`, Shift-↓/↑): the thread it anchors on, and the threads it selected
+/// that were not selected before it began — only those leave when it shrinks.
+#[derive(Debug)]
+pub(super) struct Extending {
+    anchor: i64,
+    added: BTreeSet<i64>,
 }
 
 impl BulkState {
@@ -92,7 +105,7 @@ pub(super) fn needs_confirm(action: &MailAction, count: usize, threshold: u32) -
 /// `rows` split into the batches one `action.undo` takes. A bulk action enqueues one outbox
 /// row per `action.apply` call — about 58 at `MAX_SELECTION` — so this is defensive; the
 /// request's own bound is `MAX_UNDO_ROWS`, and one `z` must take the whole set back.
-pub(super) fn undo_batches(rows: Vec<RowToken>) -> Vec<Vec<RowToken>> {
+pub(super) fn undo_batches(rows: &[RowToken]) -> Vec<Vec<RowToken>> {
     rows.chunks(MAX_UNDO_ROWS)
         .map(<[RowToken]>::to_vec)
         .collect()
@@ -305,6 +318,81 @@ fn filter_term(address: &str) -> Option<String> {
         ..Filter::default()
     };
     (rail_core::store::filter::parse(&text) == wanted).then_some(text)
+}
+
+impl MailScreen {
+    /// `J`/`K` (Shift-↓/↑): the first press anchors on the cursor row; each press moves the
+    /// cursor one row and selects every row from the anchor to it, and moving back toward the
+    /// anchor deselects the rows this range added. In `v` range mode the keys only move.
+    pub(super) fn extend_selection(&mut self, down: bool) -> Vec<Effect> {
+        let step = if down {
+            Action::ListDown
+        } else {
+            Action::ListUp
+        };
+        if self.bulk.range_on() {
+            return self.list_action(step);
+        }
+        let Some(cursor) = self.list.selected().map(|row| row.key.thread_id) else {
+            return Vec::new();
+        };
+        let anchor = self
+            .bulk
+            .extending
+            .get_or_insert_with(|| Extending {
+                anchor: cursor,
+                added: BTreeSet::new(),
+            })
+            .anchor;
+        let effects = self.list_action(step);
+        self.extend_from(anchor);
+        effects
+    }
+
+    /// The rows from `anchor` to the cursor become the Shift range's selection; a re-read that
+    /// dropped the anchor ends the range, as it ends `v`'s.
+    fn extend_from(&mut self, anchor: i64) {
+        let rows = self.list.rows();
+        let Some(at) = rows.iter().position(|row| row.key.thread_id == anchor) else {
+            self.bulk.extending = None;
+            self.status
+                .notify("The range start is no longer in the list.", self.tick);
+            return;
+        };
+        let cursor = self.list.selected_index();
+        let span: Vec<(i64, Picked)> = rows[at.min(cursor)..=at.max(cursor)]
+            .iter()
+            .map(|row| (row.key.thread_id, Picked::of(row)))
+            .collect();
+        let Some(extending) = self.bulk.extending.as_mut() else {
+            return;
+        };
+        let selection = &mut self.actions.selection;
+        let inside: BTreeSet<i64> = span.iter().map(|(id, _)| *id).collect();
+        extending.added.retain(|id| {
+            let keep = inside.contains(id);
+            if !keep {
+                selection.remove(*id);
+            }
+            keep
+        });
+        let fresh: Vec<(i64, Picked)> = (span.into_iter())
+            .filter(|(id, _)| !selection.contains(*id))
+            .collect();
+        let full = selection.add(&fresh);
+        let taken = fresh
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| selection.contains(*id));
+        extending.added.extend(taken);
+        // `(more match)` belongs to the capped select-all that set it.
+        self.bulk.more = false;
+        if full {
+            let cap = thousands(u64::try_from(MAX_SELECTION).unwrap_or(u64::MAX));
+            let text = format!("The selection holds at most {cap} threads.");
+            self.status.notify(text, self.tick);
+        }
+    }
 }
 
 #[cfg(test)]

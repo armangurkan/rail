@@ -102,7 +102,7 @@ fn message_id(f: &Fixture, remote: &str) -> i64 {
 
 /// `fixture(3)` whose `work` has a Drafts folder holding, newest first: draft 2 (pushed, its
 /// Gmail copy `dm1`), the Gmail draft `dm2` no local draft owns, and draft 1 (local only).
-async fn drafts_fixture() -> Fixture {
+pub(super) async fn drafts_fixture() -> Fixture {
     let mut f = fixture(3).await;
     seed_local(
         &f,
@@ -156,7 +156,7 @@ async fn point_at_drafts(f: &mut Fixture) {
     }
 }
 
-async fn open_drafts(f: &mut Fixture) {
+pub(super) async fn open_drafts(f: &mut Fixture) {
     point_at_drafts(f).await;
     press(f, KeyCode::Enter).await;
     assert!(f.screen.in_drafts());

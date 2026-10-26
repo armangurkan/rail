@@ -57,6 +57,11 @@ impl Selection {
         self.picked.extend(targets.iter().copied());
     }
 
+    /// Leave `thread` out of the selection.
+    pub fn remove(&mut self, thread: i64) {
+        self.picked.remove(&thread);
+    }
+
     pub fn clear(&mut self) {
         self.picked.clear();
     }

@@ -430,6 +430,10 @@ impl MailScreen {
     }
 
     pub(crate) fn act(&mut self, action: Action) -> Vec<Effect> {
+        if !matches!(action, Action::ListExtendDown | Action::ListExtendUp) {
+            // Any other key ends a Shift range; what it selected stays selected.
+            self.bulk.extending = None;
+        }
         if let Some(effects) = self.drafts_action(action) {
             return effects;
         }

@@ -230,7 +230,8 @@ Every key Rail reads is an *action* with an id and a default key. Change one in 
 
 A key name is a character (`a`, `O`, `/`), a named key (`enter`, `esc`, `tab`, `backtab`,
 `space`, `up`, `down`, `left`, `right`, `pageup`, `pagedown`, `home`, `end`, `f1` to `f12`),
-either with `ctrl-`, `alt-` or `shift-` in front (`ctrl-r`, `shift-tab`), or two keys with a
+either with `ctrl-`, `alt-` or `shift-` in front (`ctrl-r`, `shift-tab`, `shift-down`; `shift-`
+goes on a letter, `tab`, `up` or `down`), or two keys with a
 space between them for a sequence (`g x`). A key you set replaces that action's default keys.
 Both `rail` and `rail setup` refuse to start, naming the file and line and exiting 1, when `[keys]`
 names an action it does not know, a key it cannot read, `Ctrl-C` (which always quits), or a key
@@ -283,6 +284,8 @@ are in, with `*` after the ones set in `config.toml`.
 | `list.select_all` | list | `* a` | Select every thread this mailbox and filter match. |
 | `list.select_sender` | list | `* f` | Select every thread from this sender. |
 | `list.select_range` | list | `v` | Select a range of threads. |
+| `list.extend_down` | list | `J` `shift-down` | Extend the selection down. |
+| `list.extend_up` | list | `K` `shift-up` | Extend the selection up. |
 | `sidebar.focus` | list, sidebar | `tab` | Move between the sidebar and the list. |
 | `sidebar.down` | sidebar | `j` `down` | Next mailbox. |
 | `sidebar.up` | sidebar | `k` `up` | Previous mailbox. |
@@ -599,6 +602,15 @@ and keeps every thread it covered; `Esc` again clears the selection, as before. 
 started from has left the list by then, Rail says `The range start is no longer in the list.` and
 selects nothing.
 
+`J` or `Shift-↓` extends the selection down from the thread under the cursor, and `K` or `Shift-↑`
+up: the first press selects that thread and the next, and each further press one more. Going
+back toward where you started unselects what the extension added; threads you had selected before
+stay selected. Any other key ends the extension and keeps what it selected, so `J` after a move
+starts again from the new place. A terminal that does not report Shift with the arrows still has
+`J` and `K`; elsewhere in Rail a Shift-arrow moves like the plain arrow. While `v` has a range
+open, `J` and `K` only move. A selection holds at most 10,000 threads: an extension it stops says
+`The selection holds at most 10,000 threads.`
+
 A bulk action goes out as one request per 200 threads per account, and one `z` takes the whole set
 back, reporting `undone` once; an undo that could take only part of it back says `undone in part:
 some were already sent`.
@@ -798,7 +810,7 @@ draft that was deleted elsewhere before you opened or discarded it says
 `Gmail no longer has this draft`; one that cannot be fetched says `Could not open the draft: …` or
 `Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
 select, selecting all or by sender, the range, reply, forward and the filter
-(`e`, `s`, `u`, `l`, `m`, `space`, `* a`, `* f`, `v`, `r`, `R`, `f`, `/`) say
+(`e`, `s`, `u`, `l`, `m`, `space`, `* a`, `* f`, `v`, `J`, `K`, `r`, `R`, `f`, `/`) say
 `Not available on drafts`; `Esc` does nothing there and `c` writes a new message as everywhere.
 The search slot is empty in this folder: the pane is not filtered. The pane is read again whenever
 sync or the outbox

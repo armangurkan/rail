@@ -9,7 +9,8 @@ use std::fmt;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// One key as the keymap compares it: Shift folded into the character (and into `BackTab`),
-/// Ctrl and Alt kept, nothing else.
+/// Ctrl and Alt kept, and Shift on Up and Down (Shift-↑/↓ extend the list's selection); on
+/// any other key Shift only shapes it (a capital letter, `BackTab`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Key {
     pub code: KeyCode,
@@ -19,7 +20,7 @@ pub struct Key {
 impl Key {
     pub fn new(code: KeyCode, mods: KeyModifiers) -> Self {
         let shift = mods.contains(KeyModifiers::SHIFT);
-        let mods = mods & (KeyModifiers::CONTROL | KeyModifiers::ALT);
+        let mut mods = mods & (KeyModifiers::CONTROL | KeyModifiers::ALT);
         let code = match code {
             KeyCode::Tab if shift => KeyCode::BackTab,
             KeyCode::Char(c) if mods.contains(KeyModifiers::CONTROL) => {
@@ -27,6 +28,10 @@ impl Key {
             }
             other => other,
         };
+        // Shift-↑/↓ extend the list's selection, so Shift stays with Up and Down.
+        if shift && matches!(code, KeyCode::Up | KeyCode::Down) {
+            mods |= KeyModifiers::SHIFT;
+        }
         Self { code, mods }
     }
 
@@ -93,8 +98,12 @@ fn parse_key(text: &str) -> Option<Key> {
         rest = &rest[prefix.len()..];
     }
     let code = named(rest).or_else(|| character(rest))?;
-    let code = if shift { shifted(code)? } else { code };
-    Some(Key::new(code, mods))
+    match code {
+        _ if !shift => Some(Key::new(code, mods)),
+        // Shift stays a modifier on Up and Down; on a letter or Tab it shapes the key.
+        KeyCode::Up | KeyCode::Down => Some(Key::new(code, mods | KeyModifiers::SHIFT)),
+        other => shifted(other).map(|code| Key::new(code, mods)),
+    }
 }
 
 fn named(text: &str) -> Option<KeyCode> {
@@ -137,7 +146,8 @@ fn character(text: &str) -> Option<KeyCode> {
     printable.then_some(KeyCode::Char(c))
 }
 
-/// What `shift-` makes of a key: an upper-case letter, or `BackTab`. Nothing else.
+/// What `shift-` makes of a letter or Tab: an upper-case letter, or `BackTab`. Nothing else
+/// (Up and Down keep Shift as a modifier instead).
 fn shifted(code: KeyCode) -> Option<KeyCode> {
     match code {
         KeyCode::Char(c) if c.is_alphabetic() => {
@@ -157,6 +167,9 @@ impl fmt::Display for Key {
         }
         if self.mods.contains(KeyModifiers::ALT) {
             f.write_str("Alt-")?;
+        }
+        if self.mods.contains(KeyModifiers::SHIFT) {
+            f.write_str("Shift-")?;
         }
         match self.code {
             KeyCode::Char(' ') => f.write_str("Space"),
