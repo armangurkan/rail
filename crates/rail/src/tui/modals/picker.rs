@@ -257,9 +257,15 @@ impl Picker {
         self.selected = 0;
     }
 
-    /// The typed time, when a snooze chooser's text reads as one: its row comes first.
+    /// The typed time, when a snooze chooser's text reads as one: its row comes first, unless a
+    /// choice still shown already offers that time (`tomorrow` typed is the Tomorrow row).
     fn typed(&self) -> Option<i64> {
-        self.snooze.as_ref()?.reading?.ok()
+        let at = self.snooze.as_ref()?.reading?.ok()?;
+        let offered = self
+            .shown
+            .iter()
+            .any(|&i| self.items.get(i).is_some_and(|c| c.id == at));
+        (!offered).then_some(at)
     }
 
     /// The rows before the matching items: the typed time's, if any.

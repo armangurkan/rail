@@ -198,7 +198,7 @@ async fn text_that_is_not_a_time_says_why_and_enter_does_nothing() {
     type_text(&mut f, "soon").await;
     let shown = drawn(&f);
     assert!(
-        shown.contains("Try 18:00, 6pm, 2026-11-03 09:30, +3h, +2d or mon."),
+        shown.contains("Try 6pm, tomorrow 9am, 2 days, nov 3 or fri."),
         "{shown}"
     );
     press(&mut f, KeyCode::Enter).await;
@@ -327,4 +327,16 @@ async fn several_threads_back_are_counted() {
     woke(&mut f, threads).await;
     let line = f.screen.status_line();
     assert!(line.contains("3 threads back from snooze"), "{line}");
+}
+
+#[tokio::test]
+async fn typing_a_choices_name_offers_that_choice_once() {
+    let mut f = fixture(3).await;
+    press(&mut f, KeyCode::Char('h')).await;
+    type_text(&mut f, "tomorrow").await;
+    let shown = drawn(&f);
+    assert_eq!(shown.matches("Sat 08:00").count(), 1, "{shown}");
+    press(&mut f, KeyCode::Enter).await;
+    let top = f.screen.list.selected().unwrap().key.thread_id;
+    assert_eq!(snoozes(&f), [set(vec![top], MIDNIGHT + DAY + 8 * HOUR)]);
 }

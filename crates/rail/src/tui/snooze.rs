@@ -10,7 +10,7 @@ use rail_core::ops::{MAX_SNOOZE_SECS, MIN_SNOOZE_SECS};
 use crate::tui::clock::Clock;
 
 /// What the chooser shows for text it cannot read as a time.
-pub const TRY: &str = "Try 18:00, 6pm, 2026-11-03 09:30, +3h, +2d or mon.";
+pub const TRY: &str = "Try 6pm, tomorrow 9am, 2 days, nov 3 or fri.";
 /// What it shows for a time that is not at least a minute ahead.
 pub const PASSED: &str = "That time has passed.";
 /// What it shows for a time the daemon would refuse as too far ahead.
@@ -20,11 +20,13 @@ pub const TOO_FAR: &str = "That is more than a year away.";
 const MORNING: i8 = 8;
 /// The hour "Later today" comes back at.
 const EVENING: i8 = 18;
+/// The hour "tonight" means.
+const NIGHT: i8 = 20;
 /// "Later today" is offered before this hour only: later, an hour's snooze is not worth one.
 const LATE: i8 = 17;
 /// The most digits a typed span (`+3h`) has, so its arithmetic cannot overflow.
 const SPAN_DIGITS: usize = 4;
-/// The days a typed weekday names: three letters of the name or more (`tue`, `tues`).
+/// The days a typed weekday names.
 const WEEKDAYS: [(&str, Weekday); 7] = [
     ("monday", Weekday::Monday),
     ("tuesday", Weekday::Tuesday),
@@ -33,6 +35,21 @@ const WEEKDAYS: [(&str, Weekday); 7] = [
     ("friday", Weekday::Friday),
     ("saturday", Weekday::Saturday),
     ("sunday", Weekday::Sunday),
+];
+/// The months a typed date names: three letters of the name or more (`nov`, `sept`).
+const MONTHS: [&str; 12] = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
 ];
 
 /// One of the chooser's choices: its label and the time it stands for (Unix seconds).
@@ -74,18 +91,19 @@ pub fn snooze_choices(clock: &Clock) -> Vec<SnoozeChoice> {
     choices
 }
 
-/// The time `text` names, or the message to show instead. It reads, whatever `time` is set to:
-/// a time of day (`18:00`, `6pm`, `6:30 pm`: today, or tomorrow once it has passed), a date
-/// (`2026-11-03` at 08:00, or with a time), a span (`+3h`, `+2d`, `+1w`) and a weekday (`mon`:
-/// the next one, at 08:00). The time must be between a minute and a year ahead, as the daemon
-/// requires.
+/// The time `text` names, or the message to show instead. Whatever `time` is set to, it reads:
+/// a time of day (`18:00`, `6pm`, `6:30 pm`, `noon`: today, or tomorrow once it has passed); a
+/// span (`3 days`, `in 2 hours`, `an hour`, `+3h`); a named day (`tomorrow`, `tonight`, `later
+/// today`, `this weekend`, `next week`, `fri`) or a date (`nov 3`, `3 nov 2026`, `2026-11-03`);
+/// and a day with a time in either order (`tomorrow 9am`, `9am fri`, `nov 3 at 14:00`). A day
+/// alone comes back at its own hour: 08:00, `tonight` 20:00, `today` and `later today` 18:00.
+/// The time must be between a minute and a year ahead, as the daemon requires.
 pub fn parse_snooze(text: &str, clock: &Clock) -> Result<i64, &'static str> {
-    let text = text.trim().to_ascii_lowercase();
+    let text = text.to_ascii_lowercase().replace(',', " ");
+    let words: Vec<&str> = text.split_whitespace().collect();
     let now = clock.zoned(clock.now()).ok_or(TRY)?;
-    let at = span(&text, &now)
-        .or_else(|| weekday(&text, &now, clock))
-        .or_else(|| dated(&text, clock))
-        .or_else(|| time_of_day(&text).and_then(|(hour, minute)| next(clock, &now, hour, minute)))
+    let at = span(&words, &now)
+        .or_else(|| moment(&words, now.date(), clock))
         .ok_or(TRY)?;
     let now = clock.now();
     if at < now + MIN_SNOOZE_SECS {
@@ -107,50 +125,169 @@ fn local(clock: &Clock, day: Date, hour: i8, minute: i8) -> Option<i64> {
     Some(zoned.timestamp().as_second())
 }
 
-/// `hour`:`minute` today, or tomorrow once today's has passed.
-fn next(clock: &Clock, now: &Zoned, hour: i8, minute: i8) -> Option<i64> {
-    let today = local(clock, now.date(), hour, minute)?;
-    if today > clock.now() {
-        return Some(today);
-    }
-    local(clock, now.date().tomorrow().ok()?, hour, minute)
+/// The first of `dates` at `time` that is still ahead, or the last of them when none is (the
+/// caller then says the time has passed).
+fn first_ahead(clock: &Clock, dates: &[Date], (hour, minute): (i8, i8)) -> Option<i64> {
+    let times: Vec<i64> = dates
+        .iter()
+        .filter_map(|day| local(clock, *day, hour, minute))
+        .collect();
+    let ahead = times.iter().copied().find(|at| *at > clock.now());
+    ahead.or_else(|| times.last().copied())
 }
 
-/// `+3h`, `+2d` or `+1w`: hours of elapsed time, or calendar days and weeks, which keep the time
-/// of day across a daylight-saving change.
-fn span(text: &str, now: &Zoned) -> Option<i64> {
-    let rest = text.strip_prefix('+')?;
-    let unit = rest.chars().last()?;
-    let count = &rest[..rest.len() - unit.len_utf8()];
-    if count.is_empty() || count.len() > SPAN_DIGITS || !count.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let count: i64 = count.parse().ok()?;
-    let later = match unit {
-        'h' => now.checked_add(count.hours()),
-        'd' => now.checked_add(count.days()),
-        'w' => now.checked_add(count.weeks()),
+/// `3 days`, `in 2 hours`, `an hour`, `90 min`, `+3h`, `1 month`: minutes and hours of elapsed
+/// time, or calendar days, weeks and months, which keep the time of day across a daylight-saving
+/// change.
+fn span(words: &[&str], now: &Zoned) -> Option<i64> {
+    let words = match words {
+        ["in", rest @ ..] => rest,
+        _ => words,
+    };
+    let (count, unit) = match words {
+        ["a" | "an", unit] => (1, *unit),
+        [count, unit] => (count_of(count.strip_prefix('+').unwrap_or(count))?, *unit),
+        [joined] => {
+            let joined = joined.strip_prefix('+').unwrap_or(joined);
+            let digits = joined.bytes().take_while(u8::is_ascii_digit).count();
+            let (count, unit) = joined.split_at(digits);
+            (count_of(count)?, unit)
+        }
         _ => return None,
     };
-    Some(later.ok()?.timestamp().as_second())
+    let span = match unit {
+        "m" | "min" | "mins" | "minute" | "minutes" => count.minutes(),
+        "h" | "hr" | "hrs" | "hour" | "hours" => count.hours(),
+        "d" | "day" | "days" => count.days(),
+        "w" | "wk" | "wks" | "week" | "weeks" => count.weeks(),
+        "mo" | "month" | "months" => count.months(),
+        _ => return None,
+    };
+    Some(now.checked_add(span).ok()?.timestamp().as_second())
 }
 
-/// `mon` to `sun`, or more of the day's name: the next such day after today, at 08:00.
-fn weekday(text: &str, now: &Zoned, clock: &Clock) -> Option<i64> {
-    if text.len() < 3 {
+/// One to four ASCII digits, so a span's arithmetic cannot overflow.
+fn count_of(text: &str) -> Option<i64> {
+    let digits =
+        (1..=SPAN_DIGITS).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit());
+    if digits { text.parse().ok() } else { None }
+}
+
+/// A time alone (today, or tomorrow once it has passed), or a day with or without a time, in
+/// either order, an `at` allowed before a time that follows the day.
+fn moment(words: &[&str], today: Date, clock: &Clock) -> Option<i64> {
+    if let Some(time) = time_of(words) {
+        return first_ahead(clock, &[today, today.tomorrow().ok()?], time);
+    }
+    (1..=words.len()).find_map(|split| {
+        let (head, tail) = words.split_at(split);
+        let after = match tail {
+            ["at", rest @ ..] => rest,
+            _ => tail,
+        };
+        on_day(head, after, today, clock)
+            .or_else(|| (!tail.is_empty()).then(|| on_day(tail, head, today, clock))?)
+    })
+}
+
+/// The days `day` names, at `time` or, with none, at the day's own hour.
+fn on_day(day: &[&str], time: &[&str], today: Date, clock: &Clock) -> Option<i64> {
+    let (dates, hour) = days(day, today)?;
+    let time = if time.is_empty() {
+        (hour, 0)
+    } else {
+        time_of(time)?
+    };
+    first_ahead(clock, &dates, time)
+}
+
+/// The days `words` name, soonest first (the first whose time is still ahead is meant), and the
+/// hour a day named alone comes back at.
+fn days(words: &[&str], today: Date) -> Option<(Vec<Date>, i8)> {
+    let found = match words {
+        ["today" | "later"] | ["later", "today"] => (vec![today], EVENING),
+        ["tonight"] => (vec![today], NIGHT),
+        ["tomorrow"] => (vec![today.tomorrow().ok()?], MORNING),
+        ["weekend"] | ["this" | "the", "weekend"] => (weekly(today, Weekday::Saturday)?, MORNING),
+        ["next", "week"] => (vec![today.nth_weekday(1, Weekday::Monday).ok()?], MORNING),
+        ["next" | "this", day] | [day] if weekday(day).is_some() => {
+            (weekly(today, weekday(day)?)?, MORNING)
+        }
+        [date] if civil_date(date).is_some() => (vec![civil_date(date)?], MORNING),
+        _ => (month_date(words, today)?, MORNING),
+    };
+    Some(found)
+}
+
+/// A weekday by three letters of its name or more (`tue`, `tues`, `tuesday`).
+fn weekday(word: &str) -> Option<Weekday> {
+    if word.len() < 3 {
         return None;
     }
-    let (_, day) = WEEKDAYS.iter().find(|(name, _)| name.starts_with(text))?;
-    local(clock, now.date().nth_weekday(1, *day).ok()?, MORNING, 0)
+    WEEKDAYS
+        .iter()
+        .find(|(name, _)| name.starts_with(word))
+        .map(|(_, day)| *day)
 }
 
-/// `2026-11-03` (at 08:00), or that date and a time of day: `2026-11-03 09:30`.
-fn dated(text: &str, clock: &Clock) -> Option<i64> {
-    let (day, (hour, minute)) = match text.split_once(' ') {
-        Some((day, time)) => (day, time_of_day(time.trim_start())?),
-        None => (text, (MORNING, 0)),
+/// The coming `day` (today, when today is one) and the one a week later.
+fn weekly(today: Date, day: Weekday) -> Option<Vec<Date>> {
+    let first = if today.weekday() == day {
+        today
+    } else {
+        today.nth_weekday(1, day).ok()?
     };
-    local(clock, civil_date(day)?, hour, minute)
+    Some(vec![first, first.checked_add(1.week()).ok()?])
+}
+
+/// `nov 3`, `3 nov` or `november 3rd`, with or without a year: without one it is this year's, or
+/// next year's once this year's has passed.
+fn month_date(words: &[&str], today: Date) -> Option<Vec<Date>> {
+    let ((month, day), year) = match words {
+        [a, b] => (month_day(a, b)?, None),
+        [a, b, year] => (month_day(a, b)?, Some(year_of(year)?)),
+        _ => return None,
+    };
+    let years = match year {
+        Some(year) => vec![year],
+        None => vec![today.year(), today.year().checked_add(1)?],
+    };
+    let dates: Vec<Date> = years
+        .into_iter()
+        .filter_map(|year| Date::new(year, month, day).ok())
+        .collect();
+    (!dates.is_empty()).then_some(dates)
+}
+
+/// A month's name and a day of the month, in either order.
+fn month_day(a: &str, b: &str) -> Option<(i8, i8)> {
+    month_of(a)
+        .zip(ordinal(b))
+        .or_else(|| month_of(b).zip(ordinal(a)))
+}
+
+/// A month by three letters of its name or more (`nov`, `sept`, `november`).
+fn month_of(word: &str) -> Option<i8> {
+    if word.len() < 3 {
+        return None;
+    }
+    let index = MONTHS.iter().position(|name| name.starts_with(word))?;
+    i8::try_from(index + 1).ok()
+}
+
+/// A day of the month: `3`, `03` or `3rd`.
+fn ordinal(word: &str) -> Option<i8> {
+    let digits = ["st", "nd", "rd", "th"]
+        .iter()
+        .find_map(|suffix| word.strip_suffix(suffix))
+        .unwrap_or(word);
+    number(digits)
+}
+
+/// A four-digit year.
+fn year_of(word: &str) -> Option<i16> {
+    let digits = word.len() == 4 && word.bytes().all(|b| b.is_ascii_digit());
+    if digits { word.parse().ok() } else { None }
 }
 
 /// A `YYYY-MM-DD` date that exists; nothing looser.
@@ -166,6 +303,16 @@ fn civil_date(text: &str) -> Option<Date> {
     }
     let (year, month, day) = (&text[..4], &text[5..7], &text[8..]);
     Date::new(year.parse().ok()?, month.parse().ok()?, day.parse().ok()?).ok()
+}
+
+/// `18:00`, `6pm`, `6:30 pm`, `noon` or `midnight`: the hour and minute.
+fn time_of(words: &[&str]) -> Option<(i8, i8)> {
+    match words {
+        [] => None,
+        ["noon"] => Some((12, 0)),
+        ["midnight"] => Some((0, 0)),
+        _ => time_of_day(&words.join(" ")),
+    }
 }
 
 /// `18:00`, `6pm` or `6:30 pm`: the hour and minute. A bare number is not a time.
@@ -378,8 +525,15 @@ mod tests {
             "",
             "  ",
             "soon",
-            "tomorrow",
             "tu",
+            "in",
+            "next",
+            "nov",
+            "nov 32",
+            "feb 29",
+            "3 parsecs",
+            "tomorrow tomorrow",
+            "9am 10am",
             "18",
             "25:00",
             "24:00",
@@ -397,10 +551,94 @@ mod tests {
             "2025-02-30",
             "2025-13-01",
             "2025-1-1",
-            "mon 9:00",
         ];
         for text in garbage {
             assert_eq!(parse_snooze(text, &clock), Err(TRY), "{text:?}");
         }
+    }
+
+    #[test]
+    fn spans_in_words_count_from_now() {
+        parses(
+            &utc(NOW),
+            &[
+                ("3 days", NOW + 3 * DAY),
+                ("in 3 days", NOW + 3 * DAY),
+                ("3d", NOW + 3 * DAY),
+                ("3days", NOW + 3 * DAY),
+                ("2 hours", NOW + 2 * HOUR),
+                ("in 2 hrs", NOW + 2 * HOUR),
+                ("an hour", NOW + HOUR),
+                ("in a day", NOW + DAY),
+                ("90 min", NOW + 90 * 60),
+                ("30 minutes", NOW + 30 * 60),
+                ("2 weeks", NOW + 14 * DAY),
+                ("1 month", NOW + 31 * DAY),
+            ],
+        );
+    }
+
+    #[test]
+    fn named_days_take_their_own_hour_or_the_time_given() {
+        parses(
+            &utc(NOW),
+            &[
+                ("tomorrow", MIDNIGHT + DAY + 8 * HOUR),
+                ("Tomorrow 9am", MIDNIGHT + DAY + 9 * HOUR),
+                ("tomorrow at 9:30 pm", MIDNIGHT + DAY + 21 * HOUR + 30 * 60),
+                ("9am tomorrow", MIDNIGHT + DAY + 9 * HOUR),
+                ("tonight", MIDNIGHT + 20 * HOUR),
+                ("later today", MIDNIGHT + 18 * HOUR),
+                ("today 5pm", MIDNIGHT + 17 * HOUR),
+                ("this weekend", MIDNIGHT + DAY + 8 * HOUR),
+                ("weekend", MIDNIGHT + DAY + 8 * HOUR),
+                ("next week", MIDNIGHT + 3 * DAY + 8 * HOUR),
+                ("next week 10am", MIDNIGHT + 3 * DAY + 10 * HOUR),
+                ("next monday", MIDNIGHT + 3 * DAY + 8 * HOUR),
+                ("mon 9:00", MIDNIGHT + 3 * DAY + 9 * HOUR),
+                ("monday 9:30", MIDNIGHT + 3 * DAY + 9 * HOUR + 30 * 60),
+                ("fri 5pm", MIDNIGHT + 17 * HOUR),
+                ("noon", MIDNIGHT + DAY + 12 * HOUR),
+                ("midnight", MIDNIGHT + DAY),
+            ],
+        );
+        assert_eq!(
+            parse_snooze("today 9am", &utc(NOW)),
+            Err(PASSED),
+            "a named day is that day"
+        );
+    }
+
+    #[test]
+    fn a_month_date_is_this_years_or_next_years_once_it_has_passed() {
+        let nov_3 = MIDNIGHT + 24 * DAY + 8 * HOUR;
+        parses(
+            &utc(NOW),
+            &[
+                ("nov 3", nov_3),
+                ("november 3", nov_3),
+                ("3 nov", nov_3),
+                ("nov 3rd", nov_3),
+                ("nov 3, 2025", nov_3),
+                ("nov 3 2pm", nov_3 + 6 * HOUR),
+                ("3 nov at 9:30", nov_3 + 90 * 60),
+                ("oct 10 2pm", MIDNIGHT + 14 * HOUR),
+                ("oct 1", MIDNIGHT + 356 * DAY + 8 * HOUR),
+                ("oct 10", MIDNIGHT + 365 * DAY + 8 * HOUR),
+            ],
+        );
+    }
+
+    #[test]
+    fn words_keep_the_wall_clock_across_a_daylight_saving_change() {
+        // Now is Fri 14:40 at UTC+2; by Monday the zone is at UTC+1.
+        parses(
+            &shifting(),
+            &[
+                ("tomorrow 9am", MIDNIGHT + DAY + 7 * HOUR),
+                ("3 days", NOW + 3 * DAY + HOUR),
+                ("next week", MIDNIGHT + 3 * DAY + 7 * HOUR),
+            ],
+        );
     }
 }
