@@ -6,6 +6,7 @@ use super::Store;
 use super::apply_local_tests::{seeded, thread};
 use super::filter::parse;
 use super::outbox::{Failure, OutboxOutcome, OutboxWrite};
+use super::snoozes_edge_tests::{fail_next, refused};
 use super::snoozes_tests::{HOUR, NOW, in_folders, send_next, snooze, sync, wake};
 use super::view::{AccountFilter, ListQuery, PageAt, Scope};
 
@@ -103,4 +104,31 @@ fn a_failed_or_woken_snooze_holds_nothing() {
     wake(&mut store, NOW + HOUR);
     assert_eq!(snoozed(&store), Vec::<i64>::new(), "the woken one is back");
     assert_eq!((counted(&store), until(&store, t1)), (0, None));
+}
+
+#[test]
+fn the_ends_of_many_threads_snoozes_come_in_one_read_soonest_first() {
+    let mut store = seeded();
+    let (t1, t2) = (thread(&store, "t1"), thread(&store, "t2"));
+    assert_eq!(store.snooze_ends(&[t1, t2]).unwrap(), Vec::<i64>::new());
+    snooze(&mut store, vec![t1], NOW + HOUR, "a");
+    send_next(&mut store, NOW + 10);
+    snooze(&mut store, vec![t2], NOW + 2 * HOUR, "b");
+    assert_eq!(
+        store.snooze_ends(&[t2, t1]).unwrap(),
+        [NOW + HOUR, NOW + 2 * HOUR],
+        "an active and a pending one, soonest first"
+    );
+    fail_next(&mut store, NOW + 20, refused());
+    assert_eq!(
+        store.snooze_ends(&[t1, t2]).unwrap(),
+        [NOW + HOUR],
+        "t2's failed"
+    );
+    wake(&mut store, NOW + HOUR);
+    assert_eq!(
+        store.snooze_ends(&[t1, t2]).unwrap(),
+        Vec::<i64>::new(),
+        "t1 woke"
+    );
 }

@@ -369,12 +369,13 @@ impl StoreReader {
         })
     }
 
-    /// When the snoozes holding `threads` end, soonest first: a snooze chooser's title and its
-    /// "Return to inbox now".
+    /// When the snoozes holding `threads` end, soonest first, in one read: a snooze chooser's
+    /// title and its "Return to inbox now". Held as the Snoozed mailbox holds them, so a snooze
+    /// with nothing left to bring back offers no return.
     pub fn snoozes(&self, seq: u64, threads: Vec<i64>) -> Effect {
         let reader = self.clone();
         job(move |sink| async move {
-            let result = reader.read(move |store| snooze_ends(store, &threads)).await;
+            let result = reader.read(move |store| store.snooze_ends(&threads)).await;
             send(&sink, MailEvent::Snoozes { seq, result });
         })
     }
@@ -562,15 +563,4 @@ fn matching(
         Some(query) => store.matching_targets(&query, limit),
         None => Ok(Vec::new()),
     }
-}
-
-/// When the snoozes holding `threads` end, soonest first: held as the Snoozed mailbox holds
-/// them, so a snooze with nothing left to bring back offers no return.
-fn snooze_ends(store: &Store, threads: &[i64]) -> Result<Vec<i64>, StoreError> {
-    let mut ends = Vec::new();
-    for thread in threads {
-        ends.extend(store.snoozed_until(*thread)?);
-    }
-    ends.sort_unstable();
-    Ok(ends)
 }

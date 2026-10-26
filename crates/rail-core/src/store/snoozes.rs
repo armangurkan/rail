@@ -711,6 +711,25 @@ impl Store {
         held_until(&self.conn, thread_id)
     }
 
+    /// When the snoozes holding `threads` (the store's ids) end, soonest first, in one read: the
+    /// rule `snoozed_until` follows (`holds!`). A thread no snooze holds adds nothing.
+    ///
+    /// # Errors
+    /// The database's, as a `StoreError`.
+    pub fn snooze_ends(&self, threads: &[i64]) -> Result<Vec<i64>, StoreError> {
+        let mut stmt = self.conn.prepare(concat!(
+            "SELECT s.until FROM threads ht
+             JOIN snoozes s ON s.account_id = ht.account_id AND s.thread_remote = ht.remote_id
+             LEFT JOIN outbox o ON o.id = s.archive_row
+             WHERE ht.id IN (SELECT value FROM json_each(?1)) AND ",
+            holds!(),
+            "
+             ORDER BY s.until"
+        ))?;
+        let rows = stmt.query_map([json(&threads)], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// When the account's next active snooze is due.
     ///
     /// # Errors

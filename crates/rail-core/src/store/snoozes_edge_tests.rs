@@ -19,7 +19,7 @@ use crate::provider::{FolderKind, RemoteFolder};
 use crate::sync::batch::Batch;
 
 /// Claim account 1's next row at `at` and record `failure`; its id.
-fn fail_next(store: &mut Store, at: i64, failure: Failure) -> i64 {
+pub(super) fn fail_next(store: &mut Store, at: i64, failure: Failure) -> i64 {
     let row = match store
         .outbox_write(&OutboxWrite::Claim { account_id: 1 }, at)
         .unwrap()
@@ -33,7 +33,7 @@ fn fail_next(store: &mut Store, at: i64, failure: Failure) -> i64 {
     row
 }
 
-fn refused() -> Failure {
+pub(super) fn refused() -> Failure {
     Failure::Permanent("Gmail refused the change".into())
 }
 
