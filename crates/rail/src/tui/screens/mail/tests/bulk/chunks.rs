@@ -1,5 +1,6 @@
-//! A bulk selection sent and taken back: `dispatch` chunked by `MAX_ACTION_THREADS`, one
-//! client token per chunk, `z` chunked by `MAX_UNDO_ROWS` reporting once, a mixed undo answer,
+//! A bulk selection sent and taken back: `dispatch` chunked by `MAX_ACTION_THREADS` for every
+//! thread action, one client token per chunk, `z` chunked by `MAX_UNDO_ROWS` reporting once, a
+//! mixed undo answer,
 //! and a failed chunk putting back only its own threads. A child module of `tests/bulk.rs`,
 //! whose helpers it uses, because the two together would cross CONTRIBUTING's 800-line cap.
 
@@ -171,4 +172,39 @@ async fn a_failed_chunk_restores_only_its_own_threads() {
     press(&mut f, KeyCode::Char('e')).await;
     press(&mut f, KeyCode::Char('y')).await;
     assert_eq!(selected_ids(&f), second, "only the failed chunk comes back");
+}
+
+#[tokio::test]
+async fn each_other_thread_action_goes_out_in_chunks_of_two_hundred() {
+    let moving: Vec<KeyCode> = "mproj"
+        .chars()
+        .map(KeyCode::Char)
+        .chain([KeyCode::Enter])
+        .collect();
+    let actions = [
+        ("trash", vec![KeyCode::Char('d'), KeyCode::Char('y')]),
+        ("star", vec![KeyCode::Char('s'), KeyCode::Char('y')]),
+        ("read", vec![KeyCode::Char('u'), KeyCode::Char('y')]),
+        (
+            "labels",
+            vec![KeyCode::Char('l'), KeyCode::Char(' '), KeyCode::Enter],
+        ),
+        ("move", moving),
+    ];
+    for (name, keys) in actions {
+        let mut f = fixture(250).await;
+        press(&mut f, KeyCode::Char('1')).await;
+        chord(&mut f, '*', 'a').await;
+        for code in keys {
+            press(&mut f, code).await;
+        }
+        let sizes: Vec<usize> = applies(&f)
+            .iter()
+            .map(|call| match call {
+                FakeCall::Apply { threads, .. } => threads.len(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(sizes, [200, 50], "{name}");
+    }
 }

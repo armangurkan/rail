@@ -3,7 +3,8 @@
 //! anything says the refusal. A child module of `tests/snooze.rs`, whose helpers it uses.
 
 use rail_core::ops::{
-    Action as MailAction, ActionApplyResponse, NOT_IN_INBOX, RowToken, SnoozeClearResponse,
+    Action as MailAction, ActionApplyResponse, ActionUndoResponse, NOT_IN_INBOX, RowToken,
+    SnoozeClearResponse,
 };
 
 use super::super::super::selection::Picked;
@@ -350,4 +351,84 @@ async fn an_older_returns_answer_is_not_counted() {
     feed(&mut f, returned(newer, ids, 2)).await;
     let line = f.screen.status_line();
     assert!(line.contains("returned 2 to the inbox"), "{line}");
+}
+
+/// The rows of each `action.undo` the fake took, in order.
+fn undo_rows(f: &Fixture) -> Vec<Vec<i64>> {
+    f.fake
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|c| match c {
+            FakeCall::Undo { rows } => Some(rows.iter().map(|r| r.row).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_snooze_of_252_threads_goes_out_as_three_calls_and_z_takes_back_every_row() {
+    let mut f = fixture(250).await;
+    select_all(&mut f).await;
+    assert_eq!(f.screen.actions.selection.len(), 252);
+    press(&mut f, KeyCode::Char('h')).await;
+    press(&mut f, KeyCode::Enter).await;
+    let calls: Vec<(String, usize)> = snoozes(&f)
+        .into_iter()
+        .map(|call| match call {
+            FakeCall::SnoozeSet {
+                account,
+                threads,
+                until,
+                grace,
+            } => {
+                assert_eq!((until, grace), (LATER, true));
+                (account, threads.len())
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    let expected = [("work", 200), ("work", 50), ("home", 2)].map(|(a, n)| (a.to_string(), n));
+    assert_eq!(calls, expected);
+    press(&mut f, KeyCode::Char('z')).await;
+    let undone: Vec<RowToken> = f
+        .fake
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|c| match c {
+            FakeCall::Undo { rows } => Some(rows.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(undone.len(), 3, "every call's row: {undone:?}");
+    let tokens: BTreeSet<&str> = undone.iter().map(|r| r.client_token.as_str()).collect();
+    assert_eq!(tokens.len(), 3, "each under its own call's token");
+}
+
+#[tokio::test]
+async fn z_between_a_snoozes_answers_takes_back_each_row_as_it_comes() {
+    let mut f = fixture(2).await;
+    select_all(&mut f).await;
+    let (work, home) = (selected_of(&f, 1), selected_of(&f, 2));
+    snooze_unanswered(&mut f).await;
+    feed(&mut f, answer("work", work, Ok((vec![10], 2)))).await;
+    press(&mut f, KeyCode::Char('z')).await;
+    assert_eq!(undo_rows(&f), [vec![10]]);
+    assert!(f.screen.status_line().contains("undoing…"));
+    // home's row was already sent by the time its undo came.
+    *f.fake.undo_answer.lock().unwrap() = Some(Ok(ActionUndoResponse {
+        undone: vec![],
+        too_late: vec![11],
+    }));
+    feed(&mut f, answer("home", home, Ok((vec![11], 2)))).await;
+    assert_eq!(undo_rows(&f), [vec![10], vec![11]]);
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("undone in part: some were already sent"),
+        "{line}"
+    );
 }
