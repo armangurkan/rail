@@ -470,21 +470,27 @@ async fn a_replaced_snoozes_refused_call_leaves_the_newer_action_alone() {
     assert_eq!(f.screen.actions.selection.len(), 0);
 }
 
-#[tokio::test]
-async fn refused_threads_stay_left_out_when_the_snooze_took_some_whatever_answers_last() {
-    let mut f = fixture(2).await;
+/// A selection that goes out as three calls: work's 200 and 1, home's 2. Their ids need not be
+/// stored: every answer is fed by hand.
+fn three_calls(f: &mut Fixture) -> (Vec<i64>, Vec<i64>) {
     let pick = |account_id| Picked {
         account_id,
         starred: false,
         unread: true,
     };
-    // Three calls: work's 200 and 1, home's 2.
     let work: Vec<i64> = (1..=201).collect();
     let home = vec![1_001, 1_002];
     let targets: Vec<(i64, Picked)> = (work.iter().map(|id| (*id, pick(1))))
         .chain(home.iter().map(|id| (*id, pick(2))))
         .collect();
     assert!(!f.screen.actions.selection.add(&targets));
+    (work, home)
+}
+
+#[tokio::test]
+async fn refused_threads_stay_left_out_when_the_snooze_took_some_whatever_answers_last() {
+    let mut f = fixture(2).await;
+    let (work, home) = three_calls(&mut f);
     snooze_unanswered(&mut f).await;
     feed(&mut f, answer("work", vec![201], Err(not_in_inbox()))).await;
     // Snoozed already, so no archive row.
@@ -538,4 +544,69 @@ async fn an_older_returns_failed_call_gives_its_threads_back() {
         "{line}"
     );
     assert_eq!(selected_of(&f, 1), ids, "its threads are back");
+}
+
+#[tokio::test]
+async fn z_midway_gives_back_the_threads_refused_before_it() {
+    let mut f = fixture(2).await;
+    let (work, home) = three_calls(&mut f);
+    snooze_unanswered(&mut f).await;
+    feed(&mut f, answer("work", vec![201], Err(not_in_inbox()))).await;
+    press(&mut f, KeyCode::Char('z')).await;
+    assert!(
+        f.screen.actions.selection.contains(201),
+        "the thread refused before z is back at once"
+    );
+    let rest = work[..200].to_vec();
+    feed(&mut f, answer("work", rest, Err(not_in_inbox()))).await;
+    feed(&mut f, answer("home", home, Err(not_in_inbox()))).await;
+    assert_eq!(f.screen.actions.selection.len(), 203);
+}
+
+#[tokio::test]
+async fn a_failed_undo_keeps_its_error_when_a_refusal_answers_last() {
+    let mut f = fixture(2).await;
+    select_all(&mut f).await;
+    let (work, home) = (selected_of(&f, 1), selected_of(&f, 2));
+    snooze_unanswered(&mut f).await;
+    feed(&mut f, answer("work", work, Ok((vec![10], 2)))).await;
+    *f.fake.undo_answer.lock().unwrap() = Some(Err(OpError::not_found("the daemon said no")));
+    press(&mut f, KeyCode::Char('z')).await;
+    feed(&mut f, answer("home", home, Err(not_in_inbox()))).await;
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("Could not undo: the daemon said no"),
+        "{line}"
+    );
+}
+
+#[tokio::test]
+async fn an_older_returns_answer_does_not_replace_a_newer_ones_error() {
+    let mut f = fixture(2).await;
+    let ids = snoozed_selection(&mut f, 2);
+    press(&mut f, KeyCode::Char('h')).await;
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Enter)));
+    let older = f.screen.seq;
+    let picked = Picked {
+        account_id: 1,
+        starred: false,
+        unread: true,
+    };
+    let targets: Vec<(i64, Picked)> = ids.iter().map(|id| (*id, picked)).collect();
+    assert!(!f.screen.actions.selection.add(&targets));
+    press(&mut f, KeyCode::Char('h')).await;
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Enter)));
+    let newer = f.screen.seq;
+    let failed = MailEvent::Unsnoozed {
+        seq: newer,
+        threads: ids.clone(),
+        result: Err(OpError::not_found("the daemon said no")),
+    };
+    feed(&mut f, failed).await;
+    feed(&mut f, returned(older, ids, 2)).await;
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("Could not return to the inbox: the daemon said no"),
+        "{line}"
+    );
 }

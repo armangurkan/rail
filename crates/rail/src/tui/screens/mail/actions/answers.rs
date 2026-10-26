@@ -278,7 +278,7 @@ impl MailScreen {
 
     /// Once `z` was pressed and every call and undo of the record is answered, report the
     /// combined result and drop the record. `say_nothing`: say so when nothing was undone
-    /// (no error is on the bar to say why). True when a send was undone.
+    /// (no error is on the bar to say why; a failed undo's is). True when a send was undone.
     fn finish_undo(&mut self, say_nothing: bool) -> bool {
         let tick = self.tick;
         let done = self
@@ -301,7 +301,7 @@ impl MailScreen {
                 (false, _, Record::Threads | Record::Sent) => "undone",
             };
             self.status.notify(text, tick);
-        } else if say_nothing {
+        } else if say_nothing && !last.undo_failed {
             self.status.notify("Nothing to undo.", tick);
         }
         last.kind == Record::Sent && last.undid && !last.too_late
@@ -317,7 +317,9 @@ impl MailScreen {
             return false;
         };
         last.undos = last.undos.saturating_sub(1);
-        if !failed {
+        if failed {
+            last.undo_failed = true;
+        } else {
             last.undid = true;
             last.too_late |= answered.too_late;
             last.some_undone |= answered.some;

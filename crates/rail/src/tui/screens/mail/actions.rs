@@ -53,6 +53,8 @@ pub(super) struct LastAction {
     failed: bool,
     /// Some undo was answered.
     undid: bool,
+    /// Some undo failed: its error stays on the bar.
+    undo_failed: bool,
     /// What the record is: undoing a send reopens its review.
     kind: Record,
     /// What a snooze's answered calls snoozed, and left out (no mail in the inbox).
@@ -82,6 +84,7 @@ impl fmt::Debug for LastAction {
             .field("pending", &self.pending)
             .field("undo_wanted", &self.undo_wanted)
             .field("undos", &self.undos)
+            .field("undo_failed", &self.undo_failed)
             .field("selected", &self.selected.len())
             .field("failed", &self.failed)
             .field("kind", &self.kind)
@@ -109,6 +112,7 @@ impl LastAction {
             restored: false,
             failed: false,
             undid: false,
+            undo_failed: false,
             kind: Record::Threads,
             snoozed: 0,
             left_out: 0,
@@ -136,6 +140,8 @@ pub(crate) struct ActionState {
     /// Each "Return to inbox now" while its calls answer, by seq: the newest says the count, and
     /// a failed call of any gives its threads back.
     pub(super) returning: BTreeMap<u64, super::snooze_flow::Returning>,
+    /// The seq of the newest "Return to inbox now" sent: only its answers say the count.
+    pub(super) newest_return: u64,
     /// The last time typed into the snooze chooser, offered again as "Last used".
     pub(super) last_snooze: Option<String>,
 }
@@ -431,6 +437,13 @@ impl MailScreen {
             return Vec::new();
         }
         last.undo_wanted = true;
+        // Threads refused as not in the inbox were never snoozed: they come back now, as a
+        // failed call's do.
+        let refused = std::mem::take(&mut last.refused);
+        if !refused.is_empty() {
+            let selection = &mut self.actions.selection;
+            put_back_threads(&last.selected, &mut last.restored, selection, &refused);
+        }
         let rows = std::mem::take(&mut last.rows);
         let waiting = last.pending > 0;
         if rows.is_empty() {

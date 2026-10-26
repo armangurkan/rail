@@ -172,6 +172,7 @@ impl MailScreen {
             Vec::new()
         };
         let seq = self.next_seq();
+        self.actions.newest_return = seq;
         let mut effects = Vec::new();
         for (account_id, threads) in self.group_by_account(targets) {
             let Some(account) = self.account_name(account_id) else {
@@ -196,10 +197,11 @@ impl MailScreen {
         effects
     }
 
-    /// One `snooze.clear` call of the Return with `seq` answered: the newest Return's notice sums
-    /// what its calls put back (an older one's answers are not counted there). A failed call's
-    /// error stays while the others answer, and its `threads` come back to the selection,
-    /// whichever Return it belongs to.
+    /// One `snooze.clear` call of the Return with `seq` answered: the notice of the newest Return
+    /// sent sums what its calls put back (an older one's answers are not counted there). A failed
+    /// call's error stays while the others answer, and, whichever Return it belongs to, its
+    /// `threads` come back to the selection if nothing was selected since (another Return's
+    /// threads given back count as selected).
     pub(super) fn unsnoozed(
         &mut self,
         seq: u64,
@@ -207,7 +209,7 @@ impl MailScreen {
         result: Result<SnoozeClearResponse, OpError>,
     ) -> Vec<Effect> {
         let tick = self.tick;
-        let newest = self.actions.returning.keys().next_back() == Some(&seq);
+        let newest = seq == self.actions.newest_return;
         let mut done = false;
         let failed = match (self.actions.returning.get_mut(&seq), result) {
             (Some(back), Ok(answer)) => {
