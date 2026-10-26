@@ -463,6 +463,64 @@ pub(super) fn mail_screen_draws(
 /// The screen row (1 is the first) `needle` was last drawn on: the row of the last cursor move
 /// (`ESC [ row ; col H`) before it. The terminal backend moves the cursor only between cells
 /// that are not side by side, so the move before a run of text is on that text's row.
+/// The screen a `cols` x `rows` terminal shows after `shown`, one string per row. Rail draws only
+/// the cells that change, so a word on screen need not be one run in the stream: `Snoozed` over
+/// a bar that had an `e` in the same column arrives as `Snooz`, a cursor move, `d`. Cursor moves
+/// (`CSI row;col H`), a full clear and printable cells are applied; every other escape is skipped.
+pub(super) fn screen(shown: &str, cols: usize, rows: usize) -> Vec<String> {
+    use unicode_width::UnicodeWidthChar;
+    let mut grid = vec![vec![' '; cols]; rows];
+    let (mut row, mut col) = (0usize, 0usize);
+    let mut chars = shown.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.next_if_eq(&'[').is_none() {
+                chars.next();
+                continue;
+            }
+            let mut params = String::new();
+            let mut last = None;
+            for n in chars.by_ref() {
+                if ('@'..='~').contains(&n) {
+                    last = Some(n);
+                    break;
+                }
+                params.push(n);
+            }
+            match last {
+                Some('H') => {
+                    let mut at = params.split(';').map(|p| p.parse::<usize>().unwrap_or(1));
+                    row = at.next().unwrap_or(1).saturating_sub(1);
+                    col = at.next().unwrap_or(1).saturating_sub(1);
+                }
+                Some('J') if params == "2" => grid.iter_mut().for_each(|r| r.fill(' ')),
+                _ => {}
+            }
+            continue;
+        }
+        let width = c.width().unwrap_or(0);
+        if width == 0 {
+            continue;
+        }
+        if let Some(cells) = grid.get_mut(row) {
+            if col < cols {
+                cells[col] = c;
+            }
+            // The second cell of a wide character is left out when the row is read.
+            if width == 2 && col + 1 < cols {
+                cells[col + 1] = '\0';
+            }
+        }
+        col += width;
+    }
+    grid.into_iter()
+        .map(|cells| {
+            let line: String = cells.into_iter().filter(|c| *c != '\0').collect();
+            line.trim_end().to_string()
+        })
+        .collect()
+}
+
 pub(super) fn drawn_row(shown: &str, needle: &str) -> Option<u16> {
     let before = &shown[..shown.rfind(needle)?];
     before.rmatch_indices("\x1b[").find_map(|(at, _)| {

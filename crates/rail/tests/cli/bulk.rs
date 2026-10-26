@@ -19,7 +19,7 @@ use super::{StopsDaemon, WORK_FILE_BACKEND, rail_env, write_config};
 /// Fake Gmail's prefix, as `cli/sync.rs` mounts it (private to that module, so copied).
 const API: &str = "/gmail/v1/users/me";
 /// The messages fake Gmail serves: one per thread, so one archive call per thread.
-const MESSAGES: [&str; 3] = ["m1", "m2", "m3"];
+pub(super) const MESSAGES: [&str; 3] = ["m1", "m2", "m3"];
 /// How often the provider is polled for the archive calls.
 const POLL: Duration = Duration::from_millis(50);
 /// Past the 10 s undo grace and the outbox worker's next turn: an archive `z` took back would
@@ -28,7 +28,7 @@ const PAST_THE_GRACE: Duration = Duration::from_secs(15);
 
 /// Kills the child if the test fails half way. `pty::Running`'s field is private to that
 /// module, so this test owns its guard; everything else comes from `pty`.
-struct Spawned(Child);
+pub(super) struct Spawned(Child);
 
 impl Drop for Spawned {
     fn drop(&mut self) {
@@ -39,7 +39,7 @@ impl Drop for Spawned {
 
 /// Tokens that stay fresh, so the daemon never reaches `rail_env`'s dead token endpoint
 /// (`cli/sync.rs`'s form, not `store_work_tokens`, whose `expires_at` is 1).
-fn store_tokens(dir: &tempfile::TempDir) {
+pub(super) fn store_tokens(dir: &tempfile::TempDir) {
     use rail_core::auth::{FileSecretStore, SecretStore, TokenSet};
     let tokens = TokenSet {
         access_token: "test-access".into(),
@@ -70,7 +70,7 @@ fn message(id: &str) -> Value {
 
 /// Fake Gmail with `MESSAGES` in the inbox, each thread's `modify` answered: the daemon fills
 /// the store from here, as `rail_sync_fills_the_store_and_exits_0_when_caught_up` does.
-async fn gmail() -> MockServer {
+pub(super) async fn gmail() -> MockServer {
     let server = MockServer::start().await;
     let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
     let listing =
@@ -138,7 +138,7 @@ async fn modifies(server: &MockServer) -> Vec<(String, Value)> {
 
 /// Poll the provider until it has taken `count` `modify` calls. `LIMIT` does not govern an
 /// `await`, so the poll is bounded here and fails with the screen as `wait_until` does.
-async fn wait_for_modifies(
+pub(super) async fn wait_for_modifies(
     server: &MockServer,
     output: &Mutex<Vec<u8>>,
     count: usize,
@@ -163,7 +163,7 @@ async fn wait_for_modifies(
 
 /// `rail` in a 100x30 pseudo-terminal against `server`, with this test's own directories: the
 /// child, its keyboard and everything it draws.
-fn launch(
+pub(super) fn launch(
     dir: &tempfile::TempDir,
     server: &MockServer,
 ) -> (Spawned, ChildStdin, Arc<Mutex<Vec<u8>>>) {
@@ -186,7 +186,7 @@ fn launch(
 }
 
 /// Wait until all three threads are drawn in the list.
-fn wait_for_the_list(output: &Arc<Mutex<Vec<u8>>>) {
+pub(super) fn wait_for_the_list(output: &Arc<Mutex<Vec<u8>>>) {
     let drawn = output.clone();
     wait_until("the three threads in the list", output, move || {
         let shown = text(&drawn);
@@ -197,13 +197,16 @@ fn wait_for_the_list(output: &Arc<Mutex<Vec<u8>>>) {
 }
 
 /// Type `bytes` at the keyboard.
-fn type_keys(keys: &mut ChildStdin, bytes: &[u8]) {
+pub(super) fn type_keys(keys: &mut ChildStdin, bytes: &[u8]) {
     keys.write_all(bytes).unwrap();
     keys.flush().unwrap();
 }
 
 /// Wait for the child to exit; on timeout fail with what the terminal showed.
-fn wait_for_exit(child: &mut Spawned, output: &Mutex<Vec<u8>>) -> std::process::ExitStatus {
+pub(super) fn wait_for_exit(
+    child: &mut Spawned,
+    output: &Mutex<Vec<u8>>,
+) -> std::process::ExitStatus {
     let deadline = Instant::now() + LIMIT;
     loop {
         if let Some(status) = child.0.try_wait().unwrap() {
