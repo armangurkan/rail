@@ -3,6 +3,8 @@
 //! optimistic change (`apply_local`) decides what to change from it, so both agree on every
 //! message. Archive, trash and move leave the user's own mail in Sent and Drafts where it is.
 
+use std::collections::HashSet;
+
 use crate::provider::{Change, FolderKind, TargetMessage};
 
 /// The user's own mail: never archived, trashed or moved, and never the newest received.
@@ -31,9 +33,12 @@ pub fn touched(change: &Change, messages: &[TargetMessage]) -> Vec<usize> {
         Change::Labels { .. } => Vec::new(),
         // A snooze's wake: the recorded messages still in Archive, so mail the user deleted,
         // filed or answered since stays where it is.
-        Change::Unsnooze { messages: ids } => matching(messages, |m| {
-            m.folder == Some(FolderKind::Archive) && ids.contains(&m.id)
-        }),
+        Change::Unsnooze { messages: ids } => {
+            let recorded: HashSet<&str> = ids.iter().map(String::as_str).collect();
+            matching(messages, |m| {
+                m.folder == Some(FolderKind::Archive) && recorded.contains(m.id.as_str())
+            })
+        }
     }
 }
 
