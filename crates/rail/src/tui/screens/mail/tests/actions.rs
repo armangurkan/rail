@@ -527,6 +527,36 @@ async fn a_failed_request_keeps_the_selection_and_leaves_nothing_to_undo() {
 }
 
 #[tokio::test]
+async fn a_failed_account_keeps_its_error_on_the_bar_while_the_other_answers() {
+    let mut f = fixture(2).await;
+    for _ in 0..4 {
+        press(&mut f, KeyCode::Char(' ')).await;
+    }
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Char('e'))));
+    let failed = MailEvent::Applied {
+        call: Box::new(ApplyCall {
+            seq: 1,
+            account: "work".into(),
+            threads: vec![1],
+            action: MailAction::Archive {},
+            grace: true,
+            client_token: "tok-9".into(),
+            snooze: None,
+        }),
+        result: Err(OpError::not_found("the daemon said no")),
+    };
+    feed(&mut f, failed).await;
+    feed(&mut f, applied(1, "home", 11)).await;
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("Could not archive: the daemon said no"),
+        "{line}"
+    );
+    press(&mut f, KeyCode::Char('z')).await;
+    assert_eq!(undo_calls(&f), [vec![11]], "home's row is still undone");
+}
+
+#[tokio::test]
 async fn an_action_in_the_reader_keeps_a_selection_it_did_not_use() {
     let mut f = fixture(3).await;
     applying(&f);

@@ -49,6 +49,8 @@ pub(super) struct LastAction {
     selected: Vec<(i64, Picked)>,
     /// Some failed call already put its targets back.
     restored: bool,
+    /// Some call failed: its error stays on the bar while the others answer.
+    failed: bool,
     /// Some undo was answered.
     undid: bool,
     /// What the record is: undoing a send reopens its review.
@@ -85,6 +87,7 @@ impl LastAction {
             some_undone: false,
             selected,
             restored: false,
+            failed: false,
             undid: false,
             kind: Record::Threads,
             snoozed: 0,

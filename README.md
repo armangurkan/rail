@@ -616,7 +616,8 @@ it, the extension carries on from where the cursor was. A selection holds at mos
 
 A bulk action goes out as one request per 200 threads per account, and one `z` takes the whole set
 back, reporting `undone` once; an undo that could take only part of it back says `undone in part:
-some were already sent`.
+some were already sent`. When one of the requests fails, its threads come back to the selection and
+its error stays on the status bar while the others answer.
 
 After an action the status bar says what happened, in place of the key hints, for example `archived 3 · z undoes`. For ten
 seconds `z` takes it back; afterwards it says `Too late to undo.`, and with nothing done,

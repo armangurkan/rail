@@ -2,7 +2,7 @@
 //! refused as "not in the inbox" counts as left out, and only a snooze none of whose calls took
 //! anything says the refusal. A child module of `tests/snooze.rs`, whose helpers it uses.
 
-use rail_core::ops::{Action as MailAction, ActionApplyResponse, NOT_IN_INBOX};
+use rail_core::ops::{Action as MailAction, ActionApplyResponse, NOT_IN_INBOX, RowToken};
 
 use super::super::super::selection::Picked;
 use super::*;
@@ -198,4 +198,46 @@ async fn a_snooze_that_took_nothing_gives_back_its_refused_threads_with_the_fail
         "{line}"
     );
     assert_eq!(f.screen.actions.selection.len(), 4, "both calls' threads");
+}
+
+#[tokio::test]
+async fn a_failed_call_keeps_its_error_on_the_bar_while_the_others_answer() {
+    let mut f = fixture(2).await;
+    select_all(&mut f).await;
+    let (work, home) = (selected_of(&f, 1), selected_of(&f, 2));
+    snooze_unanswered(&mut f).await;
+    let failed = Err(OpError::not_found("the daemon said no"));
+    feed(&mut f, answer("work", work.clone(), failed)).await;
+    feed(&mut f, answer("home", home, Ok((vec![11], 2)))).await;
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("Could not snooze: the daemon said no"),
+        "{line}"
+    );
+    assert_eq!(
+        selected_of(&f, 1),
+        work,
+        "only the failed call's threads are back"
+    );
+    assert_eq!(f.screen.actions.selection.len(), 2);
+    press(&mut f, KeyCode::Char('z')).await;
+    let undone: Vec<FakeCall> = f
+        .fake
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| matches!(c, FakeCall::Undo { .. }))
+        .cloned()
+        .collect();
+    let home_row = RowToken {
+        row: 11,
+        client_token: "tok-home".into(),
+    };
+    assert_eq!(
+        undone,
+        [FakeCall::Undo {
+            rows: vec![home_row]
+        }]
+    );
 }

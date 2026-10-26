@@ -128,9 +128,10 @@ impl MailScreen {
     }
 
     /// The newest action's notice, while `z` can take it back: what it did and how many; a
-    /// snooze's says until when, and what its answered calls snoozed and left out so far.
+    /// snooze's says until when, and what its answered calls snoozed and left out so far. Once
+    /// one of its calls failed, nothing is said: that error stays on the bar.
     fn say_done(&mut self, call: &ApplyCall) {
-        let Some(last) = self.actions.last.as_ref() else {
+        let Some(last) = self.actions.last.as_ref().filter(|l| !l.failed) else {
             return;
         };
         let undoable = !last.rows.is_empty();
@@ -177,7 +178,8 @@ impl MailScreen {
         };
         let refused = std::mem::take(&mut last.refused);
         put_back(last, &mut self.actions.selection, &refused);
-        let refusal = last.refusal.take();
+        // An earlier call's error stays on the bar instead.
+        let refusal = last.refusal.take().filter(|_| !last.failed);
         if last.rows.is_empty() && last.undos == 0 {
             self.actions.last = None;
         }
@@ -187,12 +189,14 @@ impl MailScreen {
     }
 
     /// One account's `action.apply` failed: its selected threads come back to the selection
-    /// (if nothing was selected since), and a record with nothing to undo is dropped.
+    /// (if nothing was selected since), its error stays on the bar while the other calls
+    /// answer, and a record with nothing to undo is dropped.
     fn call_failed(&mut self, call: &ApplyCall) {
         let Some(last) = self.actions.last.as_mut() else {
             return;
         };
         last.pending = last.pending.saturating_sub(1);
+        last.failed = true;
         put_back(last, &mut self.actions.selection, &call.threads);
         if last.undo_wanted {
             self.finish_undo(false);
