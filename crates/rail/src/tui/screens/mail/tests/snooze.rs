@@ -2,6 +2,7 @@
 //! snoozes the cursor row, the open thread (closing the reader) or the selection, one
 //! `snooze.set` per account with grace; a snoozed thread's chooser offers "Return to inbox now"
 //! (`snooze.clear`); Drafts refuse it; the notice and `z`; `snooze.woke` reads the list again.
+//! Snoozing a bulk selection is `bulk`'s.
 
 use rail_core::ops::{OpError, SnoozeSetResponse, SnoozeWoke};
 
@@ -11,6 +12,8 @@ use super::*;
 use crate::tui::screens::mail::snooze_flow::read_last;
 use crate::tui::snooze::SOON;
 use crate::tui::test_util::{NOW, render_lines};
+
+mod bulk;
 
 /// Friday 2025-10-10 00:00 UTC, the day of `NOW` (12:40).
 const MIDNIGHT: i64 = NOW - 45_600;

@@ -53,6 +53,13 @@ pub(super) struct LastAction {
     undid: bool,
     /// What the record is: undoing a send reopens its review.
     kind: Record,
+    /// What a snooze's answered calls snoozed, and left out (no mail in the inbox).
+    snoozed: usize,
+    left_out: usize,
+    /// The threads of a snooze's calls refused as not in the inbox, and the refusal: said, and
+    /// the threads put back, only if the snooze took nothing.
+    refused: Vec<i64>,
+    refusal: Option<OpError>,
 }
 
 /// What an undo record took: thread actions, a `draft.send` or a `draft.push`.
@@ -80,6 +87,10 @@ impl LastAction {
             restored: false,
             undid: false,
             kind: Record::Threads,
+            snoozed: 0,
+            left_out: 0,
+            refused: Vec::new(),
+            refusal: None,
         }
     }
 }

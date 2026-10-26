@@ -688,8 +688,9 @@ is offered first next time as `Last used`, read again against the clock (`2 days
 when you open the chooser), unless a choice already offers that time; Rail keeps it in the state directory
 (`snooze-last`), so it survives a restart. `Enter` snoozes, `Esc` cancels, `Down`/`Up` move.
 
-The status bar says `Snoozed until Mon 08:00 · z undoes`, and for ten seconds `z` takes the snooze
-back, as with archive. On a thread that is already snoozed the chooser's title says until when;
+The status bar says `Snoozed until Mon 08:00 · z undoes` (for a selection, how many:
+`Snoozed 120 until Mon 08:00 · z undoes`, then `· 2 not in the inbox` for any it left out), and
+for ten seconds `z` takes the snooze back, as with archive. On a thread that is already snoozed the chooser's title says until when;
 choosing a time moves the snooze, and its first row, `Return to inbox now`, puts the thread back
 at once (`returned 1 to the inbox`). While anything is snoozed, `Snoozed` is listed under UNIFIED in
 the sidebar with the number of snoozed threads (`◷`, or `^` with `icons = "ascii"`); `:` and

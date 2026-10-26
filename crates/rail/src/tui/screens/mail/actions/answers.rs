@@ -2,7 +2,11 @@
 //! once when `z` came first) and a failed one puts its selected threads back; an `action.undo`
 //! says what came back. A record a newer action replaced still takes its calls' answers here.
 
-use rail_core::ops::{ActionApplyResponse, ActionUndoResponse, OpError, OutboxId, RowToken};
+use std::collections::HashSet;
+
+use rail_core::ops::{
+    ActionApplyResponse, ActionUndoResponse, ErrorCode, NOT_IN_INBOX, OpError, OutboxId, RowToken,
+};
 
 use super::{LastAction, Record, verbs};
 use crate::tui::app::Effect;
@@ -39,15 +43,22 @@ fn row_tokens(call: &ApplyCall, rows: Vec<OutboxId>) -> Vec<RowToken> {
         .collect()
 }
 
-/// A failed call's selected threads come back to the selection, if nothing was selected
+/// A snooze's call refused because none of its threads had mail in the inbox: they count as
+/// left out while the snooze's other calls may still take theirs.
+fn left_out(call: &ApplyCall, error: &OpError) -> bool {
+    call.snooze.is_some() && error.code == ErrorCode::InvalidInput && error.message == NOT_IN_INBOX
+}
+
+/// A failed call's selected `threads` come back to the selection, if nothing was selected
 /// since (or an earlier failed call of the record already put its threads back).
-fn put_back(record: &mut LastAction, selection: &mut Selection, call: &ApplyCall) {
+fn put_back(record: &mut LastAction, selection: &mut Selection, threads: &[i64]) {
     if record.restored || selection.is_empty() {
         record.restored = true;
+        let threads: HashSet<i64> = threads.iter().copied().collect();
         let back: Vec<(i64, Picked)> = record
             .selected
             .iter()
-            .filter(|(id, _)| call.threads.contains(id))
+            .filter(|(id, _)| threads.contains(id))
             .copied()
             .collect();
         selection.restore(&back);
@@ -69,9 +80,10 @@ impl MailScreen {
         let older = call.grace && !tracked && self.actions.replaced.contains_key(&call.seq);
         let mut effects = Vec::new();
         match result {
-            Ok(answer) if tracked => effects = self.call_answered(call, answer.rows),
+            Ok(answer) if tracked => effects = self.call_answered(call, answer),
             Ok(answer) if older => effects = self.older_answered(call, answer.rows),
             Ok(_) => {}
+            Err(error) if tracked && left_out(call, &error) => self.call_left_out(call, error),
             Err(error) => {
                 self.action_error(failed_verb(call), &error);
                 if tracked {
@@ -87,12 +99,16 @@ impl MailScreen {
 
     /// One account's `action.apply` answered: keep its rows for `z`, or undo them at once if
     /// `z` was pressed first.
-    fn call_answered(&mut self, call: &ApplyCall, rows: Vec<OutboxId>) -> Vec<Effect> {
+    fn call_answered(&mut self, call: &ApplyCall, answer: ActionApplyResponse) -> Vec<Effect> {
         let Some(last) = self.actions.last.as_mut() else {
             return Vec::new();
         };
-        let rows = row_tokens(call, rows);
+        let rows = row_tokens(call, answer.rows);
         last.pending = last.pending.saturating_sub(1);
+        if call.snooze.is_some() {
+            last.snoozed += answer.applied;
+            last.left_out += call.threads.len().saturating_sub(answer.applied);
+        }
         if last.undo_wanted {
             if rows.is_empty() {
                 self.finish_undo(true);
@@ -107,20 +123,67 @@ impl MailScreen {
                 .collect();
         }
         last.rows.extend(rows);
+        self.say_done(call);
+        Vec::new()
+    }
+
+    /// The newest action's notice, while `z` can take it back: what it did and how many; a
+    /// snooze's says until when, and what its answered calls snoozed and left out so far.
+    fn say_done(&mut self, call: &ApplyCall) {
+        let Some(last) = self.actions.last.as_ref() else {
+            return;
+        };
         let undoable = !last.rows.is_empty();
-        let count = crate::tui::screens::mail::header::thousands(
-            u64::try_from(last.count).unwrap_or(u64::MAX),
-        );
+        let counts = (last.count, last.snoozed, last.left_out);
         let left = last.until.saturating_sub(self.tick);
         let text = if let Some(until) = call.snooze {
-            self.snoozed_notice(until, undoable)
+            self.snoozed_notice(until, undoable, counts)
         } else {
             let (done, _) = verbs(&call.action);
             let key = self.ctx.keymap.label(Action::GlobalUndo);
+            let count = crate::tui::screens::mail::header::thousands(
+                u64::try_from(counts.0).unwrap_or(u64::MAX),
+            );
             format!("{done} {count} · {key} undoes")
         };
         self.status.notify_for(text, self.tick, left);
-        Vec::new()
+    }
+
+    /// A snooze's call refused because none of its threads had mail in the inbox: they count as
+    /// left out. A snooze that took some keeps counting them in its notice; once every call
+    /// answered, one that took nothing says the refusal and gives the threads back.
+    fn call_left_out(&mut self, call: &ApplyCall, refusal: OpError) {
+        let Some(last) = self.actions.last.as_mut() else {
+            return;
+        };
+        last.pending = last.pending.saturating_sub(1);
+        last.left_out += call.threads.len();
+        last.refused.extend_from_slice(&call.threads);
+        last.refusal = Some(refusal);
+        if last.undo_wanted {
+            self.finish_undo(false);
+        } else if last.snoozed > 0 {
+            self.say_done(call);
+        } else if last.pending == 0 {
+            self.nothing_snoozed();
+        }
+    }
+
+    /// Every call of a snooze answered and none took a thread: the refused threads go back to
+    /// the selection and the refusal is said; with nothing to undo, the record goes.
+    fn nothing_snoozed(&mut self) {
+        let Some(last) = self.actions.last.as_mut() else {
+            return;
+        };
+        let refused = std::mem::take(&mut last.refused);
+        put_back(last, &mut self.actions.selection, &refused);
+        let refusal = last.refusal.take();
+        if last.rows.is_empty() && last.undos == 0 {
+            self.actions.last = None;
+        }
+        if let Some(refusal) = refusal {
+            self.action_error("snooze", &refusal);
+        }
     }
 
     /// One account's `action.apply` failed: its selected threads come back to the selection
@@ -130,10 +193,14 @@ impl MailScreen {
             return;
         };
         last.pending = last.pending.saturating_sub(1);
-        put_back(last, &mut self.actions.selection, call);
+        put_back(last, &mut self.actions.selection, &call.threads);
         if last.undo_wanted {
             self.finish_undo(false);
         } else if last.pending == 0 && last.rows.is_empty() && last.undos == 0 {
+            // A snooze that took nothing gives back its calls refused as not in the inbox too;
+            // this call's error stays on the bar.
+            let refused = std::mem::take(&mut last.refused);
+            put_back(last, &mut self.actions.selection, &refused);
             self.actions.last = None;
         }
     }
@@ -164,7 +231,7 @@ impl MailScreen {
             return;
         };
         old.pending = old.pending.saturating_sub(1);
-        put_back(old, &mut self.actions.selection, call);
+        put_back(old, &mut self.actions.selection, &call.threads);
         self.drop_older_if_done(call.seq);
     }
 

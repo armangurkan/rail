@@ -157,13 +157,31 @@ impl MailScreen {
     }
 
     /// The notice once a snooze answered: when it ends, and `z` while it has a row to undo.
-    pub(super) fn snoozed_notice(&self, until: i64, undoable: bool) -> String {
+    /// Sent for more than one thread, it counts what its answered calls snoozed, and then any
+    /// they left out: last, so a narrow bar cuts that count before the undo hint.
+    pub(super) fn snoozed_notice(
+        &self,
+        until: i64,
+        undoable: bool,
+        (sent, snoozed, left_out): (usize, usize, usize),
+    ) -> String {
         let when = self.ctx.clock.ahead(until);
-        if !undoable {
-            return format!("Snoozed until {when}");
-        }
-        let key = self.ctx.keymap.label(Action::GlobalUndo);
-        format!("Snoozed until {when} · {key} undoes")
+        let head = if sent == 1 {
+            format!("Snoozed until {when}")
+        } else {
+            format!("Snoozed {} until {when}", counted(snoozed))
+        };
+        let undo = if undoable {
+            format!(" · {} undoes", self.ctx.keymap.label(Action::GlobalUndo))
+        } else {
+            String::new()
+        };
+        let left = if left_out > 0 {
+            format!(" · {} not in the inbox", counted(left_out))
+        } else {
+            String::new()
+        };
+        format!("{head}{undo}{left}")
     }
 
     /// `snooze.woke`: the list is read again, and the notice names the thread when one came back.
@@ -217,6 +235,11 @@ pub(super) fn read_last(path: &Path) -> Option<String> {
     let text = String::from_utf8(bytes).ok()?;
     let text = text.trim();
     (!text.is_empty() && text.chars().count() <= LAST_CHARS).then(|| text.to_string())
+}
+
+/// `n` with thousands separators.
+fn counted(n: usize) -> String {
+    super::header::thousands(u64::try_from(n).unwrap_or(u64::MAX))
 }
 
 /// "1 thread back from snooze", "3 threads back from snooze".
