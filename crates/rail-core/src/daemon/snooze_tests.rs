@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use super::action_tests::{BOUND, Daemon, WORK, daemon};
 use crate::auth::unix_now;
-use crate::ops::op::{SnoozeClear, SnoozeSet, SyncNow};
+use crate::ops::op::{Search, SnoozeClear, SnoozeSet, SyncNow};
 use crate::ops::{
-    Action, ErrorCode, OpError, SnoozeClearRequest, SnoozeSetRequest, SnoozeSetResponse,
-    SnoozeWoke, SyncNowRequest, names,
+    Action, ErrorCode, OpError, SearchRequest, SnoozeClearRequest, SnoozeSetRequest,
+    SnoozeSetResponse, SnoozeWoke, SyncNowRequest, names,
 };
 use crate::provider::Change;
 use crate::store::Store;
@@ -219,6 +219,50 @@ async fn a_reply_to_a_snoozed_thread_brings_it_back_without_waiting_for_the_work
         watch: false,
     };
     d.client.call::<SyncNow>(&sync).await.unwrap();
+    let woke = tokio::time::timeout(BOUND, async {
+        loop {
+            let note = notes.recv().await.unwrap();
+            if note.method == names::SNOOZE_WOKE {
+                return note.params;
+            }
+        }
+    })
+    .await
+    .expect("snooze.woke within the bound");
+    let woke: SnoozeWoke = serde_json::from_value(woke).unwrap();
+    assert_eq!(woke.threads, [t1]);
+}
+
+#[tokio::test]
+async fn a_reply_a_search_brings_in_wakes_a_snooze_without_waiting_for_the_worker() {
+    let d = daemon(WORK).await;
+    let t1 = d.thread("t1");
+    let mut notes = d.client.notifications();
+    let watch = SyncNowRequest {
+        account: None,
+        watch: true,
+    };
+    d.client.call::<SyncNow>(&watch).await.unwrap();
+    snooze(&d, vec![t1], unix_now() + 3_600, false, "s1")
+        .await
+        .unwrap();
+    until("active", || {
+        matches!(snooze_of(&d, "t1"), Some((SnoozeState::Active, _))).then_some(())
+    })
+    .await;
+    // Seeded, so no sync's history brings the reply: only the search does.
+    d.mock.seed(crate::provider::mock::envelope(
+        "reply",
+        "t1",
+        unix_now() * 1_000,
+    ));
+    d.mock.with(|m| m.search_hits = vec!["reply".into()]);
+    let request = SearchRequest {
+        query: "reply".into(),
+        account: None,
+        limit: 10,
+    };
+    d.client.call::<Search>(&request).await.unwrap();
     let woke = tokio::time::timeout(BOUND, async {
         loop {
             let note = notes.recv().await.unwrap();

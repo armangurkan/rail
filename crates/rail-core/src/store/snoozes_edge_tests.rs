@@ -241,6 +241,22 @@ fn a_woken_thread_archived_elsewhere_is_dated_by_its_mail_again() {
 }
 
 #[test]
+fn a_woken_thread_keeps_its_wake_date_while_its_return_still_waits() {
+    let mut store = seeded();
+    let t1 = woken_t1(&mut store);
+    // The return is not sent yet, so the server still has the mail out of the inbox; the waiting
+    // return is applied again before the woken row is judged, and the row stays.
+    let archived = vec![
+        in_folders("m1", "t1", 1_000, &[]),
+        in_folders("m2", "t1", 2_000, &[]),
+    ];
+    sync(&mut store, archived, NOW + 2 * HOUR);
+    let states: Vec<SnoozeState> = snoozes(&store).into_iter().map(|s| s.2).collect();
+    assert_eq!(states, [SnoozeState::Woken]);
+    assert_eq!(last_date(&store, t1), NOW + HOUR, "dated at its wake");
+}
+
+#[test]
 fn a_replay_counts_every_thread_the_first_call_snoozed() {
     let mut store = seeded();
     let (t1, t2) = (thread(&store, "t1"), thread(&store, "t2"));
