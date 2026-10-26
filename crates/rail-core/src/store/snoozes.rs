@@ -223,7 +223,7 @@ fn again(
             return Ok(false);
         }
         SnoozeState::Failed => {
-            drop_failed(tx, archive)?;
+            drop_failed(tx, old.id, archive)?;
             return Ok(false);
         }
         SnoozeState::Woken => {
@@ -257,14 +257,25 @@ fn set_until(tx: &Transaction, snooze: i64, until: i64) -> Result<(), StoreError
     Ok(())
 }
 
-/// A failed snooze's archive row goes, and its snooze with it (the row's cascade): neither a
-/// retry nor the next sync can send that archive any more. Its local change was reverted when
-/// it failed.
-fn drop_failed(tx: &Transaction, archive: Option<OutboxId>) -> Result<(), StoreError> {
-    tx.execute(
-        "DELETE FROM outbox WHERE id = ?1 AND state = 'failed'",
-        [archive],
+/// A failed snooze given up on (snoozed again or cleared) leaves its refused archive: the row
+/// goes, and the snooze with it (the row's cascade), so neither a retry nor the next sync can send
+/// that archive any more. Its local change was reverted when it failed.
+fn drop_failed(tx: &Transaction, snooze: i64, archive: Option<OutboxId>) -> Result<(), StoreError> {
+    // Threads snoozed together share one archive row: while another snooze waits on it, only
+    // this snooze leaves, and the row stays with the other's failure.
+    let shared: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM snoozes WHERE archive_row = ?1 AND id <> ?2)",
+        params![archive, snooze],
+        |r| r.get(0),
     )?;
+    if shared {
+        tx.execute("DELETE FROM snoozes WHERE id = ?1", [snooze])?;
+    } else {
+        tx.execute(
+            "DELETE FROM outbox WHERE id = ?1 AND state = 'failed'",
+            [archive],
+        )?;
+    }
     Ok(())
 }
 
@@ -411,7 +422,7 @@ pub(super) fn clear(
                 1
             }
             SnoozeState::Failed => {
-                drop_failed(tx, archive)?;
+                drop_failed(tx, snooze.id, archive)?;
                 0
             }
             SnoozeState::Woken => 0,

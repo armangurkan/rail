@@ -240,6 +240,55 @@ fn a_woken_thread_archived_elsewhere_is_dated_by_its_mail_again() {
     assert_eq!(last_date(&store, t1), 2, "its newest message's");
 }
 
+/// t1 and t2 snoozed together, their one archive refused.
+fn failed_pair(store: &mut Store) -> i64 {
+    let (t1, t2) = (thread(store, "t1"), thread(store, "t2"));
+    let (rows, _) = snooze(store, vec![t1, t2], NOW + HOUR, "a");
+    store
+        .outbox_write(&OutboxWrite::Claim { account_id: 1 }, NOW + 10)
+        .unwrap();
+    let refuse = OutboxWrite::Fail {
+        id: rows[0],
+        failure: Failure::Permanent("Gmail refused the change".into()),
+    };
+    store.outbox_write(&refuse, NOW + 10).unwrap();
+    t1
+}
+
+/// Each snooze's thread and state, by thread.
+fn states(store: &Store) -> Vec<(String, SnoozeState)> {
+    let mut all: Vec<(String, SnoozeState)> =
+        snoozes(store).into_iter().map(|s| (s.0, s.2)).collect();
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    all
+}
+
+#[test]
+fn snoozing_one_of_a_failed_pair_again_leaves_the_others_failure() {
+    let mut store = seeded();
+    let t1 = failed_pair(&mut store);
+    snooze(&mut store, vec![t1], NOW + 2 * HOUR, "b");
+    assert_eq!(
+        states(&store),
+        [
+            ("t1".to_string(), SnoozeState::Pending),
+            ("t2".to_string(), SnoozeState::Failed)
+        ]
+    );
+}
+
+#[test]
+fn clearing_one_of_a_failed_pair_leaves_the_others_failure() {
+    let mut store = seeded();
+    let t1 = failed_pair(&mut store);
+    let clear = OutboxWrite::Unsnooze {
+        account_id: 1,
+        threads: vec![t1],
+    };
+    store.outbox_write(&clear, NOW + 20).unwrap();
+    assert_eq!(states(&store), [("t2".to_string(), SnoozeState::Failed)]);
+}
+
 #[test]
 fn a_woken_thread_keeps_its_wake_date_while_its_return_still_waits() {
     let mut store = seeded();
