@@ -175,3 +175,35 @@ fn a_snooze_holds_its_conversation_only_while_some_of_its_mail_is_in_archive() {
     assert_eq!(snoozed(&store), Vec::<i64>::new());
     assert_eq!(until(&store, c1), None);
 }
+
+#[test]
+fn a_conversation_whose_mail_was_filed_in_a_folder_is_no_longer_held() {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let snooze = OutboxWrite::Snooze(SnoozeNew {
+        account_id: 1,
+        threads: vec![c1],
+        until: NOW + HOUR,
+        not_before: NOW + 10,
+        client_token: "a".into(),
+    });
+    write(&mut store, &snooze, NOW);
+    send_next(&mut store, NOW + 10);
+    let projects = RemoteFolder {
+        parent: None,
+        remote_id: "f-proj".into(),
+        name: "Projects".into(),
+        kind: FolderKind::User,
+    };
+    let filed = Batch {
+        folders: Some([folders(), vec![projects]].concat()),
+        upserts: vec![
+            message("m-in", 2_000, "f-proj"),
+            message("m-in2", 4_000, "f-proj"),
+        ],
+        ..Batch::new(1)
+    };
+    store.apply(&filed, NOW + 20).unwrap();
+    // Out of Archive, though in neither Inbox nor Deleted Items: a wake has nothing to return.
+    assert_eq!(snoozed(&store), Vec::<i64>::new());
+}

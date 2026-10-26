@@ -557,6 +557,12 @@ mod tests {
     }
 
     #[test]
+    fn the_margin_over_the_daemons_minute_is_fifteen_seconds() {
+        assert_eq!(ahead(NOW + 74, NOW), Err(SOON));
+        assert_eq!(ahead(NOW + 75, NOW), Ok(NOW + 75));
+    }
+
+    #[test]
     fn a_time_the_daemon_would_find_under_a_minute_away_is_too_soon() {
         let clock = utc(NOW);
         for text in ["+1m", "1 min", "a minute", "12:41"] {
