@@ -237,6 +237,67 @@ async fn a_snoozed_thread_is_offered_return_to_inbox_now_first() {
     assert!(line.contains("returned 1 to the inbox"), "{line}");
 }
 
+/// On a snoozed thread, `noon` typed, then `keys`, then Enter: what was sent, and the thread.
+async fn noon_then(keys: &[KeyCode]) -> (Vec<FakeCall>, i64) {
+    let mut f = fixture(3).await;
+    let top = cursor_thread(&f);
+    snoozed_in_store(&f, top, MIDNIGHT + 3 * DAY + 8 * HOUR);
+    press(&mut f, KeyCode::Char('h')).await;
+    type_text(&mut f, "noon").await;
+    for key in keys {
+        press(&mut f, *key).await;
+    }
+    press(&mut f, KeyCode::Enter).await;
+    (snoozes(&f), top)
+}
+
+#[tokio::test]
+async fn up_and_down_move_between_a_typed_time_and_return_to_inbox_now() {
+    // `noon` reads as Sat 12:00 and matches "Return to inbox now": the typed row comes first.
+    let noon = MIDNIGHT + DAY + 12 * HOUR;
+    for (keys, back) in [
+        (&[][..], false),
+        (&[KeyCode::Down][..], true),
+        (&[KeyCode::Down, KeyCode::Down][..], true),
+        (&[KeyCode::Down, KeyCode::Up][..], false),
+        (&[KeyCode::Up][..], false),
+    ] {
+        let (sent, top) = noon_then(keys).await;
+        let want = if back {
+            FakeCall::SnoozeClear {
+                account: "work".into(),
+                threads: vec![top],
+            }
+        } else {
+            set(vec![top], noon)
+        };
+        assert_eq!(sent, [want], "{keys:?}");
+    }
+}
+
+#[tokio::test]
+async fn returning_a_selection_to_the_inbox_uses_up_the_selection() {
+    let mut f = fixture(3).await;
+    let top = cursor_thread(&f);
+    snoozed_in_store(&f, top, MIDNIGHT + 3 * DAY + 8 * HOUR);
+    press_n(&mut f, KeyCode::Char(' '), 2).await;
+    assert_eq!(f.screen.actions.selection.len(), 2);
+    press(&mut f, KeyCode::Char('h')).await;
+    press(&mut f, KeyCode::Enter).await;
+    let sent = snoozes(&f);
+    assert!(
+        !sent.is_empty()
+            && sent
+                .iter()
+                .all(|c| matches!(c, FakeCall::SnoozeClear { .. })),
+        "{sent:?}"
+    );
+    assert!(
+        f.screen.actions.selection.is_empty(),
+        "the selection is used"
+    );
+}
+
 #[tokio::test]
 async fn h_is_not_available_on_drafts() {
     let mut f = drafts_fixture().await;

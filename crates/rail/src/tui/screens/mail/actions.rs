@@ -386,7 +386,7 @@ impl MailScreen {
     }
 
     /// The targets are the list's selection (not the open thread or the cursor row).
-    fn targets_are_selection(&self, targets: &[(i64, Picked)]) -> bool {
+    pub(super) fn targets_are_selection(&self, targets: &[(i64, Picked)]) -> bool {
         let selected = self.actions.selection.targets();
         self.focus != Focus::Reader
             && !selected.is_empty()

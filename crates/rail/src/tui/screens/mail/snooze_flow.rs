@@ -115,8 +115,12 @@ impl MailScreen {
         })
     }
 
-    /// "Return to inbox now": one `snooze.clear` per account.
+    /// "Return to inbox now": one `snooze.clear` per account. Like any applied action, it uses up
+    /// the selection it came from.
     pub(super) fn return_snoozed(&mut self, targets: &[(i64, Picked)]) -> Vec<Effect> {
+        if self.targets_are_selection(targets) {
+            self.actions.selection.clear();
+        }
         let mut effects = Vec::new();
         for (account_id, threads) in self.group_by_account(targets) {
             let Some(account) = self.account_name(account_id) else {
