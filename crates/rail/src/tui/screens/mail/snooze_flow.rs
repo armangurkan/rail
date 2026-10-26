@@ -66,7 +66,8 @@ impl MailScreen {
                 let clock = self.ctx.clock.clone();
                 let until = ends.first().copied().filter(|_| count == 1);
                 let choices = snooze_choices(&clock);
-                let last = (self.last_snooze.as_deref()).and_then(|t| parse_snooze(t, &clock).ok());
+                let last = (self.actions.last_snooze.as_deref())
+                    .and_then(|t| parse_snooze(t, &clock).ok());
                 let chooser = Picker::snooze(&choices, clock, (until, !ends.is_empty()), last);
                 self.modal = Some(Modal::Picker(chooser));
             }
@@ -96,13 +97,13 @@ impl MailScreen {
 
     /// The last typed time, read when the screen starts.
     pub(super) fn load_last_snooze(&mut self) {
-        self.last_snooze = read_last(&last_file(&self.ctx.paths));
+        self.actions.last_snooze = read_last(&last_file(&self.ctx.paths));
     }
 
     /// Keep `said` for "Last used": for the session at once, and in the state file (owner-only,
     /// written atomically) off the screen's thread. A failed write is logged; the session keeps it.
     fn remember_snooze(&mut self, said: String) -> Effect {
-        self.last_snooze = Some(said.clone());
+        self.actions.last_snooze = Some(said.clone());
         let path = last_file(&self.ctx.paths);
         job(move |_sink| async move {
             let written =

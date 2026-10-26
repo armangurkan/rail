@@ -236,8 +236,6 @@ pub struct MailScreen {
     show_clock: bool,
     /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
     open_files: OpenFiles,
-    /// The last time typed into the snooze chooser, offered again as "Last used".
-    last_snooze: Option<String>,
     /// The browser confirmation was answered yes this session.
     html_confirmed: bool,
     /// The message `o` is waiting on a body fetch for.
@@ -307,7 +305,6 @@ impl MailScreen {
             hints,
             show_clock,
             open_files,
-            last_snooze: None,
             html_confirmed: false,
             pending_open: None,
             compose: None,

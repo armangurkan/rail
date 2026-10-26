@@ -83,12 +83,8 @@ impl Store {
         if let Some(prune) = batch.prune {
             outcome.pruned = prune_old(&tx, account, prune, &mut touched)?;
         }
-        // Mail the batch put in the inbox brings a snoozed thread back early; checked before
-        // the waiting actions are applied again, so a snooze's own archive never hides it.
-        let arrived: Vec<&str> = (batch.upserts.iter().map(|e| e.remote_id.as_str()))
-            .chain(batch.relabels.iter().map(|r| r.remote_id.as_str()))
-            .collect();
-        outcome.snoozes_due = super::snoozes::incoming(&tx, account, &arrived, now)?;
+        // Before the waiting actions are applied again: a snooze's own archive never hides it.
+        outcome.snoozes_due = incoming_snoozes(&tx, batch, now)?;
         // The conflict rule: actions still waiting for Gmail stay on top of what it said.
         super::apply_local::reapply_live(&tx, account, &touched)?;
         super::snoozes::settle_woken(&tx, account, &touched)?;
@@ -103,6 +99,15 @@ impl Store {
         tx.commit()?;
         Ok(outcome)
     }
+}
+
+/// Mail the batch put in the inbox brings a snoozed thread back early: how many snoozes that
+/// made due.
+fn incoming_snoozes(tx: &Transaction, batch: &Batch, now: i64) -> Result<usize, StoreError> {
+    let arrived: Vec<&str> = (batch.upserts.iter().map(|e| e.remote_id.as_str()))
+        .chain(batch.relabels.iter().map(|r| r.remote_id.as_str()))
+        .collect();
+    super::snoozes::incoming(tx, batch.account_id, &arrived, now)
 }
 
 fn replace_folders(

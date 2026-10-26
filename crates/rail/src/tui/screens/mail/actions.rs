@@ -107,6 +107,8 @@ pub(crate) struct ActionState {
     pub(super) confirming: Option<(MailAction, Vec<(i64, Picked)>)>,
     /// The picker waiting for its labels, then open: what its answer applies to.
     pub(super) picking: Option<super::actions_pick::Picking>,
+    /// The last time typed into the snooze chooser, offered again as "Last used".
+    pub(super) last_snooze: Option<String>,
 }
 
 /// "archived" and "archive", for the notice and the failure line.
