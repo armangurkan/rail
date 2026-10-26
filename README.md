@@ -275,6 +275,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `list.read` | list, reader | `u` | Mark read or unread. |
 | `list.labels` | list, reader | `l` | Add or remove labels (Gmail). |
 | `list.move` | list, reader | `m` | Move to a label (Gmail) or a folder (Microsoft 365). |
+| `list.snooze` | list, reader | `h` | Snooze until later, or return a snoozed thread ([Snooze](#snooze)). |
 | `list.compose` | list, reader | `c` | Write a new message. |
 | `list.reply` | list, reader | `r` | Reply to the latest message. |
 | `list.reply_all` | list, reader | `R` | Reply to everyone. |
@@ -297,7 +298,7 @@ are in, with `*` after the ones set in `config.toml`.
 | `reader.prev` | reader | `p` | Previous message. |
 | `reader.expand` | reader | `tab` | Expand or collapse the message. |
 | `reader.unfold` | reader | `enter` | Show the quoted lines, or open the message. |
-| `reader.headers` | reader | `h` | Show or hide the headers. |
+| `reader.headers` | reader | `H` | Show or hide the headers. |
 | `reader.open_browser` | reader | `o` | Open the message in the browser. |
 | `reader.attachments` | reader | `a` | List the attachments. |
 | `reader.follow_link` | reader | `g x` | Open a link. |
@@ -428,7 +429,7 @@ at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its text. Wh
 oldest messages are not shown, `[5 older messages of this thread are not shown]` stands where they
 would be. `j`/`k` move the cursor, `n`/`p` jump between the newest message and each card, `Tab` (or
 `Enter` on a card, the subject or a preview) opens or closes the message under the cursor, and
-`Enter` on `[n quoted lines]` shows the quoted text. `h` shows or hides, for the session, the
+`Enter` on `[n quoted lines]` shows the quoted text. `H` shows or hides, for the session, the
 headers of every open message: `From:`, `To:` and `Cc:` with addresses,
 `Date: Fri 10 Oct 2025 12:40`, and `Subject:` when it differs from the thread's. With
 `icons = "ascii"` the arrows are `>` and `v` and the rules `-`.
@@ -659,6 +660,54 @@ for a selection spanning accounts: `Labels belong to one account: select threads
 refuses some messages of a thread (one deleted meanwhile, say), the others still change and the
 refusals are logged; only when it refuses every message does the action fail. Opening an unread
 thread marks it read in Outlook (the status bar shows `1 queued` meanwhile).
+
+### Snooze
+
+`h` snoozes the thread under the cursor, the selection or the open thread (which closes): Rail
+archives it now and puts it back in the inbox at the time you choose, unread, first under TODAY.
+The chooser offers `Later today` (18:00, before 17:00), `Tomorrow` (08:00), `This weekend`
+(Saturday 08:00, Monday to Friday) and `Next week` (Monday 08:00), each with its time; a choice
+that falls at the time of an earlier one is left out (on a Friday, this weekend is tomorrow).
+There is no calendar to click through: type a time instead, in numbers or in words.
+
+- A time of day: `18:00`, `6pm`, `6:30 pm`, `noon` (today, or tomorrow once it has passed).
+- A span: `3 days`, `in 2 hours`, `an hour`, `90 min`, `1 week`, `1 month`, `+3h`.
+- A day: `tomorrow`, `tonight`, `later today`, `this weekend`, `next week`, `fri`, `next monday`.
+- A date: `nov 3`, `3 nov 2026`, `november 3rd`, `2026-11-03`; without a year, a date that has
+  passed this year means next year's.
+- A day with a time, in either order: `tomorrow 9am`, `9am fri`, `nov 3 at 14:00`.
+
+24-hour and am/pm times both work whatever `time` is set to. A day without a time comes back at
+08:00, `tonight` at 20:00 and `later today` at 18:00. What you type is offered first as `At` with
+its time; typing a choice's name (`tomorrow`) picks that choice. Text Rail cannot read says `Try
+6pm, tomorrow 9am, 2 days, nov 3 or fri.`, a time less than a minute ahead `That time has
+passed.`, and one more than a year ahead `That is more than a year away.` The last time you typed
+is offered first next time as `Last used`, read again against the clock (`2 days` counts from
+when you open the chooser), unless a choice already offers that time; Rail keeps it in the state directory
+(`snooze-last`), so it survives a restart. `Enter` snoozes, `Esc` cancels, `Down`/`Up` move.
+
+The status bar says `Snoozed until Mon 08:00 · z undoes`, and for ten seconds `z` takes the snooze
+back, as with archive. On a thread that is already snoozed the chooser's title says until when;
+choosing a time moves the snooze, and its first row, `Return to inbox now`, puts the thread back
+at once (`returned 1 to the inbox`). While anything is snoozed, `Snoozed` is listed under UNIFIED in
+the sidebar with the number of snoozed threads (`◷`, or `^` with `icons = "ascii"`); `:` and
+`Mailbox: Snoozed` open it at any time, and an empty one says `Nothing is snoozed.` The reader
+shows `Snoozed until Mon 13 Oct 2025 08:00` under a snoozed thread's recipients. Drafts cannot be
+snoozed (`Not available on drafts`).
+
+New mail in the thread brings it back early; your own reply, which lands in Sent, does not, and
+neither does a message of the snooze put back in the inbox from another device (snoozing the
+thread again then archives it with the rest). When threads come back the status bar says `Back
+from snooze: <subject>` or `3 threads back from snooze`.
+
+Neither Gmail nor Microsoft 365 offers a snooze Rail can use, so Rail keeps the time itself: other
+devices show the thread archived until it comes back, and it comes back while the daemon runs (see
+[The background daemon](#the-background-daemon)). The return puts back exactly the messages the
+snooze took out of the inbox: on Gmail it adds `INBOX` to them (one you trashed or reported as
+spam meanwhile stays there), and on Microsoft 365 it moves them from Archive back to Inbox (one
+you moved to another folder meanwhile stays there). If the server refuses the archive, the snooze fails with it (`Could not archive: …`, and
+`Enter` in `:errors` sends it again); snoozing the thread again starts afresh. Removing an account
+leaves its snoozed threads archived, since nothing syncs that account any more.
 
 ## Writing mail
 
@@ -1100,7 +1149,7 @@ login), and finishes with `rail_account_add` and `rail_wait`.
 | `rail_account_remove` | Removes an account's config entry and tokens; its mail stays. Needs your confirmation. |
 
 **What the tools cannot do.** No tool returns mail content (subjects, senders, snippets or bodies)
-and none sends mail. No MCP tool archives, trashes, labels or otherwise changes mail. No secret passes through the agent: `rail_account_add` takes the absolute path
+and none sends mail. No MCP tool archives, trashes, labels, snoozes or otherwise changes mail. No secret passes through the agent: `rail_account_add` takes the absolute path
 of the client-secret JSON you downloaded, an `op://` reference or a preset, never the secret itself,
 and a `client_secret` sent by an agent is refused. Tokens stay in the daemon. Tools refuse unknown
 arguments and relative file paths.
@@ -1147,7 +1196,10 @@ folder of the cache directory until a save succeeds, and one a crash left behind
 the mail screen next starts, once it is seven days old. HTML bodies
 are converted to text by Rail's own scanner without running scripts or loading anything remote, so
 syncing never fetches a tracking pixel. A body over 10 MiB is cut and says so. Mail that a search
-finds on its server outside the window is kept for 14 days after it was last searched for. Rail
+finds on its server outside the window is kept for 14 days after it was last searched for. A snooze keeps,
+in `rail.db`, when the thread comes back and the ids of the messages its archive took out of the
+inbox; the last time typed into the snooze chooser is kept in `snooze-last` in the state
+directory. Rail
 changes mail on the server only when you act on it (archive, trash, star, read, labels, move),
 send, or save or discard a draft. It never deletes mail permanently, except a Gmail draft you
 discard or send (a Microsoft 365 draft you discard goes to Deleted Items), and the daemon is the
@@ -1210,7 +1262,7 @@ running syncs carry on unchanged.
 | `split_threshold` | `140` | At this many columns and wider the reader opens beside the list (in the mail screen). |
 | `hints` | `true` | `false` turns the key hints off: the bottom row keeps only notices and each account's state, and the key boxes' rows go to the panes. `:hints` in the palette toggles it and saves it. |
 | `clock` | `true` | `false` hides the time of day at the right edge of the header. `:clock` in the palette toggles it and saves it. |
-| `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced` and its clock, the Drafts list, `:errors`, the reader's title block and cards (`04:32` today, `Thu 08:55` yesterday and this week), and the `Date:` header line `h` shows). `:time` in the palette toggles it and saves it. |
+| `time` | `"24h"` | `"24h"` writes times of day as `14:05`, `"12h"` as `2:05 pm` (the list, the header's `Synced` and its clock, the Drafts list, `:errors`, the reader's title block and cards (`04:32` today, `Thu 08:55` yesterday and this week), and the `Date:` header line `H` shows). `:time` in the palette toggles it and saves it. |
 | `dim_read` | `"dot"` | Read threads: `"dot"` keeps the small muted dot, `"subject"` also dims the subject, `"all"` dims the sender, subject, count and time. `:dim-read` cycles the modes and saves the choice. |
 | `thread_order` | `"oldest"` | How the reader lists a thread's older messages under the newest one: `"oldest"` first or `"newest"` first. `:thread-order` in the palette toggles it and saves it. |
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
@@ -1334,6 +1386,7 @@ in concealed fields. Values reach `op` only on its standard input, never as comm
 | Token file (`secrets = "file"`) | `~/.local/share/rail/secrets.json` | `~/Library/Application Support/rail/secrets.json` |
 | Attachments of imported Gmail drafts | `~/.local/share/rail/draft-files/` | `~/Library/Application Support/rail/draft-files/` |
 | Log | `~/.local/state/rail/rail.log` | `~/Library/Application Support/rail/rail.log` |
+| Last time typed into the snooze chooser | `~/.local/state/rail/snooze-last` | `~/Library/Application Support/rail/snooze-last` |
 | Daemon socket | `$XDG_RUNTIME_DIR/rail/rail.sock` (the state directory when there is no runtime directory) | `~/Library/Application Support/rail/rail.sock` |
 | Login unit | `~/.config/systemd/user/rail.service` (under `$XDG_CONFIG_HOME` when set) | `~/Library/LaunchAgents/io.github.vitosans.rail.plist` |
 
@@ -1349,7 +1402,9 @@ commands never race on the store, the config or a login. The TUI's own config sa
 yourself: the first
 command that needs it starts `rail daemon run` in the background, or your login does after
 `rail daemon install`. While any account is configured it keeps running and syncs; with none it
-exits after ten minutes idle. A login you begin keeps waiting in the daemon until you finish it,
+exits after ten minutes idle. It also puts snoozed threads back at their time, so a snooze comes
+back on time while the daemon runs (from your login, after `rail daemon install`); one whose time
+passed while no daemon ran comes back as soon as one starts. A login you begin keeps waiting in the daemon until you finish it,
 cancel it, or 15 minutes pass, and opens the browser on the display of the command that began it.
 
 The daemon keeps the environment of the command that started it (notably `PATH` and any

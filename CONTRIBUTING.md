@@ -15,7 +15,7 @@ never let a secret reach a log or the terminal.
 crates/rail-core/        Library: paths, config, store, auth, onboarding, operations, daemon, sync. No terminal dependency.
   src/config/            TOML model, loading with line-numbered errors, comment-preserving edits
   src/store/             SQLite open, migrations, repositories
-    store/view.rs        Read-only queries the mail screen runs: thread pages (an inbox, a folder, Starred, Sent and Trash across accounts), the sidebar's counts, one thread, a message's HTML
+    store/view.rs        Read-only queries the mail screen runs: thread pages (an inbox, a folder, Starred, Snoozed, Sent and Trash across accounts), the sidebar's counts, one thread, a message's HTML
     store/filter.rs      The filter line's syntax as SQL conditions
     store/outbox.rs      The outbox queue the action operations and the worker share
     store/drafts.rs      Local drafts, their recipients and attachments
@@ -23,14 +23,17 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
     store/outbox_drafts.rs The outbox rows that save a draft to the provider and delete its provider copy
     store/addresses.rs   The addresses mail has taught the store, for `To:` completion
     store/apply_local.rs Local changes of actions and their exact reverse, and the conflict rule
+    store/snoozes.rs     Snoozes: the archive and its record, the wake, a reply's early wake, the Snoozed scope's condition
   src/auth/              Secret stores (keyring, file, 1Password), OAuth endpoints, loopback listener, login and admin consent, token refresh
   src/onboarding/        Presets and the setup wizard's pure state machine
   src/ops/               The operation layer: every request and response type, OpError, Untrusted
     ops/drafts.rs        The draft operations' types and the limits on a message
+    ops/snooze.rs        `snooze.set`, `snooze.clear` and the `snooze.woke` notice, and a snooze's time limits
   src/daemon/            JSON-RPC wire format, client and connector, the socket server and its handlers
     daemon/handlers/drafts.rs  The `draft.save`, `draft.send` and `draft.discard` handlers
     daemon/handlers/drafts_gmail.rs  The `draft.push` and `draft.import` handlers (either provider)
     daemon/handlers/draft_files.rs  The private files of an imported draft: fetch, removal, the start-up sweep
+    daemon/handlers/snooze.rs  The `snooze.set` and `snooze.clear` handlers
   src/accounts/          The add, login and remove pipeline the daemon runs
   src/guide/             Google and Microsoft setup steps as versioned data
   src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries, the Graph dialect and limiter), the HTML-to-text scanner (`provider/html.rs`), and the Gmail and Graph providers
@@ -54,7 +57,8 @@ crates/rail/             Binary: clap CLI, logging, and the account, daemon, doc
     tui/keys             Actions, their default keys and `[keys]` overrides: the keymap every screen reads
     tui/text             Escaping, width, wrapping and hyperlinks for text that came from outside
     tui/data             The mail screen's read side (the store reader) and its link to the daemon
-    tui/screens/mail     The mail screen: thread list, sidebar, status bar; `events.rs` takes the store's and the daemon's answers, `header.rs` and `hints.rs` draw the header row and the hint bar, `sidebar_tree.rs` builds the sidebar's rows and folds and `sidebar_view.rs` draws them, `list_view.rs` draws the thread list's rows and date groups, `composing*.rs` is its side of writing mail, `drafts_pane.rs` and `drafts_flow.rs` its Drafts folder
+    tui/snooze.rs        The snooze chooser's choices and the times it reads from typed text
+    tui/screens/mail     The mail screen: thread list, sidebar, status bar; `events.rs` takes the store's and the daemon's answers, `header.rs` and `hints.rs` draw the header row and the hint bar, `sidebar_tree.rs` builds the sidebar's rows and folds and `sidebar_view.rs` draws them, `list_view.rs` draws the thread list's rows and date groups, `composing*.rs` is its side of writing mail, `drafts_pane.rs` and `drafts_flow.rs` its Drafts folder, `snooze_flow.rs` its snooze chooser and what it sends
     tui/screens/mail/tests/compose_gmail.rs, drafts_folder.rs  The tests of saving to Gmail and of the Drafts folder
     tui/screens/reader   The reader: `cards.rs` builds the title block, the newest message and the cards, `lines.rs` the parts of an open message (folded quotes, numbered links), `view.rs` draws them
     tui/screens/compose  The composer: the compose file, reply and forward prefill, prompts with completion, the review
