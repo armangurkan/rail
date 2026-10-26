@@ -3,7 +3,7 @@
 //! labels, or a Microsoft 365 account's Inbox, Archive, Junk and own folders) and what the
 //! threads are in, then the picker; an account with nothing to offer says so in its own words
 //! (labels on Gmail, folders on Microsoft 365); its answer is a `labels` or `move` action with
-//! grace. The snooze chooser (`Z`) shares the picking state; its answer goes to `snooze_flow`.
+//! grace. The snooze chooser (`h`) shares the picking state; its answer goes to `snooze_flow`.
 
 use std::collections::BTreeSet;
 

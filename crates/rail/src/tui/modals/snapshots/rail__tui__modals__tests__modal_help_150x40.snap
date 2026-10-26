@@ -31,7 +31,7 @@ expression: text
                                    │  u                    Mark read or unread                                    │
                                    │  l                    Add or remove labels (Gmail)                           │
                                    │  m                    Move to a label (Gmail) or a folder (Microsoft 365)    │
-                                   │  Z                    Snooze until later, or return a snoozed thread         │
+                                   │  h                    Snooze until later, or return a snoozed thread         │
                                    │  c                    Write a new message                                    │
                                    │  r                    Reply to the latest message                            │
                                    │  R                    Reply to everyone                                      │

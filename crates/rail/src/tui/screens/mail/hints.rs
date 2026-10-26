@@ -434,7 +434,7 @@ mod tests {
             [
                 "n/p message",
                 "Tab fold",
-                "h headers",
+                "H headers",
                 "r reply",
                 "e archive",
                 "q back",

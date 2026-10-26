@@ -1,4 +1,4 @@
-//! `Z` and the snooze chooser with the fake daemon over a seeded store: a choice or a typed time
+//! `h` and the snooze chooser with the fake daemon over a seeded store: a choice or a typed time
 //! snoozes the cursor row, the open thread (closing the reader) or the selection, one
 //! `snooze.set` per account with grace; a snoozed thread's chooser offers "Return to inbox now"
 //! (`snooze.clear`); Drafts refuse it; the notice and `z`; `snooze.woke` reads the list again.
@@ -100,10 +100,10 @@ async fn woke(f: &mut Fixture, threads: Vec<i64>) {
 }
 
 #[tokio::test]
-async fn z_offers_the_times_and_enter_snoozes_the_cursor_row_with_grace() {
+async fn h_offers_the_times_and_enter_snoozes_the_cursor_row_with_grace() {
     let mut f = fixture(3).await;
     let top = cursor_thread(&f);
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     let shown = drawn(&f);
     for (label, time) in [
         ("Later today", "Fri 18:00"),
@@ -126,7 +126,7 @@ async fn z_offers_the_times_and_enter_snoozes_the_cursor_row_with_grace() {
 #[tokio::test]
 async fn esc_closes_the_chooser_and_sends_nothing() {
     let mut f = fixture(3).await;
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     assert!(f.screen.modal.is_some());
     press(&mut f, KeyCode::Esc).await;
     assert!(f.screen.modal.is_none());
@@ -135,11 +135,11 @@ async fn esc_closes_the_chooser_and_sends_nothing() {
 }
 
 #[tokio::test]
-async fn z_in_the_reader_snoozes_the_open_thread_and_closes_the_reader() {
+async fn h_in_the_reader_snoozes_the_open_thread_and_closes_the_reader() {
     let mut f = fixture(3).await;
     press(&mut f, KeyCode::Enter).await;
     let open = f.screen.reader().unwrap().thread_id();
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     press(&mut f, KeyCode::Enter).await;
     assert!(f.screen.reader().is_none(), "snoozing closes the reader");
     assert_eq!(snoozes(&f), [set(vec![open], MIDNIGHT + 18 * HOUR)]);
@@ -150,7 +150,7 @@ async fn a_selection_is_snoozed_with_one_call_per_account() {
     let mut f = fixture(2).await;
     let all: BTreeSet<i64> = thread_ids(&f).into_iter().collect();
     press_n(&mut f, KeyCode::Char(' '), all.len()).await;
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     press(&mut f, KeyCode::Enter).await;
     let mut accounts = Vec::new();
     let mut snoozed = BTreeSet::new();
@@ -181,7 +181,7 @@ async fn a_selection_is_snoozed_with_one_call_per_account() {
 async fn a_typed_time_comes_first_and_enter_snoozes_until_it() {
     let mut f = fixture(3).await;
     let top = cursor_thread(&f);
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     type_text(&mut f, "7pm").await;
     let shown = drawn(&f);
     let typed = line_of(&shown, "Fri 19:00");
@@ -194,7 +194,7 @@ async fn a_typed_time_comes_first_and_enter_snoozes_until_it() {
 #[tokio::test]
 async fn text_that_is_not_a_time_says_why_and_enter_does_nothing() {
     let mut f = fixture(3).await;
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     type_text(&mut f, "soon").await;
     let shown = drawn(&f);
     assert!(
@@ -216,7 +216,7 @@ async fn a_snoozed_thread_is_offered_return_to_inbox_now_first() {
     let mut f = fixture(3).await;
     let top = cursor_thread(&f);
     snoozed_in_store(&f, top, MIDNIGHT + 3 * DAY + 8 * HOUR);
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     let shown = drawn(&f);
     assert!(
         shown.contains("Snoozed until Mon 13 Oct 2025 08:00"),
@@ -236,11 +236,11 @@ async fn a_snoozed_thread_is_offered_return_to_inbox_now_first() {
 }
 
 #[tokio::test]
-async fn z_is_not_available_on_drafts() {
+async fn h_is_not_available_on_drafts() {
     let mut f = drafts_fixture().await;
     open_drafts(&mut f).await;
     let before = f.fake.calls.lock().unwrap().len();
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     let line = f.screen.status_line();
     assert!(line.contains("Not available on drafts"), "{line}");
     assert!(f.screen.modal.is_none(), "no chooser");
@@ -250,7 +250,7 @@ async fn z_is_not_available_on_drafts() {
 #[tokio::test]
 async fn the_notice_names_the_time_and_z_undoes_the_snooze() {
     let mut f = fixture(3).await;
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     press(&mut f, KeyCode::Enter).await;
     let line = f.screen.status_line();
     assert!(
@@ -280,7 +280,7 @@ async fn a_snooze_that_queued_no_archive_has_no_undo_hint() {
         rows: vec![],
         snoozed: 1,
     }));
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     press(&mut f, KeyCode::Enter).await;
     let line = f.screen.status_line();
     assert!(line.contains("Snoozed until Fri 18:00"), "{line}");
@@ -293,7 +293,7 @@ async fn a_refused_snooze_says_why_in_its_own_words() {
     *f.fake.snooze_answer.lock().unwrap() = Some(Err(OpError::invalid_input(
         "Only a thread in the inbox can be snoozed.",
     )));
-    press(&mut f, KeyCode::Char('Z')).await;
+    press(&mut f, KeyCode::Char('h')).await;
     press(&mut f, KeyCode::Enter).await;
     let line = f.screen.status_line();
     assert!(

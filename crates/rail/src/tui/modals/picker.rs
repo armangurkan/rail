@@ -2,7 +2,7 @@
 //! applies the difference from what the threads carried), `m` moves to one (`Enter`), `:theme`
 //! and `:accent` preview the highlighted choice on every move (`Enter` keeps it, `Esc` restores).
 //! Typing filters with the palette's fuzzy matcher; names are outside text, escaped when drawn.
-//! The snooze chooser (`Z`) shows each choice's time, and offers a typed time as its first row.
+//! The snooze chooser (`h`) shows each choice's time, and offers a typed time as its first row.
 
 use std::collections::BTreeSet;
 

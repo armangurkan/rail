@@ -19,7 +19,7 @@ use crate::tui::screens::reader::LineKind;
 use crate::tui::theme::Theme;
 
 #[tokio::test]
-async fn h_shows_and_hides_the_headers_and_help_lists_it() {
+async fn shift_h_shows_and_hides_the_headers_and_help_lists_it() {
     let mut f = fixture(false).await;
     store_bodies_on_fetch(&f);
     Store::open(&f.paths.db_file())
@@ -38,7 +38,7 @@ async fn h_shows_and_hides_the_headers_and_help_lists_it() {
     press(&mut f, KeyCode::Enter).await;
     open_toms_card(&mut f).await;
     assert!(!all_text(&f).contains("From:"), "hidden at first");
-    keys(&mut f, "h").await;
+    keys(&mut f, "H").await;
     let text = all_text(&f);
     assert!(text.contains("From: Tom <tom@example.com>"), "{text}");
     assert!(text.contains("To: Dana Reyes <dana@example.com>"), "{text}");
@@ -62,7 +62,7 @@ async fn h_shows_and_hides_the_headers_and_help_lists_it() {
             .starts_with("▾   1   Tom"),
         "the cursor stays on Tom's card"
     );
-    keys(&mut f, "h").await;
+    keys(&mut f, "H").await;
     assert!(!all_text(&f).contains("From:"), "{}", all_text(&f));
     keys(&mut f, "?").await;
     let help = draw(&f, 150, 40);

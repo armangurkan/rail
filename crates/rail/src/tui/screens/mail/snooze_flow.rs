@@ -1,4 +1,4 @@
-//! `Z`: the snooze chooser and what it sends. The chooser opens once the store says which of the
+//! `h`: the snooze chooser and what it sends. The chooser opens once the store says which of the
 //! threads are snoozed (its title then says until when, and "Return to inbox now" comes first);
 //! a time snoozes them with grace, one `snooze.set` per account, which `z` takes back like an
 //! archive; returning sends `snooze.clear`. `snooze.woke` reads the list again and says what came
@@ -20,7 +20,7 @@ use crate::tui::text::{escape, fit};
 const SHOWN_SUBJECT_CHARS: usize = 120;
 
 impl MailScreen {
-    /// `Z` on the list or the reader: read which of the threads are snoozed, then the chooser.
+    /// `h` on the list or the reader: read which of the threads are snoozed, then the chooser.
     pub(super) fn open_snooze(&mut self, targets: Vec<(i64, Picked)>) -> Vec<Effect> {
         let seq = self.next_seq();
         let threads = targets.iter().map(|(id, _)| *id).collect();

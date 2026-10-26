@@ -123,7 +123,7 @@ actions! {
     ListRead => "list.read", [List, Reader], ["u"], "Mark read or unread";
     ListLabels => "list.labels", [List, Reader], ["l"], "Add or remove labels (Gmail)";
     ListMove => "list.move", [List, Reader], ["m"], "Move to a label (Gmail) or a folder (Microsoft 365)";
-    ListSnooze => "list.snooze", [List, Reader], ["Z"], "Snooze until later, or return a snoozed thread";
+    ListSnooze => "list.snooze", [List, Reader], ["h"], "Snooze until later, or return a snoozed thread";
     ListCompose => "list.compose", [List, Reader], ["c"], "Write a new message";
     ListReply => "list.reply", [List, Reader], ["r"], "Reply to the latest message";
     ListReplyAll => "list.reply_all", [List, Reader], ["R"], "Reply to everyone";
@@ -146,7 +146,7 @@ actions! {
     ReaderPrev => "reader.prev", [Reader], ["p"], "Previous message";
     ReaderExpand => "reader.expand", [Reader], ["tab"], "Expand or collapse the message";
     ReaderUnfold => "reader.unfold", [Reader], ["enter"], "Show the quoted lines, or open the message";
-    ReaderHeaders => "reader.headers", [Reader], ["h"], "Show or hide the headers";
+    ReaderHeaders => "reader.headers", [Reader], ["H"], "Show or hide the headers";
     ReaderOpenBrowser => "reader.open_browser", [Reader], ["o"], "Open the message in the browser";
     ReaderAttachments => "reader.attachments", [Reader], ["a"], "List the attachments";
     ReaderFollowLink => "reader.follow_link", [Reader], ["g x"], "Open a link";
