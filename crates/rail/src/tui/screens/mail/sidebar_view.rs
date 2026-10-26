@@ -176,6 +176,7 @@ fn icon(row: &SidebarRow, glyphs: &Glyphs) -> String {
     let glyph = match &row.kind {
         RowKind::Unified(scope) => match scope {
             ScopeChoice::Starred => glyphs.icon_starred,
+            ScopeChoice::Snoozed => glyphs.icon_snoozed,
             ScopeChoice::Drafts => glyphs.icon_drafts,
             ScopeChoice::Sent => glyphs.icon_sent,
             ScopeChoice::Trash => glyphs.icon_trash,
@@ -347,6 +348,18 @@ mod tests {
             ..leaf("Trash", 0, None)
         };
         assert_eq!(icon(&trash, &Glyphs::of(Icons::Unicode)), "✕ ");
+    }
+
+    #[test]
+    fn the_snoozed_mailbox_has_its_own_two_cell_icon_in_both_sets() {
+        let snoozed = SidebarRow {
+            kind: RowKind::Unified(ScopeChoice::Snoozed),
+            ..leaf("Snoozed", 0, None)
+        };
+        for (icons, drawn) in [(Icons::Unicode, "◷ "), (Icons::Ascii, "^ ")] {
+            let glyph = icon(&snoozed, &Glyphs::of(icons));
+            assert_eq!((glyph.as_str(), width(&glyph)), (drawn, ICON_COLS));
+        }
     }
 
     #[test]

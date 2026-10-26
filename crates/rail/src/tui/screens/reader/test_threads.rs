@@ -71,6 +71,7 @@ pub fn four(older_left_out: usize) -> ThreadDetail {
             newest,
         ],
         older_left_out,
+        snoozed_until: None,
     }
 }
 

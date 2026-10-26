@@ -25,6 +25,29 @@ pub(super) const NOT_SNOOZED: &str = "NOT EXISTS (SELECT 1 FROM threads st JOIN 
     ON s.account_id = st.account_id AND s.thread_remote = st.remote_id
     WHERE st.id = messages.thread_id)";
 
+/// The threads `t` a snooze holds (waiting for its archive, or archived until its time; not failed,
+/// not woken): the Snoozed mailbox, its count and the reader's line. Read from the snooze side,
+/// which is small, as the view's other folder-side conditions are.
+pub(super) const HELD: &str = "t.id IN (SELECT ht.id FROM snoozes s
+    JOIN threads ht ON ht.account_id = s.account_id AND ht.remote_id = s.thread_remote
+    LEFT JOIN outbox o ON o.id = s.archive_row
+    WHERE s.woken_at IS NULL AND (s.archive_row IS NULL OR o.state <> 'failed'))";
+
+/// When the snooze holding `thread` ends, while one does (`HELD`).
+pub(super) fn held_until(conn: &Connection, thread: i64) -> Result<Option<i64>, StoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT s.until FROM threads t
+             JOIN snoozes s ON s.account_id = t.account_id AND s.thread_remote = t.remote_id
+             LEFT JOIN outbox o ON o.id = s.archive_row
+             WHERE t.id = ?1 AND s.woken_at IS NULL
+               AND (s.archive_row IS NULL OR o.state <> 'failed')",
+            [thread],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 /// A snooze to write: its threads, its time, and its archive's due time and client token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnoozeNew {

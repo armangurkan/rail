@@ -247,6 +247,7 @@ fn sidebar_counts_the_starred_unread_threads_and_the_drafts() {
             starred_unread: 2,
             drafts: 1,
             drafts_by_account: vec![(1, 1), (2, 0)],
+            snoozed: 0,
         }
     );
     assert_eq!(store.sidebar_counts(&[2]).unwrap().unified.drafts, 0);

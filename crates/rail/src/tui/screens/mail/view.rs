@@ -49,6 +49,8 @@ pub struct Glyphs {
     /// The sidebar's mailbox icons, each padded to two cells when drawn.
     pub icon_inbox: &'static str,
     pub icon_starred: &'static str,
+    /// The Snoozed mailbox: `◷`, or `^` in ASCII (`z` would read as the undo key).
+    pub icon_snoozed: &'static str,
     pub icon_drafts: &'static str,
     pub icon_sent: &'static str,
     pub icon_trash: &'static str,
@@ -80,6 +82,7 @@ impl Glyphs {
                 search: "│ 🔍 ",
                 icon_inbox: "✉",
                 icon_starred: "★",
+                icon_snoozed: "◷",
                 icon_drafts: "✎",
                 icon_sent: "➤",
                 icon_trash: "✕",
@@ -105,6 +108,7 @@ impl Glyphs {
                 search: "| ",
                 icon_inbox: "i",
                 icon_starred: "*",
+                icon_snoozed: "^",
                 icon_drafts: "d",
                 icon_sent: ">",
                 icon_trash: "x",
@@ -323,10 +327,12 @@ impl MailScreen {
                 lines
             }
             StoreState::Ready if self.list.rows().is_empty() => {
-                let text = if self.filter.is_empty() {
-                    "No threads here."
-                } else {
+                let text = if !self.filter.is_empty() {
                     "No threads match the filter."
+                } else if self.scope == ScopeChoice::Snoozed {
+                    "Nothing is snoozed."
+                } else {
+                    "No threads here."
                 };
                 vec![Line::styled(text, theme.muted)]
             }

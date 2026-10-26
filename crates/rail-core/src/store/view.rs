@@ -10,6 +10,7 @@ use rusqlite::types::Value;
 use rusqlite::{OptionalExtension, params, params_from_iter};
 
 use super::filter::Filter;
+use super::snoozes::HELD;
 use super::{Store, StoreError};
 use crate::provider::links::MAX_LINKS;
 use crate::provider::{FolderKind, Mailbox};
@@ -43,6 +44,9 @@ pub enum Scope {
         accounts: Vec<i64>,
         kind: FolderKind,
     },
+    /// Threads a snooze holds in any of these accounts: waiting for its archive, or archived
+    /// until its time.
+    Snoozed { accounts: Vec<i64> },
 }
 
 /// The filter's `account:`, resolved by the caller.
@@ -128,6 +132,8 @@ pub struct ThreadDetail {
     pub messages: Vec<MessageView>,
     /// Older messages beyond `MAX_THREAD_MESSAGES` that were left out.
     pub older_left_out: usize,
+    /// When the snooze holding the thread ends, while one does.
+    pub snoozed_until: Option<i64>,
 }
 
 impl fmt::Debug for ThreadDetail {
@@ -262,6 +268,8 @@ pub struct UnifiedCounts {
     /// `(store account id, drafts)` for each account asked, in that order: what the Drafts
     /// pane lists for that account (its local drafts and the provider drafts none of them owns).
     pub drafts_by_account: Vec<(i64, u64)>,
+    /// Threads a snooze holds: the sidebar shows the Snoozed mailbox while there are any.
+    pub snoozed: u64,
 }
 
 /// The sidebar's numbers.
@@ -376,6 +384,10 @@ fn scope_condition(scope: &Scope) -> (String, Vec<Value>) {
                 Value::Text(kind.as_str().to_string()),
                 Value::Text(ids_json(ids)),
             ],
+        ),
+        Scope::Snoozed { accounts: ids } => (
+            format!("{accounts} AND {HELD}"),
+            vec![Value::Text(ids_json(ids))],
         ),
     }
 }
@@ -517,6 +529,7 @@ impl Store {
             subject,
             messages,
             older_left_out,
+            snoozed_until: super::snoozes::held_until(&self.conn, thread_id)?,
         }))
     }
 
@@ -622,11 +635,25 @@ impl Store {
                 starred_unread: self.starred_unread(&ids)?,
                 drafts,
                 drafts_by_account,
+                snoozed: self.snoozed(&ids)?,
             },
         })
     }
 
     /// Threads of these accounts (a JSON id list) with a starred message and an unread one.
+    /// Threads a snooze holds in these accounts (`snoozes::HELD`).
+    fn snoozed(&self, ids: &str) -> Result<u64, StoreError> {
+        let n: i64 = self.conn.query_row(
+            &format!(
+                "SELECT count(*) FROM threads t
+                 WHERE t.account_id IN (SELECT value FROM json_each(?1)) AND {HELD}"
+            ),
+            params![ids],
+            |r| r.get(0),
+        )?;
+        Ok(count(n))
+    }
+
     fn starred_unread(&self, ids: &str) -> Result<u64, StoreError> {
         let n: i64 = self.conn.query_row(
             "SELECT count(*) FROM threads t

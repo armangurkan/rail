@@ -62,8 +62,8 @@ fn left_out(detail: &ThreadDetail, width: usize) -> Option<ReaderLine> {
     })
 }
 
-/// The subject (or a failed re-read's error), the sender line, the recipients line and a
-/// rule, all on the newest message.
+/// The subject (or a failed re-read's error), the sender line, the recipients line, until when
+/// the thread is snoozed (while it is) and a rule, all on the newest message.
 fn title_block(
     detail: &ThreadDetail,
     newest: usize,
@@ -77,12 +77,18 @@ fn title_block(
         None => ReaderLine::one(kind, fit(&detail.subject, width), Tone::Accent),
     };
     let count = detail.messages.len() + detail.older_left_out;
-    vec![
+    let snoozed = detail.snoozed_until.map(|until| {
+        let text = format!("Snoozed until {}", state.clock.long(until));
+        ReaderLine::one(kind, fit(&text, width), Tone::Muted)
+    });
+    let mut lines = vec![
         subject,
         ReaderLine::of(kind, cut(sender_line(m, state), width)),
         ReaderLine::one(kind, to_line(m, count, width), Tone::Muted),
-        rule(state, width),
-    ]
+    ];
+    lines.extend(snoozed);
+    lines.push(rule(state, width));
+    lines
 }
 
 /// `David Hallas  04:32   A  AXON`: the sender in bold, the time as the list writes it, the

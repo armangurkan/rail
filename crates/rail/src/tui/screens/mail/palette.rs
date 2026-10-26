@@ -170,10 +170,12 @@ pub(super) fn account_number(action: Action) -> Option<usize> {
     Some(number)
 }
 
-/// `Mailbox: Starred` and the other merged mailboxes (`0` reaches All inboxes).
+/// `Mailbox: Starred` and the other merged mailboxes (`0` reaches All inboxes). `Mailbox:
+/// Snoozed` is here whether or not the sidebar lists it.
 fn mailbox_entries() -> impl Iterator<Item = PaletteEntry> {
     [
         ScopeChoice::Starred,
+        ScopeChoice::Snoozed,
         ScopeChoice::Drafts,
         ScopeChoice::Sent,
         ScopeChoice::Trash,

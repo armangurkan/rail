@@ -26,9 +26,10 @@ const SYSTEM: [FolderKind; 6] = [
 const CATEGORY: &str = "Category: ";
 const CATEGORIES: &str = "Categories";
 /// The merged mailboxes, in the order UNIFIED lists them.
-const MERGED: [ScopeChoice; 5] = [
+const MERGED: [ScopeChoice; 6] = [
     ScopeChoice::Unified,
     ScopeChoice::Starred,
+    ScopeChoice::Snoozed,
     ScopeChoice::Drafts,
     ScopeChoice::Sent,
     ScopeChoice::Trash,
@@ -257,15 +258,21 @@ fn heading(text: &'static str) -> SidebarRow {
     )
 }
 
-/// UNIFIED, its five mailboxes and the rule under them. Sent and Trash count nothing.
+/// UNIFIED, its mailboxes and the rule under them. Sent and Trash count nothing; Snoozed is
+/// listed only while something is snoozed, so a feature most sessions never use takes no row
+/// (the palette's `Mailbox: Snoozed` always opens it).
 fn unified_rows(outcome: &SidebarOutcome) -> Vec<SidebarRow> {
     let counts = &outcome.counts;
     let mut rows = vec![heading(UNIFIED)];
     for scope in MERGED {
+        if scope == ScopeChoice::Snoozed && counts.unified.snoozed == 0 {
+            continue;
+        }
         let name = scope.unified_name().unwrap_or_default();
         let count = match scope {
             ScopeChoice::Unified => Some(counts.accounts.iter().map(|a| a.unread).sum()),
             ScopeChoice::Starred => Some(counts.unified.starred_unread),
+            ScopeChoice::Snoozed => Some(counts.unified.snoozed),
             ScopeChoice::Drafts => Some(counts.unified.drafts),
             _ => None,
         };
@@ -649,6 +656,7 @@ pub(super) mod fixtures {
                     starred_unread: 12,
                     drafts: 3,
                     drafts_by_account: vec![(1, 2), (2, 1)],
+                    snoozed: 0,
                 },
             },
             account_ids: vec![Some(1), Some(2)],

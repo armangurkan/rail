@@ -397,3 +397,80 @@ async fn last_used_is_left_out_when_a_choice_says_the_same_or_it_has_passed() {
         press(&mut f, KeyCode::Esc).await;
     }
 }
+
+/// The screen at 150x40, where the sidebar shows.
+fn wide(f: &Fixture) -> String {
+    render_lines(150, 40, |frame| f.screen.view(frame, &Theme::default())).join("\n")
+}
+
+/// `:` then "mailbox snoozed" and Enter.
+async fn open_snoozed(f: &mut Fixture) {
+    press(f, KeyCode::Char(':')).await;
+    type_text(f, "mailbox snoozed").await;
+    press(f, KeyCode::Enter).await;
+}
+
+/// The open reader's lines at a width where nothing wraps.
+fn reader_text(f: &Fixture) -> String {
+    let lines = f.screen.reader().unwrap().lines(400);
+    lines
+        .iter()
+        .map(|l| l.text().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn the_sidebar_lists_snoozed_only_while_something_is_snoozed() {
+    let mut f = fixture(3).await;
+    assert!(!wide(&f).contains("Snoozed"), "nothing is snoozed");
+    let top = cursor_thread(&f);
+    snoozed_in_store(&f, top, MIDNIGHT + DAY + 8 * HOUR);
+    store_changed(&mut f).await;
+    let shown = wide(&f);
+    let row = shown
+        .lines()
+        .find(|l| l.contains("Snoozed"))
+        .unwrap_or_default();
+    assert!(
+        row.contains("◷") && row.contains(" 1"),
+        "the icon and the count: {shown}"
+    );
+}
+
+#[tokio::test]
+async fn the_snoozed_mailbox_opens_from_the_palette_and_lists_what_is_snoozed() {
+    let mut f = fixture(3).await;
+    let top = cursor_thread(&f);
+    let entries = f.screen.palette_entries();
+    assert!(entries.iter().any(|e| e.text == "Mailbox: Snoozed"));
+    open_snoozed(&mut f).await;
+    assert!(drawn(&f).contains("Nothing is snoozed."), "{}", drawn(&f));
+    snoozed_in_store(&f, top, MIDNIGHT + DAY + 8 * HOUR);
+    store_changed(&mut f).await;
+    assert_eq!(thread_ids(&f), [top]);
+}
+
+#[tokio::test]
+async fn the_reader_says_until_when_a_thread_is_snoozed_in_either_clock() {
+    let mut f = fixture(3).await;
+    let top = cursor_thread(&f);
+    snoozed_in_store(&f, top, MIDNIGHT + 3 * DAY + 8 * HOUR);
+    press(&mut f, KeyCode::Enter).await;
+    let text = reader_text(&f);
+    assert!(
+        text.contains("Snoozed until Mon 13 Oct 2025 08:00"),
+        "{text}"
+    );
+    press(&mut f, KeyCode::Char('q')).await;
+    f.screen
+        .ctx
+        .clock
+        .set_format(rail_core::config::TimeFormat::H12);
+    press(&mut f, KeyCode::Enter).await;
+    let text = reader_text(&f);
+    assert!(
+        text.contains("Snoozed until Mon 13 Oct 2025 8:00 am"),
+        "{text}"
+    );
+}

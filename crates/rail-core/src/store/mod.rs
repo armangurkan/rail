@@ -35,6 +35,8 @@ mod snoozes_edge_tests;
 mod snoozes_single_tests;
 #[cfg(test)]
 mod snoozes_tests;
+#[cfg(test)]
+mod snoozes_view_tests;
 pub mod sync_read;
 mod sync_write;
 #[cfg(test)]

@@ -283,7 +283,9 @@ impl Sidebar {
                 .iter()
                 .find(|f| f.folder_id == *folder_id)
                 .map_or(0, |f| f.unread),
-            ScopeChoice::Sent | ScopeChoice::Trash | ScopeChoice::Drafts => 0,
+            ScopeChoice::Sent | ScopeChoice::Trash | ScopeChoice::Drafts | ScopeChoice::Snoozed => {
+                0
+            }
         }
     }
 }

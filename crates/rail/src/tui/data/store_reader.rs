@@ -40,6 +40,8 @@ pub enum ScopeChoice {
     Unified,
     /// The starred threads of every account.
     Starred,
+    /// The threads a snooze holds, in every account.
+    Snoozed,
     /// Every account's Sent.
     Sent,
     /// Every account's Trash.
@@ -62,6 +64,7 @@ impl PartialEq for ScopeChoice {
         match (self, other) {
             (Self::Unified, Self::Unified)
             | (Self::Starred, Self::Starred)
+            | (Self::Snoozed, Self::Snoozed)
             | (Self::Sent, Self::Sent)
             | (Self::Trash, Self::Trash)
             | (Self::Drafts, Self::Drafts) => true,
@@ -84,11 +87,12 @@ impl PartialEq for ScopeChoice {
 }
 
 impl ScopeChoice {
-    /// A merged mailbox's name: `All inboxes`, `Starred`, `Drafts`, `Sent`, `Trash`.
+    /// A merged mailbox's name: `All inboxes`, `Starred`, `Snoozed`, `Drafts`, `Sent`, `Trash`.
     pub fn unified_name(&self) -> Option<&'static str> {
         match self {
             Self::Unified => Some("All inboxes"),
             Self::Starred => Some("Starred"),
+            Self::Snoozed => Some("Snoozed"),
             Self::Drafts => Some("Drafts"),
             Self::Sent => Some("Sent"),
             Self::Trash => Some("Trash"),
@@ -101,11 +105,11 @@ impl ScopeChoice {
         self.unified_name().is_some()
     }
 
-    /// The header counts unread threads here: not in Sent, Trash or Drafts, merged or an
-    /// account's own.
+    /// The header counts unread threads here: not in Sent, Trash, Drafts or Snoozed, merged or
+    /// an account's own.
     pub fn counts_unread(&self) -> bool {
         match self {
-            Self::Sent | Self::Trash | Self::Drafts => false,
+            Self::Sent | Self::Trash | Self::Drafts | Self::Snoozed => false,
             Self::Folder { kind, .. } => !matches!(
                 kind,
                 FolderKind::Sent | FolderKind::Trash | FolderKind::Drafts
@@ -492,6 +496,7 @@ fn store_scope(scope: &ScopeChoice, account_ids: &[Option<i64>]) -> Option<Scope
     match scope {
         ScopeChoice::Unified => Some(Scope::Unified { accounts: all() }),
         ScopeChoice::Starred => Some(Scope::Starred { accounts: all() }),
+        ScopeChoice::Snoozed => Some(Scope::Snoozed { accounts: all() }),
         ScopeChoice::Sent => kind(FolderKind::Sent),
         ScopeChoice::Trash => kind(FolderKind::Trash),
         // The Drafts pane reads its own rows; a list read of it lists the draft threads.
