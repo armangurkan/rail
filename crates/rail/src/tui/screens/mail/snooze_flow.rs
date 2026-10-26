@@ -91,7 +91,7 @@ impl MailScreen {
         let kept = said
             .filter(|said| said.chars().count() <= LAST_CHARS)
             .map(|said| self.remember_snooze(said));
-        let sent = self.send_with(MailAction::Archive {}, targets, true, Some(until));
+        let sent = self.send_with(&MailAction::Archive {}, targets, true, Some(until));
         kept.into_iter().chain(sent).collect()
     }
 

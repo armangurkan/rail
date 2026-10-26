@@ -278,13 +278,13 @@ impl MailScreen {
         targets: &[(i64, Picked)],
         grace: bool,
     ) -> Vec<Effect> {
-        self.send_with(action, targets, grace, None)
+        self.send_with(&action, targets, grace, None)
     }
 
     /// `send_action`; with `snooze`, a `snooze.set` until then whose archive is `action`.
     pub(super) fn send_with(
         &mut self,
-        action: MailAction,
+        action: &MailAction,
         targets: &[(i64, Picked)],
         grace: bool,
         snooze: Option<i64>,
@@ -315,7 +315,7 @@ impl MailScreen {
         } else {
             Vec::new()
         };
-        let effects = self.dispatch(seq, by_account, &action, (grace, snooze));
+        let effects = self.dispatch(seq, by_account, action, (grace, snooze));
         if grace {
             if effects.is_empty() {
                 self.actions.last = None;

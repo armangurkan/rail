@@ -149,18 +149,17 @@ impl DaemonLink {
     pub fn apply(&self, call: ApplyCall) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
-                let result = match call.snooze {
-                    Some(until) => snooze::set(&connector, &call, until).await,
-                    None => {
-                        let request = ActionApplyRequest {
-                            account: call.account.clone(),
-                            threads: call.threads.clone(),
-                            action: call.action.clone(),
-                            grace: call.grace,
-                            client_token: call.client_token.clone(),
-                        };
-                        connector.call::<ActionApply>(&request).await
-                    }
+                let result = if let Some(until) = call.snooze {
+                    snooze::set(&connector, &call, until).await
+                } else {
+                    let request = ActionApplyRequest {
+                        account: call.account.clone(),
+                        threads: call.threads.clone(),
+                        action: call.action.clone(),
+                        grace: call.grace,
+                        client_token: call.client_token.clone(),
+                    };
+                    connector.call::<ActionApply>(&request).await
                 };
                 send(
                     &sink,
