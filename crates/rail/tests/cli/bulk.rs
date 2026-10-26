@@ -1,10 +1,12 @@
 //! Bulk selection in the real binary, in a pseudo-terminal against a mocked Gmail (AC-31):
 //! `* a` counts the whole mailbox in the header, then `e` archives every selected thread, so
-//! the provider receives one `threads/{id}/modify` per thread. Linux only, like every pty test.
+//! the provider receives one `threads/{id}/modify` per thread; a Shift range archives exactly
+//! the threads it covers; `z` within the grace leaves Gmail untouched. Linux only, like every
+//! pty test.
 
 use std::io::Write;
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -20,6 +22,9 @@ const API: &str = "/gmail/v1/users/me";
 const MESSAGES: [&str; 3] = ["m1", "m2", "m3"];
 /// How often the provider is polled for the archive calls.
 const POLL: Duration = Duration::from_millis(50);
+/// Past the 10 s undo grace and the outbox worker's next turn: an archive `z` took back would
+/// have reached Gmail by then.
+const PAST_THE_GRACE: Duration = Duration::from_secs(15);
 
 /// Kills the child if the test fails half way. `pty::Running`'s field is private to that
 /// module, so this test owns its guard; everything else comes from `pty`.
@@ -131,13 +136,17 @@ async fn modifies(server: &MockServer) -> Vec<(String, Value)> {
         .collect()
 }
 
-/// Poll the provider until it has taken one `modify` per thread. `LIMIT` does not govern an
+/// Poll the provider until it has taken `count` `modify` calls. `LIMIT` does not govern an
 /// `await`, so the poll is bounded here and fails with the screen as `wait_until` does.
-async fn wait_for_modifies(server: &MockServer, output: &Mutex<Vec<u8>>) -> Vec<(String, Value)> {
+async fn wait_for_modifies(
+    server: &MockServer,
+    output: &Mutex<Vec<u8>>,
+    count: usize,
+) -> Vec<(String, Value)> {
     let polling = async {
         loop {
             let taken = modifies(server).await;
-            if taken.len() >= MESSAGES.len() {
+            if taken.len() >= count {
                 return taken;
             }
             tokio::time::sleep(POLL).await;
@@ -150,6 +159,47 @@ async fn wait_for_modifies(server: &MockServer, output: &Mutex<Vec<u8>>) -> Vec<
             text(output)
         ),
     }
+}
+
+/// `rail` in a 100x30 pseudo-terminal against `server`, with this test's own directories: the
+/// child, its keyboard and everything it draws.
+fn launch(
+    dir: &tempfile::TempDir,
+    server: &MockServer,
+) -> (Spawned, ChildStdin, Arc<Mutex<Vec<u8>>>) {
+    let command = format!(
+        "stty cols 100 rows 30; exec '{}'",
+        env!("CARGO_BIN_EXE_rail")
+    );
+    let mut script = Command::new("script");
+    // Overrides `rail_env`'s dead port for the binary and the daemon it starts.
+    rail_env(&mut script, dir)
+        .env("RAIL_TEST_GMAIL_URL", format!("{}{API}/", server.uri()))
+        .args(["-q", "-e", "-c", &command, "/dev/null"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = Spawned(script.spawn().unwrap());
+    let keys = child.0.stdin.take().unwrap();
+    let output = collect(child.0.stdout.take().unwrap());
+    (child, keys, output)
+}
+
+/// Wait until all three threads are drawn in the list.
+fn wait_for_the_list(output: &Arc<Mutex<Vec<u8>>>) {
+    let drawn = output.clone();
+    wait_until("the three threads in the list", output, move || {
+        let shown = text(&drawn);
+        MESSAGES
+            .iter()
+            .all(|id| shown.contains(&format!("Budget {id}")))
+    });
+}
+
+/// Type `bytes` at the keyboard.
+fn type_keys(keys: &mut ChildStdin, bytes: &[u8]) {
+    keys.write_all(bytes).unwrap();
+    keys.flush().unwrap();
 }
 
 /// Wait for the child to exit; on timeout fail with what the terminal showed.
@@ -180,31 +230,9 @@ async fn select_all_then_archive_reaches_the_provider() {
     write_config(&dir, WORK_FILE_BACKEND);
     store_tokens(&dir);
     let server = gmail().await;
-    let command = format!(
-        "stty cols 100 rows 30; exec '{}'",
-        env!("CARGO_BIN_EXE_rail")
-    );
-    let mut script = Command::new("script");
-    // Overrides `rail_env`'s dead port for the binary and the daemon it starts.
-    rail_env(&mut script, &dir)
-        .env("RAIL_TEST_GMAIL_URL", format!("{}{API}/", server.uri()))
-        .args(["-q", "-e", "-c", &command, "/dev/null"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = Spawned(script.spawn().unwrap());
-    let mut keys = child.0.stdin.take().unwrap();
-    let output = collect(child.0.stdout.take().unwrap());
-
-    let drawn = output.clone();
-    wait_until("the three threads in the list", &output, move || {
-        let shown = text(&drawn);
-        MESSAGES
-            .iter()
-            .all(|id| shown.contains(&format!("Budget {id}")))
-    });
-    keys.write_all(b"*a").unwrap();
-    keys.flush().unwrap();
+    let (mut child, mut keys, output) = launch(&dir, &server);
+    wait_for_the_list(&output);
+    type_keys(&mut keys, b"*a");
     // The `Matched` answer is asynchronous: an `e` sent before the count is drawn would
     // archive the cursor row alone.
     let counted = output.clone();
@@ -212,10 +240,9 @@ async fn select_all_then_archive_reaches_the_provider() {
         drawn_row(&text(&counted), "3 selected") == Some(1)
     });
     // Three is under the default `bulk_confirm` of 50, so nothing is asked and no `y` is sent.
-    keys.write_all(b"e").unwrap();
-    keys.flush().unwrap();
+    type_keys(&mut keys, b"e");
 
-    let taken = wait_for_modifies(&server, &output).await;
+    let taken = wait_for_modifies(&server, &output, MESSAGES.len()).await;
     let mut threads: Vec<String> = taken.iter().map(|(t, _)| t.clone()).collect();
     threads.sort();
     assert_eq!(
@@ -231,8 +258,7 @@ async fn select_all_then_archive_reaches_the_provider() {
         );
     }
 
-    keys.write_all(b"q").unwrap();
-    keys.flush().unwrap();
+    type_keys(&mut keys, b"q");
     let status = wait_for_exit(&mut child, &output);
     drop(keys);
     std::thread::sleep(Duration::from_millis(200));
@@ -243,4 +269,88 @@ async fn select_all_then_archive_reaches_the_provider() {
         .expect("entered the alternate screen");
     let left = out.rfind("\x1b[?1049l").expect("left the alternate screen");
     assert!(entered < left, "the terminal is restored: {out:?}");
+}
+
+/// `J` anchors on the top row and takes the next one with it; `e` then archives exactly those
+/// two threads on Gmail, and the third is never touched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shift_range_archives_exactly_the_threads_it_covers() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    store_tokens(&dir);
+    let server = gmail().await;
+    let (mut child, mut keys, output) = launch(&dir, &server);
+    wait_for_the_list(&output);
+    // The list's top two rows, as drawn.
+    let shown = text(&output);
+    let mut rows: Vec<(u16, String)> = MESSAGES
+        .iter()
+        .map(|id| {
+            (
+                drawn_row(&shown, &format!("Budget {id}")).unwrap(),
+                format!("t-{id}"),
+            )
+        })
+        .collect();
+    rows.sort();
+    let mut top_two: Vec<String> = rows[..2].iter().map(|(_, t)| t.clone()).collect();
+    top_two.sort();
+    type_keys(&mut keys, b"J");
+    let counted = output.clone();
+    wait_until("`2 selected` in the header", &output, move || {
+        drawn_row(&text(&counted), "2 selected") == Some(1)
+    });
+    type_keys(&mut keys, b"e");
+    let taken = wait_for_modifies(&server, &output, 2).await;
+    let mut threads: Vec<String> = taken.iter().map(|(t, _)| t.clone()).collect();
+    threads.sort();
+    assert_eq!(threads, top_two, "the range's two threads");
+    // Same grace, same worker turn: the third would have come with them.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(modifies(&server).await.len(), 2, "the third thread stays");
+    type_keys(&mut keys, b"q");
+    let status = wait_for_exit(&mut child, &output);
+    assert!(status.success(), "{status:?}: {:?}", text(&output));
+}
+
+/// `z` right after a bulk archive takes it back before the grace ends: the bar says so, and
+/// Gmail never hears of it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn z_takes_back_a_bulk_archive_before_it_reaches_gmail() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    write_config(&dir, WORK_FILE_BACKEND);
+    store_tokens(&dir);
+    let server = gmail().await;
+    let (mut child, mut keys, output) = launch(&dir, &server);
+    wait_for_the_list(&output);
+    type_keys(&mut keys, b"*a");
+    let counted = output.clone();
+    wait_until("`3 selected` in the header", &output, move || {
+        drawn_row(&text(&counted), "3 selected") == Some(1)
+    });
+    type_keys(&mut keys, b"e");
+    let archived = output.clone();
+    wait_until("the archive's notice", &output, move || {
+        text(&archived).contains("archived 3")
+    });
+    type_keys(&mut keys, b"z");
+    let undone = output.clone();
+    wait_until("`undone` on the bar", &output, move || {
+        text(&undone).contains("undone")
+    });
+    tokio::time::sleep(PAST_THE_GRACE).await;
+    assert!(modifies(&server).await.is_empty(), "Gmail was never told");
+    type_keys(&mut keys, b"q");
+    let status = wait_for_exit(&mut child, &output);
+    assert!(status.success(), "{status:?}: {:?}", text(&output));
 }
