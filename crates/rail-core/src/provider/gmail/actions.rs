@@ -92,8 +92,9 @@ impl GmailProvider {
                 )
                 .await;
             match sent {
-                // Gmail's reference does not say what a gone id does to the call; should it
-                // refuse the whole call, the chunk goes back one message at a time.
+                // Gmail's reference is silent on an id that is gone; a live report says the call
+                // answers 204 and skips it. Should it refuse the whole call as not found
+                // instead, the chunk goes back one message at a time.
                 Err(ProviderError::NotFound) => self.return_each(chunk).await?,
                 other => {
                     other?;

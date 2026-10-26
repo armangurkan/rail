@@ -13,6 +13,7 @@ use rail_core::paths::{Paths, write_private_atomic};
 
 use super::MailScreen;
 use super::actions_pick::Picking;
+use super::bulk::SHOWN_SUBJECT_CHARS;
 use super::selection::Picked;
 use crate::tui::app::Effect;
 use crate::tui::data::{ReadError, job};
@@ -21,8 +22,6 @@ use crate::tui::modals::{Modal, Picker, PickerKind};
 use crate::tui::snooze::{parse_snooze, snooze_choices};
 use crate::tui::text::{escape, fit};
 
-/// The most of a subject the wake notice shows; the status bar cuts it to its width too.
-const SHOWN_SUBJECT_CHARS: usize = 120;
 /// The longest typed time kept for "Last used"; longer text is neither kept nor read back.
 const LAST_CHARS: usize = 100;
 /// The most of the file read: `LAST_CHARS` characters of at most four bytes each.
@@ -109,8 +108,16 @@ impl MailScreen {
             let written =
                 tokio::task::spawn_blocking(move || write_private_atomic(&path, said.as_bytes()))
                     .await;
-            if !matches!(written, Ok(Ok(()))) {
-                tracing::warn!("could not keep the last snooze time in the state directory");
+            match written {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "could not keep the last snooze time in the state directory"
+                ),
+                Err(error) => tracing::warn!(
+                    panicked = error.is_panic(),
+                    "could not keep the last snooze time in the state directory"
+                ),
             }
         })
     }
