@@ -514,6 +514,18 @@ async fn a_last_used_file_padded_past_what_rail_writes_is_ignored() {
     assert!(!shown.contains("Last used"), "{shown}");
 }
 
+#[tokio::test]
+async fn a_last_used_file_longer_than_rail_keeps_is_ignored() {
+    let mut f = fixture(3).await;
+    std::fs::create_dir_all(&f.paths.state_dir).unwrap();
+    // 112 characters, under the byte cap but over what Rail keeps, of a time it would offer.
+    std::fs::write(last_file(&f), format!("tomorrow{}9am", " ".repeat(101))).unwrap();
+    restart(&mut f).await;
+    press(&mut f, KeyCode::Char('h')).await;
+    let shown = drawn(&f);
+    assert!(!shown.contains("Last used"), "{shown}");
+}
+
 /// A pipe where the file should be: the read never waits for a writer, so Rail still starts.
 #[cfg(unix)]
 #[test]
