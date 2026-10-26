@@ -35,6 +35,7 @@ mod sidebar_tree;
 #[cfg(test)]
 mod sidebar_tree_tests;
 mod sidebar_view;
+mod snooze_flow;
 mod status;
 #[cfg(test)]
 mod tests;

@@ -425,6 +425,7 @@ fn applied(seq: u64, account: &str, row: i64) -> MailEvent {
             action: MailAction::Archive {},
             grace: true,
             client_token: format!("tok-{row}"),
+            snooze: None,
         }),
         result: Ok(ActionApplyResponse {
             rows: vec![row],
@@ -565,6 +566,7 @@ fn applied_rows(seq: u64, account: &str, rows: Vec<i64>) -> MailEvent {
             action: MailAction::Archive {},
             grace: true,
             client_token: "tok".into(),
+            snooze: None,
         }),
         result: Ok(ActionApplyResponse { rows, applied: 1 }),
     }
@@ -579,6 +581,7 @@ fn apply_failed(seq: u64, account: &str) -> MailEvent {
             action: MailAction::Archive {},
             grace: true,
             client_token: "tok".into(),
+            snooze: None,
         }),
         result: Err(OpError::not_found("gone")),
     }

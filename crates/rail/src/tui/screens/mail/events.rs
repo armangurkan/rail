@@ -90,6 +90,9 @@ impl MailScreen {
                 token,
                 kind: Timer::Filter,
             } if token == self.filter_token => self.apply_filter(),
+            MailEvent::Snoozes { seq, result } => self.snoozes_read(seq, result),
+            MailEvent::Unsnoozed { result } => self.unsnoozed(result),
+            MailEvent::WokeRead { count, subject } => self.woke_read(count, subject),
             other => self.action_event(other),
         }
     }
@@ -158,6 +161,7 @@ impl MailScreen {
                 Vec::new()
             }
             DaemonEvent::Refreshed(Ok(())) => Vec::new(),
+            DaemonEvent::Woke(woke) => self.snooze_woke(woke),
             DaemonEvent::Refreshed(Err(error)) => {
                 // The watch may be live: only `Lost` says the link is gone.
                 tracing::warn!(code = ?error.code, "sync.now failed");

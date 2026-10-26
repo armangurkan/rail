@@ -127,6 +127,15 @@ pub(crate) fn verbs(action: &MailAction) -> (&'static str, &'static str) {
     }
 }
 
+/// What a failed call could not do: a snooze's archive fails as the snooze.
+fn failed_verb(call: &ApplyCall) -> &'static str {
+    if call.snooze.is_some() {
+        "snooze"
+    } else {
+        verbs(&call.action).1
+    }
+}
+
 /// The rows one call queued, each under that call's token.
 fn row_tokens(call: &ApplyCall, rows: Vec<OutboxId>) -> Vec<RowToken> {
     rows.into_iter()
@@ -173,6 +182,7 @@ impl MailScreen {
             | Action::ListRead
             | Action::ListLabels
             | Action::ListMove
+            | Action::ListSnooze
                 if thread_view =>
             {
                 self.thread_action(action)
@@ -240,6 +250,7 @@ impl MailScreen {
             Action::ListMove => {
                 return self.open_picker(crate::tui::modals::PickerKind::Move, targets);
             }
+            Action::ListSnooze => return self.open_snooze(targets),
             _ => return Vec::new(),
         };
         // A large set is asked about first; the picker's own `Enter` is `l`/`m`'s confirmation.
@@ -249,7 +260,7 @@ impl MailScreen {
         self.send_action(mail, &targets, true)
     }
 
-    fn account_name(&self, account_id: i64) -> Option<String> {
+    pub(super) fn account_name(&self, account_id: i64) -> Option<String> {
         let index = self
             .account_ids
             .iter()
@@ -264,6 +275,17 @@ impl MailScreen {
         action: MailAction,
         targets: &[(i64, Picked)],
         grace: bool,
+    ) -> Vec<Effect> {
+        self.send_with(action, targets, grace, None)
+    }
+
+    /// `send_action`; with `snooze`, a `snooze.set` until then whose archive is `action`.
+    pub(super) fn send_with(
+        &mut self,
+        action: MailAction,
+        targets: &[(i64, Picked)],
+        grace: bool,
+        snooze: Option<i64>,
     ) -> Vec<Effect> {
         let by_account = self.group_by_account(targets);
         self.actions.seq += 1;
@@ -291,7 +313,7 @@ impl MailScreen {
         } else {
             Vec::new()
         };
-        let effects = self.dispatch(seq, by_account, &action, grace);
+        let effects = self.dispatch(seq, by_account, &action, (grace, snooze));
         if grace {
             if effects.is_empty() {
                 self.actions.last = None;
@@ -316,7 +338,10 @@ impl MailScreen {
     }
 
     /// The targets' thread ids by account; their old failure lines go.
-    fn group_by_account(&mut self, targets: &[(i64, Picked)]) -> BTreeMap<i64, Vec<i64>> {
+    pub(super) fn group_by_account(
+        &mut self,
+        targets: &[(i64, Picked)],
+    ) -> BTreeMap<i64, Vec<i64>> {
         let mut by_account: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
         for (thread, picked) in targets {
             by_account
@@ -328,14 +353,15 @@ impl MailScreen {
         by_account
     }
 
-    /// One `action.apply` per account per `MAX_ACTION_THREADS` threads, in thread-id order,
-    /// each under its own client token so a failed chunk is retried on its own.
+    /// One `action.apply` (a `snooze.set` with a snooze's end) per account per
+    /// `MAX_ACTION_THREADS` threads, in thread-id order, each under its own client token so a
+    /// failed chunk is retried on its own.
     fn dispatch(
         &mut self,
         seq: u64,
         by_account: BTreeMap<i64, Vec<i64>>,
         action: &MailAction,
-        grace: bool,
+        (grace, snooze): (bool, Option<i64>),
     ) -> Vec<Effect> {
         let mut effects = Vec::new();
         for (account_id, threads) in by_account {
@@ -352,6 +378,7 @@ impl MailScreen {
                     action: action.clone(),
                     grace,
                     client_token: client_token(),
+                    snooze,
                 }));
             }
         }
@@ -519,7 +546,7 @@ impl MailScreen {
             Ok(answer) if older => effects = self.older_answered(call, answer.rows),
             Ok(_) => {}
             Err(error) => {
-                self.action_error(verbs(&call.action).1, &error);
+                self.action_error(failed_verb(call), &error);
                 if tracked {
                     self.call_failed(call);
                 } else if older {
@@ -553,11 +580,16 @@ impl MailScreen {
                 .collect();
         }
         last.rows.extend(rows);
-        let (done, _) = verbs(&call.action);
-        let key = self.ctx.keymap.label(Action::GlobalUndo);
+        let undoable = !last.rows.is_empty();
         let count = super::header::thousands(u64::try_from(last.count).unwrap_or(u64::MAX));
-        let text = format!("{done} {count} · {key} undoes");
         let left = last.until.saturating_sub(self.tick);
+        let text = if let Some(until) = call.snooze {
+            self.snoozed_notice(until, undoable)
+        } else {
+            let (done, _) = verbs(&call.action);
+            let key = self.ctx.keymap.label(Action::GlobalUndo);
+            format!("{done} {count} · {key} undoes")
+        };
         self.status.notify_for(text, self.tick, left);
         Vec::new()
     }
@@ -706,7 +738,7 @@ impl MailScreen {
             .notify_for(format!("{done} · {key} undoes"), self.tick, UNDO_TICKS);
     }
 
-    fn action_error(&mut self, what: &str, error: &OpError) {
+    pub(super) fn action_error(&mut self, what: &str, error: &OpError) {
         tracing::warn!(code = ?error.code, "an action request failed");
         let text = format!("Could not {what}: {}", error_line(error));
         self.status.error(text, self.ctx.clock.now(), self.tick);

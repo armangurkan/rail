@@ -35,6 +35,7 @@ mod m365;
 mod pickers;
 mod replaced;
 mod sidebar;
+mod snooze;
 mod state;
 mod themes;
 mod unified;

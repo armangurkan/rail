@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rail_core::ops::{DraftId, OpError};
 use rail_core::provider::FolderKind;
 use rail_core::store::filter::Filter;
+use rail_core::store::snoozes::SnoozeState;
 use rail_core::store::view::{
     AccountFilter, ListQuery, PageAt, Scope, SidebarCounts, ThreadKey, ThreadPage,
 };
@@ -365,6 +366,33 @@ impl StoreReader {
         })
     }
 
+    /// When the snoozes holding `threads` end, soonest first: a snooze chooser's title and its
+    /// "Return to inbox now".
+    pub fn snoozes(&self, seq: u64, threads: Vec<i64>) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let result = reader.read(move |store| snooze_ends(store, &threads)).await;
+            send(&sink, MailEvent::Snoozes { seq, result });
+        })
+    }
+
+    /// The wake notice's subject: the thread's, when one came back.
+    pub fn woke(&self, threads: Vec<i64>) -> Effect {
+        let reader = self.clone();
+        job(move |sink| async move {
+            let count = threads.len();
+            let subject = match threads.first().copied().filter(|_| count == 1) {
+                Some(thread) => {
+                    reader
+                        .read(move |store| Ok(store.thread_detail(thread)?.map(|d| d.subject)))
+                        .await
+                }
+                None => Ok(None),
+            };
+            send(&sink, MailEvent::WokeRead { count, subject });
+        })
+    }
+
     /// The reply source of `target`: a message, or the newest message of a thread.
     pub fn reply_source(&self, seq: u64, target: ReplyTarget) -> Effect {
         let reader = self.clone();
@@ -530,4 +558,18 @@ fn matching(
         Some(query) => store.matching_targets(&query, limit),
         None => Ok(Vec::new()),
     }
+}
+
+/// When the snoozes holding `threads` end: the waiting and the holding ones, soonest first.
+fn snooze_ends(store: &Store, threads: &[i64]) -> Result<Vec<i64>, StoreError> {
+    let mut ends = Vec::new();
+    for thread in threads {
+        let row = store.snooze_of_thread(*thread)?;
+        ends.extend(
+            row.filter(|r| matches!(r.state, SnoozeState::Pending | SnoozeState::Active))
+                .map(|r| r.until),
+        );
+    }
+    ends.sort_unstable();
+    Ok(ends)
 }

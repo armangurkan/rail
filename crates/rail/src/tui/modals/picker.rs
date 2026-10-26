@@ -2,6 +2,7 @@
 //! applies the difference from what the threads carried), `m` moves to one (`Enter`), `:theme`
 //! and `:accent` preview the highlighted choice on every move (`Enter` keeps it, `Esc` restores).
 //! Typing filters with the palette's fuzzy matcher; names are outside text, escaped when drawn.
+//! The snooze chooser (`Z`) shows each choice's time, and offers a typed time as its first row.
 
 use std::collections::BTreeSet;
 
@@ -15,7 +16,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::{Command, ModalOutcome, boxed};
-use crate::tui::text::{escape, input_row, pad, width};
+use crate::tui::clock::Clock;
+use crate::tui::snooze::{SnoozeChoice, parse_snooze};
+use crate::tui::text::{escape, input_row, pad, pad_left, width};
 use crate::tui::theme::Theme;
 use crate::tui::theme::choice::Accent;
 use crate::tui::widgets::text_input::TextInput;
@@ -31,6 +34,14 @@ const PREVIEW_HINT: &str = "Enter keeps · Esc restores · ↑↓ move";
 /// The theme picker's hint on a terminal that cannot show a scheme.
 pub(crate) const NO_PREVIEW_HINT: &str =
     "Enter keeps · Esc cancels · ↑↓ move · no preview without truecolor";
+/// The snooze chooser's hint: plain ASCII, as it draws in either icon set.
+const SNOOZE_HINT: &str = "Type a time or pick one. Enter snoozes, Esc cancels.";
+/// The `id` of the snooze chooser's row that puts snoozed threads back now; a time's row has
+/// the time.
+pub const RETURN_NOW: i64 = 0;
+const RETURN_LABEL: &str = "Return to inbox now";
+/// The label of the row a typed time makes.
+const TYPED_LABEL: &str = "At";
 
 /// `:accent`'s answer: the scheme's own accent or one of its sixteen slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +74,8 @@ pub enum PickerKind {
     Account,
     /// A draft to open in the composer (`id`: the draft's).
     Draft,
+    /// When to snooze threads until (`id`: the time, Unix seconds; `RETURN_NOW`: back now).
+    Snooze,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -110,6 +123,42 @@ pub struct Picker {
     selected: usize,
     /// A `Theme` or `Accent` picker previews its highlight unless told not to.
     preview: bool,
+    /// A snooze chooser's clock, title and typed time.
+    snooze: Option<SnoozeParts>,
+}
+
+/// What a snooze chooser adds to a picker: the clock its times are read and written by, when
+/// the threads are snoozed until (its title), and what the typed text reads as (`None` while
+/// nothing is typed).
+struct SnoozeParts {
+    clock: Clock,
+    until: Option<i64>,
+    reading: Option<Result<i64, &'static str>>,
+}
+
+impl SnoozeParts {
+    /// A snooze row: the label, then its time right-aligned in the clock's column with a space
+    /// before it. The time is muted but on the cursor row, which is `selected` throughout.
+    fn line(
+        &self,
+        label: &str,
+        at: Option<i64>,
+        selected: bool,
+        theme: &Theme,
+        cols: usize,
+    ) -> Line<'static> {
+        let (style, muted) = if selected {
+            (theme.selected, theme.selected)
+        } else {
+            (theme.text, theme.muted)
+        };
+        let label_cols = cols.saturating_sub(self.clock.ahead_cols() + 1);
+        let time = at.map(|at| self.clock.ahead(at)).unwrap_or_default();
+        Line::from(vec![
+            Span::styled(pad(&escape(label), label_cols), style),
+            Span::styled(pad_left(&time, cols.saturating_sub(label_cols)), muted),
+        ])
+    }
 }
 
 impl Picker {
@@ -125,11 +174,41 @@ impl Picker {
             shown,
             selected: 0,
             preview: true,
+            snooze: None,
         };
         if matches!(kind, PickerKind::Theme | PickerKind::Accent) {
             // The active choice is highlighted.
             picker.selected = picker.items.iter().position(|i| i.checked).unwrap_or(0);
         }
+        picker
+    }
+
+    /// The snooze chooser: "Return to inbox now" first when `snoozed`, then `choices`; its title
+    /// says until when the threads are snoozed (`until`), and a typed time is offered first.
+    pub fn snooze(
+        choices: &[SnoozeChoice],
+        clock: Clock,
+        until: Option<i64>,
+        snoozed: bool,
+    ) -> Self {
+        let back = snoozed.then_some((RETURN_NOW, RETURN_LABEL));
+        let rows = back
+            .into_iter()
+            .chain(choices.iter().map(|c| (c.at, c.label)));
+        let items = rows
+            .map(|(id, name)| PickerItem {
+                id,
+                name: name.to_string(),
+                checked: false,
+                swatch: Vec::new(),
+            })
+            .collect();
+        let mut picker = Self::new(PickerKind::Snooze, items);
+        picker.snooze = Some(SnoozeParts {
+            clock,
+            until,
+            reading: None,
+        });
         picker
     }
 
@@ -172,14 +251,30 @@ impl Picker {
                 .map(|(candidate, _)| candidate.index)
                 .collect()
         };
+        if let Some(parts) = self.snooze.as_mut() {
+            parts.reading = (!query.trim().is_empty()).then(|| parse_snooze(query, &parts.clock));
+        }
         self.selected = 0;
+    }
+
+    /// The typed time, when a snooze chooser's text reads as one: its row comes first.
+    fn typed(&self) -> Option<i64> {
+        self.snooze.as_ref()?.reading?.ok()
+    }
+
+    /// The rows before the matching items: the typed time's, if any.
+    fn lead(&self) -> usize {
+        usize::from(self.typed().is_some())
     }
 
     /// The highlighted item's command, for the kinds that choose one item.
     fn choice(&self) -> Option<Command> {
+        if let Some(at) = self.typed().filter(|_| self.selected == 0) {
+            return Some(Command::Snooze(at));
+        }
         let item = self
             .shown
-            .get(self.selected)
+            .get(self.selected.checked_sub(self.lead())?)
             .and_then(|&i| self.items.get(i))?;
         match self.kind {
             PickerKind::Labels => None,
@@ -193,6 +288,8 @@ impl Picker {
             )),
             PickerKind::Account => usize::try_from(item.id).ok().map(Command::Account),
             PickerKind::Draft => usize::try_from(item.id).ok().map(Command::DraftRow),
+            PickerKind::Snooze if item.id == RETURN_NOW => Some(Command::SnoozeReturn),
+            PickerKind::Snooze => Some(Command::Snooze(item.id)),
         }
     }
 
@@ -223,7 +320,7 @@ impl Picker {
 
     fn step(&mut self, down: bool) -> ModalOutcome {
         self.selected = if down {
-            (self.selected + 1).min(self.shown.len().saturating_sub(1))
+            (self.selected + 1).min((self.lead() + self.shown.len()).saturating_sub(1))
         } else {
             self.selected.saturating_sub(1)
         };
@@ -290,6 +387,15 @@ impl Picker {
                 "Enter opens · Esc cancels · ↑↓ move",
                 "No draft matches.",
             ),
+            PickerKind::Snooze => (
+                "Snooze until",
+                SNOOZE_HINT,
+                self.snooze
+                    .as_ref()
+                    .and_then(|s| s.reading)
+                    .and_then(Result::err)
+                    .unwrap_or("No time matches."),
+            ),
         }
     }
 
@@ -316,8 +422,37 @@ impl Picker {
         Line::from(spans)
     }
 
+    /// The box's title: the kind's, or until when a snooze chooser's threads are snoozed.
+    fn title(&self) -> String {
+        let snoozed = self
+            .snooze
+            .as_ref()
+            .and_then(|s| s.until.map(|until| s.clock.long(until)));
+        match snoozed {
+            Some(when) => format!("Snoozed until {when}"),
+            None => self.words().0.to_string(),
+        }
+    }
+
+    /// Row `row`: the typed time's first, then the matching items.
+    fn line(&self, row: usize, theme: &Theme, cols: usize) -> Option<Line<'static>> {
+        let selected = row == self.selected;
+        let Some(index) = row.checked_sub(self.lead()) else {
+            let parts = self.snooze.as_ref()?;
+            return Some(parts.line(TYPED_LABEL, self.typed(), selected, theme, cols));
+        };
+        let item = self.items.get(*self.shown.get(index)?)?;
+        if let Some(parts) = &self.snooze {
+            let at = (item.id != RETURN_NOW).then_some(item.id);
+            return Some(parts.line(&item.name, at, selected, theme, cols));
+        }
+        let style = if selected { theme.selected } else { theme.text };
+        Some(self.row(item, style, cols))
+    }
+
     pub(super) fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let (title, hint, empty) = self.words();
+        let (_, hint, empty) = self.words();
+        let title = self.title();
         let height = u16::try_from(SHOWN + 5).unwrap_or(u16::MAX);
         // Wide enough for the hint and its border.
         let hint_width = u16::try_from(width(hint) + 2).unwrap_or(u16::MAX);
@@ -326,25 +461,20 @@ impl Picker {
             area,
             PICKER_WIDTH.max(hint_width),
             height,
-            title,
+            &title,
             theme,
         );
         let cols = usize::from(inner.width);
         let (typed, column) = input_row("> ", self.input.value(), self.input.cursor(), cols);
         let mut lines = vec![Line::styled(typed, theme.accent), Line::default()];
         let first = (self.selected + 1).saturating_sub(SHOWN);
-        for (row, &index) in self.shown.iter().enumerate().skip(first).take(SHOWN) {
-            let Some(item) = self.items.get(index) else {
-                continue;
-            };
-            let style = if row == self.selected {
-                theme.selected
-            } else {
-                theme.text
-            };
-            lines.push(self.row(item, style, cols));
-        }
-        if self.shown.is_empty() {
+        let rows = self.lead() + self.shown.len();
+        lines.extend(
+            (first..rows)
+                .take(SHOWN)
+                .filter_map(|row| self.line(row, theme, cols)),
+        );
+        if rows == 0 {
             lines.push(Line::styled(empty, theme.muted));
         }
         // The hint stays on the last inside row however many items there are.

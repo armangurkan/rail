@@ -18,6 +18,7 @@ pub mod open;
 pub mod run;
 pub mod screen;
 pub mod screens;
+pub mod snooze;
 pub mod terminal;
 #[cfg(test)]
 pub mod test_util;

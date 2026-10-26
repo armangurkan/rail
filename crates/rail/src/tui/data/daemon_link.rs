@@ -24,6 +24,8 @@ use tokio::sync::broadcast::{self, error::RecvError};
 use super::{DaemonEvent, MailEvent, job, send};
 use crate::tui::app::{Effect, TaskSink};
 
+mod snooze;
+
 /// How often the watch checks whether its connection closed (the notification channel lives
 /// as long as the client, so it does not end by itself).
 const CLOSED_POLL: Duration = Duration::from_secs(1);
@@ -41,6 +43,8 @@ pub struct ApplyCall {
     /// Made by the screen, one per call, so a resend finds its row and undo or retry can name
     /// the row with the token it was queued under.
     pub client_token: String,
+    /// When a snooze ends (Unix seconds): the call is a `snooze.set`, whose archive is `action`.
+    pub snooze: Option<i64>,
 }
 
 /// One `draft.save` the composer sends; `seq` ties the answer to the save that asked.
@@ -141,7 +145,7 @@ impl DaemonLink {
         }
     }
 
-    /// Apply `call`'s action under the call's client token.
+    /// Apply `call`'s action under the call's client token (snooze with it, for a snooze).
     pub fn apply(&self, call: ApplyCall) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
@@ -152,7 +156,10 @@ impl DaemonLink {
                     grace: call.grace,
                     client_token: call.client_token.clone(),
                 };
-                let result = connector.call::<ActionApply>(&request).await;
+                let result = match call.snooze {
+                    Some(until) => snooze::set(&connector, &call, until).await,
+                    None => connector.call::<ActionApply>(&request).await,
+                };
                 send(
                     &sink,
                     MailEvent::Applied {
@@ -344,6 +351,7 @@ async fn follow(
             note = notes.recv() => match note {
                 Ok(note) if note.method == names::SYNC_PROGRESS => progress(note, sink),
                 Ok(note) if note.method == names::ACTION_FAILED => action_failed(note, sink),
+                Ok(note) if note.method == names::SNOOZE_WOKE => snooze::woke(note, sink),
                 Ok(_) => {}
                 Err(RecvError::Lagged(_)) => {
                     // Missed some: every status again answers them all.
@@ -437,6 +445,8 @@ pub struct FakeDaemon {
         std::sync::Mutex<Option<Result<rail_core::ops::DraftImportResponse, OpError>>>,
     /// The answer to the next `draft.discard`; discarded when unset.
     pub discard_answer: std::sync::Mutex<Option<Result<(), OpError>>>,
+    /// The answer to the next `snooze.set`; a fresh row and every thread when unset.
+    pub snooze_answer: std::sync::Mutex<Option<Result<rail_core::ops::SnoozeSetResponse, OpError>>>,
     pub next_draft: std::sync::atomic::AtomicI64,
 }
 
@@ -482,6 +492,16 @@ pub enum FakeCall {
     },
     DraftDiscard {
         draft: DraftId,
+    },
+    SnoozeSet {
+        account: String,
+        threads: Vec<i64>,
+        until: i64,
+        grace: bool,
+    },
+    SnoozeClear {
+        account: String,
+        threads: Vec<i64>,
     },
 }
 
@@ -536,6 +556,9 @@ impl FakeDaemon {
 
     fn apply(&self, sink: &TaskSink, call: ApplyCall) {
         use std::sync::atomic::Ordering;
+        if let Some(until) = call.snooze {
+            return self.snooze(sink, call, until);
+        }
         self.record(FakeCall::Apply {
             account: call.account.clone(),
             threads: call.threads.clone(),

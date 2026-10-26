@@ -31,6 +31,7 @@ expression: text
                                    │  u                    Mark read or unread                                    │
                                    │  l                    Add or remove labels (Gmail)                           │
                                    │  m                    Move to a label (Gmail) or a folder (Microsoft 365)    │
+                                   │  Z                    Snooze until later, or return a snoozed thread         │
                                    │  c                    Write a new message                                    │
                                    │  r                    Reply to the latest message                            │
                                    │  R                    Reply to everyone                                      │
@@ -38,6 +39,5 @@ expression: text
                                    │  Space                Select or unselect the thread                          │
                                    │  Esc                  Clear the selection                                    │
                                    │  * a                  Select every thread this mailbox and filter match      │
-                                   │  * f                  Select every thread from this sender                   │
                                    │↓ more                                                                        │
                                    └──────────────────────────────────────────────────────────────────────────────┘

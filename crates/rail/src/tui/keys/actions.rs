@@ -123,6 +123,7 @@ actions! {
     ListRead => "list.read", [List, Reader], ["u"], "Mark read or unread";
     ListLabels => "list.labels", [List, Reader], ["l"], "Add or remove labels (Gmail)";
     ListMove => "list.move", [List, Reader], ["m"], "Move to a label (Gmail) or a folder (Microsoft 365)";
+    ListSnooze => "list.snooze", [List, Reader], ["Z"], "Snooze until later, or return a snoozed thread";
     ListCompose => "list.compose", [List, Reader], ["c"], "Write a new message";
     ListReply => "list.reply", [List, Reader], ["r"], "Reply to the latest message";
     ListReplyAll => "list.reply_all", [List, Reader], ["R"], "Reply to everyone";

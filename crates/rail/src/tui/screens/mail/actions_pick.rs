@@ -3,7 +3,7 @@
 //! labels, or a Microsoft 365 account's Inbox, Archive, Junk and own folders) and what the
 //! threads are in, then the picker; an account with nothing to offer says so in its own words
 //! (labels on Gmail, folders on Microsoft 365); its answer is a `labels` or `move` action with
-//! grace.
+//! grace. The snooze chooser (`Z`) shares the picking state; its answer goes to `snooze_flow`.
 
 use std::collections::BTreeSet;
 
@@ -19,9 +19,9 @@ use crate::tui::modals::{Command, Modal, Picker, PickerItem, PickerKind};
 /// A picker waiting for its labels, and what it applies to.
 #[derive(Debug)]
 pub(crate) struct Picking {
-    seq: u64,
-    mode: PickerKind,
-    targets: Vec<(i64, Picked)>,
+    pub(super) seq: u64,
+    pub(super) mode: PickerKind,
+    pub(super) targets: Vec<(i64, Picked)>,
 }
 
 impl MailScreen {
@@ -108,6 +108,8 @@ impl MailScreen {
             }
             Command::Labels { add, remove } => MailAction::Labels { add, remove },
             Command::MoveTo(to) => MailAction::Move { to },
+            Command::Snooze(until) => return self.send_snooze(&picking.targets, until),
+            Command::SnoozeReturn => return self.return_snoozed(&picking.targets),
             _ => return Vec::new(),
         };
         self.send_action(action, &picking.targets, true)

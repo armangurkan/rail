@@ -512,6 +512,7 @@ async fn the_fake_records_actions_and_answers_in_order() {
         action: Action::Archive {},
         grace: true,
         client_token: "tok-1".into(),
+        snooze: None,
     };
     let bound = Duration::from_secs(5);
     let applied = events(link.apply(call.clone()), 1, bound).await;

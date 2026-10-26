@@ -18,7 +18,7 @@ use futures_util::FutureExt;
 use rail_core::ops::{
     AccountSyncStatus, ActionApplyResponse, ActionFailed, ActionRetryResponse, ActionUndoResponse,
     BodyFetchResponse, DraftId, DraftImportResponse, DraftPushResponse, DraftSaveResponse,
-    DraftSendResponse, OpError, OutboxId,
+    DraftSendResponse, OpError, OutboxId, SnoozeClearResponse, SnoozeWoke,
 };
 use rail_core::provider::Mailbox;
 use rail_core::store::AddressEntry;
@@ -59,6 +59,8 @@ pub enum DaemonEvent {
     Lost(OpError),
     /// `sync.now` (Ctrl-r) answered.
     Refreshed(Result<(), OpError>),
+    /// A snooze put threads back in the inbox (`snooze.woke`).
+    Woke(SnoozeWoke),
 }
 
 /// One answer to the mail screen.
@@ -84,7 +86,7 @@ pub enum MailEvent {
         thread_id: i64,
         result: Result<BodyFetchResponse, OpError>,
     },
-    /// `action.apply` answered for `call`.
+    /// `action.apply` (or a snooze's `snooze.set`) answered for `call`.
     /// Boxed: with the token the call is large for an event.
     Applied {
         call: Box<ApplyCall>,
@@ -202,6 +204,21 @@ pub enum MailEvent {
         seq: u64,
         result: Result<Option<Mailbox>, ReadError>,
     },
+    /// When the snoozes holding the threads a snooze chooser opens for end, soonest first.
+    Snoozes {
+        seq: u64,
+        result: Result<Vec<i64>, ReadError>,
+    },
+    /// `snooze.clear` answered.
+    Unsnoozed {
+        result: Result<SnoozeClearResponse, OpError>,
+    },
+    /// How many threads a snooze put back, and the subject when it was one (`None`: it is no
+    /// longer stored).
+    WokeRead {
+        count: usize,
+        subject: Result<Option<String>, ReadError>,
+    },
 }
 
 /// Names and numbers only: a `MailEvent` carries mail, which must never reach a log.
@@ -293,6 +310,7 @@ impl fmt::Debug for MailEvent {
                     DaemonEvent::Progress(_) => "Progress",
                     DaemonEvent::Lost(_) => "Lost",
                     DaemonEvent::Refreshed(_) => "Refreshed",
+                    DaemonEvent::Woke(_) => "Woke",
                 };
                 write!(f, "Daemon({name})")
             }
@@ -373,6 +391,20 @@ impl fmt::Debug for MailEvent {
                 .debug_struct("Sender")
                 .field("seq", seq)
                 .field("ok", &result.is_ok())
+                .finish(),
+            Self::Snoozes { seq, result } => f
+                .debug_struct("Snoozes")
+                .field("seq", seq)
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::Unsnoozed { result } => f
+                .debug_struct("Unsnoozed")
+                .field("ok", &result.is_ok())
+                .finish(),
+            Self::WokeRead { count, subject } => f
+                .debug_struct("WokeRead")
+                .field("count", count)
+                .field("ok", &subject.is_ok())
                 .finish(),
         }
     }

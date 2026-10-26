@@ -93,7 +93,8 @@ impl Clock {
         self.zoned(self.now()).map_or(0, |z| z.offset().seconds())
     }
 
-    fn zoned(&self, secs: i64) -> Option<Zoned> {
+    /// `secs` in the clock's zone; `None` for a time out of range.
+    pub fn zoned(&self, secs: i64) -> Option<Zoned> {
         Timestamp::from_second(secs)
             .ok()
             .map(|t| t.to_zoned(self.tz.clone()))
@@ -151,6 +152,28 @@ impl Clock {
         let (when, now) = (self.zoned(secs)?, self.zoned(self.now())?);
         let days = now.date().since(when.date()).ok()?.get_days();
         Some((when, now, days))
+    }
+
+    /// A time ahead, as the snooze chooser and its notice write it: `Fri 18:00` within six days,
+    /// `17 Oct 08:00` beyond (`Fri 6:00 pm`, `17 Oct 8:00 am` in 12h); `?` out of range.
+    pub fn ahead(&self, secs: i64) -> String {
+        let Some((when, _, days)) = self.days_back(secs) else {
+            return "?".to_string();
+        };
+        let day = if (-6..=0).contains(&days) {
+            "%a"
+        } else {
+            "%d %b"
+        };
+        format!("{} {}", when.strftime(day), self.hhmm(&when))
+    }
+
+    /// The columns `ahead` needs at most: `17 Oct 08:00`, or `17 Oct 10:30 am` in 12h.
+    pub fn ahead_cols(&self) -> usize {
+        match self.format {
+            TimeFormat::H24 => 12,
+            TimeFormat::H12 => 15,
+        }
     }
 
     /// The reader's date: `Fri 10 Oct 2025 12:40` (`Fri 10 Oct 2025 12:40 pm` in 12h).
@@ -323,6 +346,37 @@ mod tests {
         assert_eq!(clock.time_in_group(i64::MAX, Group::Older), "?");
         clock.set_format(TimeFormat::H24);
         assert_eq!(clock.long(NOW), "Fri 10 Oct 2025 12:40", "back to 24h");
+    }
+
+    #[test]
+    fn a_time_ahead_reads_as_a_weekday_within_six_days_then_as_a_date() {
+        let mut clock = Clock::fixed(NOW, TimeZone::UTC);
+        let (midnight, day, hour) = (NOW - 45_600, 86_400, 3_600);
+        let cases = [
+            (midnight + 18 * hour, "Fri 18:00", "Fri 6:00 pm"),
+            (midnight + day + 8 * hour, "Sat 08:00", "Sat 8:00 am"),
+            (midnight + 6 * day + 8 * hour, "Thu 08:00", "Thu 8:00 am"),
+            (
+                midnight + 7 * day + 8 * hour,
+                "17 Oct 08:00",
+                "17 Oct 8:00 am",
+            ),
+            (
+                midnight + 14 * day + 10 * hour + 30 * 60,
+                "24 Oct 10:30",
+                "24 Oct 10:30 am",
+            ),
+            (i64::MAX, "?", "?"),
+        ];
+        for (secs, h24, _) in cases {
+            assert_eq!(clock.ahead(secs), h24, "{secs}");
+        }
+        assert_eq!(clock.ahead_cols(), 12);
+        clock.set_format(TimeFormat::H12);
+        for (secs, _, h12) in cases {
+            assert_eq!(clock.ahead(secs), h12, "{secs}");
+        }
+        assert_eq!(clock.ahead_cols(), 15, "`24 Oct 10:30 am` is the widest");
     }
 
     #[test]
