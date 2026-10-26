@@ -4,8 +4,10 @@
 //! archive; returning sends `snooze.clear`. `snooze.woke` reads the list again and says what came
 //! back.
 
-use std::path::PathBuf;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
+use rail_core::guarded::{GuardedReadError, read_capped};
 use rail_core::ops::{Action as MailAction, OpError, SnoozeClearResponse, SnoozeWoke};
 use rail_core::paths::{Paths, write_private_atomic};
 
@@ -21,8 +23,10 @@ use crate::tui::text::{escape, fit};
 
 /// The most of a subject the wake notice shows; the status bar cuts it to its width too.
 const SHOWN_SUBJECT_CHARS: usize = 120;
-/// The longest typed time kept for "Last used"; longer text in the file is ignored.
+/// The longest typed time kept for "Last used"; longer text is neither kept nor read back.
 const LAST_CHARS: usize = 100;
+/// The most of the file read: `LAST_CHARS` characters of at most four bytes each.
+const LAST_BYTES: u64 = 4 * LAST_CHARS as u64;
 
 /// Where the last typed snooze time is kept, so the chooser offers it again after a restart.
 fn last_file(paths: &Paths) -> PathBuf {
@@ -76,26 +80,24 @@ impl MailScreen {
     }
 
     /// A time was chosen: the threads are snoozed until then, with grace. Their archive closes
-    /// the reader as archive does. A typed time (`said`) is kept for "Last used".
+    /// the reader as archive does. A typed time (`said`) is kept for "Last used" unless it is
+    /// longer than Rail reads back, so the session offers what a restart would.
     pub(super) fn send_snooze(
         &mut self,
         targets: &[(i64, Picked)],
         until: i64,
         said: Option<String>,
     ) -> Vec<Effect> {
-        let kept = said.map(|said| self.remember_snooze(said));
+        let kept = said
+            .filter(|said| said.chars().count() <= LAST_CHARS)
+            .map(|said| self.remember_snooze(said));
         let sent = self.send_with(MailAction::Archive {}, targets, true, Some(until));
         kept.into_iter().chain(sent).collect()
     }
 
-    /// The last typed time, read when the screen starts; a missing, unreadable or overlong file
-    /// offers nothing.
+    /// The last typed time, read when the screen starts.
     pub(super) fn load_last_snooze(&mut self) {
-        let text = std::fs::read_to_string(last_file(&self.ctx.paths));
-        self.last_snooze = text
-            .ok()
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty() && t.chars().count() <= LAST_CHARS);
+        self.last_snooze = read_last(&last_file(&self.ctx.paths));
     }
 
     /// Keep `said` for "Last used": for the session at once, and in the state file (owner-only,
@@ -182,6 +184,27 @@ impl MailScreen {
         self.status.notify(text, self.tick);
         Vec::new()
     }
+}
+
+/// The time kept in `path`, read through `read_capped`: only a regular file is opened, so a pipe
+/// or a device there never holds up the start, and at most `LAST_BYTES` are read. A missing file
+/// offers nothing; one that cannot be read is logged and offers nothing, as does text Rail would
+/// not have written (empty, not UTF-8, or longer than `LAST_CHARS`).
+pub(super) fn read_last(path: &Path) -> Option<String> {
+    let bytes = match read_capped(path, LAST_BYTES) {
+        Ok(bytes) => bytes,
+        Err(GuardedReadError::Io(error)) if error.kind() == ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "the last snooze time in the state directory is not read"
+            );
+            return None;
+        }
+    };
+    let text = String::from_utf8(bytes).ok()?;
+    let text = text.trim();
+    (!text.is_empty() && text.chars().count() <= LAST_CHARS).then(|| text.to_string())
 }
 
 /// "1 thread back from snooze", "3 threads back from snooze".

@@ -8,6 +8,7 @@ use rail_core::ops::{OpError, SnoozeSetResponse, SnoozeWoke};
 use super::compose::type_text;
 use super::drafts_folder::{drafts_fixture, open_drafts};
 use super::*;
+use crate::tui::screens::mail::snooze_flow::read_last;
 use crate::tui::test_util::{NOW, render_lines};
 
 /// Friday 2025-10-10 00:00 UTC, the day of `NOW` (12:40).
@@ -396,6 +397,52 @@ async fn last_used_is_left_out_when_a_choice_says_the_same_or_it_has_passed() {
         assert!(!shown.contains("Last used"), "{why}: {shown}");
         press(&mut f, KeyCode::Esc).await;
     }
+}
+
+#[tokio::test]
+async fn a_last_used_file_padded_past_what_rail_writes_is_ignored() {
+    let mut f = fixture(3).await;
+    std::fs::create_dir_all(&f.paths.state_dir).unwrap();
+    let padded = format!("{}7pm", " ".repeat(64 * 1024));
+    std::fs::write(last_file(&f), padded).unwrap();
+    restart(&mut f).await;
+    press(&mut f, KeyCode::Char('h')).await;
+    let shown = drawn(&f);
+    assert!(!shown.contains("Last used"), "{shown}");
+}
+
+/// A pipe where the file should be: the read never waits for a writer, so Rail still starts.
+#[cfg(unix)]
+#[test]
+fn a_pipe_in_place_of_the_last_used_file_is_not_waited_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("snooze-last");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert!(made.success(), "mkfifo: {made}");
+    let (done, answer) = std::sync::mpsc::channel();
+    std::thread::spawn(move || done.send(read_last(&path)));
+    assert_eq!(
+        answer.recv_timeout(std::time::Duration::from_secs(5)),
+        Ok(None),
+        "the read waited on the pipe"
+    );
+}
+
+#[tokio::test]
+async fn a_typed_time_longer_than_rail_keeps_snoozes_but_is_not_kept() {
+    let mut f = fixture(3).await;
+    let top = cursor_thread(&f);
+    press(&mut f, KeyCode::Char('h')).await;
+    type_text(&mut f, &format!("tomorrow{}9am", " ".repeat(100))).await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(snoozes(&f), [set(vec![top], MIDNIGHT + DAY + 9 * HOUR)]);
+    assert!(!last_file(&f).exists(), "kept");
+    press(&mut f, KeyCode::Char('h')).await;
+    let shown = drawn(&f);
+    assert!(!shown.contains("Last used"), "{shown}");
 }
 
 /// The screen at 150x40, where the sidebar shows.
