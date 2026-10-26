@@ -367,3 +367,15 @@ async fn a_snoozed_thread_and_a_fresh_one_are_snoozed_together() {
     ends.dedup();
     assert_eq!(ends, [later]);
 }
+
+#[tokio::test]
+async fn an_unknown_thread_among_inbox_ones_refuses_the_whole_snooze() {
+    let d = daemon(WORK).await;
+    let t1 = d.thread("t1");
+    let refused = snooze(&d, vec![t1, 999_999], unix_now() + 3_600, false, "s1")
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::InvalidInput);
+    assert!(!refused.message.contains("999999"), "{}", refused.message);
+    assert!(snooze_of(&d, "t1").is_none(), "nothing was queued");
+}

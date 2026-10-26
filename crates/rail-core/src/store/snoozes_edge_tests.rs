@@ -322,6 +322,22 @@ fn unsnoozable_names_the_threads_with_nothing_in_the_inbox() {
 }
 
 #[test]
+fn unsnoozable_answers_in_id_order_whatever_order_it_was_asked_in() {
+    let mut store = seeded();
+    let (t1, t2) = (thread(&store, "t1"), thread(&store, "t2"));
+    let trashed = vec![
+        in_folders("m1", "t1", 1_000, &["TRASH"]),
+        in_folders("m2", "t1", 2_000, &["TRASH"]),
+        in_folders("m3", "t2", 3_000, &["TRASH"]),
+    ];
+    sync(&mut store, trashed, NOW + 20);
+    let mut ascending = vec![t1, t2];
+    ascending.sort_unstable();
+    let descending: Vec<i64> = ascending.iter().rev().copied().collect();
+    assert_eq!(store.unsnoozable(1, &descending).unwrap(), ascending);
+}
+
+#[test]
 fn a_thread_whose_snoozed_mail_was_all_trashed_is_refused_another_snooze() {
     let mut store = seeded();
     let t1 = thread(&store, "t1");
