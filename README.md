@@ -26,6 +26,11 @@ up without ever seeing your secrets.
 </p>
 <p align="center"><sub>The mail screen at 150 columns: the sidebar, the unified inbox and an open thread, with the keys for the pane you are in along the bottom. The accounts and the mail in these pictures are invented.</sub></p>
 
+<p align="center">
+  <img alt="A 24-second tour: opening a thread and turning its messages round with :thread-order, paging the sidebar, turning the key hints off with :hints, and previewing themes as you type in :theme" src="assets/screenshots/tour.gif" width="100%">
+</p>
+<p align="center"><sub>A short tour: open a thread and turn its older messages round with <code>:thread-order</code>, page the sidebar with <code>Ctrl-d</code>, turn the key hints off with <code>:hints</code>, and preview themes as you type in <code>:theme</code> (<code>Esc</code> puts yours back).</sub></p>
+
 <table>
   <tr>
     <td width="50%" valign="top" align="center">
