@@ -689,22 +689,24 @@ is offered first next time as `Last used`, read again against the clock (`2 days
 when you open the chooser), unless a choice already offers that time; Rail keeps it in the state directory
 (`snooze-last`), so it survives a restart. `Enter` snoozes, `Esc` cancels, `Down`/`Up` move.
 
-The status bar says `Snoozed until Mon 08:00 · z undoes` (for a selection, how many:
-`Snoozed 120 until Mon 08:00 · z undoes`, then `· 2 not in the inbox` for any it left out), and
-for ten seconds `z` takes the snooze back, as with archive. For a selection the chooser's title
-counts the threads (`Snooze 3 threads until`). On a thread that is already snoozed the chooser's
-title says until when; choosing a time moves the snooze, and its first row, `Return to
-inbox now`, puts the thread back at once (`returned 1 to the inbox`; for a selection the count adds
-up as each request answers, and a request that fails gives its threads back to the selection). While
-anything is snoozed, `Snoozed` is listed under UNIFIED in
+The status bar says `Snoozed until Mon 08:00 · z undoes`, and for ten seconds `z` takes the snooze
+back, as with archive. On a thread that is already snoozed the chooser's title says until when;
+choosing a time moves the snooze, and its first row, `Return to inbox now`, puts the thread back
+at once (`returned 1 to the inbox`). While anything is snoozed, `Snoozed` is listed under UNIFIED in
 the sidebar with the number of snoozed threads (`◷`, or `^` with `icons = "ascii"`); `:` and
 `Mailbox: Snoozed` open it at any time, and an empty one says `Nothing is snoozed.` A thread whose
 snoozed mail was all trashed, moved or put back in the inbox since has nothing left to bring back,
 so it is neither listed nor offered `Return to inbox now`. The reader
 shows `Snoozed until Mon 13 Oct 2025 08:00` under a snoozed thread's recipients. Drafts cannot be
-snoozed (`Not available on drafts`). A selection snoozes its threads that have mail in the inbox,
-or are snoozed already, and leaves the others where they are; a snooze with none of those is
-refused (`Only a thread in the inbox can be snoozed.`).
+snoozed (`Not available on drafts`).
+
+A selection is snoozed as one. The chooser's title counts it (`Snooze 3 threads until`, with
+`Return to inbox now` first when some of it is snoozed), and the snooze takes the threads that
+have mail in the inbox, or are snoozed already, and leaves the others where they are; the status
+bar counts both (`Snoozed 118 until Mon 08:00 · z undoes · 2 not in the inbox`). Only a snooze
+with none to take is refused (`Only a thread in the inbox can be snoozed.`). `Return to inbox now`
+counts what came back as its requests answer (`returned 250 to the inbox`), and a request that
+fails says why and gives its threads back to the selection.
 
 New mail in the thread brings it back early; your own reply, which lands in Sent, does not, and
 neither does a message of the snooze put back in the inbox from another device (snoozing the
