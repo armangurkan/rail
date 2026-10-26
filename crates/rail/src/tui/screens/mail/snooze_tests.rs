@@ -1,6 +1,7 @@
-//! The snooze chooser, the Snoozed mailbox and the reader's line, drawn at the design sizes
-//! (90x24 and 150x40) over the view tests' mailbox, in both icon sets where a glyph is new; and
-//! the chooser at sizes too small for it, drawn without panicking.
+//! The snooze chooser (also for a selection, its title counting the threads), the Snoozed
+//! mailbox and the reader's line, drawn at the design sizes (90x24 and 150x40) over the view
+//! tests' mailbox, in both icon sets where a glyph is new; and the chooser at sizes too small
+//! for it, drawn without panicking.
 
 use crossterm::event::KeyCode;
 use rail_core::config::{Icons, TimeFormat};
@@ -124,6 +125,32 @@ async fn the_chooser_draws_at_sizes_too_small_for_it_without_panicking() {
     let (_tmp, mut screen) = screen(Icons::Ascii).await;
     press(&mut screen, KeyCode::Char('h')).await;
     typed(&mut screen, "6pm").await;
+    for (width, height) in [(0, 24), (1, 24), (90, 3), (3, 2)] {
+        let _ = draw(&screen, width, height);
+    }
+}
+
+#[tokio::test]
+async fn the_chooser_for_a_selection_counts_its_threads() {
+    let (tmp, mut screen) = screen(Icons::Unicode).await;
+    for _ in 0..3 {
+        press(&mut screen, KeyCode::Char(' ')).await;
+    }
+    press(&mut screen, KeyCode::Char('h')).await;
+    let shown = draw(&screen, 90, 24);
+    assert!(shown.contains("Snooze 3 threads until"), "{shown}");
+    insta::assert_snapshot!("snooze_picker_selection_90x24", shown);
+    insta::assert_snapshot!("snooze_picker_selection_150x40", draw(&screen, 150, 40));
+    press(&mut screen, KeyCode::Esc).await;
+    // One of the three snoozed since: "Return to inbox now" comes first, under the count.
+    snooze_wt1(&tmp, MONDAY_MORNING);
+    press(&mut screen, KeyCode::Char('h')).await;
+    let shown = draw(&screen, 90, 24);
+    assert!(
+        shown.contains("Snooze 3 threads until") && shown.contains("Return to inbox now"),
+        "{shown}"
+    );
+    insta::assert_snapshot!("snooze_picker_selection_snoozed_90x24", shown);
     for (width, height) in [(0, 24), (1, 24), (90, 3), (3, 2)] {
         let _ = draw(&screen, width, height);
     }

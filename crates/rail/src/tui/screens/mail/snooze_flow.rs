@@ -85,7 +85,8 @@ impl MailScreen {
                 let choices = snooze_choices(&clock);
                 let last = (self.actions.last_snooze.as_deref())
                     .and_then(|t| parse_snooze(t, &clock).ok());
-                let chooser = Picker::snooze(&choices, clock, (until, !ends.is_empty()), last);
+                let chooser =
+                    Picker::snooze(&choices, clock, (count, until, !ends.is_empty()), last);
                 self.modal = Some(Modal::Picker(chooser));
             }
             Err(error) => {

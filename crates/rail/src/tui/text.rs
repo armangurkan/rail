@@ -2,7 +2,8 @@
 //! columns, wrapping at a pane's width, tabs, quoted blocks, link markers, link validation and
 //! OSC 8 hyperlinks. Every string from mail, Gmail or config that Rail draws goes through
 //! here: controls, Unicode format characters and line separators are escaped first, and width
-//! is measured on the escaped text, so no cell can ever carry a raw control.
+//! is measured on the escaped text, so no cell can ever carry a raw control. Rail's own counts
+//! get their thousands separators here too.
 
 use rail_core::provider::links::{MAX_LINK_BYTES, SCHEMES};
 use unicode_segmentation::UnicodeSegmentation;
@@ -11,6 +12,19 @@ use url::Url;
 
 use crate::cmd::account::escape_chars;
 use crate::cmd::text::hides_or_breaks;
+
+/// `22,853`.
+pub fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
 
 /// Columns between tab stops in a body.
 pub const TAB_STOP: usize = 8;

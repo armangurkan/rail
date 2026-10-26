@@ -18,7 +18,7 @@ use ratatui::widgets::Paragraph;
 use super::{Command, ModalOutcome, boxed};
 use crate::tui::clock::Clock;
 use crate::tui::snooze::{SnoozeChoice, ahead, parse_snooze};
-use crate::tui::text::{escape, input_row, pad, pad_left, width};
+use crate::tui::text::{escape, input_row, pad, pad_left, thousands, width};
 use crate::tui::theme::Theme;
 use crate::tui::theme::choice::Accent;
 use crate::tui::widgets::text_input::TextInput;
@@ -134,6 +134,8 @@ pub struct Picker {
 /// nothing is typed).
 struct SnoozeParts {
     clock: Clock,
+    /// How many threads the chooser snoozes: its title counts more than one.
+    threads: usize,
     until: Option<i64>,
     reading: Option<Result<i64, &'static str>>,
 }
@@ -185,13 +187,14 @@ impl Picker {
         picker
     }
 
-    /// The snooze chooser: "Return to inbox now" first when `snoozed`, then the last typed time
-    /// (`last`, unless a choice offers the same), then `choices`. Its title says until when the
-    /// threads are snoozed (`until`), and a typed time is offered first.
+    /// The snooze chooser for `threads` threads: "Return to inbox now" first when `snoozed`, then
+    /// the last typed time (`last`, unless a choice offers the same), then `choices`. Its title
+    /// says until when the one thread is snoozed (`until`), or how many threads it snoozes, and a
+    /// typed time is offered first.
     pub fn snooze(
         choices: &[SnoozeChoice],
         clock: Clock,
-        (until, snoozed): (Option<i64>, bool),
+        (threads, until, snoozed): (usize, Option<i64>, bool),
         last: Option<i64>,
     ) -> Self {
         let back = snoozed.then_some((RETURN_NOW, RETURN_LABEL));
@@ -213,6 +216,7 @@ impl Picker {
         let mut picker = Self::new(PickerKind::Snooze, items);
         picker.snooze = Some(SnoozeParts {
             clock,
+            threads,
             until,
             reading: None,
         });
@@ -468,15 +472,20 @@ impl Picker {
         Line::from(spans)
     }
 
-    /// The box's title: the kind's, or until when a snooze chooser's threads are snoozed.
+    /// The box's title: the kind's; a snooze chooser's says until when its one thread is
+    /// snoozed, or how many threads it snoozes ("Snooze 120 threads until").
     fn title(&self) -> String {
-        let snoozed = self
-            .snooze
-            .as_ref()
-            .and_then(|s| s.until.map(|until| s.clock.long(until)));
-        match snoozed {
-            Some(when) => format!("Snoozed until {when}"),
-            None => self.words().0.to_string(),
+        match &self.snooze {
+            Some(SnoozeParts {
+                until: Some(until),
+                clock,
+                ..
+            }) => format!("Snoozed until {}", clock.long(*until)),
+            Some(s) if s.threads > 1 => {
+                let threads = thousands(u64::try_from(s.threads).unwrap_or(u64::MAX));
+                format!("Snooze {threads} threads until")
+            }
+            _ => self.words().0.to_string(),
         }
     }
 

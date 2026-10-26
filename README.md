@@ -691,8 +691,9 @@ when you open the chooser), unless a choice already offers that time; Rail keeps
 
 The status bar says `Snoozed until Mon 08:00 · z undoes` (for a selection, how many:
 `Snoozed 120 until Mon 08:00 · z undoes`, then `· 2 not in the inbox` for any it left out), and
-for ten seconds `z` takes the snooze back, as with archive. On a thread that is already snoozed the
-chooser's title says until when; choosing a time moves the snooze, and its first row, `Return to
+for ten seconds `z` takes the snooze back, as with archive. For a selection the chooser's title
+counts the threads (`Snooze 3 threads until`). On a thread that is already snoozed the chooser's
+title says until when; choosing a time moves the snooze, and its first row, `Return to
 inbox now`, puts the thread back at once (`returned 1 to the inbox`; for a selection the count adds
 up as each request answers, and a request that fails gives its threads back to the selection). While
 anything is snoozed, `Snoozed` is listed under UNIFIED in

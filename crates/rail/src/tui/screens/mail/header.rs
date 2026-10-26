@@ -27,18 +27,7 @@ const GAP: usize = 2;
 /// `MIN_FOR_SLOT` columns and wider): the scope is cut to make the room.
 const MIN_SLOT_ACTIVE: usize = 24;
 
-/// `22,853`.
-pub fn thousands(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
+pub use crate::tui::text::thousands;
 
 /// What the middle of the header shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
