@@ -432,3 +432,73 @@ async fn z_between_a_snoozes_answers_takes_back_each_row_as_it_comes() {
         "{line}"
     );
 }
+
+#[tokio::test]
+async fn z_then_every_call_refused_gives_the_threads_back_and_says_nothing_to_undo() {
+    let mut f = fixture(2).await;
+    select_all(&mut f).await;
+    let (work, home) = (selected_of(&f, 1), selected_of(&f, 2));
+    snooze_unanswered(&mut f).await;
+    press(&mut f, KeyCode::Char('z')).await;
+    feed(&mut f, answer("work", work, Err(not_in_inbox()))).await;
+    feed(&mut f, answer("home", home, Err(not_in_inbox()))).await;
+    let line = f.screen.status_line();
+    assert!(line.contains("Nothing to undo."), "{line}");
+    assert_eq!(f.screen.actions.selection.len(), 4);
+}
+
+#[tokio::test]
+async fn a_replaced_snoozes_refused_call_leaves_the_newer_action_alone() {
+    let mut f = fixture(2).await;
+    select_all(&mut f).await;
+    let work = selected_of(&f, 1);
+    snooze_unanswered(&mut f).await;
+    // A newer action takes the bar and the undo before the snooze's answers come.
+    press(&mut f, KeyCode::Char('e')).await;
+    let line = f.screen.status_line();
+    assert!(line.contains("archived 1 · z undoes"), "{line}");
+    feed(&mut f, answer("work", work, Err(not_in_inbox()))).await;
+    let line = f.screen.status_line();
+    assert!(line.contains("archived 1 · z undoes"), "{line}");
+    assert_eq!(f.screen.actions.selection.len(), 0);
+}
+
+#[tokio::test]
+async fn refused_threads_stay_left_out_when_the_snooze_took_some_whatever_answers_last() {
+    let mut f = fixture(2).await;
+    let pick = |account_id| Picked {
+        account_id,
+        starred: false,
+        unread: true,
+    };
+    // Three calls: work's 200 and 1, home's 2.
+    let work: Vec<i64> = (1..=201).collect();
+    let home = vec![1_001, 1_002];
+    let targets: Vec<(i64, Picked)> = (work.iter().map(|id| (*id, pick(1))))
+        .chain(home.iter().map(|id| (*id, pick(2))))
+        .collect();
+    assert!(!f.screen.actions.selection.add(&targets));
+    snooze_unanswered(&mut f).await;
+    feed(&mut f, answer("work", vec![201], Err(not_in_inbox()))).await;
+    // Snoozed already, so no archive row.
+    feed(
+        &mut f,
+        answer("work", work[..200].to_vec(), Ok((vec![], 200))),
+    )
+    .await;
+    let failed = Err(OpError::not_found("the daemon said no"));
+    feed(&mut f, answer("home", home.clone(), failed)).await;
+    let mut back: Vec<i64> = f
+        .screen
+        .actions
+        .selection
+        .targets()
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+    back.sort_unstable();
+    assert_eq!(
+        back, home,
+        "only the failed call's threads; 201 was left out"
+    );
+}

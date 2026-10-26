@@ -72,6 +72,7 @@ impl MailScreen {
             Ok(answer) if older => effects = self.older_answered(call, answer.rows),
             Ok(_) => {}
             Err(error) if tracked && left_out(call, &error) => self.call_left_out(call, error),
+            Err(error) if older && left_out(call, &error) => self.older_left_out(call),
             Err(error) => {
                 self.action_error(failed_verb(call), &error);
                 if tracked {
@@ -94,8 +95,9 @@ impl MailScreen {
         let rows = row_tokens(call, answer.rows);
         last.pending = last.pending.saturating_sub(1);
         if call.snooze.is_some() {
-            last.snoozed += answer.applied;
-            last.left_out += call.threads.len().saturating_sub(answer.applied);
+            let missed = call.threads.len().saturating_sub(answer.applied);
+            last.snoozed = last.snoozed.saturating_add(answer.applied);
+            last.left_out = last.left_out.saturating_add(missed);
         }
         if last.undo_wanted {
             if rows.is_empty() {
@@ -140,18 +142,23 @@ impl MailScreen {
 
     /// A snooze's call refused because none of its threads had mail in the inbox: they count as
     /// left out. A snooze that took some keeps counting them in its notice; once every call
-    /// answered, one that took nothing says the refusal and gives the threads back.
+    /// answered, one that took nothing says the refusal and gives the threads back. After `z`
+    /// the call has nothing to take back: its threads come back as a failed call's do, and the
+    /// undo finishes as for an answer without rows.
     fn call_left_out(&mut self, call: &ApplyCall, refusal: OpError) {
         let Some(last) = self.actions.last.as_mut() else {
             return;
         };
         last.pending = last.pending.saturating_sub(1);
-        last.left_out += call.threads.len();
+        if last.undo_wanted {
+            put_back(last, &mut self.actions.selection, &call.threads);
+            self.finish_undo(true);
+            return;
+        }
+        last.left_out = last.left_out.saturating_add(call.threads.len());
         last.refused.extend_from_slice(&call.threads);
         last.refusal = Some(refusal);
-        if last.undo_wanted {
-            self.finish_undo(false);
-        } else if last.snoozed > 0 {
+        if last.snoozed > 0 {
             self.say_done(call);
         } else if last.pending == 0 {
             self.nothing_snoozed();
@@ -191,10 +198,22 @@ impl MailScreen {
         } else if last.pending == 0 && last.rows.is_empty() && last.undos == 0 {
             // A snooze that took nothing gives back its calls refused as not in the inbox too;
             // this call's error stays on the bar.
-            let refused = std::mem::take(&mut last.refused);
-            put_back(last, &mut self.actions.selection, &refused);
+            if last.snoozed == 0 {
+                let refused = std::mem::take(&mut last.refused);
+                put_back(last, &mut self.actions.selection, &refused);
+            }
             self.actions.last = None;
         }
+    }
+
+    /// A replaced snooze's call refused as not in the inbox: its threads count as left out, and
+    /// nothing is said over the newer action, even if the replaced snooze took nothing.
+    fn older_left_out(&mut self, call: &ApplyCall) {
+        let Some(old) = self.actions.replaced.get_mut(&call.seq) else {
+            return;
+        };
+        old.pending = old.pending.saturating_sub(1);
+        self.drop_older_if_done(call.seq);
     }
 
     /// A replaced record's call answered: its rows are undone if `z` was pressed for it, else
