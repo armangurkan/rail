@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/snooze_tests.rs
+expression: "draw(&screen, 90, 24)"
+---
+▍Rail │ All inboxes · 2 accounts · 5 unread  │ 🔍  / Search  ⟳ Backfill 1,200/5,000 │ 12:40
+TODAY
+●  W  Dana Reyes, Tom         ★   Q4 roadmap review — can we move to Thur… (3)       11:54
+●  W  GitLab                   📎  Pipeline failed: rail!42                           09:53
+YESTERDAY      ┌ Snooze until ────────────────────────────────────────────┐
+●  H  Sender   │> 6pm                                                     │          10:53
+THIS WEEK      │                                                          │
+·  W  Priya Nai│At                                               Fri 18:00│      Wed 12:53
+OLDER          │                                                          │
+●  W  Evil\u{7}│                                                          │         Sep 09
+●  W  Sender   │                                                          │fi…  2024-09-04
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │Type a time or pick one. Enter snoozes, Esc cancels.      │
+               └──────────────────────────────────────────────────────────┘
+
+
+Enter open  j/k move  r reply  c compose  ? help           ● work ✓ · ● home ⟳ 1,200/5,000

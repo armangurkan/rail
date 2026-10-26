@@ -20,7 +20,7 @@ use crate::tui::theme::Theme;
 
 /// A small mailbox with every kind of row: unread and read, starred, with an attachment, a
 /// three-message thread, a long subject, a hostile one, and mail for both accounts.
-async fn screen(icons: Icons) -> (tempfile::TempDir, MailScreen) {
+pub(super) async fn screen(icons: Icons) -> (tempfile::TempDir, MailScreen) {
     screen_with(icons, true).await
 }
 
@@ -118,11 +118,11 @@ async fn screen_with(icons: Icons, hints: bool) -> (tempfile::TempDir, MailScree
     (tmp, screen)
 }
 
-fn draw(screen: &MailScreen, width: u16, height: u16) -> String {
+pub(super) fn draw(screen: &MailScreen, width: u16, height: u16) -> String {
     snapshot(width, height, |frame| screen.view(frame, &Theme::default()))
 }
 
-async fn press(screen: &mut MailScreen, code: crossterm::event::KeyCode) {
+pub(super) async fn press(screen: &mut MailScreen, code: crossterm::event::KeyCode) {
     let effects = screen.update(crate::tui::app::Msg::Key(crate::tui::test_util::key(code)));
     settle(screen, effects).await;
 }

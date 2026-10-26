@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/snooze_tests.rs
+expression: "draw(&screen, 90, 24)"
+---
+▍Rail │ Snoozed · 2 accounts  │ 🔍  / Search                 ⟳ Backfill 1,200/5,000 │ 12:40
+TODAY
+●  W  Dana Reyes, Tom         ★   Q4 roadmap review — can we move to Thur… (3)       11:54
+
+               ┌ Snoozed until Mon 13 Oct 2025 08:00 ─────────────────────┐
+               │>                                                         │
+               │                                                          │
+               │Return to inbox now                                       │
+               │Later today                                      Fri 18:00│
+               │Tomorrow                                         Sat 08:00│
+               │Next week                                        Mon 08:00│
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │                                                          │
+               │Type a time or pick one. Enter snoozes, Esc cancels.      │
+               └──────────────────────────────────────────────────────────┘
+
+
+Enter open  j/k move  r reply  c compose  ? help           ● work ✓ · ● home ⟳ 1,200/5,000

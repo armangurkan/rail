@@ -1,0 +1,28 @@
+---
+source: crates/rail/src/tui/screens/mail/snooze_tests.rs
+expression: "draw(&screen, 90, 24)"
+---
+▍Rail │ Snoozed · 2 accounts  │ 🔍  / Search                 ⟳ Backfill 1,200/5,000 │ 12:40
+Q4 roadmap review — can we move to Thursday?
+Dana Reyes  11:54   W  WORK
+/  3 messages
+Snoozed until Mon 13 Oct 2025 08:00
+──────────────────────────────────────────────────────────────────────────────────────────
+
+The body did not arrive; open the thread again to try again.
+
+──────────────────────────────────────────────────────────────────────────────────────────
+▸   1   Dana Reyes ★                                                                 10:53
+        snippet w1
+──────────────────────────────────────────────────────────────────────────────────────────
+▸   2   Tom                                                                          11:53
+        snippet w2
+──────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+n/p message  Tab fold  H headers  r reply  ? help          ● work ✓ · ● home ⟳ 1,200/5,000
