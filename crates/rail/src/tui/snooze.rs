@@ -15,6 +15,11 @@ pub const TRY: &str = "Try 6pm, tomorrow 9am, 2 days, nov 3 or fri.";
 pub const PASSED: &str = "That time has passed.";
 /// What it shows for a time the daemon would refuse as too far ahead.
 pub const TOO_FAR: &str = "That is more than a year away.";
+/// What a time too close to now says: the daemon would refuse it by the time it arrived.
+pub const SOON: &str = "That is too soon.";
+/// Seconds past the daemon's minute that a time must be: its clock may tick on, or past a second,
+/// before the request arrives.
+const SLACK_SECS: i64 = 15;
 
 /// The hour a morning choice, and a typed day without a time, come back at.
 const MORNING: i8 = 8;
@@ -105,10 +110,17 @@ pub fn parse_snooze(text: &str, clock: &Clock) -> Result<i64, &'static str> {
     let at = span(&words, &now)
         .or_else(|| moment(&words, now.date(), clock))
         .ok_or(TRY)?;
-    let now = clock.now();
-    if at < now + MIN_SNOOZE_SECS {
+    ahead(at, clock.now())
+}
+
+/// `at` as a snooze's end at `now`: passed, too soon (the daemon wants a minute, and the request
+/// takes a moment to reach it), more than a year ahead, or fine. The chooser asks again at Enter.
+pub fn ahead(at: i64, now: i64) -> Result<i64, &'static str> {
+    if at <= now {
         Err(PASSED)
-    } else if at > now + MAX_SNOOZE_SECS {
+    } else if at < now.saturating_add(MIN_SNOOZE_SECS + SLACK_SECS) {
+        Err(SOON)
+    } else if at > now.saturating_add(MAX_SNOOZE_SECS) {
         Err(TOO_FAR)
     } else {
         Ok(at)
@@ -462,7 +474,7 @@ mod tests {
                 ("6pm", MIDNIGHT + 18 * HOUR),
                 ("6:30 pm", MIDNIGHT + 18 * HOUR + 30 * 60),
                 (" 6:30PM ", MIDNIGHT + 18 * HOUR + 30 * 60),
-                ("12:41", NOW + 60),
+                ("12:42", NOW + 120),
                 ("12:45pm", MIDNIGHT + 12 * HOUR + 45 * 60),
                 ("12:40", MIDNIGHT + DAY + 12 * HOUR + 40 * 60),
                 ("9:05", MIDNIGHT + DAY + 9 * HOUR + 5 * 60),
@@ -516,6 +528,15 @@ mod tests {
         for text in ["2026-11-03", "+53w", "+367d", "+9999d"] {
             assert_eq!(parse_snooze(text, &clock), Err(TOO_FAR), "{text:?}");
         }
+    }
+
+    #[test]
+    fn a_time_the_daemon_would_find_under_a_minute_away_is_too_soon() {
+        let clock = utc(NOW);
+        for text in ["+1m", "1 min", "a minute", "12:41"] {
+            assert_eq!(parse_snooze(text, &clock), Err(SOON), "{text:?}");
+        }
+        assert_eq!(parse_snooze("+2m", &clock), Ok(NOW + 120));
     }
 
     #[test]

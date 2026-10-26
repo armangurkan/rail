@@ -680,8 +680,10 @@ There is no calendar to click through: type a time instead, in numbers or in wor
 24-hour and am/pm times both work whatever `time` is set to. A day without a time comes back at
 08:00, `tonight` at 20:00 and `later today` at 18:00. What you type is offered first as `At` with
 its time; typing a choice's name (`tomorrow`) picks that choice. Text Rail cannot read says `Try
-6pm, tomorrow 9am, 2 days, nov 3 or fri.`, a time less than a minute ahead `That time has
-passed.`, and one more than a year ahead `That is more than a year away.` The last time you typed
+6pm, tomorrow 9am, 2 days, nov 3 or fri.`, a time that has passed `That time has passed.`, one
+less than about a minute ahead `That is too soon.`, and one more than a year ahead `That is more
+than a year away.` `Enter` checks the time against the clock once more, so one that became too
+soon while the chooser was open is refused there and nothing is sent. The last time you typed
 is offered first next time as `Last used`, read again against the clock (`2 days` counts from
 when you open the chooser), unless a choice already offers that time; Rail keeps it in the state directory
 (`snooze-last`), so it survives a restart. `Enter` snoozes, `Esc` cancels, `Down`/`Up` move.

@@ -17,7 +17,7 @@ use ratatui::widgets::Paragraph;
 
 use super::{Command, ModalOutcome, boxed};
 use crate::tui::clock::Clock;
-use crate::tui::snooze::{SnoozeChoice, parse_snooze};
+use crate::tui::snooze::{SnoozeChoice, ahead, parse_snooze};
 use crate::tui::text::{escape, input_row, pad, pad_left, width};
 use crate::tui::theme::Theme;
 use crate::tui::theme::choice::Accent;
@@ -231,6 +231,14 @@ impl Picker {
         self.items.iter().map(|i| i.name.as_str()).collect()
     }
 
+    /// Moves a snooze chooser's clock (tests: a chooser keeps the clock it was opened with).
+    #[cfg(test)]
+    pub(crate) fn set_now(&mut self, now: i64) {
+        if let Some(parts) = self.snooze.as_mut() {
+            parts.clock.set_now(now);
+        }
+    }
+
     /// Moving the highlight shows nothing, and the hint says why (a theme on a terminal
     /// without truecolor).
     pub fn without_preview(mut self) -> Self {
@@ -310,9 +318,12 @@ impl Picker {
         }
     }
 
-    fn enter(&self) -> ModalOutcome {
+    fn enter(&mut self) -> ModalOutcome {
         if self.kind != PickerKind::Labels {
-            return self.choice().map_or(ModalOutcome::Stay, ModalOutcome::Run);
+            return match self.choice() {
+                Some(command) => self.still_ahead(command),
+                None => ModalOutcome::Stay,
+            };
         }
         let now: BTreeSet<i64> = self
             .items
@@ -324,6 +335,24 @@ impl Picker {
             add: now.difference(&self.initial).copied().collect(),
             remove: self.initial.difference(&now).copied().collect(),
         })
+    }
+
+    /// A snooze's time asked again at Enter, since the clock has moved on since it was shown: the
+    /// time shown is sent, unless it has become too soon. Then the chooser says why and shows no
+    /// rows, so a second Enter sends nothing until the text changes.
+    fn still_ahead(&mut self, command: Command) -> ModalOutcome {
+        let (Command::Snooze { until, .. }, Some(parts)) = (&command, self.snooze.as_mut()) else {
+            return ModalOutcome::Run(command);
+        };
+        match ahead(*until, parts.clock.now()) {
+            Ok(_) => ModalOutcome::Run(command),
+            Err(why) => {
+                parts.reading = Some(Err(why));
+                self.shown.clear();
+                self.selected = 0;
+                ModalOutcome::Stay
+            }
+        }
     }
 
     /// After the highlight may have moved: a preview of it in the kinds that preview.

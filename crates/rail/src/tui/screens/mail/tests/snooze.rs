@@ -9,6 +9,7 @@ use super::compose::type_text;
 use super::drafts_folder::{drafts_fixture, open_drafts};
 use super::*;
 use crate::tui::screens::mail::snooze_flow::read_last;
+use crate::tui::snooze::SOON;
 use crate::tui::test_util::{NOW, render_lines};
 
 /// Friday 2025-10-10 00:00 UTC, the day of `NOW` (12:40).
@@ -443,6 +444,29 @@ async fn a_typed_time_longer_than_rail_keeps_snoozes_but_is_not_kept() {
     press(&mut f, KeyCode::Char('h')).await;
     let shown = drawn(&f);
     assert!(!shown.contains("Last used"), "{shown}");
+}
+
+/// The open chooser's clock moves on (it keeps the clock it was opened with).
+fn chooser_clock(f: &mut Fixture, now: i64) {
+    let Some(Modal::Picker(picker)) = f.screen.modal.as_mut() else {
+        panic!("no chooser is open");
+    };
+    picker.set_now(now);
+}
+
+#[tokio::test]
+async fn a_typed_time_that_is_too_soon_by_enter_is_refused_in_the_chooser() {
+    let mut f = fixture(3).await;
+    press(&mut f, KeyCode::Char('h')).await;
+    type_text(&mut f, "+2m").await;
+    // 55 seconds ahead by now: the daemon, which wants a minute, would refuse it.
+    chooser_clock(&mut f, NOW + 65);
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(snoozes(&f), []);
+    let shown = drawn(&f);
+    assert!(shown.contains(SOON), "{shown}");
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(snoozes(&f), [], "a second Enter sends nothing either");
 }
 
 /// The screen at 150x40, where the sidebar shows.
