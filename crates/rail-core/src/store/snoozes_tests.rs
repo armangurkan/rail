@@ -359,6 +359,40 @@ fn the_wake_returns_the_recorded_messages_then_marks_the_thread_unread() {
 }
 
 #[test]
+fn rows_queued_under_the_tokens_a_return_once_took_do_not_stop_the_return() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    let t2 = thread(&store, "t2");
+    snooze(&mut store, vec![t1], NOW + HOUR, "a");
+    send_next(&mut store, NOW + 10);
+    let id = store.snoozes(1).unwrap()[0].id;
+    // A client that predicts a return's tokens (once `unsnooze-{id}-{now}`) queues rows first.
+    for prefix in ["unsnooze", "unsnooze-read"] {
+        let row = NewAction {
+            account_id: 1,
+            action: Action::Star { on: true },
+            threads: vec![t2],
+            not_before: NOW + HOUR,
+            client_token: format!("{prefix}-{id}-{}", NOW + HOUR),
+        };
+        store
+            .outbox_write(&OutboxWrite::Enqueue(row), NOW + 20)
+            .unwrap();
+    }
+    assert_eq!(wake(&mut store, NOW + HOUR), vec![t1]);
+    let returned = Action::Unsnooze {
+        messages: names(&["m1", "m2"]),
+    };
+    assert_eq!(
+        live(&store, t1),
+        vec![
+            (returned, vec![t1], NOW + HOUR),
+            (Action::Read { on: false }, vec![t1], NOW + HOUR),
+        ]
+    );
+}
+
+#[test]
 fn the_wake_marks_a_thread_read_while_snoozed_unread() {
     let mut store = seeded();
     let t1 = thread(&store, "t1");

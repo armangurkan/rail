@@ -17,7 +17,7 @@ use super::apply_local::{Prior, system_folder};
 use super::outbox::{NewAction, OutboxOutcome, enqueue, json};
 use super::{Store, StoreError, rollup};
 use crate::config::FolderModel;
-use crate::ops::{Action, OutboxId};
+use crate::ops::{Action, OutboxId, client_token};
 
 /// Messages of a thread that `prune_old` and `sweep_unseen` keep: a snoozed thread stays whole
 /// until it comes back.
@@ -405,7 +405,9 @@ fn return_thread(
             action,
             threads: vec![thread],
             not_before: now,
-            client_token: format!("{prefix}-{snooze}-{now}"),
+            // Random: a client that could predict a return's token could queue a row under it
+            // first, and the return would then find that row and queue nothing.
+            client_token: format!("{prefix}-{}", client_token()),
         };
         enqueue(tx, &row)?;
     }
