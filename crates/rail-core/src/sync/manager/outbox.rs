@@ -13,8 +13,8 @@ use crate::error::ErrorClass;
 use crate::ops::{Action, ActionFailed, ErrorCode, OpError, SyncPhase};
 use crate::store::Store;
 use crate::store::outbox::OutboxRow;
-use crate::sync::FailureSubscriber;
 use crate::sync::outbox::publish_depth;
+use crate::sync::{FailureSubscriber, WokeSubscriber};
 
 /// A configured account with a store row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +142,11 @@ impl SyncManager {
     /// `subscriber` runs under the board's lock: it must not block or call the board.
     pub fn subscribe_failures(&self, subscriber: FailureSubscriber) {
         self.board.subscribe_failures(subscriber);
+    }
+
+    /// `subscriber` runs under the board's lock: it must not block or call the board.
+    pub fn subscribe_wakes(&self, subscriber: WokeSubscriber) {
+        self.board.subscribe_wakes(subscriber);
     }
 }
 

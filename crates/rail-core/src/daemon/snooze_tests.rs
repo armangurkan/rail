@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use super::action_tests::{BOUND, Daemon, WORK, daemon};
 use crate::auth::unix_now;
-use crate::ops::op::{SnoozeClear, SnoozeSet};
+use crate::ops::op::{SnoozeClear, SnoozeSet, SyncNow};
 use crate::ops::{
     Action, ErrorCode, OpError, SnoozeClearRequest, SnoozeSetRequest, SnoozeSetResponse,
+    SnoozeWoke, SyncNowRequest, names,
 };
 use crate::provider::Change;
 use crate::store::Store;
@@ -138,4 +139,53 @@ async fn a_clear_sends_the_return_then_the_unread_and_the_thread_is_back() {
     .await;
     assert!(d.in_inbox("m1"));
     assert!(matches!(snooze_of(&d, "t1"), Some((SnoozeState::Woken, _))));
+}
+
+#[tokio::test]
+async fn a_watcher_is_told_when_a_snooze_puts_threads_back() {
+    let d = daemon(WORK).await;
+    let (t1, t2) = (d.thread("t1"), d.thread("t2"));
+    let mut notes = d.client.notifications();
+    let watch = SyncNowRequest {
+        account: None,
+        watch: true,
+    };
+    d.client.call::<SyncNow>(&watch).await.unwrap();
+    snooze(&d, vec![t1], unix_now() + 3_600, false, "s1")
+        .await
+        .unwrap();
+    until("active", || {
+        matches!(snooze_of(&d, "t1"), Some((SnoozeState::Active, _))).then_some(())
+    })
+    .await;
+    // Due now, as an incoming reply would make it; then wake the worker: a clear of a thread
+    // with no snooze changes nothing but tells the worker to look.
+    Store::open(&d.paths.db_file())
+        .unwrap()
+        .conn()
+        .execute("UPDATE snoozes SET until = ?1", [unix_now() - 1])
+        .unwrap();
+    let nudge = SnoozeClearRequest {
+        account: "work".into(),
+        threads: vec![t2],
+    };
+    d.client.call::<SnoozeClear>(&nudge).await.unwrap();
+    let woke = tokio::time::timeout(BOUND, async {
+        loop {
+            let note = notes.recv().await.unwrap();
+            if note.method == names::SNOOZE_WOKE {
+                return note.params;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let woke: SnoozeWoke = serde_json::from_value(woke).unwrap();
+    assert_eq!(
+        woke,
+        SnoozeWoke {
+            account: "work".into(),
+            threads: vec![t1],
+        }
+    );
 }

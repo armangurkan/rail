@@ -66,7 +66,7 @@ fn start_watch(sync: &SyncManager, caller: &Caller) -> (u64, bool) {
         .watching()
         .join(NEXT_WATCH.fetch_add(1, Ordering::SeqCst));
     if subscribe {
-        let (status_caller, failures) = (caller.clone(), caller.clone());
+        let (status_caller, failures, wakes) = (caller.clone(), caller.clone(), caller.clone());
         sync.subscribe(Box::new(move |status| {
             if !status_caller.is_open() || !status_caller.watching().is_live(id) {
                 return false;
@@ -80,6 +80,14 @@ fn start_watch(sync: &SyncManager, caller: &Caller) -> (u64, bool) {
                 return false;
             }
             failures.notify(names::ACTION_FAILED, failure);
+            true
+        }));
+        // The same for snoozes that put threads back.
+        sync.subscribe_wakes(Box::new(move |woke| {
+            if !wakes.is_open() || !wakes.watching().is_live(id) {
+                return false;
+            }
+            wakes.notify(names::SNOOZE_WOKE, woke);
             true
         }));
     }

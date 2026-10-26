@@ -24,7 +24,7 @@ pub use manager::{
     ActionTarget, CONFIG_CHECK, ENGINE_STOP, MAX_WRITER_RESTARTS, ProviderFactory, ProviderRequest,
     Reach, SETTLE_WAIT, SearchTarget, SyncManager, WRITER_HEALTHY, Wants,
 };
-pub use status::{FailureSubscriber, StatusBoard, Subscriber};
+pub use status::{FailureSubscriber, StatusBoard, Subscriber, WokeSubscriber};
 pub use writer::{WRITER_QUEUE, WriterHandle, WriterTask, spawn_writer};
 
 /// How long a message found only by server search is kept after it was last searched for.

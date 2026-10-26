@@ -7,8 +7,9 @@
 //! records) within the manager's stop deadline, so a create is never cut off before its ids are
 //! kept. A `Send` row goes through `sending` (the never-twice rule); a `PushDraft` or
 //! `DeleteDraft` row goes through `pushing`. Once a draft row completes, the account's sync
-//! engine is nudged so Gmail's copy (Sent or Drafts) arrives. Logs carry row ids, counts and
-//! codes only.
+//! engine is nudged so Gmail's copy (Sent or Drafts) arrives. Snoozes that fall due go back on its
+//! next pass, paused or not: the store queues their return and the status board tells who
+//! watches. Logs carry row ids, counts and codes only.
 
 mod compose;
 #[cfg(test)]
@@ -28,6 +29,8 @@ mod sending;
 mod sending_tests;
 #[cfg(test)]
 mod settlement_tests;
+#[cfg(test)]
+mod snooze_tests;
 #[cfg(test)]
 mod tests;
 
@@ -50,7 +53,7 @@ use super::writer::WriterHandle;
 use crate::config::{AccountKind, FolderModel};
 use crate::error::ErrorClass;
 use crate::ops::{
-    Action, ActionFailed, DraftId, ErrorCode, OpError, OutboxDepth, OutboxId, SyncPhase,
+    Action, ActionFailed, DraftId, ErrorCode, OpError, OutboxDepth, OutboxId, SnoozeWoke, SyncPhase,
 };
 use crate::provider::{Change, DraftIds, Provider, ProviderError, ThreadTarget};
 use crate::store::drafts::ListedFile;
@@ -168,6 +171,8 @@ impl Worker {
         self.publish().await;
         loop {
             if self.paused() {
+                // The store can still put snoozed threads back; their calls wait for the login.
+                self.wake_due().await;
                 tokio::select! {
                     () = self.signal.notified() => continue,
                     // The engine clears `needs_auth` without telling the worker: look again.
@@ -231,6 +236,7 @@ impl Worker {
 
     /// Claim and send one row; or how long to sleep.
     pub(super) async fn step(&self) -> Next {
+        self.wake_due().await;
         let claimed = self
             .writer
             .outbox(OutboxWrite::Claim {
@@ -257,11 +263,14 @@ impl Worker {
         Next::Again
     }
 
-    /// Until the earliest due row, within `MIN_IDLE..=MAX_IDLE`.
+    /// Until the earliest due row or snooze, within `MIN_IDLE..=MAX_IDLE`.
     async fn idle(&self) -> Duration {
         let id = self.account_id;
         let due = self
-            .read(move |store| store.outbox_next_due(id))
+            .read(move |store| {
+                let row = store.outbox_next_due(id)?;
+                Ok(row.into_iter().chain(store.snooze_next_due(id)?).min())
+            })
             .await
             .ok()
             .flatten();
@@ -270,6 +279,37 @@ impl Worker {
             Duration::from_secs(u64::try_from(at - now).unwrap_or(0))
         })
         .clamp(MIN_IDLE, MAX_IDLE)
+    }
+
+    /// Put back the account's snoozes due by now: the store queues their return (sent as any
+    /// row is, once the account can send) and the status board tells who watches.
+    async fn wake_due(&self) {
+        let (id, now) = (self.account_id, (self.clock)());
+        let due = self
+            .read(move |store| store.snooze_next_due(id))
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|at| at <= now);
+        if !due {
+            return;
+        }
+        match self
+            .writer
+            .outbox(OutboxWrite::Wake { account_id: id })
+            .await
+        {
+            Ok(OutboxOutcome::Woke { threads }) if !threads.is_empty() => {
+                tracing::info!(account = %self.name, threads = threads.len(), "snoozed threads went back");
+                self.publish().await;
+                let account = self.name.clone();
+                self.board.report_woke(&SnoozeWoke { account, threads });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(account = %self.name, error = %error.message, "could not put snoozed threads back");
+            }
+        }
     }
 
     async fn send(&self, row: &OutboxRow) -> Result<Landed, ProviderError> {

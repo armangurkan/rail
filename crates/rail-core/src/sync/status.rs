@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use crate::ops::{AccountSyncStatus, ActionFailed};
+use crate::ops::{AccountSyncStatus, ActionFailed, SnoozeWoke};
 
 /// Told of every change; returns false once its client is gone, and is then dropped.
 pub type Subscriber = Box<dyn Fn(&AccountSyncStatus) -> bool + Send>;
@@ -12,11 +12,15 @@ pub type Subscriber = Box<dyn Fn(&AccountSyncStatus) -> bool + Send>;
 /// Told of every action Gmail refused for good; returns false once its client is gone.
 pub type FailureSubscriber = Box<dyn Fn(&ActionFailed) -> bool + Send>;
 
+/// Told of every snooze that put threads back; returns false once its client is gone.
+pub type WokeSubscriber = Box<dyn Fn(&SnoozeWoke) -> bool + Send>;
+
 #[derive(Default)]
 struct Inner {
     accounts: BTreeMap<String, AccountSyncStatus>,
     subscribers: Vec<Subscriber>,
     failure_subscribers: Vec<FailureSubscriber>,
+    woke_subscribers: Vec<WokeSubscriber>,
 }
 
 #[derive(Clone, Default)]
@@ -72,5 +76,14 @@ impl StatusBoard {
     /// Tell every failure subscriber; ones whose client is gone are dropped.
     pub fn report_failure(&self, failure: &ActionFailed) {
         self.lock().failure_subscribers.retain(|tell| tell(failure));
+    }
+
+    pub fn subscribe_wakes(&self, subscriber: WokeSubscriber) {
+        self.lock().woke_subscribers.push(subscriber);
+    }
+
+    /// Tell every wake subscriber; ones whose client is gone are dropped.
+    pub fn report_woke(&self, woke: &SnoozeWoke) {
+        self.lock().woke_subscribers.retain(|tell| tell(woke));
     }
 }
