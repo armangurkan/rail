@@ -477,4 +477,24 @@ impl Store {
             |r| r.get(0),
         )?)
     }
+
+    /// How many of `threads` (the account's) a snooze must refuse: no mail in the inbox and no
+    /// snooze still waiting (a snoozed thread may take a new time).
+    ///
+    /// # Errors
+    /// The database's, as a `StoreError`.
+    pub fn unsnoozable(&self, account_id: i64, threads: &[i64]) -> Result<usize, StoreError> {
+        let refused: i64 = self.conn.query_row(
+            "SELECT count(*) FROM threads t
+             WHERE t.account_id = ?1 AND t.id IN (SELECT value FROM json_each(?2))
+               AND NOT EXISTS (SELECT 1 FROM messages m JOIN message_folders mf ON mf.message_id = m.id
+                               JOIN folders f ON f.id = mf.folder_id
+                               WHERE m.thread_id = t.id AND f.kind = 'inbox')
+               AND NOT EXISTS (SELECT 1 FROM snoozes s WHERE s.account_id = t.account_id
+                               AND s.thread_remote = t.remote_id AND s.woken_at IS NULL)",
+            params![account_id, json(&threads)],
+            |r| r.get(0),
+        )?;
+        Ok(usize::try_from(refused).unwrap_or(0))
+    }
 }

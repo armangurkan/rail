@@ -11,6 +11,7 @@ mod pending;
 mod presets;
 mod remove;
 mod secrets;
+mod snooze;
 mod status;
 mod sync;
 
@@ -47,5 +48,7 @@ pub(crate) fn registry() -> Registry {
     registry.register::<op::DraftDiscard, _, _>(drafts::discard);
     registry.register::<op::DraftPush, _, _>(drafts_gmail::push);
     registry.register::<op::DraftImport, _, _>(drafts_gmail::import);
+    registry.register::<op::SnoozeSet, _, _>(snooze::set);
+    registry.register::<op::SnoozeClear, _, _>(snooze::clear);
     registry
 }

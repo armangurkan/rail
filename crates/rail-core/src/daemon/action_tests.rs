@@ -21,18 +21,18 @@ use crate::store::Store;
 use crate::store::drafts::DraftKind;
 use crate::test_support::{daemon_context, mock_factory, start_daemon};
 
-const WORK: &str = "[general]\nsecrets = \"file\"\npoll_interval = \"60s\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\n";
+pub(super) const WORK: &str = "[general]\nsecrets = \"file\"\npoll_interval = \"60s\"\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"cid\"\n";
 const CORP: &str = "\n[[accounts]]\nname = \"corp\"\nkind = \"m365\"\naddress = \"me@corp.example\"\nclient_id = \"cid2\"\n";
-const BOUND: Duration = Duration::from_secs(15);
+pub(super) const BOUND: Duration = Duration::from_secs(15);
 
-struct Daemon {
+pub(super) struct Daemon {
     _tmp: tempfile::TempDir,
-    paths: Paths,
-    mock: MockProvider,
-    client: DaemonClient,
+    pub(super) paths: Paths,
+    pub(super) mock: MockProvider,
+    pub(super) client: DaemonClient,
 }
 
-async fn daemon(config: &str) -> Daemon {
+pub(super) async fn daemon(config: &str) -> Daemon {
     let tmp = tempfile::tempdir().unwrap();
     let paths = Paths::all_in(tmp.path());
     std::fs::create_dir_all(&paths.config_dir).unwrap();
@@ -88,7 +88,7 @@ impl Daemon {
         .expect("synced");
     }
 
-    fn thread(&self, remote: &str) -> i64 {
+    pub(super) fn thread(&self, remote: &str) -> i64 {
         Store::open_reader(&self.paths.db_file())
             .unwrap()
             .conn()
@@ -140,7 +140,7 @@ impl Daemon {
             .ok()
     }
 
-    async fn apply(
+    pub(super) async fn apply(
         &self,
         threads: Vec<i64>,
         action: Action,
@@ -157,7 +157,7 @@ impl Daemon {
         self.client.call::<ActionApply>(&request).await
     }
 
-    fn in_inbox(&self, remote: &str) -> bool {
+    pub(super) fn in_inbox(&self, remote: &str) -> bool {
         Store::open_reader(&self.paths.db_file())
             .unwrap()
             .conn()

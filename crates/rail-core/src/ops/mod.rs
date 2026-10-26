@@ -14,12 +14,15 @@ pub mod op;
 pub mod pending;
 pub mod presets;
 pub mod secrets;
+pub mod snooze;
 pub mod status;
 pub mod sync;
 pub mod untrusted;
 
 #[cfg(test)]
 mod drafts_tests;
+#[cfg(test)]
+mod snooze_tests;
 #[cfg(test)]
 mod tests;
 
@@ -63,6 +66,10 @@ pub use presets::{
     PresetsListResponse,
 };
 pub use secrets::{SecretsConfigureRequest, SecretsConfigureResponse};
+pub use snooze::{
+    MAX_SNOOZE_SECS, MIN_SNOOZE_SECS, SnoozeClearRequest, SnoozeClearResponse, SnoozeSetRequest,
+    SnoozeSetResponse, SnoozeWoke,
+};
 pub use status::{
     AccountStatus, AccountSummary, AccountsListRequest, AccountsListResponse, DoctorReport,
     StatusRequest, StatusResponse, TokenState,

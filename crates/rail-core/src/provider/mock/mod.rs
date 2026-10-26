@@ -259,6 +259,29 @@ impl MockProvider {
         Ok(())
     }
 
+    /// Gmail's `messages.batchModify` adding `INBOX` (a snooze's return), played on the mailbox
+    /// and recorded; it fails as a modify does.
+    pub(crate) async fn return_to_inbox(&self, messages: &[RemoteId]) -> Result<(), ProviderError> {
+        self.enter(Call::Modify, None)?;
+        let mut m = self.lock();
+        for id in messages {
+            if let Some(env) = m.messages.get_mut(id)
+                && !env.folders.iter().any(|f| f == super::INBOX_LABEL)
+            {
+                env.folders.push(super::INBOX_LABEL.into());
+            }
+            let change = Relabel {
+                remote_id: id.clone(),
+                add_folders: vec![super::INBOX_LABEL.into()],
+                remove_folders: Vec::new(),
+                read: None,
+                starred: None,
+            };
+            record(&mut m, Change::Relabel(change));
+        }
+        Ok(())
+    }
+
     pub(crate) fn with<R>(&self, f: impl FnOnce(&mut Mailbox) -> R) -> R {
         f(&mut self.lock())
     }
@@ -597,8 +620,7 @@ impl Provider for MockProvider {
         match super::gmail::actions::gmail_call(change) {
             GmailCall::Trash => self.trash(threads).await,
             GmailCall::Modify { add, remove } => self.modify(threads, &add, &remove).await,
-            // A snooze's return: `applied` above records it; failures come as a modify's do.
-            GmailCall::Return { .. } => self.enter(Call::Modify, None),
+            GmailCall::Return { messages } => self.return_to_inbox(&messages).await,
         }
     }
 

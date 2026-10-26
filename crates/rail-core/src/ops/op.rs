@@ -28,6 +28,7 @@ use super::presets::{
     PresetFetchRequest, PresetFetchResponse, PresetsListRequest, PresetsListResponse,
 };
 use super::secrets::{SecretsConfigureRequest, SecretsConfigureResponse};
+use super::snooze::{SnoozeClearRequest, SnoozeClearResponse, SnoozeSetRequest, SnoozeSetResponse};
 use super::status::{AccountsListRequest, AccountsListResponse, StatusRequest, StatusResponse};
 use super::sync::{
     SearchRequest, SearchResponse, SyncNowRequest, SyncNowResponse, SyncStatusRequest,
@@ -60,9 +61,11 @@ pub mod names {
     pub const DRAFT_DISCARD: &str = "draft.discard";
     pub const DRAFT_PUSH: &str = "draft.push";
     pub const DRAFT_IMPORT: &str = "draft.import";
+    pub const SNOOZE_SET: &str = "snooze.set";
+    pub const SNOOZE_CLEAR: &str = "snooze.clear";
 
     /// Every user operation, in the order of the specs' tables.
-    pub const ALL: [&str; 24] = [
+    pub const ALL: [&str; 26] = [
         STATUS,
         ACCOUNTS_LIST,
         PRESETS_LIST,
@@ -87,6 +90,8 @@ pub mod names {
         DRAFT_DISCARD,
         DRAFT_PUSH,
         DRAFT_IMPORT,
+        SNOOZE_SET,
+        SNOOZE_CLEAR,
     ];
 
     /// The daemon's own methods: the handshake and its lifecycle. Not user operations.
@@ -102,6 +107,8 @@ pub mod names {
 
     /// Sent, on the same watch as `sync.progress`, when Gmail refused an action for good.
     pub const ACTION_FAILED: &str = "action.failed";
+    /// Sent, on the same watch as `sync.progress`, when snoozed threads came back to the inbox.
+    pub const SNOOZE_WOKE: &str = "snooze.woke";
 }
 
 /// One operation: its wire name and the types it takes and returns.
@@ -231,4 +238,12 @@ operation!(
 operation!(
     /// Ask the daemon to exit once running saves finish.
     DaemonStop, names::DAEMON_STOP, DaemonStopRequest, DaemonStopResponse
+);
+operation!(
+    /// Archive threads now and put them back at a time. Terminal-only.
+    SnoozeSet, names::SNOOZE_SET, SnoozeSetRequest, SnoozeSetResponse
+);
+operation!(
+    /// Put snoozed threads back now. Terminal-only.
+    SnoozeClear, names::SNOOZE_CLEAR, SnoozeClearRequest, SnoozeClearResponse
 );

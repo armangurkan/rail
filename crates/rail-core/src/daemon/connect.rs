@@ -28,7 +28,7 @@ use crate::paths::{Paths, canonical_dir, create_private_dir};
 /// same draft again), `draft.push` (the token finds the row; a second push folds into it),
 /// `draft.import` (a second import answers the draft the first made), `action.undo`,
 /// `action.retry` and `draft.discard`.
-const RETRY_SAFE: [&str; 20] = [
+const RETRY_SAFE: [&str; 22] = [
     names::STATUS,
     names::ACCOUNTS_LIST,
     names::PRESETS_LIST,
@@ -49,6 +49,8 @@ const RETRY_SAFE: [&str; 20] = [
     names::DRAFT_DISCARD,
     names::DRAFT_PUSH,
     names::DRAFT_IMPORT,
+    names::SNOOZE_SET,
+    names::SNOOZE_CLEAR,
 ];
 
 /// True when `operation` may be sent again on a fresh connection.

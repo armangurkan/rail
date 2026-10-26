@@ -5,7 +5,7 @@
 -- messages it took out of the inbox in snooze_messages and clears the link. woken_at: when the
 -- thread went back; the rollup dates it there. A snooze's state is read from these columns.
 
-CREATE TABLE snoozes (
+CREATE TABLE IF NOT EXISTS snoozes (
   id            INTEGER PRIMARY KEY,
   account_id    INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   thread_remote TEXT    NOT NULL,
@@ -16,11 +16,11 @@ CREATE TABLE snoozes (
   UNIQUE (account_id, thread_remote)
 );
 
-CREATE INDEX snoozes_due ON snoozes(account_id, until)
+CREATE INDEX IF NOT EXISTS snoozes_due ON snoozes(account_id, until)
   WHERE archive_row IS NULL AND woken_at IS NULL;
-CREATE INDEX snoozes_by_archive ON snoozes(archive_row) WHERE archive_row IS NOT NULL;
+CREATE INDEX IF NOT EXISTS snoozes_by_archive ON snoozes(archive_row) WHERE archive_row IS NOT NULL;
 
-CREATE TABLE snooze_messages (
+CREATE TABLE IF NOT EXISTS snooze_messages (
   snooze_id      INTEGER NOT NULL REFERENCES snoozes(id) ON DELETE CASCADE,
   message_remote TEXT    NOT NULL,
   PRIMARY KEY (snooze_id, message_remote)

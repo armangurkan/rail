@@ -62,7 +62,7 @@ fn read_in_store(
 /// Every thread is the account's, every label one of its labels, a move's folder one of its
 /// move targets (`FolderModel::move_kinds`), and a one-folder mailbox that archives has an
 /// Archive folder.
-async fn check_in_store(
+pub(super) async fn check_in_store(
     call: &Call,
     account_id: i64,
     threads: Vec<i64>,
