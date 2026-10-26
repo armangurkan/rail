@@ -697,7 +697,9 @@ the sidebar with the number of snoozed threads (`◷`, or `^` with `icons = "asc
 snoozed mail was all trashed, moved or put back in the inbox since has nothing left to bring back,
 so it is neither listed nor offered `Return to inbox now`. The reader
 shows `Snoozed until Mon 13 Oct 2025 08:00` under a snoozed thread's recipients. Drafts cannot be
-snoozed (`Not available on drafts`).
+snoozed (`Not available on drafts`). A selection snoozes its threads that have mail in the inbox,
+or are snoozed already, and leaves the others where they are; a snooze with none of those is
+refused (`Only a thread in the inbox can be snoozed.`).
 
 New mail in the thread brings it back early; your own reply, which lands in Sent, does not, and
 neither does a message of the snooze put back in the inbox from another device (snoozing the

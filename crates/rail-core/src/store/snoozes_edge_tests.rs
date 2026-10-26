@@ -310,6 +310,18 @@ fn retrying_a_pairs_archive_after_one_thread_was_snoozed_again_keeps_the_new_sno
 }
 
 #[test]
+fn unsnoozable_names_the_threads_with_nothing_in_the_inbox() {
+    let mut store = seeded();
+    let (t1, t2) = (thread(&store, "t1"), thread(&store, "t2"));
+    sync(
+        &mut store,
+        vec![in_folders("m3", "t2", 3_000, &["TRASH"])],
+        NOW + 20,
+    );
+    assert_eq!(store.unsnoozable(1, &[t1, t2]).unwrap(), vec![t2]);
+}
+
+#[test]
 fn a_thread_whose_snoozed_mail_was_all_trashed_is_refused_another_snooze() {
     let mut store = seeded();
     let t1 = thread(&store, "t1");
@@ -320,7 +332,11 @@ fn a_thread_whose_snoozed_mail_was_all_trashed_is_refused_another_snooze() {
         in_folders("m2", "t1", 2_000, &["TRASH"]),
     ];
     sync(&mut store, trashed, NOW + 20);
-    assert_eq!(store.unsnoozable(1, &[t1]).unwrap(), 1, "nothing held");
+    assert_eq!(
+        store.unsnoozable(1, &[t1]).unwrap().len(),
+        1,
+        "nothing held"
+    );
     assert_eq!(
         snooze(&mut store, vec![t1], NOW + 2 * HOUR, "b"),
         (vec![], 0)

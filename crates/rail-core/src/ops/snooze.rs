@@ -14,6 +14,8 @@ use super::{OpError, OutboxId};
 pub const MIN_SNOOZE_SECS: i64 = 60;
 /// The latest: 366 days from now.
 pub const MAX_SNOOZE_SECS: i64 = 366 * 24 * 60 * 60;
+/// `snooze.set`'s refusal when none of its threads has mail in the inbox or a snooze to move.
+pub const NOT_IN_INBOX: &str = "Only a thread in the inbox can be snoozed.";
 
 /// `snooze.set`: one account's threads (the TUI sends one call per account).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -36,7 +38,8 @@ pub struct SnoozeSetRequest {
 pub struct SnoozeSetResponse {
     /// The archive's rows, for `action.undo`; none when every thread was snoozed already.
     pub rows: Vec<OutboxId>,
-    /// How many of the threads are snoozed now.
+    /// How many of the threads are snoozed now: those with mail in the inbox, or snoozed
+    /// already. A thread with neither was left out.
     pub snoozed: usize,
 }
 

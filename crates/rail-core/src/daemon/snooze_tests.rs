@@ -1,8 +1,8 @@
 //! `snooze.set` and `snooze.clear` through a real daemon over the fake Gmail: the archive goes
 //! through the outbox and the snooze becomes active with the message it moved; a replayed token
-//! answers with its archive row; a time too soon and a thread with nothing in the inbox are
-//! refused; a clear sends the return, then the unread, and the thread is back; and a reply wakes
-//! a snooze at once.
+//! answers with its archive row; a time too soon, and a request with nothing in the inbox, are
+//! refused, while a mixed one snoozes the threads it can; a clear sends the return, then the
+//! unread, and the thread is back; and a reply wakes a snooze at once.
 
 use std::time::Duration;
 
@@ -303,4 +303,67 @@ async fn snoozing_an_archived_snoozed_thread_again_takes_the_new_time() {
     assert_eq!((again.rows, again.snoozed), (vec![], 1));
     let store = Store::open_reader(&d.paths.db_file()).unwrap();
     assert_eq!(store.snoozes(1).unwrap()[0].until, later);
+}
+
+/// Archive `threads` (no grace) and wait until their mail has left the inbox.
+async fn archived(d: &Daemon, threads: &[(&str, &str)]) {
+    let ids = threads.iter().map(|(t, _)| d.thread(t)).collect();
+    d.apply(ids, Action::Archive {}, false, "archive")
+        .await
+        .unwrap();
+    for (_, m) in threads {
+        until("archived", || (!d.in_inbox(m)).then_some(())).await;
+    }
+}
+
+#[tokio::test]
+async fn a_mixed_snooze_takes_the_inbox_thread_and_leaves_the_archived_one() {
+    let d = daemon(WORK).await;
+    let (t1, t2) = (d.thread("t1"), d.thread("t2"));
+    archived(&d, &[("t2", "m2")]).await;
+    let answer = snooze(&d, vec![t1, t2], unix_now() + 3_600, false, "s1")
+        .await
+        .unwrap();
+    assert_eq!((answer.rows.len(), answer.snoozed), (1, 1));
+    until("t1 snoozed", || {
+        matches!(snooze_of(&d, "t1"), Some((SnoozeState::Active, _))).then_some(())
+    })
+    .await;
+    assert_eq!(snooze_of(&d, "t2"), None, "the archived thread is left out");
+}
+
+#[tokio::test]
+async fn a_snooze_with_nothing_in_the_inbox_among_its_threads_is_refused() {
+    let d = daemon(WORK).await;
+    let (t1, t2) = (d.thread("t1"), d.thread("t2"));
+    archived(&d, &[("t1", "m1"), ("t2", "m2")]).await;
+    let refused = snooze(&d, vec![t1, t2], unix_now() + 3_600, false, "s1")
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::InvalidInput);
+    assert_eq!(
+        refused.message,
+        "Only a thread in the inbox can be snoozed."
+    );
+    assert!(snooze_of(&d, "t1").is_none() && snooze_of(&d, "t2").is_none());
+}
+
+#[tokio::test]
+async fn a_snoozed_thread_and_a_fresh_one_are_snoozed_together() {
+    let d = daemon(WORK).await;
+    let (t1, t2) = (d.thread("t1"), d.thread("t2"));
+    snooze(&d, vec![t1], unix_now() + 3_600, false, "s1")
+        .await
+        .unwrap();
+    until("t1 active", || {
+        matches!(snooze_of(&d, "t1"), Some((SnoozeState::Active, _))).then_some(())
+    })
+    .await;
+    let later = unix_now() + 7_200;
+    let both = snooze(&d, vec![t1, t2], later, false, "s2").await.unwrap();
+    assert_eq!((both.rows.len(), both.snoozed), (1, 2), "one archive: t2's");
+    let store = Store::open_reader(&d.paths.db_file()).unwrap();
+    let mut ends: Vec<i64> = store.snoozes(1).unwrap().iter().map(|s| s.until).collect();
+    ends.dedup();
+    assert_eq!(ends, [later]);
 }

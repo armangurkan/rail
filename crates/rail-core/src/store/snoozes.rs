@@ -724,31 +724,29 @@ impl Store {
         )?)
     }
 
-    /// How many of `threads` (the account's) a snooze must refuse: no mail in the inbox and no
-    /// snooze holding it (`holds!`; a snoozed thread may take a new time).
+    /// The threads of `threads` (the account's) a snooze cannot take, in id order: no mail in the
+    /// inbox and no snooze holding them (`holds!`; a snoozed thread may take a new time).
     ///
     /// # Errors
     /// The database's, as a `StoreError`.
-    pub fn unsnoozable(&self, account_id: i64, threads: &[i64]) -> Result<usize, StoreError> {
-        let refused: i64 = self.conn.query_row(
-            concat!(
-                "SELECT count(*) FROM threads t
-                 WHERE t.account_id = ?1 AND t.id IN (SELECT value FROM json_each(?2))
-                   AND NOT EXISTS (SELECT 1 FROM messages m
-                                   JOIN message_folders mf ON mf.message_id = m.id
-                                   JOIN folders f ON f.id = mf.folder_id
-                                   WHERE m.thread_id = t.id AND f.kind = 'inbox')
-                   AND NOT EXISTS (SELECT 1 FROM snoozes s
-                                   JOIN threads ht ON ht.account_id = s.account_id
-                                     AND ht.remote_id = s.thread_remote
-                                   LEFT JOIN outbox o ON o.id = s.archive_row
-                                   WHERE ht.id = t.id AND ",
-                holds!(),
-                ")"
-            ),
-            params![account_id, json(&threads)],
-            |r| r.get(0),
-        )?;
-        Ok(usize::try_from(refused).unwrap_or(0))
+    pub fn unsnoozable(&self, account_id: i64, threads: &[i64]) -> Result<Vec<i64>, StoreError> {
+        let mut stmt = self.conn.prepare(concat!(
+            "SELECT t.id FROM threads t
+             WHERE t.account_id = ?1 AND t.id IN (SELECT value FROM json_each(?2))
+               AND NOT EXISTS (SELECT 1 FROM messages m
+                               JOIN message_folders mf ON mf.message_id = m.id
+                               JOIN folders f ON f.id = mf.folder_id
+                               WHERE m.thread_id = t.id AND f.kind = 'inbox')
+               AND NOT EXISTS (SELECT 1 FROM snoozes s
+                               JOIN threads ht ON ht.account_id = s.account_id
+                                 AND ht.remote_id = s.thread_remote
+                               LEFT JOIN outbox o ON o.id = s.archive_row
+                               WHERE ht.id = t.id AND ",
+            holds!(),
+            ")
+             ORDER BY t.id"
+        ))?;
+        let rows = stmt.query_map(params![account_id, json(&threads)], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 }

@@ -67,8 +67,8 @@ pub use presets::{
 };
 pub use secrets::{SecretsConfigureRequest, SecretsConfigureResponse};
 pub use snooze::{
-    MAX_SNOOZE_SECS, MIN_SNOOZE_SECS, SnoozeClearRequest, SnoozeClearResponse, SnoozeSetRequest,
-    SnoozeSetResponse, SnoozeWoke,
+    MAX_SNOOZE_SECS, MIN_SNOOZE_SECS, NOT_IN_INBOX, SnoozeClearRequest, SnoozeClearResponse,
+    SnoozeSetRequest, SnoozeSetResponse, SnoozeWoke,
 };
 pub use status::{
     AccountStatus, AccountSummary, AccountsListRequest, AccountsListResponse, DoctorReport,
