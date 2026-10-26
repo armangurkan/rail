@@ -17,7 +17,7 @@ const ACME: &str = "name = \"Acme Gmail\"\nkind = \"gmail\"\nclient_id = \"acme.
 pub(super) const LIMIT: Duration = Duration::from_secs(30);
 
 /// Kills the child if the test fails half way, so no wizard is left running.
-pub(super) struct Running(Child);
+pub(super) struct Running(pub(super) Child);
 
 impl Drop for Running {
     fn drop(&mut self) {
@@ -89,7 +89,7 @@ fn start(dir: &tempfile::TempDir, url_file: &std::path::Path) -> (Running, Child
     (child, keys)
 }
 
-fn wait_for_exit(child: &mut Running, output: &Mutex<Vec<u8>>) -> ExitStatus {
+pub(super) fn wait_for_exit(child: &mut Running, output: &Mutex<Vec<u8>>) -> ExitStatus {
     let deadline = Instant::now() + LIMIT;
     loop {
         if let Some(status) = child.0.try_wait().unwrap() {

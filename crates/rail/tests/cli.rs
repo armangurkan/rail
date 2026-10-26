@@ -714,5 +714,11 @@ mod pty;
 #[path = "cli/service.rs"]
 mod service;
 
+/// `h` snoozing a thread end to end, in a pseudo-terminal like the flows above (Linux, debug).
+#[cfg(target_os = "linux")]
+#[cfg(debug_assertions)]
+#[path = "cli/snooze.rs"]
+mod snooze;
+
 #[path = "cli/sync.rs"]
 mod sync;

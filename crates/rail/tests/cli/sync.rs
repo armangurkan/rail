@@ -12,10 +12,10 @@ use super::{
     write_config,
 };
 
-const API: &str = "/gmail/v1/users/me";
+pub(super) const API: &str = "/gmail/v1/users/me";
 
 /// Tokens that stay fresh, so no test refreshes.
-fn store_tokens(dir: &tempfile::TempDir) {
+pub(super) fn store_tokens(dir: &tempfile::TempDir) {
     use rail_core::auth::{FileSecretStore, SecretStore, TokenSet};
     let tokens = TokenSet {
         access_token: "test-access".into(),
@@ -44,7 +44,7 @@ fn message(id: &str, subject: &str, days_ago: i64) -> Value {
 }
 
 /// Fake Gmail with one recent message `m1`; `search` hits an old `m9` too.
-async fn gmail() -> MockServer {
+pub(super) async fn gmail() -> MockServer {
     gmail_with(Duration::ZERO, search_hits()).await
 }
 
