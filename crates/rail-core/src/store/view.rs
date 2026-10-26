@@ -640,7 +640,6 @@ impl Store {
         })
     }
 
-    /// Threads of these accounts (a JSON id list) with a starred message and an unread one.
     /// Threads a snooze holds in these accounts (`snoozes::HELD`).
     fn snoozed(&self, ids: &str) -> Result<u64, StoreError> {
         let n: i64 = self.conn.query_row(
@@ -654,6 +653,7 @@ impl Store {
         Ok(count(n))
     }
 
+    /// Threads of these accounts (a JSON id list) with a starred message and an unread one.
     fn starred_unread(&self, ids: &str) -> Result<u64, StoreError> {
         let n: i64 = self.conn.query_row(
             "SELECT count(*) FROM threads t
