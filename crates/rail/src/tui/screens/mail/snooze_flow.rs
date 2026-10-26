@@ -4,20 +4,30 @@
 //! archive; returning sends `snooze.clear`. `snooze.woke` reads the list again and says what came
 //! back.
 
+use std::path::PathBuf;
+
 use rail_core::ops::{Action as MailAction, OpError, SnoozeClearResponse, SnoozeWoke};
+use rail_core::paths::{Paths, write_private_atomic};
 
 use super::MailScreen;
 use super::actions_pick::Picking;
 use super::selection::Picked;
 use crate::tui::app::Effect;
-use crate::tui::data::ReadError;
+use crate::tui::data::{ReadError, job};
 use crate::tui::keys::Action;
 use crate::tui::modals::{Modal, Picker, PickerKind};
-use crate::tui::snooze::snooze_choices;
+use crate::tui::snooze::{parse_snooze, snooze_choices};
 use crate::tui::text::{escape, fit};
 
 /// The most of a subject the wake notice shows; the status bar cuts it to its width too.
 const SHOWN_SUBJECT_CHARS: usize = 120;
+/// The longest typed time kept for "Last used"; longer text in the file is ignored.
+const LAST_CHARS: usize = 100;
+
+/// Where the last typed snooze time is kept, so the chooser offers it again after a restart.
+fn last_file(paths: &Paths) -> PathBuf {
+    paths.state_dir.join("snooze-last")
+}
 
 impl MailScreen {
     /// `h` on the list or the reader: read which of the threads are snoozed, then the chooser.
@@ -53,7 +63,8 @@ impl MailScreen {
                 let clock = self.ctx.clock.clone();
                 let until = ends.first().copied().filter(|_| count == 1);
                 let choices = snooze_choices(&clock);
-                let chooser = Picker::snooze(&choices, clock, until, !ends.is_empty());
+                let last = (self.last_snooze.as_deref()).and_then(|t| parse_snooze(t, &clock).ok());
+                let chooser = Picker::snooze(&choices, clock, (until, !ends.is_empty()), last);
                 self.modal = Some(Modal::Picker(chooser));
             }
             Err(error) => {
@@ -65,9 +76,41 @@ impl MailScreen {
     }
 
     /// A time was chosen: the threads are snoozed until then, with grace. Their archive closes
-    /// the reader as archive does.
-    pub(super) fn send_snooze(&mut self, targets: &[(i64, Picked)], until: i64) -> Vec<Effect> {
-        self.send_with(MailAction::Archive {}, targets, true, Some(until))
+    /// the reader as archive does. A typed time (`said`) is kept for "Last used".
+    pub(super) fn send_snooze(
+        &mut self,
+        targets: &[(i64, Picked)],
+        until: i64,
+        said: Option<String>,
+    ) -> Vec<Effect> {
+        let kept = said.map(|said| self.remember_snooze(said));
+        let sent = self.send_with(MailAction::Archive {}, targets, true, Some(until));
+        kept.into_iter().chain(sent).collect()
+    }
+
+    /// The last typed time, read when the screen starts; a missing, unreadable or overlong file
+    /// offers nothing.
+    pub(super) fn load_last_snooze(&mut self) {
+        let text = std::fs::read_to_string(last_file(&self.ctx.paths));
+        self.last_snooze = text
+            .ok()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty() && t.chars().count() <= LAST_CHARS);
+    }
+
+    /// Keep `said` for "Last used": for the session at once, and in the state file (owner-only,
+    /// written atomically) off the screen's thread. A failed write is logged; the session keeps it.
+    fn remember_snooze(&mut self, said: String) -> Effect {
+        self.last_snooze = Some(said.clone());
+        let path = last_file(&self.ctx.paths);
+        job(move |_sink| async move {
+            let written =
+                tokio::task::spawn_blocking(move || write_private_atomic(&path, said.as_bytes()))
+                    .await;
+            if !matches!(written, Ok(Ok(()))) {
+                tracing::warn!("could not keep the last snooze time in the state directory");
+            }
+        })
     }
 
     /// "Return to inbox now": one `snooze.clear` per account.

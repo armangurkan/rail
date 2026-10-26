@@ -108,7 +108,9 @@ impl MailScreen {
             }
             Command::Labels { add, remove } => MailAction::Labels { add, remove },
             Command::MoveTo(to) => MailAction::Move { to },
-            Command::Snooze(until) => return self.send_snooze(&picking.targets, until),
+            Command::Snooze { until, said } => {
+                return self.send_snooze(&picking.targets, until, said);
+            }
             Command::SnoozeReturn => return self.return_snoozed(&picking.targets),
             _ => return Vec::new(),
         };

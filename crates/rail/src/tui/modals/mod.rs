@@ -68,8 +68,12 @@ pub enum Command {
     KeepText,
     /// "Discard the unsaved changes?" was answered yes: close the composer.
     DiscardUnsaved,
-    /// The snooze chooser's answer: snooze its threads until this time (Unix seconds).
-    Snooze(i64),
+    /// The snooze chooser's answer: snooze its threads until `until` (Unix seconds); `said` is
+    /// the text typed for it, which the chooser offers again as "Last used".
+    Snooze {
+        until: i64,
+        said: Option<String>,
+    },
     /// The snooze chooser's "Return to inbox now": put its snoozed threads back.
     SnoozeReturn,
 }

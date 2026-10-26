@@ -234,6 +234,8 @@ pub struct MailScreen {
     show_clock: bool,
     /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
     open_files: OpenFiles,
+    /// The last time typed into the snooze chooser, offered again as "Last used".
+    last_snooze: Option<String>,
     /// The browser confirmation was answered yes this session.
     html_confirmed: bool,
     /// The message `o` is waiting on a body fetch for.
@@ -303,6 +305,7 @@ impl MailScreen {
             hints,
             show_clock,
             open_files,
+            last_snooze: None,
             html_confirmed: false,
             pending_open: None,
             compose: None,
@@ -623,6 +626,7 @@ impl Screen for MailScreen {
         if self.ctx.depth == ColorDepth::Ansi && self.themes.current.scheme.is_some() {
             self.status.notify(themes::NEEDS_TRUECOLOR, self.tick);
         }
+        self.load_last_snooze();
         vec![
             self.ctx.link.watch(),
             self.read_list(PageAt::First, Place::Top),

@@ -40,6 +40,8 @@ const SNOOZE_HINT: &str = "Type a time or pick one. Enter snoozes, Esc cancels."
 /// the time.
 pub const RETURN_NOW: i64 = 0;
 const RETURN_LABEL: &str = "Return to inbox now";
+/// The label of the row offering the last typed time again.
+const LAST_LABEL: &str = "Last used";
 /// The label of the row a typed time makes.
 const TYPED_LABEL: &str = "At";
 
@@ -183,17 +185,22 @@ impl Picker {
         picker
     }
 
-    /// The snooze chooser: "Return to inbox now" first when `snoozed`, then `choices`; its title
-    /// says until when the threads are snoozed (`until`), and a typed time is offered first.
+    /// The snooze chooser: "Return to inbox now" first when `snoozed`, then the last typed time
+    /// (`last`, unless a choice offers the same), then `choices`. Its title says until when the
+    /// threads are snoozed (`until`), and a typed time is offered first.
     pub fn snooze(
         choices: &[SnoozeChoice],
         clock: Clock,
-        until: Option<i64>,
-        snoozed: bool,
+        (until, snoozed): (Option<i64>, bool),
+        last: Option<i64>,
     ) -> Self {
         let back = snoozed.then_some((RETURN_NOW, RETURN_LABEL));
+        let last = last
+            .filter(|at| choices.iter().all(|c| c.at != *at))
+            .map(|at| (at, LAST_LABEL));
         let rows = back
             .into_iter()
+            .chain(last)
             .chain(choices.iter().map(|c| (c.at, c.label)));
         let items = rows
             .map(|(id, name)| PickerItem {
@@ -276,7 +283,8 @@ impl Picker {
     /// The highlighted item's command, for the kinds that choose one item.
     fn choice(&self) -> Option<Command> {
         if let Some(at) = self.typed().filter(|_| self.selected == 0) {
-            return Some(Command::Snooze(at));
+            let said = Some(self.input.value().trim().to_string());
+            return Some(Command::Snooze { until: at, said });
         }
         let item = self
             .shown
@@ -295,7 +303,10 @@ impl Picker {
             PickerKind::Account => usize::try_from(item.id).ok().map(Command::Account),
             PickerKind::Draft => usize::try_from(item.id).ok().map(Command::DraftRow),
             PickerKind::Snooze if item.id == RETURN_NOW => Some(Command::SnoozeReturn),
-            PickerKind::Snooze => Some(Command::Snooze(item.id)),
+            PickerKind::Snooze => Some(Command::Snooze {
+                until: item.id,
+                said: None,
+            }),
         }
     }
 

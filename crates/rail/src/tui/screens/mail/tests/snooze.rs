@@ -340,3 +340,60 @@ async fn typing_a_choices_name_offers_that_choice_once() {
     let top = f.screen.list.selected().unwrap().key.thread_id;
     assert_eq!(snoozes(&f), [set(vec![top], MIDNIGHT + DAY + 8 * HOUR)]);
 }
+
+/// The screen again over the same files and daemon, as Rail starting anew.
+async fn restart(f: &mut Fixture) {
+    f.screen = MailScreen::new(mail_ctx(&f.paths, f.fake.clone()), work_and_home());
+    let effects = f.screen.start();
+    settle(&mut f.screen, effects).await;
+}
+
+fn last_file(f: &Fixture) -> std::path::PathBuf {
+    f.paths.state_dir.join("snooze-last")
+}
+
+#[tokio::test]
+async fn a_typed_time_is_offered_again_as_last_used_even_after_a_restart() {
+    let mut f = fixture(3).await;
+    press(&mut f, KeyCode::Char('h')).await;
+    type_text(&mut f, "7pm").await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(std::fs::read_to_string(last_file(&f)).unwrap(), "7pm");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(last_file(&f))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    for screen in ["this session", "after a restart"] {
+        if screen == "after a restart" {
+            restart(&mut f).await;
+        }
+        press(&mut f, KeyCode::Char('h')).await;
+        let shown = drawn(&f);
+        assert!(
+            line_of(&shown, "Last used") < line_of(&shown, "Later today"),
+            "{screen}: {shown}"
+        );
+        let row = shown.lines().nth(line_of(&shown, "Last used")).unwrap();
+        assert!(row.contains("Fri 19:00"), "{screen}: {row}");
+        press(&mut f, KeyCode::Esc).await;
+    }
+}
+
+#[tokio::test]
+async fn last_used_is_left_out_when_a_choice_says_the_same_or_it_has_passed() {
+    let mut f = fixture(3).await;
+    std::fs::create_dir_all(&f.paths.state_dir).unwrap();
+    for (said, why) in [("tomorrow", "the Tomorrow row"), ("2025-10-01", "passed")] {
+        std::fs::write(last_file(&f), said).unwrap();
+        restart(&mut f).await;
+        press(&mut f, KeyCode::Char('h')).await;
+        let shown = drawn(&f);
+        assert!(!shown.contains("Last used"), "{why}: {shown}");
+        press(&mut f, KeyCode::Esc).await;
+    }
+}
