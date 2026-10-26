@@ -232,3 +232,31 @@ async fn a_reply_to_a_snoozed_thread_brings_it_back_without_waiting_for_the_work
     let woke: SnoozeWoke = serde_json::from_value(woke).unwrap();
     assert_eq!(woke.threads, [t1]);
 }
+
+#[tokio::test]
+async fn a_thread_the_account_does_not_hold_is_refused() {
+    let d = daemon(WORK).await;
+    let refused = snooze(&d, vec![999_999], unix_now() + 3_600, false, "s1")
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::InvalidInput);
+    assert!(snooze_of(&d, "t1").is_none());
+}
+
+#[tokio::test]
+async fn snoozing_an_archived_snoozed_thread_again_takes_the_new_time() {
+    let d = daemon(WORK).await;
+    let t1 = d.thread("t1");
+    snooze(&d, vec![t1], unix_now() + 3_600, false, "s1")
+        .await
+        .unwrap();
+    until("active", || {
+        matches!(snooze_of(&d, "t1"), Some((SnoozeState::Active, _))).then_some(())
+    })
+    .await;
+    let later = unix_now() + 7_200;
+    let again = snooze(&d, vec![t1], later, false, "s2").await.unwrap();
+    assert_eq!((again.rows, again.snoozed), (vec![], 1));
+    let store = Store::open_reader(&d.paths.db_file()).unwrap();
+    assert_eq!(store.snoozes(1).unwrap()[0].until, later);
+}

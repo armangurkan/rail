@@ -4,7 +4,8 @@
 use serde_json::json;
 
 use super::snooze::{
-    MAX_SNOOZE_SECS, MIN_SNOOZE_SECS, SnoozeClearRequest, SnoozeSetRequest, SnoozeWoke,
+    MAX_SNOOZE_SECS, MIN_SNOOZE_SECS, SnoozeClearRequest, SnoozeClearResponse, SnoozeSetRequest,
+    SnoozeSetResponse, SnoozeWoke,
 };
 use super::{ErrorCode, names};
 
@@ -101,4 +102,32 @@ fn snooze_woke_has_the_spec_json() {
         serde_json::to_value(&woke).unwrap(),
         json!({"account": "work", "threads": [7]})
     );
+}
+
+#[test]
+fn the_requests_and_answers_round_trip_through_json() {
+    let request = set(vec![4, 9], NOW + 3_600, "tok");
+    let back: SnoozeSetRequest =
+        serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap();
+    assert_eq!(back, request);
+    let clear = SnoozeClearRequest {
+        account: "work".into(),
+        threads: vec![4],
+    };
+    let back: SnoozeClearRequest =
+        serde_json::from_value(serde_json::to_value(&clear).unwrap()).unwrap();
+    assert_eq!(back, clear);
+    let answer = SnoozeSetResponse {
+        rows: vec![7],
+        snoozed: 2,
+    };
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap(),
+        json!({"rows": [7], "snoozed": 2})
+    );
+    let back: SnoozeSetResponse =
+        serde_json::from_value(json!({"rows": [7], "snoozed": 2})).unwrap();
+    assert_eq!(back, answer);
+    let cleared: SnoozeClearResponse = serde_json::from_value(json!({"returned": 1})).unwrap();
+    assert_eq!(cleared, SnoozeClearResponse { returned: 1 });
 }

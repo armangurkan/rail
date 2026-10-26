@@ -270,6 +270,8 @@ mod tests {
             "addresses",
             "outbox",
             "messages_fts",
+            "snoozes",
+            "snooze_messages",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),
