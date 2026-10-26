@@ -209,8 +209,11 @@ pub enum MailEvent {
         seq: u64,
         result: Result<Vec<i64>, ReadError>,
     },
-    /// `snooze.clear` answered.
+    /// One `snooze.clear` call of the "Return to inbox now" with this `seq` answered: its
+    /// threads, and how many went back or why not.
     Unsnoozed {
+        seq: u64,
+        threads: Vec<i64>,
         result: Result<SnoozeClearResponse, OpError>,
     },
     /// How many threads a snooze put back, and the subject when it was one (`None`: it is no
@@ -397,8 +400,15 @@ impl fmt::Debug for MailEvent {
                 .field("seq", seq)
                 .field("ok", &result.is_ok())
                 .finish(),
-            Self::Unsnoozed { result } => f
+            // Thread ids: only how many is named.
+            Self::Unsnoozed {
+                seq,
+                threads,
+                result,
+            } => f
                 .debug_struct("Unsnoozed")
+                .field("seq", seq)
+                .field("threads", &threads.len())
                 .field("ok", &result.is_ok())
                 .finish(),
             Self::WokeRead { count, subject } => f

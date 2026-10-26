@@ -91,7 +91,11 @@ impl MailScreen {
                 kind: Timer::Filter,
             } if token == self.filter_token => self.apply_filter(),
             MailEvent::Snoozes { seq, result } => self.snoozes_read(seq, result),
-            MailEvent::Unsnoozed { result } => self.unsnoozed(result),
+            MailEvent::Unsnoozed {
+                seq,
+                threads,
+                result,
+            } => self.unsnoozed(seq, &threads, result),
             MailEvent::WokeRead { count, subject } => self.woke_read(count, subject),
             other => self.action_event(other),
         }

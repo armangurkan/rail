@@ -2,7 +2,9 @@
 //! refused as "not in the inbox" counts as left out, and only a snooze none of whose calls took
 //! anything says the refusal. A child module of `tests/snooze.rs`, whose helpers it uses.
 
-use rail_core::ops::{Action as MailAction, ActionApplyResponse, NOT_IN_INBOX, RowToken};
+use rail_core::ops::{
+    Action as MailAction, ActionApplyResponse, NOT_IN_INBOX, RowToken, SnoozeClearResponse,
+};
 
 use super::super::super::selection::Picked;
 use super::*;
@@ -240,4 +242,112 @@ async fn a_failed_call_keeps_its_error_on_the_bar_while_the_others_answer() {
             rows: vec![home_row]
         }]
     );
+}
+
+/// Work's first `n` threads, snoozed in the store until tomorrow 08:00 and put in the selection
+/// as a bulk select does (the list read before still shows them).
+fn snoozed_selection(f: &mut Fixture, n: usize) -> Vec<i64> {
+    let ids: Vec<i64> = {
+        let store = writer(f);
+        let mut statement = store
+            .conn()
+            .prepare("SELECT id FROM threads WHERE account_id = 1 ORDER BY id LIMIT ?1")
+            .unwrap();
+        statement
+            .query_map([i64::try_from(n).unwrap()], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    for id in &ids {
+        snoozed_in_store(f, *id, MIDNIGHT + DAY + 8 * HOUR);
+    }
+    let picked = Picked {
+        account_id: 1,
+        starred: false,
+        unread: true,
+    };
+    let targets: Vec<(i64, Picked)> = ids.iter().map(|id| (*id, picked)).collect();
+    assert!(!f.screen.actions.selection.add(&targets));
+    ids
+}
+
+/// The fake's `snooze.clear` calls: work's thread lists, in order.
+fn clears(f: &Fixture) -> Vec<Vec<i64>> {
+    snoozes(f)
+        .into_iter()
+        .map(|call| match call {
+            FakeCall::SnoozeClear { account, threads } => {
+                assert_eq!(account, "work");
+                threads
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn return_to_inbox_now_goes_in_chunks_of_two_hundred_and_sums_their_answers() {
+    let mut f = fixture(250).await;
+    let ids = snoozed_selection(&mut f, 250);
+    press(&mut f, KeyCode::Char('h')).await;
+    // "Return to inbox now" is the first row.
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(clears(&f), [ids[..200].to_vec(), ids[200..].to_vec()]);
+    let line = f.screen.status_line();
+    assert!(line.contains("returned 250 to the inbox"), "{line}");
+}
+
+#[tokio::test]
+async fn a_failed_return_call_puts_its_threads_back_and_keeps_its_error() {
+    let mut f = fixture(250).await;
+    let ids = snoozed_selection(&mut f, 250);
+    f.fake.clear_answers.lock().unwrap().extend([
+        Err(OpError::not_found("the daemon said no")),
+        Ok(SnoozeClearResponse { returned: 50 }),
+    ]);
+    press(&mut f, KeyCode::Char('h')).await;
+    press(&mut f, KeyCode::Enter).await;
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("Could not return to the inbox: the daemon said no"),
+        "{line}"
+    );
+    assert_eq!(selected_of(&f, 1), ids[..200], "the failed call's threads");
+}
+
+/// One `snooze.clear` call of the Return with `seq` answered: `returned` of `threads`.
+fn returned(seq: u64, threads: Vec<i64>, returned: usize) -> MailEvent {
+    MailEvent::Unsnoozed {
+        seq,
+        threads,
+        result: Ok(SnoozeClearResponse { returned }),
+    }
+}
+
+#[tokio::test]
+async fn an_older_returns_answer_is_not_counted() {
+    let mut f = fixture(2).await;
+    let ids = snoozed_selection(&mut f, 2);
+    press(&mut f, KeyCode::Char('h')).await;
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Enter)));
+    let older = f.screen.seq;
+    // The same threads again, before the first Return answered.
+    let picked = Picked {
+        account_id: 1,
+        starred: false,
+        unread: true,
+    };
+    let targets: Vec<(i64, Picked)> = ids.iter().map(|id| (*id, picked)).collect();
+    assert!(!f.screen.actions.selection.add(&targets));
+    press(&mut f, KeyCode::Char('h')).await;
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Enter)));
+    let newer = f.screen.seq;
+    assert_ne!(older, newer);
+    feed(&mut f, returned(older, ids.clone(), 2)).await;
+    let line = f.screen.status_line();
+    assert!(!line.contains("returned"), "{line}");
+    feed(&mut f, returned(newer, ids, 2)).await;
+    let line = f.screen.status_line();
+    assert!(line.contains("returned 2 to the inbox"), "{line}");
 }

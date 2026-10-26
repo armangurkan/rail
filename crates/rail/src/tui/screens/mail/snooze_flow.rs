@@ -8,10 +8,13 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use rail_core::guarded::{GuardedReadError, read_capped};
-use rail_core::ops::{Action as MailAction, OpError, SnoozeClearResponse, SnoozeWoke};
+use rail_core::ops::{
+    Action as MailAction, MAX_ACTION_THREADS, OpError, SnoozeClearResponse, SnoozeWoke,
+};
 use rail_core::paths::{Paths, write_private_atomic};
 
 use super::MailScreen;
+use super::actions::put_back_threads;
 use super::actions_pick::Picking;
 use super::bulk::SHOWN_SUBJECT_CHARS;
 use super::selection::Picked;
@@ -26,6 +29,20 @@ use crate::tui::text::{escape, fit};
 const LAST_CHARS: usize = 100;
 /// The most of the file read: `LAST_CHARS` characters of at most four bytes each.
 const LAST_BYTES: u64 = 4 * LAST_CHARS as u64;
+
+/// "Return to inbox now" while its calls answer: what they put back so far, and the threads it
+/// took from the selection, which a failed call gives back.
+#[derive(Debug)]
+pub(super) struct Returning {
+    seq: u64,
+    pending: usize,
+    returned: usize,
+    selected: Vec<(i64, Picked)>,
+    /// A failed call already gave its threads back.
+    restored: bool,
+    /// A call failed: its error stays on the bar while the others answer.
+    failed: bool,
+}
 
 /// Where the last typed snooze time is kept, so the chooser offers it again after a restart.
 fn last_file(paths: &Paths) -> PathBuf {
@@ -123,12 +140,16 @@ impl MailScreen {
         })
     }
 
-    /// "Return to inbox now": one `snooze.clear` per account. Like any applied action, it uses up
-    /// the selection it came from.
+    /// "Return to inbox now": `snooze.clear` in calls of up to `MAX_ACTION_THREADS` threads per
+    /// account, under one seq. Like any applied action, it uses up the selection it came from.
     pub(super) fn return_snoozed(&mut self, targets: &[(i64, Picked)]) -> Vec<Effect> {
-        if self.targets_are_selection(targets) {
+        let selected = if self.targets_are_selection(targets) {
             self.actions.selection.clear();
-        }
+            targets.to_vec()
+        } else {
+            Vec::new()
+        };
+        let seq = self.next_seq();
         let mut effects = Vec::new();
         for (account_id, threads) in self.group_by_account(targets) {
             let Some(account) = self.account_name(account_id) else {
@@ -136,22 +157,59 @@ impl MailScreen {
                     .notify("This account is no longer configured.", self.tick);
                 continue;
             };
-            effects.push(self.ctx.link.unsnooze(account, threads));
+            for chunk in threads.chunks(MAX_ACTION_THREADS) {
+                effects.push(self.ctx.link.unsnooze(seq, account.clone(), chunk.to_vec()));
+            }
         }
+        self.actions.returning = Some(Returning {
+            seq,
+            pending: effects.len(),
+            returned: 0,
+            selected,
+            restored: false,
+            failed: false,
+        });
         effects
     }
 
-    /// `snooze.clear` answered: how many went back, or why not.
+    /// One `snooze.clear` call of the Return with `seq` answered: the notice sums what its calls
+    /// put back. A failed call's error stays while the others answer, and its `threads` come
+    /// back to the selection; an older Return's answers are not counted.
     pub(super) fn unsnoozed(
         &mut self,
+        seq: u64,
+        threads: &[i64],
         result: Result<SnoozeClearResponse, OpError>,
     ) -> Vec<Effect> {
-        match result {
-            Ok(answer) => {
-                let text = format!("returned {} to the inbox", answer.returned);
-                self.status.notify(text, self.tick);
+        let tick = self.tick;
+        let current = self.actions.returning.as_mut().filter(|r| r.seq == seq);
+        let failed = match (current, result) {
+            (Some(back), Ok(answer)) => {
+                back.pending = back.pending.saturating_sub(1);
+                back.returned += answer.returned;
+                if !back.failed {
+                    let text = format!("returned {} to the inbox", counted(back.returned));
+                    self.status.notify(text, tick);
+                }
+                None
             }
-            Err(error) => self.action_error("return to the inbox", &error),
+            (Some(back), Err(error)) => {
+                back.pending = back.pending.saturating_sub(1);
+                back.failed = true;
+                let selection = &mut self.actions.selection;
+                put_back_threads(&back.selected, &mut back.restored, selection, threads);
+                Some(error)
+            }
+            (None, Ok(_)) => None,
+            (None, Err(error)) => Some(error),
+        };
+        if let Some(error) = failed {
+            self.action_error("return to the inbox", &error);
+        }
+        let done =
+            (self.actions.returning.as_ref()).is_some_and(|r| r.seq == seq && r.pending == 0);
+        if done {
+            self.actions.returning = None;
         }
         self.dirty()
     }

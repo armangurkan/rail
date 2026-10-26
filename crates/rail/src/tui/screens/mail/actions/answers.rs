@@ -2,18 +2,16 @@
 //! once when `z` came first) and a failed one puts its selected threads back; an `action.undo`
 //! says what came back. A record a newer action replaced still takes its calls' answers here.
 
-use std::collections::HashSet;
-
 use rail_core::ops::{
     ActionApplyResponse, ActionUndoResponse, ErrorCode, NOT_IN_INBOX, OpError, OutboxId, RowToken,
 };
 
-use super::{LastAction, Record, verbs};
+use super::{LastAction, Record, put_back_threads, verbs};
 use crate::tui::app::Effect;
 use crate::tui::data::ApplyCall;
 use crate::tui::keys::Action;
 use crate::tui::screens::mail::MailScreen;
-use crate::tui::screens::mail::selection::{Picked, Selection};
+use crate::tui::screens::mail::selection::Selection;
 
 /// What one `action.undo` answered. Both can hold at once over a bulk action's chunks.
 #[derive(Debug, Clone, Copy, Default)]
@@ -52,17 +50,7 @@ fn left_out(call: &ApplyCall, error: &OpError) -> bool {
 /// A failed call's selected `threads` come back to the selection, if nothing was selected
 /// since (or an earlier failed call of the record already put its threads back).
 fn put_back(record: &mut LastAction, selection: &mut Selection, threads: &[i64]) {
-    if record.restored || selection.is_empty() {
-        record.restored = true;
-        let threads: HashSet<i64> = threads.iter().copied().collect();
-        let back: Vec<(i64, Picked)> = record
-            .selected
-            .iter()
-            .filter(|(id, _)| threads.contains(id))
-            .copied()
-            .collect();
-        selection.restore(&back);
-    }
+    put_back_threads(&record.selected, &mut record.restored, selection, threads);
 }
 
 impl MailScreen {

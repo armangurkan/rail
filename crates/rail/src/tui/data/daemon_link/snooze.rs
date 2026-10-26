@@ -34,17 +34,26 @@ pub(super) async fn set(
 }
 
 impl DaemonLink {
-    /// Put one account's snoozed `threads` back in the inbox now.
-    pub fn unsnooze(&self, account: String, threads: Vec<i64>) -> Effect {
+    /// Put one account's snoozed `threads` back in the inbox now: one call of the "Return to
+    /// inbox now" with `seq`.
+    pub fn unsnooze(&self, seq: u64, account: String, threads: Vec<i64>) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
                 let request = SnoozeClearRequest { account, threads };
                 let result = connector.call::<SnoozeClear>(&request).await;
-                send(&sink, MailEvent::Unsnoozed { result });
+                let threads = request.threads;
+                send(
+                    &sink,
+                    MailEvent::Unsnoozed {
+                        seq,
+                        threads,
+                        result,
+                    },
+                );
             }),
             #[cfg(test)]
             Link::Fake(fake) => {
-                job(move |sink| async move { fake.unsnooze(&sink, account, threads) })
+                job(move |sink| async move { fake.unsnooze(&sink, seq, account, threads) })
             }
         }
     }
@@ -100,15 +109,27 @@ impl super::FakeDaemon {
         );
     }
 
-    /// `snooze.clear`: recorded, and every thread returned.
-    pub(super) fn unsnooze(&self, sink: &TaskSink, account: String, threads: Vec<i64>) {
+    /// `snooze.clear`: recorded, then answered with the next queued answer, or every thread
+    /// returned.
+    pub(super) fn unsnooze(&self, sink: &TaskSink, seq: u64, account: String, threads: Vec<i64>) {
         let returned = threads.len();
-        self.record(super::FakeCall::SnoozeClear { account, threads });
+        self.record(super::FakeCall::SnoozeClear {
+            account,
+            threads: threads.clone(),
+        });
+        let queued = self.clear_answers.lock().unwrap().pop_front();
         let result = if self.down() {
             Err(super::closed())
         } else {
-            Ok(rail_core::ops::SnoozeClearResponse { returned })
+            queued.unwrap_or(Ok(rail_core::ops::SnoozeClearResponse { returned }))
         };
-        send(sink, MailEvent::Unsnoozed { result });
+        send(
+            sink,
+            MailEvent::Unsnoozed {
+                seq,
+                threads,
+                result,
+            },
+        );
     }
 }

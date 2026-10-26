@@ -3,7 +3,7 @@
 //! their rows and in `:errors`. Every call goes through the daemon link; the store change
 //! comes back as a re-read; the calls' answers are `answers`'.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 
 use rail_core::ops::{
@@ -113,6 +113,8 @@ pub(crate) struct ActionState {
     pub(super) confirming: Option<(MailAction, Vec<(i64, Picked)>)>,
     /// The picker waiting for its labels, then open: what its answer applies to.
     pub(super) picking: Option<super::actions_pick::Picking>,
+    /// "Return to inbox now" while its calls answer.
+    pub(super) returning: Option<super::snooze_flow::Returning>,
     /// The last time typed into the snooze chooser, offered again as "Last used".
     pub(super) last_snooze: Option<String>,
 }
@@ -132,6 +134,27 @@ pub(crate) fn verbs(action: &MailAction) -> (&'static str, &'static str) {
         MailAction::PushDraft { .. } => ("saved", "save the draft"),
         MailAction::DeleteDraft { .. } => ("discarded", "discard the draft"),
         MailAction::Unsnooze { .. } => ("returned to the inbox", "return to the inbox"),
+    }
+}
+
+/// After a failed call, the threads of `threads` among `selected` come back to the selection,
+/// if nothing was selected since (or an earlier failed call already put its threads back:
+/// `restored`).
+pub(super) fn put_back_threads(
+    selected: &[(i64, Picked)],
+    restored: &mut bool,
+    selection: &mut Selection,
+    threads: &[i64],
+) {
+    if *restored || selection.is_empty() {
+        *restored = true;
+        let threads: HashSet<i64> = threads.iter().copied().collect();
+        let back: Vec<(i64, Picked)> = selected
+            .iter()
+            .filter(|(id, _)| threads.contains(id))
+            .copied()
+            .collect();
+        selection.restore(&back);
     }
 }
 

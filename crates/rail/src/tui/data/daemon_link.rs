@@ -448,6 +448,11 @@ pub struct FakeDaemon {
     pub discard_answer: std::sync::Mutex<Option<Result<(), OpError>>>,
     /// The answer to the next `snooze.set`; a fresh row and every thread when unset.
     pub snooze_answer: std::sync::Mutex<Option<Result<rail_core::ops::SnoozeSetResponse, OpError>>>,
+    /// The answers to the next `snooze.clear` calls, one per call in the order they are made;
+    /// every thread returned when none is queued.
+    pub clear_answers: std::sync::Mutex<
+        std::collections::VecDeque<Result<rail_core::ops::SnoozeClearResponse, OpError>>,
+    >,
     pub next_draft: std::sync::atomic::AtomicI64,
 }
 
