@@ -222,9 +222,11 @@ fn days(words: &[&str], today: Date) -> Option<(Vec<Date>, i8)> {
         ["tomorrow"] => (vec![today.tomorrow().ok()?], MORNING),
         ["weekend"] | ["this" | "the", "weekend"] => (weekly(today, Weekday::Saturday)?, MORNING),
         ["next", "week"] => (vec![today.nth_weekday(1, Weekday::Monday).ok()?], MORNING),
-        ["next" | "this", day] | [day] if weekday(day).is_some() => {
-            (weekly(today, weekday(day)?)?, MORNING)
+        // `next` skips today when today is that day; `this` and the bare day count it.
+        ["next", day] if weekday(day).is_some() => {
+            (vec![today.nth_weekday(1, weekday(day)?).ok()?], MORNING)
         }
+        ["this", day] | [day] if weekday(day).is_some() => (weekly(today, weekday(day)?)?, MORNING),
         [date] if civil_date(date).is_some() => (vec![civil_date(date)?], MORNING),
         _ => (month_date(words, today)?, MORNING),
     };
@@ -528,6 +530,30 @@ mod tests {
         for text in ["2026-11-03", "+53w", "+367d", "+9999d"] {
             assert_eq!(parse_snooze(text, &clock), Err(TOO_FAR), "{text:?}");
         }
+    }
+
+    #[test]
+    fn next_and_a_weekday_named_on_that_weekday_means_the_week_after() {
+        // Monday 2025-10-13 07:00 UTC.
+        let monday = utc(MIDNIGHT + 3 * DAY + 7 * HOUR);
+        parses(
+            &monday,
+            &[
+                ("next monday", MIDNIGHT + 10 * DAY + 8 * HOUR),
+                ("next mon 9am", MIDNIGHT + 10 * DAY + 9 * HOUR),
+                ("monday", MIDNIGHT + 3 * DAY + 8 * HOUR),
+                ("this monday", MIDNIGHT + 3 * DAY + 8 * HOUR),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_time_a_daylight_saving_change_skips_moves_past_the_gap() {
+        // Saturday 2026-03-28 12:00 XST (UTC+1); that night clocks go from 02:00 to 03:00 XDT.
+        let zone = TimeZone::posix("XST-1XDT,M3.5.0,M10.2.0/3").unwrap();
+        let clock = Clock::fixed(1_774_695_600, zone);
+        // 02:30 does not exist then: it reads as 03:30 XDT, which is 01:30 UTC.
+        assert_eq!(parse_snooze("tomorrow 2:30am", &clock), Ok(1_774_747_800));
     }
 
     #[test]
