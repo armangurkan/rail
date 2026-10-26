@@ -97,12 +97,57 @@ async fn in_range_mode_the_capitals_only_move() {
 }
 
 #[tokio::test]
-async fn drafts_refuse_extending_the_selection() {
+async fn in_drafts_the_extend_keys_move_as_j_and_k_do() {
     let mut f = drafts_fixture().await;
     open_drafts(&mut f).await;
+    let at = |f: &Fixture| f.screen.drafts.pane.selected().map(|r| r.subject.clone());
+    let first = at(&f);
     press(&mut f, KeyCode::Char('J')).await;
+    assert_ne!(at(&f), first, "J moved down");
+    press_shift(&mut f, KeyCode::Up).await;
+    assert_eq!(at(&f), first, "Shift-↑ moved back up");
     let line = f.screen.status_line();
-    assert!(line.contains("Not available on drafts"), "{line}");
+    assert!(!line.contains("Not available on drafts"), "{line}");
+}
+
+#[tokio::test]
+async fn a_re_read_that_drops_the_anchor_keeps_the_extension_going() {
+    let mut f = fixture(100).await;
+    press_n(&mut f, KeyCode::Char('J'), 60).await;
+    assert_eq!(f.screen.actions.selection.len(), 61);
+    // A sync's progress reads the list again from the first row on screen: the anchor leaves.
+    store_changed(&mut f).await;
+    press(&mut f, KeyCode::Char('J')).await;
+    assert_eq!(
+        f.screen.actions.selection.len(),
+        62,
+        "the press still selected"
+    );
+    assert!(
+        f.screen.bulk.extending.is_some(),
+        "the extension carries on"
+    );
+    let line = f.screen.status_line();
+    assert!(!line.contains("no longer in the list"), "{line}");
+    // Anchored afresh on the row it left: K takes back the row that press added.
+    press(&mut f, KeyCode::Char('K')).await;
+    assert_eq!(f.screen.actions.selection.len(), 61);
+}
+
+#[tokio::test]
+async fn extending_past_the_window_reads_the_next_page() {
+    let mut f = fixture(250).await;
+    assert_eq!(f.screen.list.rows().len(), 100);
+    press_n(&mut f, KeyCode::Char('J'), 95).await;
+    assert_eq!(f.screen.list.rows().len(), 200, "the next page came in");
+}
+
+#[tokio::test]
+async fn extending_drops_the_more_match_note() {
+    let mut f = fixture(6).await;
+    f.screen.bulk.more = true;
+    press(&mut f, KeyCode::Char('J')).await;
+    assert!(!f.screen.bulk.more);
 }
 
 #[tokio::test]

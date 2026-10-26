@@ -1,6 +1,6 @@
 //! Bulk selection: `* a` selects every thread the mailbox and filter match, `* f` everything
-//! from one sender, `v` a range; the state those keys keep between presses, and the question a
-//! large archive, star or mark-read asks before it is sent.
+//! from one sender, `v` a range, `J`/`K` (Shift-↓/↑) extend it a row at a time; the state those
+//! keys keep between presses, and the question a large archive, star or mark-read asks first.
 
 use std::collections::BTreeSet;
 
@@ -25,7 +25,7 @@ const SHOWN_SUBJECT_CHARS: usize = 120;
 /// account, about 300 KB of ids and flags.
 pub(crate) const MAX_SELECTION: usize = 10_000;
 
-/// What the three bulk keys keep between presses.
+/// What the bulk keys keep between presses.
 #[derive(Debug, Default)]
 pub(crate) struct BulkState {
     /// `v`: the thread the range anchors on, while range mode is on.
@@ -345,19 +345,28 @@ impl MailScreen {
             })
             .anchor;
         let effects = self.list_action(step);
-        self.extend_from(anchor);
+        self.extend_from(anchor, cursor);
         effects
     }
 
-    /// The rows from `anchor` to the cursor become the Shift range's selection; a re-read that
-    /// dropped the anchor ends the range, as it ends `v`'s.
-    fn extend_from(&mut self, anchor: i64) {
+    /// The rows from `anchor` to the cursor become the Shift range's selection. A sync's re-read
+    /// starts at the screen's first row, so a long range can lose its anchor: it then anchors
+    /// afresh on `from`, the row the cursor just left, and only the older rows' shrink is lost.
+    fn extend_from(&mut self, anchor: i64, from: i64) {
         let rows = self.list.rows();
-        let Some(at) = rows.iter().position(|row| row.key.thread_id == anchor) else {
-            self.bulk.extending = None;
-            self.status
-                .notify("The range start is no longer in the list.", self.tick);
-            return;
+        let find = |id: i64| rows.iter().position(|row| row.key.thread_id == id);
+        let at = if let Some(at) = find(anchor) {
+            at
+        } else {
+            let Some(at) = find(from) else {
+                self.bulk.extending = None;
+                return;
+            };
+            if let Some(extending) = self.bulk.extending.as_mut() {
+                extending.anchor = from;
+                extending.added.clear();
+            }
+            at
         };
         let cursor = self.list.selected_index();
         let span: Vec<(i64, Picked)> = rows[at.min(cursor)..=at.max(cursor)]

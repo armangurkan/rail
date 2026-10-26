@@ -607,8 +607,10 @@ up: the first press selects that thread and the next, and each further press one
 back toward where you started unselects what the extension added; threads you had selected before
 stay selected. Any other key ends the extension and keeps what it selected, so `J` after a move
 starts again from the new place. A terminal that does not report Shift with the arrows still has
-`J` and `K`; elsewhere in Rail a Shift-arrow moves like the plain arrow. While `v` has a range
-open, `J` and `K` only move. A selection holds at most 10,000 threads: an extension it stops says
+`J` and `K`; elsewhere in Rail, the Drafts folder included, a Shift-arrow moves like the plain
+arrow, and there `J` and `K` move too. While `v` has a range open, `J`, `K` and the Shift-arrows
+only move. If a sync reads the list again while you extend and the thread you started from leaves
+it, the extension carries on from where the cursor was. A selection holds at most 10,000 threads: an extension it stops says
 `The selection holds at most 10,000 threads.`
 
 A bulk action goes out as one request per 200 threads per account, and one `z` takes the whole set
@@ -810,7 +812,7 @@ draft that was deleted elsewhere before you opened or discarded it says
 `Gmail no longer has this draft`; one that cannot be fetched says `Could not open the draft: …` or
 `Could not discard the draft: …` with the reason. Archive, star, read, labels, move,
 select, selecting all or by sender, the range, reply, forward and the filter
-(`e`, `s`, `u`, `l`, `m`, `space`, `* a`, `* f`, `v`, `J`, `K`, `r`, `R`, `f`, `/`) say
+(`e`, `s`, `u`, `l`, `m`, `space`, `* a`, `* f`, `v`, `r`, `R`, `f`, `/`) say
 `Not available on drafts`; `Esc` does nothing there and `c` writes a new message as everywhere.
 The search slot is empty in this folder: the pane is not filtered. The pane is read again whenever
 sync or the outbox

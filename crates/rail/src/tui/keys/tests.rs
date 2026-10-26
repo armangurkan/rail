@@ -194,6 +194,10 @@ fn shift_arrows_extend_the_list_and_move_where_nothing_binds_them() {
         resolve(&map, &[View::Reader, View::Global], &[down]),
         [Resolved::Action(Action::ReaderDown)]
     );
+    assert_eq!(
+        resolve(&map, &[View::Sidebar, View::Global], &[down]),
+        [Resolved::Action(Action::SidebarDown)]
+    );
 }
 
 #[test]

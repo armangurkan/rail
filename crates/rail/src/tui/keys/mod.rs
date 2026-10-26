@@ -179,7 +179,8 @@ impl Keymap {
         Ok(())
     }
 
-    /// What `key` means in `views` (most specific first), given a pending chord key.
+    /// What `key` means in `views` (most specific first), given a pending chord key. A
+    /// Shift-arrow nothing binds there means what the plain arrow means.
     pub fn resolve(&self, views: &[View], chord: &mut Chord, key: KeyEvent) -> Resolved {
         let pressed = Key::from_event(key);
         let first = chord.0.take();
