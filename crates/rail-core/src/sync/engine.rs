@@ -91,6 +91,8 @@ pub struct EngineParts {
     pub reader: Store,
     pub board: StatusBoard,
     pub wake: Arc<Notify>,
+    /// The account's outbox worker: a batch that makes snoozes due wakes it.
+    pub outbox: Arc<Notify>,
     pub clock: Clock,
 }
 
@@ -103,6 +105,7 @@ pub struct Engine {
     reader: Arc<Mutex<Store>>,
     board: StatusBoard,
     wake: Arc<Notify>,
+    outbox: Arc<Notify>,
     pub(super) clock: Clock,
 }
 
@@ -129,6 +132,7 @@ impl Engine {
             reader: Arc::new(Mutex::new(parts.reader)),
             board: parts.board,
             wake: parts.wake,
+            outbox: parts.outbox,
             clock: parts.clock,
         }
     }
@@ -207,11 +211,15 @@ impl Engine {
     }
 
     /// Hand `batch` to the writer, stamped with this engine's clock, and wait for its commit.
-    /// A batch that settled failed actions publishes the account's outbox depth.
+    /// A batch that settled failed actions publishes the account's outbox depth; one whose mail
+    /// made snoozes due wakes the outbox worker, which puts them back.
     pub(super) async fn write(&self, mut batch: Batch) -> Result<BatchOutcome, SyncError> {
         batch.account_id = self.account_id;
         batch.at = Some((self.clock)());
         let outcome = self.writer.write(batch).await?;
+        if outcome.snoozes_due > 0 {
+            self.outbox.notify_one();
+        }
         if outcome.failed_cleared > 0 {
             let (board, address, id) = (
                 self.board.clone(),

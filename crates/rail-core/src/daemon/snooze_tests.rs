@@ -1,7 +1,8 @@
 //! `snooze.set` and `snooze.clear` through a real daemon over the fake Gmail: the archive goes
 //! through the outbox and the snooze becomes active with the message it moved; a replayed token
 //! answers with its archive row; a time too soon and a thread with nothing in the inbox are
-//! refused; and a clear sends the return, then the unread, and the thread is back.
+//! refused; a clear sends the return, then the unread, and the thread is back; and a reply wakes
+//! a snooze at once.
 
 use std::time::Duration;
 
@@ -188,4 +189,46 @@ async fn a_watcher_is_told_when_a_snooze_puts_threads_back() {
             threads: vec![t1],
         }
     );
+}
+
+#[tokio::test]
+async fn a_reply_to_a_snoozed_thread_brings_it_back_without_waiting_for_the_worker() {
+    let d = daemon(WORK).await;
+    let t1 = d.thread("t1");
+    let mut notes = d.client.notifications();
+    let watch = SyncNowRequest {
+        account: None,
+        watch: true,
+    };
+    d.client.call::<SyncNow>(&watch).await.unwrap();
+    snooze(&d, vec![t1], unix_now() + 3_600, false, "s1")
+        .await
+        .unwrap();
+    until("active", || {
+        matches!(snooze_of(&d, "t1"), Some((SnoozeState::Active, _))).then_some(())
+    })
+    .await;
+    // The worker now sleeps toward the snooze's hour; the reply must not wait for it.
+    d.mock.add(crate::provider::mock::envelope(
+        "reply",
+        "t1",
+        unix_now() * 1_000,
+    ));
+    let sync = SyncNowRequest {
+        account: None,
+        watch: false,
+    };
+    d.client.call::<SyncNow>(&sync).await.unwrap();
+    let woke = tokio::time::timeout(BOUND, async {
+        loop {
+            let note = notes.recv().await.unwrap();
+            if note.method == names::SNOOZE_WOKE {
+                return note.params;
+            }
+        }
+    })
+    .await
+    .expect("snooze.woke within the bound");
+    let woke: SnoozeWoke = serde_json::from_value(woke).unwrap();
+    assert_eq!(woke.threads, [t1]);
 }

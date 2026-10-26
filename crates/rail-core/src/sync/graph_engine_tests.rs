@@ -85,6 +85,7 @@ fn engine_on(h: &Harness, provider: Arc<GraphProvider>, history_days: u32, now: 
         reader: Store::open_reader(&h.db).unwrap(),
         board: h.board.clone(),
         wake: Arc::new(Notify::new()),
+        outbox: Arc::new(Notify::new()),
         clock: Arc::new(move || now),
     })
 }

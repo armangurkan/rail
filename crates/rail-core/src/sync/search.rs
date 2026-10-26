@@ -155,15 +155,9 @@ async fn server_hits(
         searched: known.into_iter().collect(),
         ..Batch::new(target.account_id)
     };
-    if ctx
-        .sync
-        .writer(ctx)
-        .await?
-        .write(batch)
-        .await?
-        .failed_cleared
-        > 0
-    {
+    let outcome = ctx.sync.writer(ctx).await?.write(batch).await?;
+    // Settled failures change the outbox depth; mail that made snoozes due needs the worker.
+    if outcome.failed_cleared > 0 || outcome.snoozes_due > 0 {
         ctx.sync.outbox_changed(ctx).await;
     }
     let path = db.to_path_buf();

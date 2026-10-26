@@ -442,7 +442,7 @@ impl SyncManager {
         planned: &PlannedAccount,
         (account_id, provider): (i64, Arc<dyn Provider>),
         reader: Store,
-        writer: &WriterHandle,
+        (writer, outbox): (&WriterHandle, Arc<tokio::sync::Notify>),
     ) -> Engine {
         Engine::new(EngineParts {
             account: planned.account.clone(),
@@ -453,6 +453,7 @@ impl SyncManager {
             reader,
             board: self.board.clone(),
             wake: Arc::new(tokio::sync::Notify::new()),
+            outbox,
             clock: Arc::new(unix_now),
         })
     }
@@ -466,14 +467,14 @@ impl SyncManager {
     ) -> Running {
         let account = &planned.account;
         self.board.insert(initial_status(account, &prepared.state));
+        let outbox_signal = Arc::new(tokio::sync::Notify::new());
         let engine = self.new_engine(
             planned,
             (prepared.account_id, prepared.provider.clone()),
             prepared.reader,
-            &writer,
+            (&writer, outbox_signal.clone()),
         );
         let wake = engine.wake_handle();
-        let outbox_signal = Arc::new(tokio::sync::Notify::new());
         let worker = Worker::new(WorkerParts {
             name: account.name.clone(),
             address: account.address.to_ascii_lowercase(),

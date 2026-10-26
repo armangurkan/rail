@@ -19,7 +19,12 @@ pub const WRITER_QUEUE: usize = 4;
 
 enum Job {
     Batch(Box<Batch>, oneshot::Sender<Result<BatchOutcome, OpError>>),
-    Outbox(OutboxWrite, oneshot::Sender<Result<OutboxOutcome, OpError>>),
+    /// A write, stamped with the caller's time when it has one.
+    Outbox(
+        OutboxWrite,
+        Option<i64>,
+        oneshot::Sender<Result<OutboxOutcome, OpError>>,
+    ),
 }
 
 /// Where batches go. Cheap to clone; the writer ends once every handle is dropped.
@@ -60,9 +65,26 @@ impl WriterHandle {
 
     /// Queue one outbox write and wait for its commit.
     pub async fn outbox(&self, write: OutboxWrite) -> Result<OutboxOutcome, OpError> {
+        self.outbox_job(write, None).await
+    }
+
+    /// `outbox`, stamped `now` by the caller's clock instead of the writer's: a wake decides what
+    /// is due by the outbox worker's clock, and the store must agree with it.
+    ///
+    /// # Errors
+    /// The write's own, or the writer's when it has stopped.
+    pub async fn outbox_at(&self, write: OutboxWrite, now: i64) -> Result<OutboxOutcome, OpError> {
+        self.outbox_job(write, Some(now)).await
+    }
+
+    async fn outbox_job(
+        &self,
+        write: OutboxWrite,
+        at: Option<i64>,
+    ) -> Result<OutboxOutcome, OpError> {
         let (reply, answer) = oneshot::channel();
         self.jobs
-            .send(Job::Outbox(write, reply))
+            .send(Job::Outbox(write, at, reply))
             .await
             .map_err(|_| stopped())?;
         answer.await.map_err(|_| stopped())?
@@ -92,9 +114,9 @@ fn run_job(store: &mut Store, job: Job) {
             }
             let _ = reply.send(outcome);
         }
-        Job::Outbox(write, reply) => {
+        Job::Outbox(write, at, reply) => {
             let outcome = store
-                .outbox_write(&write, unix_now())
+                .outbox_write(&write, at.unwrap_or_else(unix_now))
                 .map_err(OpError::from);
             if let Err(error) = &outcome {
                 tracing::warn!(error = %error.message, "an outbox write was rolled back");

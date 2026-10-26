@@ -88,7 +88,7 @@ impl Store {
         let arrived: Vec<&str> = (batch.upserts.iter().map(|e| e.remote_id.as_str()))
             .chain(batch.relabels.iter().map(|r| r.remote_id.as_str()))
             .collect();
-        super::snoozes::incoming(&tx, account, &arrived, now)?;
+        outcome.snoozes_due = super::snoozes::incoming(&tx, account, &arrived, now)?;
         // The conflict rule: actions still waiting for Gmail stay on top of what it said.
         super::apply_local::reapply_live(&tx, account, &touched)?;
         super::snoozes::settle_woken(&tx, account, &touched)?;

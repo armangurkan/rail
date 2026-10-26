@@ -281,31 +281,30 @@ impl Worker {
         .clamp(MIN_IDLE, MAX_IDLE)
     }
 
-    /// Put back the account's snoozes due by now: the store queues their return (sent as any
-    /// row is, once the account can send) and the status board tells who watches.
+    /// Put back the account's snoozes due by the worker's clock: the store queues their return
+    /// (sent as any row is, once the account can send) and the status board tells who watches.
     async fn wake_due(&self) {
         let (id, now) = (self.account_id, (self.clock)());
-        let due = self
-            .read(move |store| store.snooze_next_due(id))
-            .await
-            .ok()
-            .flatten()
-            .is_some_and(|at| at <= now);
-        if !due {
+        let next = match self.read(move |store| store.snooze_next_due(id)).await {
+            Ok(next) => next,
+            Err(error) => {
+                tracing::warn!(account = %self.name, error = %error.message, "could not read when a snooze is due");
+                return;
+            }
+        };
+        if next.is_none_or(|at| at > now) {
             return;
         }
-        match self
-            .writer
-            .outbox(OutboxWrite::Wake { account_id: id })
-            .await
-        {
-            Ok(OutboxOutcome::Woke { threads }) if !threads.is_empty() => {
+        let wake = OutboxWrite::Wake { account_id: id };
+        match self.writer.outbox_at(wake, now).await {
+            Ok(OutboxOutcome::Woke { threads }) if threads.is_empty() => {}
+            Ok(OutboxOutcome::Woke { threads }) => {
                 tracing::info!(account = %self.name, threads = threads.len(), "snoozed threads went back");
                 self.publish().await;
                 let account = self.name.clone();
                 self.board.report_woke(&SnoozeWoke { account, threads });
             }
-            Ok(_) => {}
+            Ok(_) => tracing::warn!(account = %self.name, "the store answered a wake unexpectedly"),
             Err(error) => {
                 tracing::warn!(account = %self.name, error = %error.message, "could not put snoozed threads back");
             }

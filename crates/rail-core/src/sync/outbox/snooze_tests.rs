@@ -2,6 +2,7 @@
 //! on the next step, its return sent before the unread; while the account needs a login the store
 //! still puts it back and the calls wait; the status board tells who watches.
 
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::params;
@@ -127,4 +128,70 @@ async fn a_wake_is_told_to_the_status_board() {
             threads: vec![t1],
         }
     );
+}
+
+/// A worker for the rig's account whose clock reads `at`.
+fn worker_at(rig: &Rig, at: Arc<AtomicI64>) -> super::Worker {
+    super::Worker::new(super::WorkerParts {
+        name: "work".into(),
+        address: ADDRESS.into(),
+        account_id: 1,
+        provider: Arc::new(rig.mock.clone()),
+        writer: rig.writer.clone(),
+        reader: Store::open_reader(&rig.db).unwrap(),
+        board: rig.board.clone(),
+        signal: rig.signal.clone(),
+        clock: Arc::new(move || at.load(Ordering::SeqCst)),
+        from_name: None,
+        sync_wake: Arc::new(tokio::sync::Notify::new()),
+        draft_files_dir: rig.draft_files_dir(),
+        kind: crate::config::AccountKind::Gmail,
+    })
+}
+
+#[tokio::test]
+async fn the_worker_wakes_a_snooze_by_its_own_clock() {
+    let rig = rig().await;
+    // A week ahead of the wall clock: only the worker's clock can make the snooze due.
+    let later = unix_now() + 7 * 86_400;
+    snoozed(&rig, "t1", "m1", later + 30);
+    let at = Arc::new(AtomicI64::new(later));
+    let worker = worker_at(&rig, at.clone());
+    assert_eq!(worker.idle().await.as_secs(), 30);
+    worker.step().await;
+    assert_eq!(state_of(&rig), SnoozeState::Active, "not due yet");
+    at.store(later + 31, Ordering::SeqCst);
+    worker.step().await;
+    assert_eq!(state_of(&rig), SnoozeState::Woken);
+}
+
+#[tokio::test]
+async fn the_idle_sleep_ends_at_the_earlier_of_a_due_row_and_a_due_snooze() {
+    let rig = rig().await;
+    let later = unix_now() + 7 * 86_400;
+    snoozed(&rig, "t1", "m1", later + 40);
+    let row = crate::store::outbox::NewAction {
+        account_id: 1,
+        action: crate::ops::Action::Star { on: true },
+        threads: vec![
+            rig.store()
+                .conn()
+                .query_row("SELECT id FROM threads WHERE remote_id = 't2'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap(),
+        ],
+        not_before: later + 15,
+        client_token: "row".into(),
+    };
+    rig.writer
+        .outbox(crate::store::outbox::OutboxWrite::Enqueue(row))
+        .await
+        .unwrap();
+    let at = Arc::new(AtomicI64::new(later));
+    assert_eq!(worker_at(&rig, at).idle().await.as_secs(), 15, "the row");
+    let rig = super::tests::rig().await;
+    snoozed(&rig, "t1", "m1", later + 20);
+    let at = Arc::new(AtomicI64::new(later));
+    assert_eq!(worker_at(&rig, at).idle().await.as_secs(), 20, "the snooze");
 }

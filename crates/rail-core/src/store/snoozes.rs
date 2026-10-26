@@ -437,18 +437,18 @@ pub(super) const INCOMING: &str = "UPDATE snoozes SET until = ?3
 /// A sync batch put `messages` (provider ids) somewhere: any of them now in the inbox, not in
 /// Sent or Drafts and not recorded by the thread's active snooze makes that snooze due now. Rail
 /// stores no sender, so the folder tells: the user's own reply lands in Sent and never counts.
-/// Pending snoozes are left alone: their archive takes the new mail with it.
+/// Pending snoozes are left alone: their archive takes the new mail with it. How many snoozes it
+/// made due.
 pub(super) fn incoming(
     tx: &Transaction,
     account: i64,
     messages: &[&str],
     now: i64,
-) -> Result<(), StoreError> {
+) -> Result<usize, StoreError> {
     if messages.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
-    tx.execute(INCOMING, params![account, json(&messages), now])?;
-    Ok(())
+    Ok(tx.execute(INCOMING, params![account, json(&messages), now])?)
 }
 
 /// Rail archived, trashed or moved `threads` (or snoozes one again): a thread that came back from

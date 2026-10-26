@@ -105,4 +105,6 @@ pub struct BatchOutcome {
     pub pruned: usize,
     /// Failed outbox rows the batch's server state settled (the outbox depth changed).
     pub failed_cleared: usize,
+    /// Snoozes the batch's mail made due now: the account's outbox worker wakes them.
+    pub snoozes_due: usize,
 }

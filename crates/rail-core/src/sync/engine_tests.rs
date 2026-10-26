@@ -95,6 +95,7 @@ fn engine_at(
         reader: Store::open_reader(&h.db).unwrap(),
         board: h.board.clone(),
         wake: Arc::new(Notify::new()),
+        outbox: Arc::new(Notify::new()),
         clock: Arc::new(move || now),
     })
 }
