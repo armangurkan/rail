@@ -113,8 +113,9 @@ pub(crate) struct ActionState {
     pub(super) confirming: Option<(MailAction, Vec<(i64, Picked)>)>,
     /// The picker waiting for its labels, then open: what its answer applies to.
     pub(super) picking: Option<super::actions_pick::Picking>,
-    /// "Return to inbox now" while its calls answer.
-    pub(super) returning: Option<super::snooze_flow::Returning>,
+    /// Each "Return to inbox now" while its calls answer, by seq: the newest says the count, and
+    /// a failed call of any gives its threads back.
+    pub(super) returning: BTreeMap<u64, super::snooze_flow::Returning>,
     /// The last time typed into the snooze chooser, offered again as "Last used".
     pub(super) last_snooze: Option<String>,
 }

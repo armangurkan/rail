@@ -34,7 +34,6 @@ const LAST_BYTES: u64 = 4 * LAST_CHARS as u64;
 /// took from the selection, which a failed call gives back.
 #[derive(Debug)]
 pub(super) struct Returning {
-    seq: u64,
     pending: usize,
     returned: usize,
     selected: Vec<(i64, Picked)>,
@@ -162,20 +161,23 @@ impl MailScreen {
                 effects.push(self.ctx.link.unsnooze(seq, account.clone(), chunk.to_vec()));
             }
         }
-        self.actions.returning = Some(Returning {
-            seq,
-            pending: effects.len(),
-            returned: 0,
-            selected,
-            restored: false,
-            failed: false,
-        });
+        if !effects.is_empty() {
+            let back = Returning {
+                pending: effects.len(),
+                returned: 0,
+                selected,
+                restored: false,
+                failed: false,
+            };
+            self.actions.returning.insert(seq, back);
+        }
         effects
     }
 
-    /// One `snooze.clear` call of the Return with `seq` answered: the notice sums what its calls
-    /// put back. A failed call's error stays while the others answer, and its `threads` come
-    /// back to the selection; an older Return's answers are not counted.
+    /// One `snooze.clear` call of the Return with `seq` answered: the newest Return's notice sums
+    /// what its calls put back (an older one's answers are not counted there). A failed call's
+    /// error stays while the others answer, and its `threads` come back to the selection,
+    /// whichever Return it belongs to.
     pub(super) fn unsnoozed(
         &mut self,
         seq: u64,
@@ -183,15 +185,17 @@ impl MailScreen {
         result: Result<SnoozeClearResponse, OpError>,
     ) -> Vec<Effect> {
         let tick = self.tick;
-        let current = self.actions.returning.as_mut().filter(|r| r.seq == seq);
-        let failed = match (current, result) {
+        let newest = self.actions.returning.keys().next_back() == Some(&seq);
+        let mut done = false;
+        let failed = match (self.actions.returning.get_mut(&seq), result) {
             (Some(back), Ok(answer)) => {
                 back.pending = back.pending.saturating_sub(1);
-                back.returned += answer.returned;
-                if !back.failed {
+                back.returned = back.returned.saturating_add(answer.returned);
+                if newest && !back.failed {
                     let text = format!("returned {} to the inbox", counted(back.returned));
                     self.status.notify(text, tick);
                 }
+                done = back.pending == 0;
                 None
             }
             (Some(back), Err(error)) => {
@@ -199,18 +203,17 @@ impl MailScreen {
                 back.failed = true;
                 let selection = &mut self.actions.selection;
                 put_back_threads(&back.selected, &mut back.restored, selection, threads);
+                done = back.pending == 0;
                 Some(error)
             }
             (None, Ok(_)) => None,
             (None, Err(error)) => Some(error),
         };
+        if done {
+            self.actions.returning.remove(&seq);
+        }
         if let Some(error) = failed {
             self.action_error("return to the inbox", &error);
-        }
-        let done =
-            (self.actions.returning.as_ref()).is_some_and(|r| r.seq == seq && r.pending == 0);
-        if done {
-            self.actions.returning = None;
         }
         self.dirty()
     }

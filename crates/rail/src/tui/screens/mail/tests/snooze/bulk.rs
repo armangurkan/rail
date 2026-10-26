@@ -502,3 +502,33 @@ async fn refused_threads_stay_left_out_when_the_snooze_took_some_whatever_answer
         "only the failed call's threads; 201 was left out"
     );
 }
+
+#[tokio::test]
+async fn an_older_returns_failed_call_gives_its_threads_back() {
+    let mut f = fixture(2).await;
+    let ids = snoozed_selection(&mut f, 2);
+    press(&mut f, KeyCode::Char('h')).await;
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Enter)));
+    let older = f.screen.seq;
+    let picked = Picked {
+        account_id: 1,
+        starred: false,
+        unread: true,
+    };
+    let targets: Vec<(i64, Picked)> = ids.iter().map(|id| (*id, picked)).collect();
+    assert!(!f.screen.actions.selection.add(&targets));
+    press(&mut f, KeyCode::Char('h')).await;
+    let _unrun = f.screen.update(Msg::Key(key(KeyCode::Enter)));
+    let failed = MailEvent::Unsnoozed {
+        seq: older,
+        threads: ids.clone(),
+        result: Err(OpError::not_found("the daemon said no")),
+    };
+    feed(&mut f, failed).await;
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("Could not return to the inbox: the daemon said no"),
+        "{line}"
+    );
+    assert_eq!(selected_of(&f, 1), ids, "its threads are back");
+}
