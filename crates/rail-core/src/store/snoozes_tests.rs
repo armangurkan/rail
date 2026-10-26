@@ -558,3 +558,79 @@ fn the_snooze_of_a_thread_is_read_by_its_local_id() {
     assert_eq!((row.thread_remote.as_str(), row.until), ("t1", NOW + HOUR));
     assert!(store.snooze_of_thread(t2).unwrap().is_none());
 }
+
+#[test]
+fn a_message_trashed_before_its_return_is_sent_stays_in_the_trash() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    snooze(&mut store, vec![t1], NOW + HOUR, "a");
+    send_next(&mut store, NOW + 10);
+    wake(&mut store, NOW + HOUR);
+    // Trashed on another device before the return was sent: the sync applies the waiting
+    // return again (the conflict rule), which must leave it in the trash.
+    let trashed = vec![in_folders("m2", "t1", 2_000, &["TRASH"])];
+    sync(&mut store, trashed, NOW + HOUR + 1);
+    assert_eq!(folders_of(&store, "m2"), names(&["TRASH"]));
+    assert_eq!(folders_of(&store, "m1"), names(&["INBOX"]));
+}
+
+#[test]
+fn a_reply_the_user_sent_that_also_lands_in_the_inbox_does_not_wake_a_snooze() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    snooze(&mut store, vec![t1], NOW + HOUR, "a");
+    send_next(&mut store, NOW + 10);
+    let mut all = folders();
+    all.push(RemoteFolder {
+        parent: None,
+        remote_id: "SENT".into(),
+        name: "Sent".into(),
+        kind: FolderKind::Sent,
+    });
+    let to_self = Batch {
+        folders: Some(all),
+        upserts: vec![in_folders("m7", "t1", 7_000, &["INBOX", "SENT"])],
+        ..Batch::new(1)
+    };
+    store.apply(&to_self, NOW + 100).unwrap();
+    assert_eq!(snoozes(&store)[0].1, NOW + HOUR);
+}
+
+#[test]
+fn clearing_a_pending_snooze_makes_it_due_at_once() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    snooze(&mut store, vec![t1], NOW + HOUR, "a");
+    let clear = OutboxWrite::Unsnooze {
+        account_id: 1,
+        threads: vec![t1],
+    };
+    assert_eq!(
+        store.outbox_write(&clear, NOW + 5).unwrap(),
+        OutboxOutcome::Unsnoozed { returned: 1 }
+    );
+    assert_eq!(snoozes(&store)[0].1, NOW + 5);
+    send_next(&mut store, NOW + 10);
+    assert_eq!(wake(&mut store, NOW + 10), vec![t1], "back once archived");
+}
+
+#[test]
+fn clearing_a_failed_snooze_drops_it() {
+    let mut store = seeded();
+    let t1 = thread(&store, "t1");
+    let (rows, _) = snooze(&mut store, vec![t1], NOW + HOUR, "a");
+    store
+        .outbox_write(&OutboxWrite::Claim { account_id: 1 }, NOW + 10)
+        .unwrap();
+    let refuse = OutboxWrite::Fail {
+        id: rows[0],
+        failure: Failure::Permanent("Gmail refused the change".into()),
+    };
+    store.outbox_write(&refuse, NOW + 10).unwrap();
+    let clear = OutboxWrite::Unsnooze {
+        account_id: 1,
+        threads: vec![t1],
+    };
+    store.outbox_write(&clear, NOW + 20).unwrap();
+    assert_eq!(snoozes(&store), Vec::<Seen>::new());
+}
