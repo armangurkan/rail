@@ -5,7 +5,8 @@
 //! the link: the snooze is then active until its time, an incoming message or a clear. Its state
 //! is read from the link and `woken_at`, never stored. A wake queues two ordinary outbox rows (the
 //! return of the recorded messages still archived, then mark unread) and dates the thread at the
-//! wake, so it sorts first until Rail archives, trashes, moves or snoozes it again.
+//! wake, so it sorts first until it leaves the inbox: Rail archives, trashes, moves or snoozes it
+//! again, or a sync finds it gone from the inbox. A thread the store forgets takes its snooze.
 
 use std::collections::BTreeSet;
 
@@ -27,15 +28,21 @@ pub(super) const NOT_SNOOZED: &str = "NOT EXISTS (SELECT 1 FROM threads st JOIN 
 /// A snooze to write: its threads, its time, and its archive's due time and client token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnoozeNew {
+    /// The account the threads belong to.
     pub account_id: i64,
+    /// The store's thread ids; a thread named twice is snoozed once.
     pub threads: Vec<i64>,
-    /// Unix seconds.
+    /// When the threads come back, in Unix seconds.
     pub until: i64,
     /// When the archive is due (the undo grace).
     pub not_before: i64,
+    /// The client's token: a replay finds the archive it made.
     pub client_token: String,
 }
 
+/// Where a snooze is, read from its archive row and `woken_at`. `Store::snoozes` and
+/// `Store::snooze_of_thread` return every state; a thread counts as snoozed while its snooze is
+/// `Pending` or `Active`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnoozeState {
     /// The archive waits or is being sent.
@@ -48,13 +55,17 @@ pub enum SnoozeState {
     Woken,
 }
 
+/// One snooze, as the store reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnoozeRow {
     pub id: i64,
     pub account_id: i64,
+    /// The thread's provider id.
     pub thread_remote: String,
+    /// When it comes back, in Unix seconds.
     pub until: i64,
     pub state: SnoozeState,
+    /// When it went back, once it has.
     pub woken_at: Option<i64>,
     /// The provider ids the archive took out of the inbox, sorted.
     pub messages: Vec<String>,
@@ -64,7 +75,8 @@ const ROW: &str = "SELECT s.id, s.account_id, s.thread_remote, s.until, s.woken_
     CASE WHEN s.woken_at IS NOT NULL THEN 'woken' WHEN s.archive_row IS NULL THEN 'active'
          WHEN o.state = 'failed' THEN 'failed' ELSE 'pending' END,
     (SELECT json_group_array(message_remote) FROM
-       (SELECT message_remote FROM snooze_messages WHERE snooze_id = s.id ORDER BY message_remote))
+       (SELECT message_remote FROM snooze_messages WHERE snooze_id = s.id ORDER BY message_remote)),
+    s.archive_row
   FROM snoozes s LEFT JOIN outbox o ON o.id = s.archive_row";
 
 fn read_row(r: &Row<'_>) -> rusqlite::Result<SnoozeRow> {
@@ -87,35 +99,31 @@ fn read_row(r: &Row<'_>) -> rusqlite::Result<SnoozeRow> {
     })
 }
 
-/// `OutboxWrite::Snooze`: threads already snoozed (pending or active) take the new time; the
-/// rest that hold mail in the inbox lose any woken row and are archived by one row (the client's
-/// token) and snoozed. A token the outbox already holds answers with its row and changes nothing.
+/// `OutboxWrite::Snooze`: a thread already snoozed takes the new time (`again`); the rest that
+/// hold mail in the inbox are archived by one row (the client's token) and snoozed. A token the
+/// outbox already holds answers with its row and how many of the threads are snoozed now, and
+/// changes nothing.
 pub(super) fn snooze(
     tx: &Transaction,
     new: &SnoozeNew,
     now: i64,
 ) -> Result<OutboxOutcome, StoreError> {
+    let threads = unique(&new.threads);
     if let Some(row) = known_row(tx, &new.client_token)? {
-        let snoozed = linked(tx, row)?.len();
+        let snoozed = holding(tx, new.account_id, &threads)?;
         return Ok(OutboxOutcome::Snoozed {
             rows: vec![row],
             snoozed,
         });
     }
     let (mut snoozed, mut fresh) = (0, Vec::new());
-    for &thread in &new.threads {
+    for thread in threads {
         let Some(remote) = thread_remote(tx, new.account_id, thread)? else {
             continue;
         };
-        let moved = tx.execute(
-            "UPDATE snoozes SET until = ?3
-             WHERE account_id = ?1 AND thread_remote = ?2 AND woken_at IS NULL",
-            params![new.account_id, remote, new.until],
-        )?;
-        if moved > 0 {
+        if again(tx, new, (thread, &remote), now)? {
             snoozed += 1;
         } else if in_inbox(tx, thread)? {
-            forget_woken(tx, new.account_id, &remote)?;
             fresh.push((thread, remote));
         }
     }
@@ -124,6 +132,99 @@ pub(super) fn snooze(
         snoozed += fresh.len();
     }
     Ok(OutboxOutcome::Snoozed { rows, snoozed })
+}
+
+/// A thread snoozed before: true when it only takes the new time (its snooze is pending, or
+/// active with nothing back in the inbox). Otherwise the old snooze makes way for a fresh one:
+/// a failed one's archive is dropped, an active one with mail back in the inbox puts the rest of
+/// its mail back first (as a wake would, so the fresh archive takes it all), a woken one goes.
+fn again(
+    tx: &Transaction,
+    new: &SnoozeNew,
+    (thread, remote): (i64, &str),
+    now: i64,
+) -> Result<bool, StoreError> {
+    let Some((old, archive)) = current(tx, new.account_id, remote)? else {
+        return Ok(false);
+    };
+    match old.state {
+        SnoozeState::Pending => set_until(tx, old.id, new.until)?,
+        SnoozeState::Active if !in_inbox(tx, thread)? => set_until(tx, old.id, new.until)?,
+        SnoozeState::Active => {
+            return_thread(tx, new.account_id, old.id, remote, now)?;
+            forget_woken(tx, new.account_id, remote)?;
+            return Ok(false);
+        }
+        SnoozeState::Failed => {
+            drop_failed(tx, archive)?;
+            return Ok(false);
+        }
+        SnoozeState::Woken => {
+            forget_woken(tx, new.account_id, remote)?;
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The account's snooze of the thread `remote`, with its archive row while that lives.
+fn current(
+    tx: &Transaction,
+    account: i64,
+    remote: &str,
+) -> Result<Option<(SnoozeRow, Option<OutboxId>)>, StoreError> {
+    Ok(tx
+        .query_row(
+            &format!("{ROW} WHERE s.account_id = ?1 AND s.thread_remote = ?2"),
+            params![account, remote],
+            |r| Ok((read_row(r)?, r.get(7)?)),
+        )
+        .optional()?)
+}
+
+fn set_until(tx: &Transaction, snooze: i64, until: i64) -> Result<(), StoreError> {
+    tx.execute(
+        "UPDATE snoozes SET until = ?2 WHERE id = ?1",
+        params![snooze, until],
+    )?;
+    Ok(())
+}
+
+/// A failed snooze's archive row goes, and its snooze with it (the row's cascade): neither a
+/// retry nor the next sync can send that archive any more. Its local change was reverted when
+/// it failed.
+fn drop_failed(tx: &Transaction, archive: Option<OutboxId>) -> Result<(), StoreError> {
+    tx.execute(
+        "DELETE FROM outbox WHERE id = ?1 AND state = 'failed'",
+        [archive],
+    )?;
+    Ok(())
+}
+
+/// How many of `threads` (the account's) a snooze holds now: pending or active.
+fn holding(tx: &Transaction, account: i64, threads: &[i64]) -> Result<usize, StoreError> {
+    let mut count = 0;
+    for &thread in threads {
+        let Some(remote) = thread_remote(tx, account, thread)? else {
+            continue;
+        };
+        let state = current(tx, account, &remote)?.map(|(row, _)| row.state);
+        count += usize::from(matches!(
+            state,
+            Some(SnoozeState::Pending | SnoozeState::Active)
+        ));
+    }
+    Ok(count)
+}
+
+/// Each thread once, in order.
+fn unique(threads: &[i64]) -> Vec<i64> {
+    let mut seen = BTreeSet::new();
+    threads
+        .iter()
+        .copied()
+        .filter(|t| seen.insert(*t))
+        .collect()
 }
 
 /// One archive row for `fresh` and a pending snooze per thread, linked to it.
@@ -167,7 +268,12 @@ pub(super) fn archive_sent(tx: &Transaction, row: OutboxId) -> Result<(), StoreE
         tx.query_row("SELECT reversal FROM outbox WHERE id = ?1", [row], |r| {
             r.get(0)
         })?;
-    let priors: Vec<Prior> = serde_json::from_str(&reversal).unwrap_or_default();
+    // Rail's own JSON. An unreadable one (a hand-edited store) records nothing, so it is logged:
+    // that snooze has no mail to put back.
+    let priors: Vec<Prior> = serde_json::from_str(&reversal).unwrap_or_else(|_| {
+        tracing::warn!(row, "a snoozed archive's reversal did not parse");
+        Vec::new()
+    });
     for (snooze, account, remote) in snoozes {
         let (Some(thread), Some(inbox)) = (
             thread_id(tx, account, &remote)?,
@@ -212,9 +318,9 @@ pub(super) fn wake(tx: &Transaction, account: i64, now: i64) -> Result<OutboxOut
 }
 
 /// `OutboxWrite::Unsnooze`, "Return to inbox now": an active snooze goes back at once; a pending
-/// one is due now (it goes back once its archive is sent); a failed one (its archive reverted)
-/// is dropped. A thread with no snooze, or one back already, is left alone. How many threads were
-/// returned or made due.
+/// one is due now (it goes back once its archive is sent); a failed one is dropped with its
+/// archive (reverted already), so no retry archives the thread later. A thread with no snooze,
+/// or one back already, is left alone. How many threads were returned or made due.
 pub(super) fn clear(
     tx: &Transaction,
     account: i64,
@@ -222,35 +328,26 @@ pub(super) fn clear(
     now: i64,
 ) -> Result<OutboxOutcome, StoreError> {
     let mut returned = 0;
-    for &thread in threads {
+    for thread in unique(threads) {
         let Some(remote) = thread_remote(tx, account, thread)? else {
             continue;
         };
-        let found: Option<(i64, Option<OutboxId>, Option<String>)> = tx
-            .query_row(
-                "SELECT s.id, s.archive_row, o.state FROM snoozes s
-                 LEFT JOIN outbox o ON o.id = s.archive_row
-                 WHERE s.account_id = ?1 AND s.thread_remote = ?2 AND s.woken_at IS NULL",
-                params![account, remote],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()?;
-        returned += match found {
-            None => 0,
-            Some((snooze, None, _)) => {
-                usize::from(return_thread(tx, account, snooze, &remote, now)?.is_some())
+        let Some((snooze, archive)) = current(tx, account, &remote)? else {
+            continue;
+        };
+        returned += match snooze.state {
+            SnoozeState::Active => {
+                usize::from(return_thread(tx, account, snooze.id, &remote, now)?.is_some())
             }
-            Some((snooze, Some(_), Some(state))) if state == "failed" => {
-                tx.execute("DELETE FROM snoozes WHERE id = ?1", [snooze])?;
-                0
-            }
-            Some((snooze, Some(_), _)) => {
-                tx.execute(
-                    "UPDATE snoozes SET until = ?2 WHERE id = ?1",
-                    params![snooze, now],
-                )?;
+            SnoozeState::Pending => {
+                set_until(tx, snooze.id, now)?;
                 1
             }
+            SnoozeState::Failed => {
+                drop_failed(tx, archive)?;
+                0
+            }
+            SnoozeState::Woken => 0,
         };
     }
     Ok(OutboxOutcome::Unsnoozed { returned })
@@ -320,6 +417,23 @@ fn still_archived(
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// `incoming`'s statement (parameters: the account, the batch's provider ids as JSON, now).
+/// It starts from the account's active snoozes (few) and reaches the batch's messages by their
+/// provider ids, so its cost does not grow with the mailbox.
+pub(super) const INCOMING: &str = "UPDATE snoozes SET until = ?3
+    WHERE account_id = ?1 AND archive_row IS NULL AND woken_at IS NULL AND until > ?3
+      AND EXISTS (
+        SELECT 1 FROM messages m JOIN threads t ON t.id = m.thread_id
+        WHERE m.account_id = ?1 AND m.remote_id IN (SELECT value FROM json_each(?2))
+          AND t.remote_id = snoozes.thread_remote
+          AND EXISTS (SELECT 1 FROM message_folders mf JOIN folders f ON f.id = mf.folder_id
+                      WHERE mf.message_id = m.id AND f.kind = 'inbox')
+          AND NOT EXISTS (SELECT 1 FROM message_folders mf JOIN folders f
+                          ON f.id = mf.folder_id
+                          WHERE mf.message_id = m.id AND f.kind IN ('sent', 'drafts'))
+          AND NOT EXISTS (SELECT 1 FROM snooze_messages sm WHERE sm.snooze_id = snoozes.id
+                          AND sm.message_remote = m.remote_id))";
+
 /// A sync batch put `messages` (provider ids) somewhere: any of them now in the inbox, not in
 /// Sent or Drafts and not recorded by the thread's active snooze makes that snooze due now. Rail
 /// stores no sender, so the folder tells: the user's own reply lands in Sent and never counts.
@@ -333,21 +447,7 @@ pub(super) fn incoming(
     if messages.is_empty() {
         return Ok(());
     }
-    tx.execute(
-        "UPDATE snoozes SET until = ?3
-         WHERE account_id = ?1 AND archive_row IS NULL AND woken_at IS NULL AND until > ?3
-           AND thread_remote IN (
-             SELECT t.remote_id FROM messages m JOIN threads t ON t.id = m.thread_id
-             WHERE t.account_id = ?1 AND m.remote_id IN (SELECT value FROM json_each(?2))
-               AND EXISTS (SELECT 1 FROM message_folders mf JOIN folders f ON f.id = mf.folder_id
-                           WHERE mf.message_id = m.id AND f.kind = 'inbox')
-               AND NOT EXISTS (SELECT 1 FROM message_folders mf JOIN folders f
-                               ON f.id = mf.folder_id
-                               WHERE mf.message_id = m.id AND f.kind IN ('sent', 'drafts'))
-               AND NOT EXISTS (SELECT 1 FROM snooze_messages sm WHERE sm.snooze_id = snoozes.id
-                               AND sm.message_remote = m.remote_id))",
-        params![account, json(&messages), now],
-    )?;
+    tx.execute(INCOMING, params![account, json(&messages), now])?;
     Ok(())
 }
 
@@ -367,9 +467,36 @@ pub(super) fn left_inbox(
     }
     tx.execute(
         "DELETE FROM snoozes WHERE account_id = ?1 AND woken_at IS NOT NULL
-           AND thread_remote IN (SELECT remote_id FROM threads WHERE account_id = ?1
-                                 AND id IN (SELECT value FROM json_each(?2)))",
+           AND EXISTS (SELECT 1 FROM threads t WHERE t.account_id = snoozes.account_id
+                       AND t.remote_id = snoozes.thread_remote
+                       AND t.id IN (SELECT value FROM json_each(?2)))",
         params![account, json(&threads)],
+    )?;
+    Ok(())
+}
+
+/// A sync batch touched `threads`: one that came back from a snooze but is out of the inbox now
+/// (archived elsewhere, or its return reverted) leaves its woken row, so the rollup dates it by
+/// its mail again. Run after the waiting actions are applied again, so a return still on its way
+/// keeps the thread in the inbox.
+pub(super) fn settle_woken(
+    tx: &Transaction,
+    account: i64,
+    threads: &BTreeSet<i64>,
+) -> Result<(), StoreError> {
+    if threads.is_empty() {
+        return Ok(());
+    }
+    tx.execute(
+        "DELETE FROM snoozes WHERE account_id = ?1 AND woken_at IS NOT NULL
+           AND EXISTS (SELECT 1 FROM threads t WHERE t.account_id = snoozes.account_id
+                       AND t.remote_id = snoozes.thread_remote
+                       AND t.id IN (SELECT value FROM json_each(?2))
+                       AND NOT EXISTS (SELECT 1 FROM messages m
+                                       JOIN message_folders mf ON mf.message_id = m.id
+                                       JOIN folders f ON f.id = mf.folder_id
+                                       WHERE m.thread_id = t.id AND f.kind = 'inbox'))",
+        params![account, json(threads)],
     )?;
     Ok(())
 }

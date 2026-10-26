@@ -263,6 +263,8 @@ impl MockProvider {
     /// and recorded; it fails as a modify does.
     pub(crate) async fn return_to_inbox(&self, messages: &[RemoteId]) -> Result<(), ProviderError> {
         self.enter(Call::Modify, None)?;
+        let delay = self.lock().action_delay;
+        tokio::time::sleep(delay).await;
         let mut m = self.lock();
         for id in messages {
             if let Some(env) = m.messages.get_mut(id)

@@ -30,6 +30,8 @@ mod rollup;
 mod search_text_tests;
 pub mod snoozes;
 #[cfg(test)]
+mod snoozes_edge_tests;
+#[cfg(test)]
 mod snoozes_single_tests;
 #[cfg(test)]
 mod snoozes_tests;

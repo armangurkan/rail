@@ -12,11 +12,16 @@ use crate::provider::mock::envelope;
 use crate::provider::{Envelope, FolderKind, RemoteFolder};
 use crate::sync::batch::{Batch, Prune, Sweep};
 
-const NOW: i64 = 1_760_000_000;
-const HOUR: i64 = 3_600;
+pub(super) const NOW: i64 = 1_760_000_000;
+pub(super) const HOUR: i64 = 3_600;
 
 /// Snooze `threads` of account 1 until `until` at `NOW`, the archive due at `NOW + 10`.
-fn snooze(store: &mut Store, threads: Vec<i64>, until: i64, token: &str) -> (Vec<i64>, usize) {
+pub(super) fn snooze(
+    store: &mut Store,
+    threads: Vec<i64>,
+    until: i64,
+    token: &str,
+) -> (Vec<i64>, usize) {
     let write = OutboxWrite::Snooze(SnoozeNew {
         account_id: 1,
         threads,
@@ -31,7 +36,7 @@ fn snooze(store: &mut Store, threads: Vec<i64>, until: i64, token: &str) -> (Vec
 }
 
 /// Claim account 1's next row at `at` and record it sent; its id.
-fn send_next(store: &mut Store, at: i64) -> i64 {
+pub(super) fn send_next(store: &mut Store, at: i64) -> i64 {
     let row = match store
         .outbox_write(&OutboxWrite::Claim { account_id: 1 }, at)
         .unwrap()
@@ -47,7 +52,7 @@ fn send_next(store: &mut Store, at: i64) -> i64 {
     row.id
 }
 
-fn wake(store: &mut Store, at: i64) -> Vec<i64> {
+pub(super) fn wake(store: &mut Store, at: i64) -> Vec<i64> {
     match store
         .outbox_write(&OutboxWrite::Wake { account_id: 1 }, at)
         .unwrap()
@@ -58,7 +63,7 @@ fn wake(store: &mut Store, at: i64) -> Vec<i64> {
 }
 
 /// The live rows on `thread`: (action, threads, `not_before`).
-fn live(store: &Store, thread: i64) -> Vec<(Action, Vec<i64>, i64)> {
+pub(super) fn live(store: &Store, thread: i64) -> Vec<(Action, Vec<i64>, i64)> {
     store
         .pending_for(&[thread])
         .unwrap()
@@ -68,9 +73,9 @@ fn live(store: &Store, thread: i64) -> Vec<(Action, Vec<i64>, i64)> {
 }
 
 /// Account 1's snoozes as (thread, until, state, `woken_at`, messages).
-type Seen = (String, i64, SnoozeState, Option<i64>, Vec<String>);
+pub(super) type Seen = (String, i64, SnoozeState, Option<i64>, Vec<String>);
 
-fn snoozes(store: &Store) -> Vec<Seen> {
+pub(super) fn snoozes(store: &Store) -> Vec<Seen> {
     store
         .snoozes(1)
         .unwrap()
@@ -79,12 +84,12 @@ fn snoozes(store: &Store) -> Vec<Seen> {
         .collect()
 }
 
-fn names(ids: &[&str]) -> Vec<String> {
+pub(super) fn names(ids: &[&str]) -> Vec<String> {
     ids.iter().map(|s| (*s).to_string()).collect()
 }
 
 /// A sync batch of `upserts` for account 1, written at `at`.
-fn sync(store: &mut Store, upserts: Vec<Envelope>, at: i64) {
+pub(super) fn sync(store: &mut Store, upserts: Vec<Envelope>, at: i64) {
     let batch = Batch {
         upserts,
         ..Batch::new(1)
@@ -92,7 +97,7 @@ fn sync(store: &mut Store, upserts: Vec<Envelope>, at: i64) {
     store.apply(&batch, at).unwrap();
 }
 
-fn in_folders(id: &str, thread: &str, ms: i64, folders: &[&str]) -> Envelope {
+pub(super) fn in_folders(id: &str, thread: &str, ms: i64, folders: &[&str]) -> Envelope {
     Envelope {
         folders: names(folders),
         ..envelope(id, thread, ms)
@@ -100,7 +105,7 @@ fn in_folders(id: &str, thread: &str, ms: i64, folders: &[&str]) -> Envelope {
 }
 
 /// The messages of the account with their folders, read and starred flags.
-fn folders_of(store: &Store, id: &str) -> Vec<String> {
+pub(super) fn folders_of(store: &Store, id: &str) -> Vec<String> {
     state(store)
         .into_iter()
         .find(|m| m.0 == id)
@@ -108,7 +113,7 @@ fn folders_of(store: &Store, id: &str) -> Vec<String> {
         .unwrap()
 }
 
-fn last_date(store: &Store, thread: i64) -> i64 {
+pub(super) fn last_date(store: &Store, thread: i64) -> i64 {
     store
         .conn()
         .query_row(

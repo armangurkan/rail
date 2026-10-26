@@ -29,6 +29,13 @@ pub(super) fn refresh(tx: &Transaction, threads: &BTreeSet<i64>) -> Result<(), S
     for &thread in threads {
         let participants = participants(tx, thread)?;
         tx.execute(ROLLUP, params![thread, participants])?;
+        // A thread with no mail left takes its snooze with it: snoozes are keyed by the
+        // provider's thread id, which a later thread may reuse.
+        tx.execute(
+            "DELETE FROM snoozes WHERE (account_id, thread_remote) IN
+               (SELECT account_id, remote_id FROM threads WHERE id = ?1 AND message_count = 0)",
+            params![thread],
+        )?;
         tx.execute(
             "DELETE FROM threads WHERE id = ?1 AND message_count = 0",
             params![thread],

@@ -91,6 +91,7 @@ impl Store {
         super::snoozes::incoming(&tx, account, &arrived, now)?;
         // The conflict rule: actions still waiting for Gmail stay on top of what it said.
         super::apply_local::reapply_live(&tx, account, &touched)?;
+        super::snoozes::settle_woken(&tx, account, &touched)?;
         rollup::refresh(&tx, &touched)?;
         // A thread the rollup deleted leaves the outbox before its rowid can be reused.
         super::apply_local::forget_threads(&tx, &touched)?;
