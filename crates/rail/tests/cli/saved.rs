@@ -457,4 +457,38 @@ mod terminal {
         keeps_the_account(&saved);
         quit(&mut child, &mut keys, &output);
     }
+
+    /// `modals/palette.rs`'s box title: on screen only while the palette is open.
+    const PALETTE_TITLE: &str = "Command palette";
+
+    /// US-3 (FR-9, FR-10): the palette lists the search as `Search: <name>` and running the
+    /// entry opens it. The entry is proved by a row that is not the header — the header holds
+    /// the same text once the search is open, so only its absence there makes the first wait
+    /// about the palette.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_palette_lists_and_opens_a_saved_search() {
+        if !script_available() {
+            eprintln!("skipping: util-linux `script` is not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let _daemon = StopsDaemon(&dir);
+        let server = bulk::gmail().await;
+        let (mut child, mut keys, output, config) =
+            open_mail(&dir, &server, &with_searches(JUST_ONE));
+
+        bulk::type_keys(&mut keys, b":search just-one");
+        wait_shown("the palette's entry for the search", &output, |rows| {
+            rows.iter().any(|row| row.contains(PALETTE_TITLE))
+                && !rows[HEADER].contains("Search: just-one")
+                && rows[HEADER + 1..]
+                    .iter()
+                    .any(|row| row.contains("Search: just-one"))
+        });
+        bulk::type_keys(&mut keys, b"\r");
+
+        wait_for_the_one_thread(&output, "just-one");
+        still_saved(&config);
+        quit(&mut child, &mut keys, &output);
+    }
 }
