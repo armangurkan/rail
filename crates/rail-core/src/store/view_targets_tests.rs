@@ -261,3 +261,69 @@ fn newest_sender_is_the_last_messages_from() {
         Some("\"dana reyes\"@x".to_string())
     );
 }
+
+#[test]
+fn newest_sender_skips_the_accounts_own_messages() {
+    let mut store = empty();
+    let batch = Batch {
+        folders: Some(vec![
+            folders().remove(0),
+            RemoteFolder {
+                parent: None,
+                remote_id: "SENT".into(),
+                name: "Sent".into(),
+                kind: FolderKind::Sent,
+            },
+        ]),
+        ..Batch::new(1)
+    };
+    store.apply(&batch, NOW).unwrap();
+    let from = |id: &str, thread: &str, ms: i64, address: &str, folder: &str| Envelope {
+        from: vec![Mailbox {
+            name: None,
+            address: address.to_string(),
+        }],
+        folders: vec![folder.into()],
+        ..envelope(id, thread, ms)
+    };
+    put(
+        &mut store,
+        1,
+        vec![
+            from("m0", "t1", BASE_MS, "a@x", "INBOX"),
+            // Sent from an alias the store does not know as the account's address.
+            from("m1", "t1", BASE_MS + MINUTE_MS, "alias@x", "SENT"),
+            // The account's own address, in another case, outside Sent (a copy to self).
+            from(
+                "m2",
+                "t1",
+                BASE_MS + 2 * MINUTE_MS,
+                "W@Example.COM",
+                "INBOX",
+            ),
+            from("n0", "t2", BASE_MS, "w@example.com", "SENT"),
+            from("n1", "t2", BASE_MS + MINUTE_MS, "w@example.com", "INBOX"),
+        ],
+    );
+    let thread = |remote: &str| -> i64 {
+        store
+            .conn()
+            .query_row(
+                "SELECT id FROM threads WHERE remote_id = ?1",
+                [remote],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let (t1, t2) = (thread("t1"), thread("t2"));
+    assert_eq!(
+        store.newest_sender(t1).unwrap().map(|m| m.address),
+        Some("a@x".to_string()),
+        "the newest message someone else sent"
+    );
+    assert_eq!(
+        store.newest_sender(t2).unwrap(),
+        None,
+        "only the user's own messages: no sender"
+    );
+}
