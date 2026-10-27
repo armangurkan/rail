@@ -25,6 +25,7 @@ use crate::ops::{
 use crate::paths::{Paths, create_private_dir};
 use crate::provider::ProviderError;
 use crate::provider::gmail::mime::{MAX_FILENAME_BYTES, sanitize_filename};
+use crate::provider::http::{RetryPolicy, with_retry_policy};
 use crate::store::Store;
 use crate::store::view::AttachmentView;
 use crate::sync::manager::{Reach, SearchTarget};
@@ -59,19 +60,45 @@ pub(super) async fn save(
     // The writer opens (and migrates) the store; the handle is not kept.
     call.ctx.sync.writer(&call.ctx).await?;
     let listed = listed(&call.ctx, target.account_id, request.message_id.clone()).await?;
+    let results = save_each(&call.ctx, &target, &request, &named, &listed).await?;
+    tracing::info!(parts = results.len(), "attachments saved");
+    Ok(AttachmentSaveResponse { results })
+}
+
+/// One outcome per requested part, in the order asked: the destination prepared once, then a
+/// part fetched and written at a time, so a 40-part message never holds more than one
+/// attachment in memory. The **first network or login failure stops the fetching**: the parts
+/// after it are given that same failure unasked, because a provider that cannot be reached for
+/// one part cannot be reached for the next, and a person is waiting on the answer. Anything
+/// else — a part the provider no longer has, a refused one, a write that failed — is that
+/// part's own outcome and the next part is still tried.
+async fn save_each(
+    ctx: &DaemonContext,
+    target: &SearchTarget,
+    request: &AttachmentSaveRequest,
+    named: &[String],
+    listed: &[AttachmentView],
+) -> Result<Vec<AttachmentResult>, OpError> {
     let dir = PathBuf::from(&request.dir);
     let mut taken = {
         let dir = dir.clone();
-        call.ctx.blocking(move || prepare(&dir)).await?
+        ctx.blocking(move || prepare(&dir)).await?
     };
     let mut results = Vec::with_capacity(listed.len().max(named.len()));
-    for (part_id, meta) in wanted(&named, &listed) {
-        let outcome = match meta {
-            None => AttachmentOutcome::Missing,
-            Some(meta) => {
+    let mut stopped: Option<OpError> = None;
+    for (part_id, meta) in wanted(named, listed) {
+        let outcome = match (meta, &stopped) {
+            (None, _) => AttachmentOutcome::Missing,
+            (Some(_), Some(error)) => AttachmentOutcome::Failed(error.clone()),
+            (Some(meta), None) => {
                 let (back, outcome) =
-                    save_one(&call.ctx, &target, &request.message_id, meta, &dir, taken).await;
+                    save_one(ctx, target, &request.message_id, meta, &dir, taken).await;
                 taken = back;
+                if let AttachmentOutcome::Failed(error) = &outcome
+                    && matches!(error.code, ErrorCode::Network | ErrorCode::Auth)
+                {
+                    stopped = Some(error.clone());
+                }
                 outcome
             }
         };
@@ -80,8 +107,7 @@ pub(super) async fn save(
             outcome,
         });
     }
-    tracing::info!(parts = results.len(), "attachments saved");
-    Ok(AttachmentSaveResponse { results })
+    Ok(results)
 }
 
 /// Every attachment the store lists for the account's message. The only source of a part's
@@ -125,10 +151,16 @@ async fn save_one(
     dir: &Path,
     taken: HashSet<String>,
 ) -> (HashSet<String>, AttachmentOutcome) {
-    let fetched = target
-        .provider
-        .attachment(&message_id.to_string(), &meta.part_id)
-        .await;
+    // A person is waiting on the answer, so one short retry instead of the sync's backoff —
+    // the same policy `sync::search` gives an interactive search. Without it a network outage
+    // holds `Saving…` up for the engine's full retry run, per part.
+    let fetched = with_retry_policy(
+        RetryPolicy::interactive(),
+        target
+            .provider
+            .attachment(&message_id.to_string(), &meta.part_id),
+    )
+    .await;
     let bytes = match fetched {
         Ok(bytes) => bytes,
         Err(ProviderError::NotFound) => return (taken, AttachmentOutcome::Missing),
@@ -386,10 +418,14 @@ pub(super) async fn open(
         // Never the part: it is the provider's text, and the front end already knows it.
         .ok_or_else(|| OpError::not_found("this message has no such attachment"))?;
     let extension = openable(&meta.mime_type).ok_or_else(unopenable)?;
-    let bytes = target
-        .provider
-        .attachment(&request.message_id, &meta.part_id)
-        .await?;
+    // As a save's fetch: one short retry, because a person is waiting (§7).
+    let bytes = with_retry_policy(
+        RetryPolicy::interactive(),
+        target
+            .provider
+            .attachment(&request.message_id, &meta.part_id),
+    )
+    .await?;
     let name = cache_name(&meta.filename, extension);
     let paths = call.ctx.paths.clone();
     // Taken before the sweep and held through the write.

@@ -394,6 +394,40 @@ async fn provider_failures_map_to_missing_and_failed() {
     assert!(entries(&dest).is_empty(), "{:?}", entries(&dest));
 }
 
+/// FR-3: a network failure stops the save. Every part after the first such failure is given
+/// that same failure without a fetch of its own, so a save of a many-part message cannot hold
+/// `Saving…` up for a retry run per part while the network is down.
+#[tokio::test]
+async fn a_network_failure_stops_the_fetches_that_would_follow() {
+    let (h, dest) = fixture().await;
+    list_part(&h, "0.2", "logo.png", "image/png", 3);
+    bytes_at(&h, "0.2", b"png".to_vec());
+    list_part(&h, "0.3", "notes.txt", "text/plain", 5);
+    bytes_at(&h, "0.3", b"notes".to_vec());
+    for _ in 0..3 {
+        h.mock.fail_next(
+            Call::Attachment,
+            ProviderError::transient("the network went"),
+        );
+    }
+    let before = attachment_calls(&h);
+    let response = save(&h, &[], &dest).await.unwrap();
+    assert_eq!(response.results.len(), 3, "{:?}", response.results);
+    for result in &response.results {
+        let AttachmentOutcome::Failed(error) = &result.outcome else {
+            panic!("{}: {:?}", result.part_id, result.outcome);
+        };
+        assert_eq!(error.code, ErrorCode::Network, "{}", result.part_id);
+        assert_eq!(error.class, ErrorClass::Transient, "{}", result.part_id);
+    }
+    assert_eq!(
+        attachment_calls(&h) - before,
+        1,
+        "only the first part was fetched"
+    );
+    nothing_written(&dest);
+}
+
 /// AC-22: a Microsoft 365 reference attachment's permanent message passes through verbatim.
 #[tokio::test]
 async fn a_reference_attachment_says_where_to_reach_it() {
