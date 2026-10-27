@@ -166,3 +166,58 @@ pub(super) fn validate_saved_searches(config: &Config) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `count` saved searches, `s1`, `s2`, … each with a query of its own.
+    fn many(count: usize) -> Vec<SavedSearch> {
+        (1..=count)
+            .map(|n| SavedSearch {
+                name: format!("s{n}"),
+                query: format!("subject:s{n}"),
+            })
+            .collect()
+    }
+
+    /// FR-6's query cap, in §8's wording, straight at `check_put` — the one function the
+    /// prompt and the daemon both refuse through. Exactly `MAX_FILTER_CHARS` is accepted and
+    /// one character more is not, so the boundary is pinned, not just the direction.
+    #[test]
+    fn a_query_one_character_over_the_cap_is_refused() {
+        let at_cap = "x".repeat(MAX_FILTER_CHARS);
+        assert_eq!(check_put(&[], "ok", &at_cap, None), Ok(()));
+        assert_eq!(
+            check_put(&[], "ok", &"x".repeat(MAX_FILTER_CHARS + 1), None),
+            Err("A saved search query must be at most 1024 characters.".to_string())
+        );
+    }
+
+    /// FR-6: the cap counts what the write would **add**, so at 20 a new name is refused in
+    /// §8's wording while a rename, which adds nothing, goes through. The rename is still
+    /// checked for everything else: FR-5's charset and FR-4's clash with another entry (its
+    /// own entry is the one `replaces` skips).
+    #[test]
+    fn the_cap_stops_a_save_at_twenty_but_never_a_rename() {
+        let full = many(MAX_SAVED_SEARCHES);
+        assert_eq!(full.len(), 20);
+        assert_eq!(
+            check_put(&full, "one-more", "is:unread", None),
+            Err("Rail keeps at most 20 saved searches.".to_string())
+        );
+        assert_eq!(
+            check_put(&full, "renamed", "subject:s1", Some("s1")),
+            Ok(())
+        );
+        assert_eq!(
+            check_put(&full, "no spaces", "subject:s1", Some("s1")),
+            Err(name_rule()),
+            "a refusal at the cap is still the name rule, verbatim"
+        );
+        assert_eq!(
+            check_put(&full, "S2", "subject:s1", Some("s1")),
+            Err("A saved search named \"S2\" already exists.".to_string())
+        );
+    }
+}

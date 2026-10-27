@@ -170,6 +170,54 @@ async fn removing_the_open_search_falls_back_to_all_inboxes() {
     );
 }
 
+/// AC-17's other half (FR-17 step 3): removing the search **above** the open one keeps it
+/// open and re-keys it to where it now is, so the next read is still its own and nothing is
+/// called gone. `TWO` lists `needs-reply` first, so with it removed `big-attachments` moves
+/// from index 1 to index 0 — the shift a positional scope has to be told about.
+#[tokio::test]
+async fn removing_the_search_above_the_open_one_shifts_its_index() {
+    let mut f = saved_fixture(&five_threads(), &TWO).await;
+    sidebar_to(&mut f, None, "big-attachments").await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(
+        f.screen.scope,
+        ScopeChoice::Saved {
+            index: 1,
+            name: "big-attachments".into()
+        }
+    );
+
+    *f.fake.saved_answer.lock().unwrap() = Some(Ok(SavedSearchListResponse {
+        searches: vec![SavedSearch {
+            name: "big-attachments".into(),
+            query: "has:attachment".into(),
+        }],
+    }));
+    sidebar_up_to(&mut f, None, "needs-reply").await;
+    press(&mut f, KeyCode::Char('d')).await;
+    press(&mut f, KeyCode::Char('y')).await;
+
+    assert_eq!(
+        f.screen.scope,
+        ScopeChoice::Saved {
+            index: 0,
+            name: "big-attachments".into()
+        }
+    );
+    assert!(
+        f.screen
+            .header_left()
+            .starts_with("▍Rail │ Search: big-attachments"),
+        "{}",
+        f.screen.header_left()
+    );
+    assert_eq!(
+        f.screen.status.notice(),
+        None,
+        "the open search was not read as the removed one"
+    );
+}
+
 /// AC-18 (FR-18): a failed write keeps the list and says why, `detail` included.
 #[tokio::test]
 async fn a_failed_write_keeps_the_list_and_says_why() {
