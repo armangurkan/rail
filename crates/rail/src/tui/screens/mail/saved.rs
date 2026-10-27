@@ -9,6 +9,7 @@
 use rail_core::config::SavedSearch;
 use rail_core::config::saved::check_put;
 use rail_core::ops::OpError;
+use rail_core::store::filter::parse;
 
 use super::sidebar_tree::{RowKey, RowKind};
 use super::{MailScreen, error_line};
@@ -31,6 +32,8 @@ const MOVED_NOTICE: &str = "The saved searches changed; try again.";
 /// What opening a saved search says when its name is gone from the list. Named once: FR-17's
 /// re-find and `resolve_saved_scope` both show it, and one of the two would otherwise drift.
 const GONE_NOTICE: &str = "The saved search you had open is gone; showing All inboxes.";
+/// `S` on a filter whose every word the filter drops (`* ( )`).
+const NARROWS_NOTHING: &str = "That filter narrows nothing; add a condition to save it.";
 /// FR-16, on a row that is not a saved search at all.
 const NOT_A_SEARCH: &str = "That is not a saved search.";
 
@@ -49,6 +52,12 @@ impl MailScreen {
         if !self.has_filter_text() {
             self.status
                 .notify("Set a filter with / first, then save it.", self.tick);
+            return Vec::new();
+        }
+        // Saved, a filter that narrows nothing would list nothing (#110 fails it closed), so
+        // it is refused here rather than saved as a search that looks broken.
+        if !parse(&self.filter_text).has_condition() {
+            self.status.notify(NARROWS_NOTHING, self.tick);
             return Vec::new();
         }
         let check = self.name_check(self.filter_text.clone(), None);

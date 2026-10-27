@@ -516,7 +516,9 @@ such as `form:dana` shows up as a word. `Enter` keeps the filter; `Esc` clears i
 searches the local store only (`rail search` also asks each account's server).
 
 `S` saves the filter in force under a name, so you never type it again: the prompt asks for a
-name of 1 to 40 letters, digits, `-` or `_`, `Enter` saves it and `Esc` cancels. A saved search
+name of 1 to 40 letters, digits, `-` or `_`, `Enter` saves it and `Esc` cancels. A filter that
+narrows nothing — only characters the filter ignores, such as `* ( )` — is not saved; Rail says
+`That filter narrows nothing; add a condition to save it.` A saved search
 then behaves like a mailbox — its own row in the sidebar under `SEARCHES`, an unread count, a
 `Search: <name>` palette entry, a header title, paging and `Esc` — and lists every folder of
 every account narrowed by that filter, so it finds archived mail an inbox view would not. `/`

@@ -279,6 +279,24 @@ async fn s_without_a_filter_says_to_set_one() {
     assert_eq!(saved_calls(&f), Vec::new());
 }
 
+/// `S` on a filter that narrows nothing (only words the filter drops) is refused before the
+/// prompt opens: saved, it would list nothing, which reads as a broken search.
+#[tokio::test]
+async fn s_on_a_filter_that_narrows_nothing_says_so() {
+    let mut f = saved_fixture(&five_threads(), &[]).await;
+    set_filter(&mut f, "* ( )").await;
+    press(&mut f, KeyCode::Char('S')).await;
+    assert!(f.screen.modal.is_none(), "nothing opened");
+    assert!(
+        f.screen
+            .status_line()
+            .contains("That filter narrows nothing; add a condition to save it."),
+        "{}",
+        f.screen.status_line()
+    );
+    assert_eq!(saved_calls(&f), Vec::new());
+}
+
 /// AC-3 (FR-4): a name already saved is refused in the prompt, before any call.
 #[tokio::test]
 async fn a_clashing_name_is_refused_in_the_prompt() {
