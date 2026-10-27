@@ -34,7 +34,8 @@ const BAR: usize = 29;
 
 /// One attachment of the seeded message, as both the store and fake Gmail describe it.
 struct Part {
-    part_id: &'static str,
+    /// The MIME part id the store keeps and Gmail's payload carries.
+    id: &'static str,
     filename: &'static str,
     mime_type: &'static str,
     /// The bytes Gmail serves, and `data` is those bytes in base64url.
@@ -48,7 +49,7 @@ struct Part {
 
 /// `plan.pdf`, five bytes inline: AC-44's part, byte for byte as it was.
 const PLAN: Part = Part {
-    part_id: "0.1",
+    id: "0.1",
     filename: "plan.pdf",
     mime_type: "application/pdf",
     bytes: b"hello",
@@ -58,7 +59,7 @@ const PLAN: Part = Part {
 
 /// `notes.txt`, whose bytes Gmail only hands over from `attachments.get`.
 const NOTES: Part = Part {
-    part_id: "0.2",
+    id: "0.2",
     filename: "notes.txt",
     mime_type: "text/plain",
     bytes: b"the notes",
@@ -75,7 +76,7 @@ impl Part {
             Some(id) => json!({"size": size, "attachmentId": id}),
         };
         json!({
-            "partId": self.part_id, "filename": self.filename,
+            "partId": self.id, "filename": self.filename,
             "mimeType": self.mime_type, "body": body
         })
     }
@@ -83,7 +84,7 @@ impl Part {
     /// The part as the store lists it.
     fn meta(&self) -> rail_core::provider::AttachmentMeta {
         rail_core::provider::AttachmentMeta {
-            part_id: self.part_id.into(),
+            part_id: self.id.into(),
             filename: self.filename.into(),
             mime_type: self.mime_type.into(),
             size: i64::try_from(self.bytes.len()).unwrap(),
@@ -306,7 +307,7 @@ fn ends(run: &mut Run, keys: &[u8]) {
 
 /// What `path` holds and the mode it holds it at.
 fn saved_file(path: &Path) -> (Vec<u8>, u32) {
-    let bytes = std::fs::read(path).unwrap_or_else(|error| panic!("{path:?}: {error}"));
+    let bytes = std::fs::read(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
     (bytes, mode)
 }

@@ -137,6 +137,11 @@ fn entries(dir: &Path) -> Vec<String> {
     names
 }
 
+/// Nothing is in `dir`, and the names it holds when there are any.
+fn nothing_written(dir: &Path) {
+    assert_eq!(entries(dir), Vec::<String>::new(), "nothing was written");
+}
+
 /// Set `path`'s modification time `seconds` into the past.
 fn age(path: &Path, seconds: u64) {
     let when = SystemTime::now() - Duration::from_secs(seconds);
@@ -231,8 +236,9 @@ async fn a_hidden_name_is_made_visible() {
     assert_eq!(path, dest.join("attachment"));
 }
 
-/// AC-19: an empty part list saves every attachment that message has, in the store's order,
-/// and nothing beyond the store's own cap.
+/// AC-19: an empty part list saves every attachment that message has, in the store's order:
+/// one result per part the store lists, however many that is. Nothing here caps them — the
+/// sync's own `MAX_ATTACHMENTS` is what bounds what the store can list for one message.
 #[tokio::test]
 async fn an_empty_part_list_saves_every_attachment_of_that_message() {
     let (h, dest) = fixture().await;
@@ -288,7 +294,7 @@ async fn an_unknown_part_is_missing_without_a_provider_call() {
         response.results[0].outcome
     );
     assert_eq!(attachment_calls(&h), before, "Gmail was not asked");
-    assert!(entries(&dest).is_empty());
+    nothing_written(&dest);
 }
 
 /// AC-21: a provider that no longer has the part is `Missing`; one with network trouble is a
@@ -303,7 +309,7 @@ async fn provider_failures_map_to_missing_and_failed() {
         "{:?}",
         response.results[0].outcome
     );
-    assert!(entries(&dest).is_empty());
+    nothing_written(&dest);
 
     h.mock
         .fail_next(Call::Attachment, ProviderError::transient("Gmail is busy"));
@@ -387,7 +393,7 @@ async fn save_on_an_account_needing_login_fails_before_any_fetch() {
             .is_some_and(|hint| hint.contains("rail account login work")),
         "{error}"
     );
-    assert!(entries(&dest).is_empty());
+    nothing_written(&dest);
     assert!(
         !mock.calls().contains(&Call::Attachment),
         "Gmail was not asked"
@@ -484,7 +490,7 @@ async fn open_refuses_a_type_rail_does_not_open() {
     assert_eq!(error.code, ErrorCode::Unsupported);
     assert_eq!(error.class, ErrorClass::Permanent);
     assert_eq!(attachment_calls(&h), before, "Gmail was not asked");
-    assert!(entries(&h.paths.attachments_dir()).is_empty());
+    nothing_written(&h.paths.attachments_dir());
 }
 
 /// AC-26b: an open of a part the store does not list names no part and asks nothing.
@@ -497,7 +503,7 @@ async fn open_refuses_an_unlisted_part_without_a_provider_call() {
     assert_eq!(error.class, ErrorClass::Permanent);
     assert!(!error.to_string().contains("9.9"), "{error}");
     assert_eq!(attachment_calls(&h), before);
-    assert!(entries(&h.paths.attachments_dir()).is_empty());
+    nothing_written(&h.paths.attachments_dir());
 }
 
 /// AC-27: the sweep at daemon start removes the copies older than a day, and only those.

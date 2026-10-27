@@ -131,7 +131,7 @@ async fn attachment_fixture_icons(
         .unwrap();
     let fake = Arc::new(FakeDaemon::default());
     *fake.statuses.lock().unwrap() = vec![status("work", "w@example.com", SyncPhase::Idle)];
-    let (opener, opened) = recording_opener();
+    let (opener, urls) = recording_opener();
     let ctx = MailContext {
         opener,
         icons,
@@ -153,7 +153,7 @@ async fn attachment_fixture_icons(
     press(&mut f, KeyCode::Enter).await;
     *f.fake.open_dir.lock().unwrap() = Some(f.paths.attachments_dir());
     f.fake.calls.lock().unwrap().clear();
-    (f, opened)
+    (f, urls)
 }
 
 /// `attachment_fixture` with the session's open question already answered yes, and nothing
@@ -179,13 +179,13 @@ fn saved_text(f: &Fixture) -> String {
 
 fn draw(f: &Fixture, width: u16, height: u16) -> String {
     snapshot(width, height, |frame| {
-        f.screen.view(frame, &Theme::default())
+        f.screen.view(frame, &Theme::default());
     })
 }
 
 fn rows(f: &Fixture, width: u16, height: u16) -> Vec<String> {
     render_lines(width, height, |frame| {
-        f.screen.view(frame, &Theme::default())
+        f.screen.view(frame, &Theme::default());
     })
 }
 
@@ -569,11 +569,11 @@ async fn a_long_list_scrolls_and_keeps_the_cursor_drawn() {
             .filter(|row| row.contains("attachment-22.pdf"))
             .collect();
         assert_eq!(marked.len(), 1, "{marked:?}");
-        let marker = match icons {
+        let cursor = match icons {
             Icons::Unicode => "▸ ",
             Icons::Ascii => "> ",
         };
-        assert!(marked[0].contains(marker), "{marked:?}");
+        assert!(marked[0].contains(cursor), "{marked:?}");
         insta::assert_snapshot!(
             format!("attachments_modal_scrolled_{name}_90x24"),
             draw(&f, 90, 24)
