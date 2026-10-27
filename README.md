@@ -1215,11 +1215,12 @@ the daemon (the `draft-files` folder of the data directory, 0600 files in 0700 f
 draft refers to when it starts. Saving an attachment (`s`, `S`, `w`) writes a private (0600) file
 into `attachment_dir` — your download directory unless you set one — and never replaces a file
 that is there: a clash becomes `2-name.pdf`, and a name beginning with a dot or a dash loses it,
-so a save cannot hide a file in that directory or leave one shaped like a command-line option. Opening an attachment writes a 0600 copy in a 0700 directory
-of its own under the cache directory (`~/.cache/rail/attachments/` on Linux), removed when you
-close the reader or quit; any copy older than 24 hours is swept when the daemon starts and before
-each open. On macOS, files Rail writes are quarantined like downloads. The editor's working file
-lives in the `compose` folder of the cache directory until a save succeeds, and one a crash left
+so a save cannot hide a file in that directory or leave one shaped like a command-line option.
+Opening an attachment writes a 0600 copy in a 0700 directory of its own under the cache
+directory (`~/.cache/rail/attachments/` on Linux), removed when you close the reader or quit; any
+copy older than 24 hours is swept when the daemon starts and before each open. On macOS, files
+Rail writes are quarantined like downloads. The editor's working file lives in the `compose`
+folder of the cache directory until a save succeeds, and one a crash left
 behind is removed when
 the mail screen next starts, once it is seven days old. HTML bodies
 are converted to text by Rail's own scanner without running scripts or loading anything remote, so
@@ -1296,7 +1297,7 @@ running syncs carry on unchanged.
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 | `bulk_confirm` | `50` | How many threads an archive, star or mark-read may cover before Rail asks first; `0` never asks. Trash always asks. |
-| `attachment_dir` | unset | Where `s`, `S` and `w` save attachments. Unset is your download directory (the `XDG_DOWNLOAD_DIR` entry of `~/.config/user-dirs.dirs` on Linux, else `~/Downloads`). `~` is expanded; a relative path is refused. |
+| `attachment_dir` | unset | Where `s`, `S` and `w` save attachments. Unset is your download directory (the `XDG_DOWNLOAD_DIR` entry of `~/.config/user-dirs.dirs` on Linux, else `~/Downloads`). `~` is expanded; a relative path is refused, as is one inside Rail's own attachment cache (`attachments` in the cache directory), whose files Rail sweeps a day after it writes them. |
 
 ### `[[accounts]]`
 

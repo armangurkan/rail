@@ -4,6 +4,8 @@ mod actions;
 pub(super) mod attachments;
 #[cfg(all(test, target_os = "macos"))]
 mod attachments_quarantine_tests;
+#[cfg(test)]
+mod attachments_sweep_tests;
 mod body;
 pub(super) mod draft_files;
 mod drafts;

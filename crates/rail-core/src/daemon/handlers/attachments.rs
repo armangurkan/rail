@@ -43,6 +43,12 @@ pub(super) async fn save(
     request: AttachmentSaveRequest,
 ) -> Result<AttachmentSaveResponse, OpError> {
     let named = request.checked_parts()?;
+    // Every copy under Rail's own cache is swept a day after it was written (§7), so a save
+    // into it would quietly lose the file. Refused before the account is reached, so nothing is
+    // fetched and the cache is not created on the way.
+    if Path::new(&request.dir).starts_with(call.ctx.paths.attachments_dir()) {
+        return Err(destination_in_the_cache());
+    }
     let target = match call.ctx.sync.body_target(&request.account).await? {
         Reach::Ready(target) => target,
         // With an empty part list the parts are known only after a store read, and that read
@@ -395,6 +401,15 @@ pub(super) async fn open(
     Ok(AttachmentOpenResponse { path })
 }
 
+/// The refusal a destination inside `attachments_dir()` gets: the sweep removes what is under
+/// it a day after it was written, so a save there would not keep. Names the field, never a
+/// path.
+fn destination_in_the_cache() -> OpError {
+    OpError::invalid_input(
+        "dir: Rail sweeps its own attachment cache, so a save into it would not keep",
+    )
+}
+
 /// The refusal a type outside `OPENABLE` gets. Scripted and executable formats are not handed
 /// to a program of the system's choosing.
 fn unopenable() -> OpError {
@@ -475,8 +490,11 @@ fn write_open_copy(paths: &Paths, name: &str, bytes: &[u8]) -> Result<String, Op
 /// Remove every file under `attachments_dir()` last changed before `now - STALE_AFTER`, then
 /// every token directory that is left empty; how many files went. Each entry's own type is
 /// checked, so a symlink is never followed and nothing outside the directory is touched. No
-/// directory yet means nothing to do.
-fn sweep(paths: &Paths, now: SystemTime) -> std::io::Result<usize> {
+/// directory yet means nothing to do. An entry that has gone since it was listed is skipped —
+/// the reader removes the copies it opened, and the sweep before an open runs beside the one at
+/// start — and any other failure is kept while the rest of the directory is swept, the first of
+/// them coming back at the end.
+pub(super) fn sweep(paths: &Paths, now: SystemTime) -> std::io::Result<usize> {
     let root = paths.attachments_dir();
     let tokens = match std::fs::read_dir(&root) {
         Ok(tokens) => tokens,
@@ -487,31 +505,74 @@ fn sweep(paths: &Paths, now: SystemTime) -> std::io::Result<usize> {
         .checked_sub(STALE_AFTER)
         .unwrap_or(SystemTime::UNIX_EPOCH);
     let mut removed = 0;
+    let mut failed = None;
     for token in tokens {
-        let token = token?;
-        if !token.file_type()?.is_dir() {
-            continue;
+        match token.and_then(|token| sweep_entry(&token, cutoff)) {
+            Ok(went) => removed += went,
+            Err(error) => keep_first(&mut failed, error),
         }
-        removed += sweep_token(&token.path(), cutoff)?;
-        drop_if_empty(&token.path());
     }
+    first_error(failed, removed)
+}
+
+/// One entry of the attachments directory: the stale files in a token directory, and the
+/// directory itself once the sweep has left it empty. Anything that is not a directory — a
+/// symlink included, which is never followed — is left alone.
+fn sweep_entry(token: &std::fs::DirEntry, cutoff: SystemTime) -> std::io::Result<usize> {
+    if !token.file_type()?.is_dir() {
+        return Ok(0);
+    }
+    let removed = sweep_token(&token.path(), cutoff)?;
+    drop_if_empty(&token.path());
     Ok(removed)
 }
 
-/// Remove the regular files in one token directory last changed before `cutoff`; how many.
-fn sweep_token(dir: &Path, cutoff: SystemTime) -> std::io::Result<usize> {
+/// Remove the regular files in one token directory last changed before `cutoff`; how many. A
+/// directory that is no longer there has nothing stale in it, and a file that has gone since it
+/// was listed is not a failure either; the first failure that is neither comes back once the
+/// rest of the directory has been swept.
+pub(super) fn sweep_token(dir: &Path, cutoff: SystemTime) -> std::io::Result<usize> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
     let mut removed = 0;
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        if entry.metadata()?.modified()? < cutoff {
-            std::fs::remove_file(entry.path())?;
-            removed += 1;
+    let mut failed = None;
+    for entry in entries {
+        match entry.and_then(|entry| sweep_file(&entry, cutoff)) {
+            Ok(went) => removed += went,
+            Err(error) => keep_first(&mut failed, error),
         }
     }
-    Ok(removed)
+    first_error(failed, removed)
+}
+
+/// One entry of a token directory: removed when it is a regular file last changed before
+/// `cutoff`, and 1 when it went.
+fn sweep_file(entry: &std::fs::DirEntry, cutoff: SystemTime) -> std::io::Result<usize> {
+    if !entry.file_type()?.is_file() || entry.metadata()?.modified()? >= cutoff {
+        return Ok(0);
+    }
+    std::fs::remove_file(entry.path())?;
+    Ok(1)
+}
+
+/// Keep `error` as what the sweep will report, unless it is an entry that has gone (there is
+/// nothing left to do about it) or a failure is already kept (the first one is reported).
+fn keep_first(failed: &mut Option<std::io::Error>, error: std::io::Error) {
+    if error.kind() == std::io::ErrorKind::NotFound || failed.is_some() {
+        return;
+    }
+    *failed = Some(error);
+}
+
+/// What one sweep loop answers: the failure it kept, else how many files it removed.
+fn first_error(failed: Option<std::io::Error>, removed: usize) -> std::io::Result<usize> {
+    match failed {
+        Some(error) => Err(error),
+        None => Ok(removed),
+    }
 }
 
 /// Remove `dir` when nothing is left in it. A directory still holding a fresh copy, and one
@@ -532,11 +593,10 @@ fn drop_if_empty(dir: &Path) {
 }
 
 /// The start-up sweep, in the background: a copy a crashed terminal left behind does not
-/// survive until the next open. Nothing to do without the directory.
+/// survive until the next open. Nothing to do without the directory, which `sweep` answers
+/// with 0 — the question is asked on the blocking pool with the rest of the sweep's I/O, never
+/// on the runtime.
 pub(crate) async fn sweep_at_start(ctx: std::sync::Arc<DaemonContext>) {
-    if !ctx.paths.attachments_dir().exists() {
-        return;
-    }
     let _opens = OPENS.lock().await;
     let paths = ctx.paths.clone();
     match ctx

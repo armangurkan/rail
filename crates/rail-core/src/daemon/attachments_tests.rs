@@ -491,6 +491,28 @@ async fn a_relative_destination_is_refused() {
     }
 }
 
+/// FR-12: Rail's own attachment cache is not a destination. Every copy under it is swept a
+/// day after it was written, so a save into it — or into a directory under it — would lose the
+/// file; the refusal is permanent, names no file, and nothing is fetched or written.
+#[tokio::test]
+async fn a_save_into_rail_s_own_cache_is_refused() {
+    let (h, _dest) = fixture().await;
+    let inside = h.paths.attachments_dir().join("mine");
+    for dir in [h.paths.attachments_dir(), inside.clone()] {
+        let before = attachment_calls(&h);
+        let error = save(&h, &["0.1"], &dir)
+            .await
+            .expect_err("Rail's own cache");
+        assert_eq!(error.code, ErrorCode::InvalidInput, "{}", dir.display());
+        assert_eq!(error.class, ErrorClass::Permanent, "{}", dir.display());
+        assert!(error.message.contains("dir"), "{error}");
+        assert!(!error.to_string().contains("plan.pdf"), "{error}");
+        assert_eq!(attachment_calls(&h), before, "Gmail was not asked");
+    }
+    assert!(!inside.exists(), "the destination was created anyway");
+    nothing_written(&h.paths.attachments_dir());
+}
+
 /// AC-24: a destination that does not exist yet is created at the process umask, not at 0700.
 #[tokio::test]
 async fn a_missing_destination_is_created_at_the_umask() {
