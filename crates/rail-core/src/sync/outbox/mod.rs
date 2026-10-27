@@ -317,6 +317,8 @@ impl Worker {
             }
         };
         if next.is_none_or(|at| at > now) {
+            // Nothing due: a wait left by an earlier failure starts afresh next time.
+            self.wake_tried(now, true);
             return;
         }
         let wake = OutboxWrite::Wake { account_id: id };

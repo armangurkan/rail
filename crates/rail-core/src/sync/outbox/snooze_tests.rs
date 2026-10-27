@@ -239,3 +239,23 @@ fn the_wait_after_a_failed_wake_doubles_up_to_the_longest_idle() {
     assert_eq!(next_wake_delay(Some(MAX_IDLE / 2 + MIN_IDLE)), MAX_IDLE);
     assert_eq!(next_wake_delay(Some(MAX_IDLE)), MAX_IDLE);
 }
+
+#[tokio::test]
+async fn the_wait_starts_afresh_once_no_snooze_is_due() {
+    let rig = rig().await;
+    let later = unix_now() + 7 * 86_400;
+    snoozed(&rig, "t1", "m1", later - 1);
+    refuse_wakes(&rig, true);
+    let at = Arc::new(AtomicI64::new(later));
+    let worker = worker_at(&rig, at.clone());
+    worker.step().await;
+    // The snooze is cleared meanwhile: the next look finds nothing due.
+    let store = Store::open(&rig.db).unwrap();
+    store.conn().execute("DELETE FROM snoozes", []).unwrap();
+    at.store(later + 2, Ordering::SeqCst);
+    worker.step().await;
+    snoozed(&rig, "t2", "m2", later + 2);
+    at.store(later + 3, Ordering::SeqCst);
+    worker.step().await;
+    assert_eq!(worker.idle().await.as_secs(), 2, "not doubled from before");
+}
