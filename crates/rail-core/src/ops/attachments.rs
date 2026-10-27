@@ -18,7 +18,8 @@ use super::error::OpError;
 /// own cap on how many attachments a message lists (`provider::limits::MAX_ATTACHMENTS`).
 pub const MAX_SAVE_PARTS: usize = 50;
 /// The longest part id, and the longest message id, Rail passes on, in bytes. Gmail's part ids
-/// are dotted (`0.1`) and a Graph id is URL-safe base64 that may end `=`, so neither fits
+/// are dotted (`0.1`) — and empty for a single-part message whose top part is the file — while
+/// a Graph id is URL-safe base64 that may end `=`, so none of them fits
 /// `BodyFetchRequest::checked_ids`' letters-digits-`-`-`_` rule; the provider's own gate
 /// (`gmail::body::part_id_ok`, `graph::graph_id`) decides after this one.
 pub const MAX_PART_ID_BYTES: usize = 512;
@@ -79,17 +80,30 @@ pub fn openable(mime_type: &str) -> Option<&'static str> {
         .map(|(_, extension)| *extension)
 }
 
-/// One id's own rule: 1 to `MAX_PART_ID_BYTES` bytes, with no control and no format
-/// character, so an unbounded or invisible id never reaches SQLite or a provider URL. The
-/// provider's own gate decides after this one. `what` names the field; the value is never
-/// quoted.
-fn checked_id(value: &str, what: &str) -> Result<(), OpError> {
+/// A part id's own rule: at most `MAX_PART_ID_BYTES` bytes, with no control and no format
+/// character, so an unbounded or invisible id never reaches SQLite or a provider URL. **Empty
+/// is one of Gmail's own**: the part id of a single-part message whose top part is the file
+/// (`gmail::body::part_id_ok` keeps it, and `gmail::attachment::find_part` answers it with the
+/// payload itself), so `s`, `Enter` and `o` have to be able to name it.
+fn checked_part_id(value: &str) -> Result<(), OpError> {
+    checked_id(value, "a part id", 0)
+}
+
+/// The same rule with at least one byte: a message id says which message a part belongs to,
+/// and neither provider gives an empty one.
+fn checked_message_id(value: &str) -> Result<(), OpError> {
+    checked_id(value, "message_id", 1)
+}
+
+/// `least` to `MAX_PART_ID_BYTES` bytes, with no control and no format character. `what` names
+/// the field; the value is never quoted.
+fn checked_id(value: &str, what: &str, least: usize) -> Result<(), OpError> {
     let plain = !value
         .chars()
         .any(|c| c.is_control() || crate::config::is_format_char(c));
-    if value.is_empty() || value.len() > MAX_PART_ID_BYTES || !plain {
+    if value.len() < least || value.len() > MAX_PART_ID_BYTES || !plain {
         return Err(OpError::invalid_input(format!(
-            "{what}: 1 to {MAX_PART_ID_BYTES} bytes, with no control or format characters"
+            "{what}: {least} to {MAX_PART_ID_BYTES} bytes, with no control or format characters"
         )));
     }
     Ok(())
@@ -101,9 +115,10 @@ fn checked_id(value: &str, what: &str) -> Result<(), OpError> {
 pub struct AttachmentSaveRequest {
     /// An account's name or address.
     pub account: String,
-    /// The provider's message id, checked by the part-id rule above.
+    /// The provider's message id, checked by the id rule above; never empty.
     pub message_id: String,
-    /// Empty means every attachment the store lists for that message.
+    /// Empty means every attachment the store lists for that message. One of the ids may
+    /// itself be empty: that is Gmail's part id for a single-part message's own payload.
     pub part_ids: Vec<String>,
     /// An absolute directory, resolved by the client: the daemon's working directory is `/`.
     pub dir: String,
@@ -143,8 +158,9 @@ pub enum AttachmentOutcome {
 pub struct AttachmentOpenRequest {
     /// An account's name or address.
     pub account: String,
-    /// The provider's message id, checked by the part-id rule above.
+    /// The provider's message id, checked by the id rule above; never empty.
     pub message_id: String,
+    /// The part id, which Gmail leaves empty for a single-part message's own payload.
     pub part_id: String,
 }
 
@@ -170,7 +186,7 @@ impl AttachmentSaveRequest {
                 "dir: at most {MAX_DIR_BYTES} bytes"
             )));
         }
-        checked_id(&self.message_id, "message_id")?;
+        checked_message_id(&self.message_id)?;
         if self.part_ids.len() > MAX_SAVE_PARTS {
             return Err(OpError::invalid_input(format!(
                 "attachment.save takes at most {MAX_SAVE_PARTS} part ids"
@@ -179,7 +195,7 @@ impl AttachmentSaveRequest {
         let mut seen = HashSet::new();
         let mut parts = Vec::with_capacity(self.part_ids.len());
         for id in &self.part_ids {
-            checked_id(id, "a part id")?;
+            checked_part_id(id)?;
             if seen.insert(id.as_str()) {
                 parts.push(id.clone());
             }
@@ -194,8 +210,8 @@ impl AttachmentOpenRequest {
     /// # Errors
     /// `InvalidInput`/`Permanent`, quoting neither id.
     pub fn checked(&self) -> Result<(), OpError> {
-        checked_id(&self.message_id, "message_id")?;
-        checked_id(&self.part_id, "a part id")
+        checked_message_id(&self.message_id)?;
+        checked_part_id(&self.part_id)
     }
 }
 

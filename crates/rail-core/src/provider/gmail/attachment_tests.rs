@@ -52,6 +52,22 @@ async fn attachment_paths(gmail: &Gmail) -> Vec<String> {
         .collect()
 }
 
+/// Gmail gives a single-part message's own payload the part id `""`, which `part_id_ok`
+/// keeps and the store holds, so a fetch of `""` must answer with that payload's bytes.
+#[tokio::test]
+async fn the_empty_part_id_is_the_message_s_own_payload() {
+    let gmail = Gmail::start().await;
+    let payload = file_part("", json!({"attachmentId": "ANGjdJ_top", "size": 3}));
+    gmail.mount_message(full_json("m1", payload)).await;
+    serve_attachment(&gmail, "ANGjdJ_top", &[9, 8, 7], 1).await;
+    let bytes = gmail
+        .provider()
+        .attachment(&"m1".to_string(), "")
+        .await
+        .unwrap();
+    assert_eq!(bytes, [9, 8, 7]);
+}
+
 #[tokio::test]
 async fn a_part_is_fetched_by_its_attachment_id_not_its_part_id() {
     let gmail = Gmail::start().await;

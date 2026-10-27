@@ -290,6 +290,25 @@ async fn an_option_shaped_name_loses_its_dashes() {
     }
 }
 
+/// FR-2/FR-5: Gmail stores `""` as the part id of a single-part message whose top part is the
+/// file itself (`gmail/body.rs`'s `part_id_ok` keeps it, and `find_part` matches the payload
+/// for it), so `s`, `Enter` and `o` have to reach that part: an empty **part** id is one both
+/// operations take.
+#[tokio::test]
+async fn a_part_whose_id_is_empty_is_saved_and_opened() {
+    let (h, dest) = fixture().await;
+    list_part(&h, "", "photo.png", "image/png", 3);
+    bytes_at(&h, "", b"png".to_vec());
+    let response = save(&h, &[""], &dest).await.unwrap();
+    assert_eq!(response.results[0].part_id, "");
+    let path = written(&response);
+    assert_eq!(path, dest.join("photo.png"));
+    assert_eq!(std::fs::read(&path).unwrap(), b"png");
+    let copy = PathBuf::from(open(&h, "").await.unwrap().path);
+    assert!(copy.ends_with("photo.png"), "{}", copy.display());
+    assert_eq!(std::fs::read(&copy).unwrap(), b"png");
+}
+
 /// AC-19: an empty part list saves every attachment that message has, in the store's order:
 /// one result per part the store lists, however many that is. Nothing here caps them — the
 /// sync's own `MAX_ATTACHMENTS` is what bounds what the store can list for one message.

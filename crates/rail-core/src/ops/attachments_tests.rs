@@ -124,21 +124,22 @@ fn refused(error: &OpError) -> bool {
         && error.class == crate::error::ErrorClass::Permanent
 }
 
-/// AC-30: the part-id rule takes both providers' ids and refuses the rest, on a part id and
-/// on the message id alike, and a part named twice is kept once.
+/// AC-30: the part-id rule takes both providers' ids — Gmail's empty one included, which is a
+/// single-part message's own payload — and refuses the rest, on a part id and on the message id
+/// alike (a message id is never empty), and a part named twice is kept once.
 #[test]
 fn part_id_validation_accepts_both_providers_and_refuses_the_rest() {
     let graph = "AAMkAGI2THVSAAA=";
     let long = "a".repeat(MAX_PART_ID_BYTES + 1);
     let many: Vec<String> = (0..=MAX_SAVE_PARTS).map(|n| format!("0.{n}")).collect();
     let named: Vec<&str> = many.iter().map(String::as_str).collect();
-    for bad in [long.as_str(), "bell\u{7}", "zero\u{200b}width", ""] {
+    for bad in [long.as_str(), "bell\u{7}", "zero\u{200b}width"] {
         let error = save_of("m1", &[bad])
             .checked_parts()
             .expect_err("a part id Rail does not pass on");
         assert!(refused(&error), "{bad:?}: {error:?}");
         assert!(
-            bad.is_empty() || !error.message.contains(bad),
+            !error.message.contains(bad),
             "the id is never quoted: {error:?}"
         );
         let open = AttachmentOpenRequest {
@@ -158,6 +159,17 @@ fn part_id_validation_accepts_both_providers_and_refuses_the_rest() {
         ["0.1", graph]
     );
     assert_eq!(save_of(graph, &["0.1"]).checked_parts().unwrap(), ["0.1"]);
+    // Gmail's own part id for a single-part message whose top part is the file.
+    assert_eq!(save_of("m1", &[""]).checked_parts().unwrap(), [""]);
+    assert!(
+        AttachmentOpenRequest {
+            account: "work".into(),
+            message_id: "m1".into(),
+            part_id: String::new(),
+        }
+        .checked()
+        .is_ok()
+    );
     assert!(
         AttachmentOpenRequest {
             account: "work".into(),
