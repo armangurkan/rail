@@ -1,6 +1,6 @@
 //! Saving and opening attachments through the real binary in a pseudo-terminal, against a
-//! mocked Gmail: `a` then `s` on one part (AC-44), and `w` and `S` on every
-//! part of a message. Every wait reads the screen a 100x30 terminal would show — Rail redraws only the
+//! mocked Gmail: `a` then `s` on one part (AC-44), `w` and `S` on every part of a message, and a
+//! second save that writes `2-plan.pdf` instead of replacing what is there. Every wait reads the screen a 100x30 terminal would show — Rail redraws only the
 //! cells that changed, so a phrase on the bar is never one run in the stream — and every test
 //! checks the files on disk, their modes, and what Gmail was asked for. Linux only, like every
 //! pty test.
@@ -453,6 +453,59 @@ async fn s_capital_in_the_list_saves_every_attachment() {
         attachment_fetches(&run.server, "att-notes").await,
         1,
         "Gmail served notes.txt's bytes once"
+    );
+    ends(&mut run, b"qq");
+}
+
+/// US-4, FR-11: a second save never replaces the first. `plan.pdf` keeps the bytes it has and
+/// the next save lands beside it as `2-plan.pdf`, which is the name the bar reports.
+#[tokio::test]
+async fn a_second_save_never_replaces_the_first() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let mut run = start(&dir, &[PLAN]).await;
+    open_the_thread(&mut run);
+    open_the_list(&mut run);
+    bulk::type_keys(&mut run.keys, b"s");
+    let saved = run.saved.clone();
+    wait_row(
+        "the first save's line",
+        &run.output,
+        BAR,
+        format!("Saved plan.pdf to {}", saved.display()),
+    );
+    // Bytes of the user's own: five bytes of `hello` written twice would tell a replaced file
+    // from an untouched one by nothing at all.
+    let first = saved.join("plan.pdf");
+    std::fs::write(&first, b"mine").unwrap();
+    bulk::type_keys(&mut run.keys, b"as");
+    wait_row(
+        "the second save's line",
+        &run.output,
+        BAR,
+        format!("Saved 2-plan.pdf to {}", saved.display()),
+    );
+    assert_eq!(
+        std::fs::read(&first).unwrap(),
+        b"mine",
+        "the file that was there"
+    );
+    let (bytes, mode) = saved_file(&saved.join("2-plan.pdf"));
+    assert_eq!(bytes, PLAN.bytes, "the served bytes, beside it");
+    assert_eq!(mode, 0o600, "owner-only");
+    let mut names: Vec<String> = std::fs::read_dir(&saved)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["2-plan.pdf", "plan.pdf"],
+        "nothing else was written"
     );
     ends(&mut run, b"qq");
 }
