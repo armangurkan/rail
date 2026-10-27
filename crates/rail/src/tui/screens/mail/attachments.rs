@@ -17,6 +17,7 @@ use rail_core::provider::graph::REFERENCE_ATTACHMENT;
 
 use super::MailScreen;
 use crate::tui::app::Effect;
+use crate::tui::data::MailEvent;
 use crate::tui::modals::{AttachmentTarget, Command, Confirm, Modal};
 use crate::tui::text::escape;
 
@@ -135,6 +136,34 @@ impl MailScreen {
         let text = "Set [general] attachment_dir: Rail could not find your download directory."
             .to_string();
         self.status.error(text, self.ctx.clock.now(), self.tick);
+    }
+
+    /// The two attachment answers, unpacked beside the lines they are turned into. They sat in
+    /// `mail_event`, whose own arms then crossed CONTRIBUTING's 50-line function limit; it sends
+    /// nothing else here, and the last arm is the one it would have taken itself.
+    pub(super) fn attachment_event(&mut self, event: MailEvent) -> Vec<Effect> {
+        match event {
+            MailEvent::AttachmentSaved {
+                result,
+                account,
+                dir,
+                name,
+                unopenable,
+                ..
+            } => self.attachment_saved(
+                result,
+                &account,
+                &dir,
+                name.as_deref(),
+                unopenable.as_deref(),
+            ),
+            MailEvent::AttachmentOpened {
+                result,
+                account,
+                filename,
+            } => self.attachment_opened(result, &account, &filename),
+            other => self.action_event(other),
+        }
     }
 
     /// `attachment.save` answered: one status line, per §8's table.
