@@ -7,6 +7,8 @@ mod attachments_link;
 mod bulk_tests;
 mod daemon_link;
 mod saved_link;
+#[cfg(test)]
+mod saved_tests;
 mod store_reader;
 #[cfg(test)]
 mod tests;
