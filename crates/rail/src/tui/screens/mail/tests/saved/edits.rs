@@ -179,12 +179,11 @@ async fn removing_the_search_above_the_open_one_shifts_its_index() {
     let mut f = saved_fixture(&five_threads(), &TWO).await;
     sidebar_to(&mut f, None, "big-attachments").await;
     press(&mut f, KeyCode::Enter).await;
-    assert_eq!(
-        f.screen.scope,
-        ScopeChoice::Saved {
-            index: 1,
-            name: "big-attachments".into()
-        }
+    // Matched, not compared: `ScopeChoice`'s `PartialEq` reads a `Saved`'s `index` only.
+    assert!(
+        matches!(&f.screen.scope, ScopeChoice::Saved { index: 1, name } if name == "big-attachments"),
+        "{:?}",
+        f.screen.scope
     );
 
     *f.fake.saved_answer.lock().unwrap() = Some(Ok(SavedSearchListResponse {
@@ -197,12 +196,10 @@ async fn removing_the_search_above_the_open_one_shifts_its_index() {
     press(&mut f, KeyCode::Char('d')).await;
     press(&mut f, KeyCode::Char('y')).await;
 
-    assert_eq!(
-        f.screen.scope,
-        ScopeChoice::Saved {
-            index: 0,
-            name: "big-attachments".into()
-        }
+    assert!(
+        matches!(&f.screen.scope, ScopeChoice::Saved { index: 0, name } if name == "big-attachments"),
+        "{:?}",
+        f.screen.scope
     );
     assert!(
         f.screen

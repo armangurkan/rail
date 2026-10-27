@@ -492,13 +492,12 @@ mod tests {
 
         let effects = screen.saved_searches_changed(Ok(searches(&["a", "b", "c"])));
         settle(&mut screen, effects).await;
-        assert_eq!(
-            screen.scope,
-            ScopeChoice::Saved {
-                index: 0,
-                name: "a".into()
-            },
-            "the scope stayed on the search it was opened on"
+        // `ScopeChoice`'s `PartialEq` compares a `Saved` by `index` alone, so the name is
+        // matched rather than compared: an `assert_eq!` here would pass on any name.
+        assert!(
+            matches!(&screen.scope, ScopeChoice::Saved { index: 0, name } if name == "a"),
+            "the scope stayed on the search it was opened on: {:?}",
+            screen.scope
         );
         assert_eq!(screen.status.notice(), None, "nothing was called gone");
         assert_eq!(
@@ -509,12 +508,10 @@ mod tests {
 
         let effects = screen.saved_searches_changed(Ok(searches(&["x", "b", "c"])));
         settle(&mut screen, effects).await;
-        assert_eq!(
-            screen.scope,
-            ScopeChoice::Saved {
-                index: 0,
-                name: "x".into()
-            }
+        assert!(
+            matches!(&screen.scope, ScopeChoice::Saved { index: 0, name } if name == "x"),
+            "{:?}",
+            screen.scope
         );
         assert_eq!(screen.pending_rename, None, "it was followed once");
         assert_eq!(screen.status.notice(), None);

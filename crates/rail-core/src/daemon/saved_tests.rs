@@ -321,7 +321,12 @@ fn no_temporary_config_left(dir: &std::path::Path) {
     );
     let left: Vec<&String> = names
         .iter()
-        .filter(|name| name.starts_with("config.toml.") && name.ends_with(".tmp"))
+        .filter(|name| {
+            let dot_tmp = std::path::Path::new(name.as_str())
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("tmp"));
+            name.starts_with("config.toml.") && dot_tmp
+        })
         .collect();
     assert!(
         left.is_empty(),

@@ -114,12 +114,11 @@ async fn a_stale_row_opens_its_own_search_by_name() {
         "{}",
         f.screen.header_left()
     );
-    assert_eq!(
-        f.screen.scope,
-        ScopeChoice::Saved {
-            index: 0,
-            name: "b-list".into()
-        }
+    // Matched, not compared: `ScopeChoice`'s `PartialEq` reads a `Saved`'s `index` only.
+    assert!(
+        matches!(&f.screen.scope, ScopeChoice::Saved { index: 0, name } if name == "b-list"),
+        "{:?}",
+        f.screen.scope
     );
     assert_eq!(f.screen.status.notice(), None, "the row opened, quietly");
 }
@@ -149,5 +148,5 @@ async fn d_on_a_stale_row_asks_about_that_row_or_says_they_moved() {
         "{}",
         f.screen.status_line()
     );
-    assert!(saved_calls(&f).is_empty());
+    assert_eq!(saved_calls(&f), Vec::new(), "nothing was sent");
 }
