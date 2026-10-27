@@ -22,7 +22,7 @@ use crate::ops::{
     AttachmentSaveRequest, AttachmentSaveResponse, CONTENT_MISMATCH, ErrorCode, OpError,
     STALE_AFTER, content_matches, openable, unwritable_dir,
 };
-use crate::paths::{Paths, create_private_dir};
+use crate::paths::{Paths, canonical_dir, create_private_dir};
 use crate::provider::ProviderError;
 use crate::provider::gmail::mime::{MAX_FILENAME_BYTES, sanitize_filename};
 use crate::provider::http::{RetryPolicy, with_retry_policy};
@@ -47,7 +47,7 @@ pub(super) async fn save(
     // Every copy under Rail's own cache is swept a day after it was written (§7), so a save
     // into it would quietly lose the file. Refused before the account is reached, so nothing is
     // fetched and the cache is not created on the way.
-    if Path::new(&request.dir).starts_with(call.ctx.paths.attachments_dir()) {
+    if in_the_cache(&call.ctx, &request.dir).await? {
         return Err(destination_in_the_cache());
     }
     let target = match call.ctx.sync.body_target(&request.account).await? {
@@ -63,6 +63,15 @@ pub(super) async fn save(
     let results = save_each(&call.ctx, &target, &request, &named, &listed).await?;
     tracing::info!(parts = results.len(), "attachments saved");
     Ok(AttachmentSaveResponse { results })
+}
+
+/// Whether `dir` is `attachments_dir()` or under it once both are resolved: a symlink to the
+/// cache, or a `..` that climbs back into it, is the cache, which comparing the spelling would
+/// miss. `canonical_dir` reads the file system, so it runs on the blocking pool.
+async fn in_the_cache(ctx: &DaemonContext, dir: &str) -> Result<bool, OpError> {
+    let (dir, cache) = (PathBuf::from(dir), ctx.paths.attachments_dir());
+    ctx.blocking(move || Ok(canonical_dir(&dir).starts_with(canonical_dir(&cache))))
+        .await
 }
 
 /// One outcome per requested part, in the order asked: the destination prepared once, then a

@@ -75,7 +75,7 @@ fn dir_text(path: &Path) -> String {
     path.display().to_string()
 }
 
-async fn save(
+pub(super) async fn save(
     h: &DaemonHarness,
     part_ids: &[&str],
     dir: &Path,
@@ -83,7 +83,7 @@ async fn save(
     save_into(h, part_ids, &dir_text(dir)).await
 }
 
-async fn save_into(
+pub(super) async fn save_into(
     h: &DaemonHarness,
     part_ids: &[&str],
     dir: &str,

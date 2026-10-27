@@ -1329,7 +1329,7 @@ running syncs carry on unchanged.
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 | `bulk_confirm` | `50` | How many threads an archive, star or mark-read may cover before Rail asks first; `0` never asks. Trash always asks. |
-| `attachment_dir` | unset | Where `s`, `S` and `w` save attachments. Unset is your download directory (the `XDG_DOWNLOAD_DIR` entry of `~/.config/user-dirs.dirs` on Linux, else `~/Downloads`). `~` is expanded; a relative path is refused, as is one inside Rail's own attachment cache (`attachments` in the cache directory), whose files Rail sweeps a day after it writes them. |
+| `attachment_dir` | unset | Where `s`, `S` and `w` save attachments. Unset is your download directory (the `XDG_DOWNLOAD_DIR` entry of `~/.config/user-dirs.dirs` on Linux, else `~/Downloads`). `~` is expanded, and refused when there is no `$HOME` to expand it to; a relative path is refused, as is one inside Rail's own attachment cache (`attachments` in the cache directory, reached directly, through a symlink or through `..`), whose files Rail sweeps a day after it writes them. |
 
 ### `[[accounts]]`
 
