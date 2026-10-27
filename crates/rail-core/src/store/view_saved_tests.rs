@@ -286,11 +286,9 @@ fn saved_counts_counts_unread_threads_per_filter() {
         )
         .unwrap();
     assert_eq!(counts.saved, [1, 4]);
-    assert!(
-        store
-            .sidebar_counts(&[1, 2], &[], 0)
-            .unwrap()
-            .saved
-            .is_empty()
+    assert_eq!(
+        store.sidebar_counts(&[1, 2], &[], 0).unwrap().saved,
+        Vec::<u64>::new(),
+        "no filters means no count query ran"
     );
 }

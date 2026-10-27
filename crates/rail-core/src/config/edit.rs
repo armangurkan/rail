@@ -682,7 +682,13 @@ mod tests {
 
         let last = remove_saved_search(&gone, path, "big").unwrap();
         let config = parse(&last, path).unwrap();
-        assert!(config.saved_searches.is_empty());
+        // Counted, not shown: `SavedSearch` has no `Debug` (§8 Privacy), so `assert_eq!`
+        // against an empty slice would need one.
+        assert!(
+            config.saved_searches.is_empty(),
+            "{} left",
+            config.saved_searches.len()
+        );
         assert!(!last.contains("[[saved_searches]]"), "{last}");
         assert_eq!(config.accounts.len(), 1);
 
