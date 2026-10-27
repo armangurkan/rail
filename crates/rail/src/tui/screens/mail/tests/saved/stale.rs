@@ -37,7 +37,7 @@ fn one_each() -> Vec<(usize, Envelope)> {
 /// is still in flight: `MailScreen.saved` becomes `searches`, the rows do not. The effects are
 /// dropped on purpose — that dropped `read_sidebar` **is** the window being tested.
 fn answer_without_the_sidebar_read(f: &mut Fixture, searches: &[(&str, &str)]) {
-    let effects = f.screen.saved_searches_changed(Ok(list(searches)));
+    let effects = f.screen.saved_searches_changed(Ok(list(searches)), None);
     assert!(!effects.is_empty(), "the answer asked for a sidebar read");
     drop(effects);
 }

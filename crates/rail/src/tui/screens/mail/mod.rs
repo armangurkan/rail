@@ -251,9 +251,6 @@ pub struct MailScreen {
     saved: Vec<SavedSearch>,
     /// Saved-search counts are shown: from the config, then whatever `:search-counts` chose.
     search_counts: bool,
-    /// A rename in flight, old name then new: the open scope and the sidebar cursor are both
-    /// keyed by the name, so they are re-keyed through it when the answer arrives.
-    pending_rename: Option<(String, String)>,
     /// The HTML files `o` wrote this session, removed when the reader closes and on drop.
     open_files: OpenFiles,
     /// The browser confirmation was answered yes this session.
@@ -333,7 +330,6 @@ impl MailScreen {
             show_clock,
             saved,
             search_counts,
-            pending_rename: None,
             open_files,
             html_confirmed: false,
             attachment: attachments::AttachmentState::default(),

@@ -222,9 +222,9 @@ impl MailScreen {
     }
 
     /// Rename the search the prompt named — `old`, at `index` when it opened — to `name`,
-    /// keeping its query. The rename is remembered until the answer arrives, so the open
-    /// scope and the sidebar cursor can follow the row instead of reading a changed name as a
-    /// removal.
+    /// keeping its query. The pair travels on the request, so its own answer brings it back
+    /// and the open scope and the sidebar cursor can follow the row instead of reading a
+    /// changed name as a removal.
     pub(super) fn rename_search(&mut self, index: usize, old: &str, name: String) -> Vec<Effect> {
         let Some((old, query)) = self
             .entry_at(index, old)
@@ -232,7 +232,6 @@ impl MailScreen {
         else {
             return self.searches_moved();
         };
-        self.pending_rename = Some((old.clone(), name.clone()));
         vec![self.ctx.link.saved_search_put(name, query, Some(old))]
     }
 
@@ -244,19 +243,21 @@ impl MailScreen {
         vec![self.ctx.link.saved_search_remove(found)]
     }
 
-    /// `saved_search.put` or `.remove` answered. On `Ok`, in FR-17's order: a rename in
-    /// flight re-keys the open scope and the sidebar cursor, so the row is followed rather
-    /// than read as a removal; the whole new list replaces what the screen holds; the open
-    /// search is found again by name; the sidebar is read again, so its rows and its
-    /// positional counts are rebuilt together; and the list is read again when the scope
-    /// changed. On `Err` the list is left as it was and the reason is shown.
+    /// `saved_search.put` or `.remove` answered. On `Ok`, in FR-17's order: `renamed` — set
+    /// only on the answer of the rename's own request — re-keys the open scope and the sidebar
+    /// cursor, so the row is followed rather than read as a removal; the whole new list
+    /// replaces what the screen holds; the open search is found again by name; the sidebar is
+    /// read again, so its rows and its positional counts are rebuilt together; and the list is
+    /// read again when the scope changed. On `Err` nothing was written, so the list is left as
+    /// it was, the rename it may carry is not followed, and the reason is shown.
     pub(super) fn saved_searches_changed(
         &mut self,
         result: Result<Vec<SavedSearch>, OpError>,
+        renamed: Option<(String, String)>,
     ) -> Vec<Effect> {
         match result {
             Ok(searches) => {
-                if let Some((old, new)) = self.rename_answered(&searches) {
+                if let Some((old, new)) = renamed {
                     self.follow_rename(&old, &new);
                 }
                 self.saved = searches;
@@ -265,10 +266,6 @@ impl MailScreen {
                 effects
             }
             Err(error) => {
-                // Nothing was written, so there is no new list for a remembered rename to
-                // follow. Which write failed is not on the event, so this clears it, as every
-                // answer did before the rename learnt to wait for its own.
-                self.pending_rename = None;
                 tracing::warn!(code = ?error.code, "a saved-search write failed");
                 let text = format!(
                     "Could not change the saved searches: {}",
@@ -277,26 +274,6 @@ impl MailScreen {
                 self.status.error(text, self.ctx.clock.now(), self.tick);
                 Vec::new()
             }
-        }
-    }
-
-    /// The rename in flight, taken, when `searches` is **its** answer: the new name is in the
-    /// arriving list. Every `saved_search.put` and `.remove` answers with the whole list, so
-    /// another write's answer would otherwise consume the rename and re-key the open scope and
-    /// the cursor to a name that list does not hold — which FR-17 step 3 reads one line later
-    /// as a removal. Left in place otherwise, for the answer it belongs to. Names are compared
-    /// the way the daemon keys them, ignoring ASCII case, so a case-only rename is its own
-    /// answer too.
-    fn rename_answered(&mut self, searches: &[SavedSearch]) -> Option<(String, String)> {
-        let its_own = self.pending_rename.as_ref().is_some_and(|(_, new)| {
-            searches
-                .iter()
-                .any(|entry| entry.name.eq_ignore_ascii_case(new))
-        });
-        if its_own {
-            self.pending_rename.take()
-        } else {
-            None
         }
     }
 
@@ -424,7 +401,7 @@ mod tests {
         let asked = confirm_body(&screen);
         assert!(asked[0].contains("\"a-list\""), "{asked:?}");
 
-        let effects = screen.saved_searches_changed(Ok(searches(&["b-list", "c-list"])));
+        let effects = screen.saved_searches_changed(Ok(searches(&["b-list", "c-list"])), None);
         settle(&mut screen, effects).await;
 
         let command = answer(&mut screen, KeyCode::Char('y'));
@@ -447,7 +424,7 @@ mod tests {
     async fn a_rename_never_hits_a_search_that_moved() {
         let (_tmp, fake, mut screen) = screen_with(&["a-list", "b-list", "c-list"]);
         screen.rename_search_prompt(0);
-        let effects = screen.saved_searches_changed(Ok(searches(&["b-list", "c-list"])));
+        let effects = screen.saved_searches_changed(Ok(searches(&["b-list", "c-list"])), None);
         settle(&mut screen, effects).await;
 
         screen
@@ -460,7 +437,6 @@ mod tests {
         settle(&mut screen, effects).await;
 
         assert_eq!(saved_calls(&fake), Vec::new(), "nothing was renamed");
-        assert_eq!(screen.pending_rename, None, "no rename is remembered");
         assert!(
             screen
                 .status_line()
@@ -470,11 +446,12 @@ mod tests {
         );
     }
 
-    /// G3 (FR-17 step 1): the rename remembered for the scope to follow belongs to **its**
-    /// answer. Every `saved_search.put` and `.remove` answers with the whole list, so a save
-    /// already in flight answers first here; consuming the rename on that answer re-keys the
-    /// open scope to a name the arriving list does not hold, which step 3 reads one line later
-    /// as a removal — the search the user is looking at, closed by their own rename.
+    /// G3 (FR-17 step 1): the rename the scope follows belongs to **its** answer. Every
+    /// `saved_search.put` and `.remove` answers with the whole list, so a save already in
+    /// flight answers first here; following the rename on that answer re-keys the open scope
+    /// to a name the arriving list does not hold, which step 3 reads one line later as a
+    /// removal — the search the user is looking at, closed by their own rename. The pair is
+    /// on the answer, so only the rename's own answer carries it.
     #[tokio::test]
     async fn a_rename_is_followed_on_its_own_answer() {
         let (_tmp, _fake, mut screen) = screen_with(&["a", "b"]);
@@ -482,15 +459,8 @@ mod tests {
             index: 0,
             name: "a".into(),
         };
-        // `r` on `a`, renamed to `x`: the put is sent and remembered. Its answer is held back,
-        // so the save of `c` that was already in flight is the next one to land.
-        drop(screen.rename_search(0, "a", "x".to_string()));
-        assert_eq!(
-            screen.pending_rename,
-            Some(("a".to_string(), "x".to_string()))
-        );
-
-        let effects = screen.saved_searches_changed(Ok(searches(&["a", "b", "c"])));
+        // The save of `c` that was already in flight lands first, carrying no rename.
+        let effects = screen.saved_searches_changed(Ok(searches(&["a", "b", "c"])), None);
         settle(&mut screen, effects).await;
         // `ScopeChoice`'s `PartialEq` compares a `Saved` by `index` alone, so the name is
         // matched rather than compared: an `assert_eq!` here would pass on any name.
@@ -500,20 +470,50 @@ mod tests {
             screen.scope
         );
         assert_eq!(screen.status.notice(), None, "nothing was called gone");
-        assert_eq!(
-            screen.pending_rename,
-            Some(("a".to_string(), "x".to_string())),
-            "the rename waits for its own answer"
-        );
 
-        let effects = screen.saved_searches_changed(Ok(searches(&["x", "b", "c"])));
+        // Then the answer to `r` on `a`, renamed to `x`, which does carry the pair.
+        let renamed = Some(("a".to_string(), "x".to_string()));
+        let effects = screen.saved_searches_changed(Ok(searches(&["x", "b", "c"])), renamed);
         settle(&mut screen, effects).await;
         assert!(
             matches!(&screen.scope, ScopeChoice::Saved { index: 0, name } if name == "x"),
             "{:?}",
             screen.scope
         );
-        assert_eq!(screen.pending_rename, None, "it was followed once");
         assert_eq!(screen.status.notice(), None);
+    }
+
+    /// G3's other half (FR-17 step 1): a rename has to survive another write's **failure**.
+    /// Which write failed is not on the answer, so screen state remembering the rename has to
+    /// clear on any `Err` — and the rename's own `Ok` then reads the open search's old name as
+    /// gone and closes the search the user is looking at. The pair rides on the answer of the
+    /// rename's own request instead, so a failure landing in between cannot lose it.
+    #[tokio::test]
+    async fn a_rename_survives_another_write_s_failure() {
+        let (_tmp, fake, mut screen) = screen_with(&["a", "b"]);
+        screen.scope = ScopeChoice::Saved {
+            index: 0,
+            name: "a".into(),
+        };
+        screen.filter_text = "from:c@example.com".into();
+        // `r` on `a`, renamed to `x`: the put is sent and its answer is held back.
+        let rename = screen.rename_search(0, "a", "x".to_string());
+        // The save of `c` that was already in flight fails, and answers first.
+        *fake.saved_answer.lock().unwrap() = Some(Err(OpError::internal("the config is locked")));
+        let save = screen.save_search("c".to_string());
+        settle(&mut screen, save).await;
+        // Then the rename's own answer lands, carrying `[x, b]`.
+        settle(&mut screen, rename).await;
+
+        assert!(
+            matches!(&screen.scope, ScopeChoice::Saved { index: 0, name } if name == "x"),
+            "the open search followed its own rename: {:?}",
+            screen.scope
+        );
+        assert!(
+            !screen.status_line().contains(GONE_NOTICE),
+            "the rename was read as a removal: {}",
+            screen.status_line()
+        );
     }
 }

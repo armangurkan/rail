@@ -13,6 +13,7 @@ fn the_saved_search_events_log_names_and_numbers_only() {
             name: "needs-reply".into(),
             query: "from:dana@corp.example".into(),
         }]),
+        renamed: None,
     };
     let text = format!("{changed:?}");
     assert!(text.contains("len: 1"), "{text}");
@@ -21,11 +22,22 @@ fn the_saved_search_events_log_names_and_numbers_only() {
 
     let failed = MailEvent::SavedSearchesChanged {
         result: Err(rail_core::ops::OpError::internal("gone")),
+        renamed: None,
     };
     assert_eq!(
         format!("{failed:?}"),
-        "SavedSearchesChanged { ok: false, len: 0 }"
+        "SavedSearchesChanged { ok: false, len: 0, renamed: false }"
     );
+
+    // The rename a `put`'s answer carries is two names, so only whether there is one prints.
+    let renamed = MailEvent::SavedSearchesChanged {
+        result: Ok(Vec::new()),
+        renamed: Some(("needs-reply".into(), "later".into())),
+    };
+    let text = format!("{renamed:?}");
+    assert!(text.contains("renamed: true"), "{text}");
+    assert!(!text.contains("needs-reply"), "{text}");
+    assert!(!text.contains("later"), "{text}");
 
     let saved = MailEvent::SearchCountsSaved {
         result: Err("disk full at /Users/me".into()),

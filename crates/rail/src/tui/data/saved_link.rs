@@ -22,13 +22,17 @@ impl DaemonLink {
     ) -> Effect {
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
+                // Captured here, where the rename is sent, so its answer carries it: every
+                // answer is the whole list, so nothing in the answer itself says which write
+                // it belongs to.
+                let renamed = replaces.clone().map(|old| (old, name.clone()));
                 let request = SavedSearchPutRequest {
                     name,
                     query,
                     replaces,
                 };
                 let result = connector.call::<SavedSearchPut>(&request).await;
-                send(&sink, changed(result));
+                send(&sink, changed(result, renamed));
             }),
             #[cfg(test)]
             Link::Fake(fake) => job(move |sink| async move {
@@ -43,7 +47,7 @@ impl DaemonLink {
             Link::Daemon(connector) => job(move |sink| async move {
                 let request = SavedSearchRemoveRequest { name };
                 let result = connector.call::<SavedSearchRemove>(&request).await;
-                send(&sink, changed(result));
+                send(&sink, changed(result, None));
             }),
             #[cfg(test)]
             Link::Fake(fake) => job(move |sink| async move {
@@ -53,10 +57,15 @@ impl DaemonLink {
     }
 }
 
-/// Either op's answer as the screen's event: the new list, or why nothing changed.
-fn changed(result: Result<SavedSearchListResponse, rail_core::ops::OpError>) -> MailEvent {
+/// Either op's answer as the screen's event: the new list, or why nothing changed. `renamed`
+/// is the pair the request asked for, so the screen follows a rename only on its own answer.
+fn changed(
+    result: Result<SavedSearchListResponse, rail_core::ops::OpError>,
+    renamed: Option<(String, String)>,
+) -> MailEvent {
     MailEvent::SavedSearchesChanged {
         result: result.map(|answer| answer.searches),
+        renamed,
     }
 }
 
@@ -77,6 +86,8 @@ impl super::FakeDaemon {
             query: query.clone(),
             replaces: replaces.map(str::to_string),
         });
+        // As the real link does: taken from the request, before `name` is moved into the entry.
+        let renamed = replaces.map(|old| (old.to_string(), name.clone()));
         let answer = self.saved_answer.lock().unwrap().take();
         let result = answer.unwrap_or_else(|| {
             let mut saved = self.saved.lock().unwrap();
@@ -91,7 +102,7 @@ impl super::FakeDaemon {
                 searches: saved.clone(),
             })
         });
-        send(sink, changed(result));
+        send(sink, changed(result, renamed));
     }
 
     /// Record the call and answer: `saved_answer` when a test set one, else the fake's own
@@ -108,6 +119,6 @@ impl super::FakeDaemon {
                 searches: saved.clone(),
             })
         });
-        send(sink, changed(result));
+        send(sink, changed(result, None));
     }
 }

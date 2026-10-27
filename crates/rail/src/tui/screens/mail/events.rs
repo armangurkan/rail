@@ -100,7 +100,9 @@ impl MailScreen {
                 result,
             } => self.unsnoozed(seq, &threads, result),
             MailEvent::WokeRead { count, subject } => self.woke_read(count, subject),
-            MailEvent::SavedSearchesChanged { result } => self.saved_searches_changed(result),
+            MailEvent::SavedSearchesChanged { result, renamed } => {
+                self.saved_searches_changed(result, renamed)
+            }
             other => self.action_event(other),
         }
     }
