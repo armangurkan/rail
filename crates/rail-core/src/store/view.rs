@@ -67,7 +67,7 @@ pub enum AccountFilter {
 pub struct ListQuery {
     pub scope: Scope,
     pub filter: Filter,
-    /// The open saved search's filter, ANDed under `filter` as its own condition. Re-derived
+    /// The open saved search's filter, `ANDed` under `filter` as its own condition. Re-derived
     /// by `filter::parse` on every read and never cached.
     pub saved: Option<Filter>,
     pub account: AccountFilter,
