@@ -237,7 +237,13 @@ Both `rail` and `rail setup` refuse to start, naming the file and line and exiti
 names an action it does not know, a key it cannot read, `Ctrl-C` (which always quits), or a key
 another action of the same view already uses (a key that starts another action's sequence
 counts). They check before the terminal changes. A view's own key wins over a global one: `q`
-closes the reader but quits from the list.
+closes the reader but quits from the list. The defaults count too: `J`, `K`, `shift-down` and
+`shift-up` extend the selection in the list, so a `[keys]` entry that binds one of them to another
+list action (`"list.down" = "J"`, say) stops Rail from starting with that error until you change
+the entry or move `list.extend_down` / `list.extend_up` to other keys. Likewise `h` snoozes in the
+list and the reader, so the reader's headers moved to `H`: an older `"reader.headers" = "h"` entry
+stops Rail from starting with `[keys] "list.snooze" (h) and "reader.headers" (h) cannot share a
+key in the reader view` until you remove it or bind `list.snooze` to another key.
 
 The `global.*`, `list.*`, `sidebar.*`, `reader.*` and `compose.*` actions below take effect in the
 mail screen and the `wizard.*` ones in the setup wizard. In the mail screen `?` lists the keys of the view you
@@ -433,8 +439,8 @@ at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its text. Wh
 oldest messages are not shown, `[5 older messages of this thread are not shown]` stands where they
 would be. `j`/`k` move the cursor, `n`/`p` jump between the newest message and each card, `Tab` (or
 `Enter` on a card, the subject or a preview) opens or closes the message under the cursor, and
-`Enter` on `[n quoted lines]` shows the quoted text. `H` shows or hides, for the session, the
-headers of every open message: `From:`, `To:` and `Cc:` with addresses,
+`Enter` on `[n quoted lines]` shows the quoted text. `H` (`h` before snooze took it) shows or
+hides, for the session, the headers of every open message: `From:`, `To:` and `Cc:` with addresses,
 `Date: Fri 10 Oct 2025 12:40`, and `Subject:` when it differs from the thread's. With
 `icons = "ascii"` the arrows are `>` and `v` and the rules `-`.
 
@@ -455,7 +461,20 @@ five such parameters. Rail opens only `http`, `https` and `mailto` links of at m
 message's rows sit under a `MESSAGE <n>` heading when more than one message carries attachments.
 `Enter` or `o` opens the highlighted one with the program your system uses for it — Rail asks once
 a session before the first open, and only for the common document and image types it hands over;
-anything else is saved instead and says so. `s` saves the highlighted attachment, `S` saves every
+anything else is saved instead and says so. Office documents (Word, Excel, PowerPoint and their
+OpenDocument kin) and RTF are among them, so the question warns that they can hold macros or links
+that run or fetch content when opened. A type is the sender's claim, and your system's opener
+may judge a file by its contents instead, so before writing the copy Rail checks that the file
+starts the way its type does (`%PDF-` for a PDF, the PNG, JPEG, GIF, WebP, BMP, TIFF or HEIC
+signature for an image, a ZIP whose first part is an Office one for `.docx` and its kin (so a
+Java archive renamed `.docx` is refused), a ZIP naming its own type first for
+`.odt`, `.ods` and `.odp`, the old Office header for `.doc`, `.xls` and `.ppt`, `{\rtf` for RTF).
+Plain text, CSV and TSV may be in any 8-bit encoding (UTF-8, or Latin-1 from a spreadsheet), but
+not hold a NUL byte, start (past any byte-order marks and white space) with markup, a `#!`
+script line or a PDF or PostScript header, or have an HTML, SVG or XML tag start in their first
+64 KiB, whatever its case or the white space inside it. A file that fails is not opened — a web page
+labelled as a picture would otherwise open in your browser — and is saved instead, with a line
+that says so. `s` saves the highlighted attachment, `S` saves every
 attachment of its message, and `Esc`, `q` or `a` closes the list. From the reader itself, `w`
 saves the cursor message's attachments without opening the list. Saves land in `[general]
 attachment_dir` (below), your download directory by default, and never replace a file you have: a
@@ -629,12 +648,17 @@ the selection, which stays as it was (`Space` still pages down, and selecting is
 archive, trash and move close the reader.
 
 `* a` selects every thread this mailbox and filter match — newest first, at most 10,000, and the
-header then reads `10,000 selected (more match)`. `* f` puts the sender of the thread under the
-cursor into the filter line as `from:<address>` and selects those: in the filter line that form
-matches that address exactly, where a plain `from:dana` matches every thread whose sender's name
-*or* address contains `dana`. A thread whose newest message has no readable sender, or one whose
-address the filter cannot carry, says `This thread has no sender to select by.` and changes
-nothing.
+header then reads `10,000 selected (more match)`; when nothing matches it says `Nothing matches.`
+and selects nothing. `* f` puts the sender of the thread under the cursor into the filter line as
+`from:<address>` and selects every thread with any message from that address, as the same `from:`
+filter would show them: in the filter line that form matches that address exactly, where a plain
+`from:dana` matches every thread whose sender's name *or* address contains `dana`. The sender is
+that of the thread's newest message from someone else: your own messages (from the account's
+address, or in its Sent or Drafts) are passed over, so a thread you answered last selects by the
+person you answered. A thread with no such message with a readable sender, or one whose address
+the filter cannot carry, says `This thread has no sender to select by.` and changes nothing. If
+you change the mailbox or the filter before `* a` or `* f` has answered, its answer is dropped and
+nothing is selected.
 
 `v` starts a range at the thread under the cursor: the bar says `range from here`, and while the
 range is open its first key hint is `Esc range`. Move as usual, then `v` or `Esc` ends the range
@@ -650,8 +674,8 @@ starts again from the new place. A terminal that does not report Shift with the 
 `J` and `K`; elsewhere in Rail, the Drafts folder included, a Shift-arrow moves like the plain
 arrow, and there `J` and `K` move too. While `v` has a range open, `J`, `K` and the Shift-arrows
 only move. If a sync reads the list again while you extend and the thread you started from leaves
-it, the extension carries on from where the cursor was. A selection holds at most 10,000 threads: an extension it stops says
-`The selection holds at most 10,000 threads.`
+it, the extension carries on from where the cursor was. A selection holds at most 10,000 threads:
+an extension or a `v` range it stops says `The selection holds at most 10,000 threads.`
 
 A bulk action goes out as one request per 200 threads per account, and one `z` takes the whole set
 back, reporting `undone` once; an undo that could take only part of it back says `undone in part:
@@ -685,7 +709,8 @@ refuses an action for good (the thread or the label no longer exists), Rail undo
 list, shows "Could not archive: …" on the thread's row, and keeps the error in `:errors`, where
 `Enter` on it sends the action again. Refusals are listed in `:errors` again whenever Rail
 connects to the daemon, so one that happened while Rail was closed or disconnected is not lost.
-A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed`.
+A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed` (a
+snoozed thread's failed return excepted: see [Snooze](#snooze)).
 On a Microsoft 365 account the same keys act through Outlook's folders, where a message lives in
 one folder. `e` moves the thread's Inbox messages to Archive; on a mailbox with no Archive folder
 it says `This mailbox has no Archive folder; press m to move.` (Rail never makes one). `d` moves
@@ -758,7 +783,15 @@ devices show the thread archived until it comes back, and it comes back while th
 snooze took out of the inbox: on Gmail it adds `INBOX` to them (one you trashed or reported as
 spam meanwhile stays there), and on Microsoft 365 it moves them from Archive back to Inbox (one
 you moved to another folder meanwhile stays there). If the server refuses the archive, the snooze fails with it (`Could not archive: …`, and
-`Enter` in `:errors` sends it again); snoozing the thread again starts afresh. Removing an account
+`Enter` in `:errors` sends it again); snoozing the thread again starts afresh. A return the server
+cannot take right away is tried again like any action; one it refuses, or that gives up after 20
+attempts, leaves the thread archived and stays in `:errors` (`Could not return to the inbox: …`)
+through later syncs, where `Enter` sends it again; a retry leaves mail you trashed or reported as
+spam since where it is. It leaves `:errors` once it is sent, once the thread is back in the inbox
+by other means, once none of its messages is still archived (all trashed, reported or filed
+elsewhere), or when you archive, trash or move the thread in Rail. So a return the server keeps
+refusing stays until you send it again with `Enter` in `:errors` and it goes through, or you
+archive, trash or move the thread in Rail to give it up. Removing an account
 leaves its snoozed threads archived, since nothing syncs that account any more.
 
 ## Writing mail
@@ -1248,8 +1281,9 @@ into `attachment_dir` — your download directory unless you set one — and nev
 that is there: a clash becomes `2-name.pdf`, and a name beginning with a dot or a dash loses it,
 so a save cannot hide a file in that directory or leave one shaped like a command-line option.
 Opening an attachment writes a 0600 copy in a 0700 directory of its own under the cache
-directory (`~/.cache/rail/attachments/` on Linux), removed when you close the reader or quit; any
-copy older than 24 hours is swept when the daemon starts and before each open. On macOS, files
+directory (`~/.cache/rail/attachments/` on Linux), removed a minute after you close the reader —
+so a viewer that starts slowly still finds it — or at once when you quit; any copy older than 24
+hours is swept when the daemon starts and before each open. On macOS, files
 Rail writes are quarantined like downloads. The editor's working file lives in the `compose`
 folder of the cache directory until a save succeeds, and one a crash left
 behind is removed when
@@ -1328,7 +1362,7 @@ running syncs carry on unchanged.
 | `layout` | `"auto"` | Only `"auto"` works in this version; `"split"` and `"stack"` are accepted and act as `"auto"`. |
 | `editor` | unset | The command that writes mail, split like a shell command line (no shell runs), e.g. `"nvim"` or `"code --wait"`. Unset: `$VISUAL`, then `$EDITOR`, then `vi`. Read when the mail screen starts. |
 | `bulk_confirm` | `50` | How many threads an archive, star or mark-read may cover before Rail asks first; `0` never asks. Trash always asks. |
-| `attachment_dir` | unset | Where `s`, `S` and `w` save attachments. Unset is your download directory (the `XDG_DOWNLOAD_DIR` entry of `~/.config/user-dirs.dirs` on Linux, else `~/Downloads`). `~` is expanded; a relative path is refused, as is one inside Rail's own attachment cache (`attachments` in the cache directory), whose files Rail sweeps a day after it writes them. |
+| `attachment_dir` | unset | Where `s`, `S` and `w` save attachments. Unset is your download directory (the `XDG_DOWNLOAD_DIR` entry of `~/.config/user-dirs.dirs` on Linux, else `~/Downloads`). `~` is expanded, and refused when there is no `$HOME` to expand it to; a relative path is refused, as is one inside Rail's own attachment cache (`attachments` in the cache directory, reached directly, through a symlink or through `..`), whose files Rail sweeps a day after it writes them. |
 | `saved_search_counts` | `true` | Unread counts beside each saved search in the sidebar. `false` leaves them out and skips the count queries, the one thing saved searches cost on a large mailbox. `:search-counts` toggles it and saves it. |
 
 ### `[[saved_searches]]`

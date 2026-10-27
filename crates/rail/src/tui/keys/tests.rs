@@ -464,3 +464,16 @@ fn compose_push_is_s_and_clashes_with_no_other_compose_key() {
     );
     configured("").expect("the defaults are free of clashes");
 }
+
+#[test]
+fn the_old_headers_key_h_clashes_with_snooze_in_the_reader() {
+    let text = "[keys]\n\"reader.headers\" = \"h\"\n";
+    let error = configured(text).unwrap_err();
+    assert_eq!(error.line, 2);
+    assert_eq!(
+        error.message,
+        "[keys] \"list.snooze\" (h) and \"reader.headers\" (h) cannot share a key in the reader view"
+    );
+    let moved = configured("[keys]\n\"reader.headers\" = \"h\"\n\"list.snooze\" = \"z\"\n");
+    assert!(moved.is_ok(), "moving snooze frees h");
+}

@@ -42,6 +42,11 @@ macro_rules! archived_in_folder {
     };
 }
 
+// After the two macros above, which `return_still_owed!` names.
+pub(in crate::store) use {archived_by_labels, archived_in_folder};
+mod settle;
+pub(super) use settle::{left_inbox, return_still_owed, settle_woken};
+
 /// Snooze `s` (its archive row joined as `o`) holds its thread `ht`: not woken, and either waiting
 /// for an archive that has not failed, or archived with some recorded message still where the
 /// archive left it, which a wake would bring back. Mail all trashed, moved or returned by hand
@@ -561,56 +566,6 @@ pub(super) fn incoming(
     Ok(tx.execute(INCOMING, params![account, json(&messages), now])?)
 }
 
-/// Rail archived, trashed or moved `threads` (or snoozes one again): a thread that came back from
-/// a snooze leaves its woken row, so its rollup dates it by its mail again.
-pub(super) fn left_inbox(
-    tx: &Transaction,
-    account: i64,
-    action: &Action,
-    threads: &[i64],
-) -> Result<(), StoreError> {
-    if !matches!(
-        action,
-        Action::Archive {} | Action::Trash {} | Action::Move { .. }
-    ) {
-        return Ok(());
-    }
-    tx.execute(
-        "DELETE FROM snoozes WHERE account_id = ?1 AND woken_at IS NOT NULL
-           AND EXISTS (SELECT 1 FROM threads t WHERE t.account_id = snoozes.account_id
-                       AND t.remote_id = snoozes.thread_remote
-                       AND t.id IN (SELECT value FROM json_each(?2)))",
-        params![account, json(&threads)],
-    )?;
-    Ok(())
-}
-
-/// A sync batch touched `threads`: one that came back from a snooze but is out of the inbox now
-/// (archived elsewhere, or its return reverted) leaves its woken row, so the rollup dates it by
-/// its mail again. Run after the waiting actions are applied again, so a return still on its way
-/// keeps the thread in the inbox.
-pub(super) fn settle_woken(
-    tx: &Transaction,
-    account: i64,
-    threads: &BTreeSet<i64>,
-) -> Result<(), StoreError> {
-    if threads.is_empty() {
-        return Ok(());
-    }
-    tx.execute(
-        "DELETE FROM snoozes WHERE account_id = ?1 AND woken_at IS NOT NULL
-           AND EXISTS (SELECT 1 FROM threads t WHERE t.account_id = snoozes.account_id
-                       AND t.remote_id = snoozes.thread_remote
-                       AND t.id IN (SELECT value FROM json_each(?2))
-                       AND NOT EXISTS (SELECT 1 FROM messages m
-                                       JOIN message_folders mf ON mf.message_id = m.id
-                                       JOIN folders f ON f.id = mf.folder_id
-                                       WHERE m.thread_id = t.id AND f.kind = 'inbox'))",
-        params![account, json(threads)],
-    )?;
-    Ok(())
-}
-
 fn forget_woken(tx: &Transaction, account: i64, remote: &str) -> Result<(), StoreError> {
     tx.execute(
         "DELETE FROM snoozes WHERE account_id = ?1 AND thread_remote = ?2 AND woken_at IS NOT NULL",
@@ -727,6 +682,34 @@ impl Store {
              ORDER BY s.until"
         ))?;
         let rows = stmt.query_map([json(&threads)], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The messages of a return (`messages`, provider ids) to send now: those still in
+    /// `threads` (the account's) and in neither Trash nor Spam, in the order given. A return
+    /// retried late leaves mail trashed or reported since where it is, as the local apply does.
+    ///
+    /// # Errors
+    /// The database's, as a `StoreError`.
+    pub fn returnable(
+        &self,
+        account_id: i64,
+        threads: &[i64],
+        messages: &[String],
+    ) -> Result<Vec<String>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT r.value FROM json_each(?3) r WHERE EXISTS (
+               SELECT 1 FROM messages m JOIN threads t ON t.id = m.thread_id
+               WHERE t.account_id = ?1 AND m.remote_id = r.value
+                 AND m.thread_id IN (SELECT value FROM json_each(?2))
+                 AND NOT EXISTS (SELECT 1 FROM message_folders mf
+                                 JOIN folders f ON f.id = mf.folder_id
+                                 WHERE mf.message_id = m.id AND f.kind IN ('trash', 'spam')))
+             ORDER BY r.key",
+        )?;
+        let rows = stmt.query_map(params![account_id, json(&threads), json(&messages)], |r| {
+            r.get(0)
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

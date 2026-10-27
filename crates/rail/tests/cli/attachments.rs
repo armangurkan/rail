@@ -23,8 +23,9 @@ use super::{StopsDaemon, WORK_FILE_BACKEND, opened_url_file, write_config};
 const API: &str = "/gmail/v1/users/me";
 /// `The plan is ready.` in base64, as Gmail serves a text part.
 const BODY_DATA: &str = "VGhlIHBsYW4gaXMgcmVhZHku";
-/// `hello` in base64url, `plan.pdf`'s five bytes.
-const PLAN_DATA: &str = "aGVsbG8";
+/// `%PDF-1.7 plan` in base64url, `plan.pdf`'s thirteen bytes: a PDF's header, because an open
+/// checks the bytes against the declared type (#107).
+const PLAN_DATA: &str = "JVBERi0xLjcgcGxhbg";
 /// `the notes` in base64url, `notes.txt`'s nine.
 const NOTES_DATA: &str = "dGhlIG5vdGVz";
 /// The attachment list's top border, as `boxed` draws it.
@@ -47,12 +48,12 @@ struct Part {
     attachment_id: Option<&'static str>,
 }
 
-/// `plan.pdf`, five bytes inline: AC-44's part, byte for byte as it was.
+/// `plan.pdf`, thirteen bytes inline: AC-44's part.
 const PLAN: Part = Part {
     id: "0.1",
     filename: "plan.pdf",
     mime_type: "application/pdf",
-    bytes: b"hello",
+    bytes: b"%PDF-1.7 plan",
     data: PLAN_DATA,
     attachment_id: None,
 };
@@ -65,6 +66,17 @@ const NOTES: Part = Part {
     bytes: b"the notes",
     data: NOTES_DATA,
     attachment_id: Some("att-notes"),
+};
+
+/// `logo.png`, declared `image/png`, whose bytes are an SVG that runs a script when a browser
+/// renders it: what a sniffing opener would hand to one (#107).
+const DISGUISED: Part = Part {
+    id: "0.3",
+    filename: "logo.png",
+    mime_type: "image/png",
+    bytes: b"<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>",
+    data: "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIG9ubG9hZD0iYWxlcnQoMSkiLz4",
+    attachment_id: None,
 };
 
 impl Part {
@@ -378,7 +390,11 @@ async fn pressing_a_then_s_in_the_reader_saves_the_attachment_to_the_configured_
         format!("Saved plan.pdf to {}", run.saved.display()),
     );
     let file = run.saved.join("plan.pdf");
-    assert_eq!(std::fs::read(&file).unwrap(), b"hello", "the served bytes");
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        PLAN.bytes,
+        "the served bytes"
+    );
     assert_eq!(
         std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
         0o600,
@@ -507,7 +523,7 @@ async fn a_second_save_never_replaces_the_first() {
         BAR,
         format!("Saved plan.pdf to {}", saved.display()),
     );
-    // Bytes of the user's own: five bytes of `hello` written twice would tell a replaced file
+    // Bytes of the user's own: the served bytes written twice would tell a replaced file
     // from an untouched one by nothing at all.
     let first = saved.join("plan.pdf");
     std::fs::write(&first, b"mine").unwrap();
@@ -593,9 +609,10 @@ fn wait_removed(run: &Run, copies: &[&Path]) {
 }
 
 /// US-3, US-4, FR-5, FR-7, FR-14, FR-15: the session's first `Enter` asks, `y` hands a private
-/// copy to the stand-in opener, a second `Enter` opens without asking, closing the reader
-/// removes both copies and their token directories, and a copy still open when Rail ends goes
-/// with it.
+/// copy to the stand-in opener, a second `Enter` opens without asking, and quitting removes
+/// both copies and their token directories — closing the reader first leaves them their
+/// minute's grace (#108), which a quit does not wait out — and a copy still open when Rail
+/// ends goes with it.
 #[tokio::test]
 async fn opening_asks_once_then_hands_a_private_copy_to_the_opener() {
     if !script_available() {
@@ -624,15 +641,14 @@ async fn opening_asks_once_then_hands_a_private_copy_to_the_opener() {
         "and the second read it once more"
     );
     assert_ne!(again.parent(), asked.parent(), "a token directory each");
-    bulk::type_keys(&mut run.keys, b"q");
+    ends(&mut run, b"qq");
     wait_removed(&run, &[&asked, &again]);
-    ends(&mut run, b"q");
     a_copy_still_open_when_rail_ends_goes_with_it().await;
 }
 
-/// The session's end, on a run of its own: `q` in the reader is `reader.back`, which removes
-/// the copies on its way out, so a copy that is still open when Rail ends needs a quit that
-/// skips the reader — Ctrl-C always quits (`tui/app.rs:158`). A second run also starts the
+/// The session's end, on a run of its own: `q` in the reader is `reader.back`, which starts
+/// the copies' grace on its way out, so a copy that is still open when Rail ends needs a quit
+/// that skips the reader — Ctrl-C always quits (`tui/app.rs:158`). A second run also starts the
 /// session's question again, which `answer_the_open_question` asserts.
 async fn a_copy_still_open_when_rail_ends_goes_with_it() {
     let last = tempfile::tempdir().unwrap();
@@ -654,4 +670,38 @@ async fn a_copy_still_open_when_rail_ends_goes_with_it() {
         "quitting left its directory: {}",
         left.display()
     );
+}
+
+/// #107: a part declared `image/png` whose bytes are an SVG is never handed to the opener —
+/// the daemon checks the bytes and refuses, and the TUI saves the part instead and says why.
+#[tokio::test]
+async fn a_png_whose_bytes_are_svg_is_saved_and_never_opened() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let mut run = start(&dir, &[DISGUISED]).await;
+    let url_file = opened_url_file(&dir);
+    open_the_thread(&mut run);
+    open_the_list(&mut run);
+    bulk::type_keys(&mut run.keys, b"\r");
+    wait_anywhere("the open question", &run.output, "┌ Open this attachment? ");
+    bulk::type_keys(&mut run.keys, b"y");
+    wait_anywhere(
+        "the refusal's line",
+        &run.output,
+        "contents do not match its type",
+    );
+    let (bytes, mode) = saved_file(&run.saved.join("logo.png"));
+    assert_eq!(bytes, DISGUISED.bytes, "saved as served");
+    assert_eq!(mode, 0o600);
+    assert!(!url_file.exists(), "the opener was handed a URL");
+    let copies = dir.path().join("cache").join("attachments");
+    let left: Vec<_> = std::fs::read_dir(&copies)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    assert!(left.is_empty(), "an open copy was written: {left:?}");
+    ends(&mut run, b"qq");
 }

@@ -235,33 +235,32 @@ pub fn download_dir() -> Option<PathBuf> {
 
 /// Where a save lands. `configured` being `~` alone, or starting `~/`, is resolved against
 /// `home`; an empty `configured` counts as unset, as an empty `RAIL_*_DIR` does. Anything
-/// else is returned **as typed** and never made absolute against a working directory, so a
-/// relative or `~user/...` value reaches the daemon unchanged and is refused by name. Unset
-/// falls back to `download_dir_from`.
+/// else — and a `~` with no home to stand for — is returned **as typed** and never made
+/// absolute against a working directory, so a relative, `~user/...` or unexpandable `~` value
+/// reaches the daemon unchanged and is refused by name rather than quietly replaced by the
+/// download directory. Unset falls back to `download_dir_from`.
 #[must_use]
 pub fn attachment_target(
     configured: Option<&Path>,
     home: Option<&Path>,
     xdg_download: Option<&Path>,
 ) -> Option<PathBuf> {
-    configured
-        .filter(|path| !path.as_os_str().is_empty())
-        .and_then(|path| expand_tilde(path, home))
-        .or_else(|| download_dir_from(home, xdg_download))
+    match configured.filter(|path| !path.as_os_str().is_empty()) {
+        Some(path) => Some(expand_tilde(path, home)),
+        None => download_dir_from(home, xdg_download),
+    }
 }
 
-/// `path` with a leading `~` — alone or followed by `/` — replaced by `home`; anything else
-/// exactly as typed, so a relative or `~user/...` value is never resolved here. `None` only
-/// when a `~` has no home to stand for.
-fn expand_tilde(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
+/// `path` with a leading `~` — alone or followed by `/` — replaced by `home`; anything else,
+/// and a `~` when there is no `home`, exactly as typed, so a relative or `~user/...` value is
+/// never resolved here.
+fn expand_tilde(path: &Path, home: Option<&Path>) -> PathBuf {
     let text = path.to_string_lossy();
-    if text == "~" {
-        return home.map(Path::to_path_buf);
+    match (home, text.strip_prefix('~')) {
+        (Some(home), Some("")) => home.to_path_buf(),
+        (Some(home), Some(rest)) if rest.starts_with('/') => home.join(&rest[1..]),
+        _ => path.to_path_buf(),
     }
-    if let Some(rest) = text.strip_prefix("~/") {
-        return home.map(|home| home.join(rest));
-    }
-    Some(path.to_path_buf())
 }
 
 /// Create `dir` (and missing parents) readable by the owner only. On unix a
@@ -440,7 +439,17 @@ mod tests {
         assert_eq!(target(None, Some(download)), Some(download.to_path_buf()));
         assert_eq!(target(None, None), Some(PathBuf::from("/h/Downloads")));
         assert_eq!(attachment_target(None, None, None), None);
-        assert_eq!(attachment_target(Some(Path::new("~")), None, None), None);
+        // A `~` with no home to stand for is kept as typed, for the daemon to refuse by name,
+        // never quietly swapped for the download directory.
+        for tilde in ["~", "~/mail"] {
+            for xdg in [None, Some(download)] {
+                assert_eq!(
+                    attachment_target(Some(Path::new(tilde)), None, xdg),
+                    Some(PathBuf::from(tilde)),
+                    "{tilde} with {xdg:?}"
+                );
+            }
+        }
 
         assert_eq!(
             download_dir_from(Some(home), Some(download)),

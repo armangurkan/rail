@@ -3,8 +3,8 @@
 //! each file got — never bytes, and never a replaced file: a name already in the destination
 //! becomes `2-name.pdf`. The destination is the user's own directory, so its mode is never
 //! changed. An open writes one part into a private directory of its own under the cache,
-//! named from the stored type rather than the sender's, and answers that path for the front
-//! end to hand to the system opener; those copies are swept at daemon start and before every
+//! named from the stored type rather than the sender's — and only once its bytes carry that
+//! type's signature — and answers that path for the front end to hand to the system opener; those copies are swept at daemon start and before every
 //! open. Front-end operations only: no MCP tool reaches them. Logs carry counts and error
 //! kinds, never a file name or a path.
 
@@ -19,10 +19,10 @@ use crate::daemon::registry::Call;
 use crate::error::ErrorClass;
 use crate::ops::{
     AttachmentOpenRequest, AttachmentOpenResponse, AttachmentOutcome, AttachmentResult,
-    AttachmentSaveRequest, AttachmentSaveResponse, ErrorCode, OpError, STALE_AFTER, openable,
-    unwritable_dir,
+    AttachmentSaveRequest, AttachmentSaveResponse, CONTENT_MISMATCH, ErrorCode, OpError,
+    STALE_AFTER, content_matches, openable, unwritable_dir,
 };
-use crate::paths::{Paths, create_private_dir};
+use crate::paths::{Paths, canonical_dir, create_private_dir};
 use crate::provider::ProviderError;
 use crate::provider::gmail::mime::{MAX_FILENAME_BYTES, sanitize_filename};
 use crate::provider::http::{RetryPolicy, with_retry_policy};
@@ -47,7 +47,7 @@ pub(super) async fn save(
     // Every copy under Rail's own cache is swept a day after it was written (§7), so a save
     // into it would quietly lose the file. Refused before the account is reached, so nothing is
     // fetched and the cache is not created on the way.
-    if Path::new(&request.dir).starts_with(call.ctx.paths.attachments_dir()) {
+    if in_the_cache(&call.ctx, &request.dir).await? {
         return Err(destination_in_the_cache());
     }
     let target = match call.ctx.sync.body_target(&request.account).await? {
@@ -63,6 +63,15 @@ pub(super) async fn save(
     let results = save_each(&call.ctx, &target, &request, &named, &listed).await?;
     tracing::info!(parts = results.len(), "attachments saved");
     Ok(AttachmentSaveResponse { results })
+}
+
+/// Whether `dir` is `attachments_dir()` or under it once both are resolved: a symlink to the
+/// cache, or a `..` that climbs back into it, is the cache, which comparing the spelling would
+/// miss. `canonical_dir` reads the file system, so it runs on the blocking pool.
+async fn in_the_cache(ctx: &DaemonContext, dir: &str) -> Result<bool, OpError> {
+    let (dir, cache) = (PathBuf::from(dir), ctx.paths.attachments_dir());
+    ctx.blocking(move || Ok(canonical_dir(&dir).starts_with(canonical_dir(&cache))))
+        .await
 }
 
 /// One outcome per requested part, in the order asked: the destination prepared once, then a
@@ -426,6 +435,12 @@ pub(super) async fn open(
             .attachment(&request.message_id, &meta.part_id),
     )
     .await?;
+    // The declared type is the sender's word, and an opener may sniff the bytes instead, so
+    // markup declared `image/png` could reach a browser: refused before anything is written.
+    if !content_matches(&meta.mime_type, &bytes) {
+        tracing::warn!("an attachment's bytes did not match its type; not opened");
+        return Err(content_mismatch());
+    }
     let name = cache_name(&meta.filename, extension);
     let paths = call.ctx.paths.clone();
     // Taken before the sweep and held through the write.
@@ -453,6 +468,16 @@ fn unopenable() -> OpError {
         ErrorCode::Unsupported,
         ErrorClass::Permanent,
         "Rail does not open this attachment's type",
+    )
+}
+
+/// The refusal bytes that do not match their declared type get: permanent, since the same
+/// bytes come back on a retry, and quoting nothing of the part.
+fn content_mismatch() -> OpError {
+    OpError::new(
+        ErrorCode::Unsupported,
+        ErrorClass::Permanent,
+        CONTENT_MISMATCH,
     )
 }
 

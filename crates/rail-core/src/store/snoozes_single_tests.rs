@@ -5,8 +5,8 @@
 
 use super::Store;
 use super::apply_local_tests::{state, thread};
-use super::outbox::{OutboxOutcome, OutboxWrite};
-use super::snoozes::SnoozeNew;
+use super::outbox::{Failure, OutboxOutcome, OutboxWrite};
+use super::snoozes::{SnoozeNew, SnoozeState};
 use super::snoozes_view_tests::{snoozed, until};
 use crate::ops::Action;
 use crate::provider::mock::envelope;
@@ -206,4 +206,54 @@ fn a_conversation_whose_mail_was_filed_in_a_folder_is_no_longer_held() {
     store.apply(&filed, NOW + 20).unwrap();
     // Out of Archive, though in neither Inbox nor Deleted Items: a wake has nothing to return.
     assert_eq!(snoozed(&store), Vec::<i64>::new());
+}
+
+#[test]
+fn a_refused_return_survives_the_next_sync_and_a_retry_moves_it_back_to_the_inbox() {
+    let mut store = seeded();
+    let c1 = thread(&store, "c1");
+    let snooze = OutboxWrite::Snooze(SnoozeNew {
+        account_id: 1,
+        threads: vec![c1],
+        until: NOW + HOUR,
+        not_before: NOW + 10,
+        client_token: "a".into(),
+    });
+    write(&mut store, &snooze, NOW);
+    send_next(&mut store, NOW + 10);
+    write(&mut store, &OutboxWrite::Wake { account_id: 1 }, NOW + HOUR);
+    let OutboxOutcome::Claimed(Some(row)) = write(
+        &mut store,
+        &OutboxWrite::Claim { account_id: 1 },
+        NOW + HOUR,
+    ) else {
+        panic!("no return to claim");
+    };
+    assert!(matches!(row.action, Action::Unsnooze { .. }), "{row:?}");
+    let refuse = OutboxWrite::Fail {
+        id: row.id,
+        failure: Failure::Permanent("Microsoft 365 refused the change".into()),
+    };
+    write(&mut store, &refuse, NOW + HOUR);
+    let still_archived = Batch {
+        upserts: vec![
+            message("m-in", 2_000, "f-arch"),
+            message("m-in2", 4_000, "f-arch"),
+        ],
+        ..Batch::new(1)
+    };
+    store.apply(&still_archived, NOW + 2 * HOUR).unwrap();
+    let failed: Vec<i64> = store.failed_rows(1).unwrap().iter().map(|r| r.id).collect();
+    assert_eq!(failed, [row.id], "still in :errors");
+    assert_eq!(store.snoozes(1).unwrap()[0].state, SnoozeState::Woken);
+    let retry = OutboxWrite::Retry {
+        id: row.id,
+        client_token: row.client_token,
+    };
+    assert_eq!(
+        write(&mut store, &retry, NOW + 3 * HOUR),
+        OutboxOutcome::Retried(true)
+    );
+    assert_eq!(place("m-in", "f-inbox"), places(&store)[0]);
+    assert_eq!(place("m-in2", "f-inbox"), places(&store)[1]);
 }

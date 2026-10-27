@@ -2,7 +2,8 @@
 //! 0600 in a 0700 directory, named by a random token, and starts with a policy that blocks
 //! scripts (remote images still load: the confirmation says so). Rail fetches nothing itself.
 //! Files go when the reader closes, all of them when the session ends, and leftovers of a
-//! crash at the next start.
+//! crash at the next start. An opened attachment's copy goes `OPENED_GRACE` after the reader
+//! closes instead, so a slow viewer still finds it.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -70,33 +71,80 @@ impl OpenFiles {
     }
 }
 
+/// How long an opened attachment's copy stays after the reader that opened it closes (#108):
+/// the system opener hands off and exits at once, and a viewer that starts slowly (a cold
+/// office suite, a sandboxed app) must still find the file.
+pub const OPENED_GRACE: Duration = Duration::from_secs(60);
+/// `OPENED_GRACE` in event-loop ticks, at one tick per `run::TICK`. A tick missed while the
+/// terminal is suspended only makes the grace longer, never shorter.
+pub const OPENED_GRACE_TICKS: usize =
+    (OPENED_GRACE.as_millis() / crate::tui::run::TICK.as_millis()) as usize;
+
 /// The copies `attachment.open` wrote this session. Each sits alone in a token directory
-/// under the cache, so removing one never touches another's.
+/// under the cache, so removing one never touches another's. A copy is `written` while the
+/// reader that opened it is open, then `closing` until its tick deadline: removing it is a
+/// check on the next tick, so nothing waits on the event loop.
 #[derive(Default)]
 pub struct OpenedAttachments {
     written: Vec<PathBuf>,
+    /// Each closed reader's copy with the tick at which it goes.
+    closing: Vec<(PathBuf, usize)>,
 }
 
 impl OpenedAttachments {
-    /// Remember a path the daemon answered, so closing the reader removes it.
+    /// Remember a path the daemon answered, so closing the reader removes it. A path already
+    /// in its grace is the open reader's again and leaves the grace.
     pub fn add(&mut self, path: PathBuf) {
+        self.closing.retain(|(closing, _)| *closing != path);
         self.written.push(path);
     }
 
-    /// Remove every copy written so far, each with the directory it was alone in. A file or
-    /// directory already gone is fine, and a directory still holding something is left alone.
-    /// A failure is logged by error kind and a count only — never by name, because unlike the
-    /// random tokens `OpenFiles` writes, these names are the sender's.
+    /// The reader closed at `tick`: its copies go `OPENED_GRACE_TICKS` later.
+    pub fn close(&mut self, tick: usize) {
+        let until = tick.saturating_add(OPENED_GRACE_TICKS);
+        let closed = std::mem::take(&mut self.written);
+        self.closing
+            .extend(closed.into_iter().map(|path| (path, until)));
+    }
+
+    /// The event loop reached `tick`: remove the copies whose grace has run out.
+    pub fn expire(&mut self, tick: usize) {
+        if self.closing.iter().all(|(_, until)| *until > tick) {
+            return;
+        }
+        let (due, kept) = std::mem::take(&mut self.closing)
+            .into_iter()
+            .partition(|(_, until)| *until <= tick);
+        self.closing = kept;
+        remove_copies(due.into_iter().map(|(path, _)| path).collect());
+    }
+
+    /// Remove every copy written so far, open or in its grace, each with the directory it was
+    /// alone in: quitting does not wait.
     pub fn remove_all(&mut self) {
-        let count = self.written.len();
-        for path in std::mem::take(&mut self.written) {
-            if let Err(error) = remove_copy(&path) {
-                tracing::warn!(
-                    kind = ?error.kind(),
-                    count,
-                    "could not remove an opened attachment"
-                );
-            }
+        let mut every = std::mem::take(&mut self.written);
+        every.extend(
+            std::mem::take(&mut self.closing)
+                .into_iter()
+                .map(|(path, _)| path),
+        );
+        remove_copies(every);
+    }
+}
+
+/// Remove `paths`, each with the directory it was alone in. A file or directory already gone
+/// is fine, and a directory still holding something is left alone. A failure is logged by
+/// error kind and a count only — never by name, because unlike the random tokens `OpenFiles`
+/// writes, these names are the sender's.
+fn remove_copies(paths: Vec<PathBuf>) {
+    let count = paths.len();
+    for path in paths {
+        if let Err(error) = remove_copy(&path) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                count,
+                "could not remove an opened attachment"
+            );
         }
     }
 }
@@ -138,6 +186,7 @@ impl std::fmt::Debug for OpenedAttachments {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenedAttachments")
             .field("written", &self.written.len())
+            .field("closing", &self.closing.len())
             .finish()
     }
 }
@@ -243,6 +292,67 @@ mod tests {
             0,
             "no directory, nothing to do"
         );
+    }
+
+    /// A copy alone in a token directory under `root`, as the daemon writes one.
+    fn copy_in(root: &Path, token: &str) -> PathBuf {
+        let dir = root.join(token);
+        create_private_dir(&dir).unwrap();
+        let path = dir.join("plan.pdf");
+        std::fs::write(&path, "x").unwrap();
+        path
+    }
+
+    /// #108: a closed reader's copies stay `OPENED_GRACE_TICKS` ticks, then go with their
+    /// directories; a copy still open is not touched.
+    #[test]
+    fn closed_copies_stay_for_the_grace_then_go() {
+        assert_eq!(OPENED_GRACE_TICKS, 240, "a minute at one tick per 250 ms");
+        let tmp = tempfile::tempdir().unwrap();
+        let mut opened = OpenedAttachments::default();
+        let first = copy_in(tmp.path(), "a");
+        opened.add(first.clone());
+        opened.close(10);
+        let second = copy_in(tmp.path(), "b");
+        opened.add(second.clone());
+        opened.expire(10 + OPENED_GRACE_TICKS - 1);
+        assert!(first.is_file(), "inside the grace");
+        opened.expire(10 + OPENED_GRACE_TICKS);
+        assert!(
+            !first.exists() && !tmp.path().join("a").exists(),
+            "after it"
+        );
+        assert!(second.is_file(), "a copy still open stays");
+    }
+
+    /// Dropping (quitting) removes the copies in their grace at once, and the open ones.
+    #[test]
+    fn dropping_removes_closed_and_open_copies_at_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut opened = OpenedAttachments::default();
+        let closed = copy_in(tmp.path(), "a");
+        opened.add(closed.clone());
+        opened.close(0);
+        let open = copy_in(tmp.path(), "b");
+        opened.add(open.clone());
+        drop(opened);
+        assert!(!closed.exists() && !open.exists());
+    }
+
+    /// A copy opened again before its grace ran out is the open reader's again, and stays.
+    #[test]
+    fn a_copy_opened_again_is_not_removed_by_its_old_grace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut opened = OpenedAttachments::default();
+        let path = copy_in(tmp.path(), "a");
+        opened.add(path.clone());
+        opened.close(0);
+        opened.add(path.clone());
+        opened.expire(OPENED_GRACE_TICKS * 2);
+        assert!(path.is_file(), "it was opened again");
+        opened.close(OPENED_GRACE_TICKS * 2);
+        opened.expire(OPENED_GRACE_TICKS * 3);
+        assert!(!path.exists(), "and goes a grace after the next close");
     }
 
     #[test]

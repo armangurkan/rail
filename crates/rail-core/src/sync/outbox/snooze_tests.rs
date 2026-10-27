@@ -1,6 +1,7 @@
 //! The worker and snoozes: its idle sleep ends at the next snooze due; a snooze due is put back
 //! on the next step, its return sent before the unread; while the account needs a login the store
-//! still puts it back and the calls wait; the status board tells who watches.
+//! still puts it back and the calls wait; the status board tells who watches; a wake that fails
+//! waits longer each time before it is tried again.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -194,4 +195,67 @@ async fn the_idle_sleep_ends_at_the_earlier_of_a_due_row_and_a_due_snooze() {
     snoozed(&rig, "t1", "m1", later + 20);
     let at = Arc::new(AtomicI64::new(later));
     assert_eq!(worker_at(&rig, at).idle().await.as_secs(), 20, "the snooze");
+}
+
+/// The store refuses to mark a snooze woken, so every wake fails; `false` lifts it.
+fn refuse_wakes(rig: &Rig, refuse: bool) {
+    let store = Store::open(&rig.db).unwrap();
+    let sql = if refuse {
+        "CREATE TRIGGER refuse_wake BEFORE UPDATE OF woken_at ON snoozes
+         BEGIN SELECT RAISE(ABORT, 'refused'); END"
+    } else {
+        "DROP TRIGGER refuse_wake"
+    };
+    store.conn().execute(sql, []).unwrap();
+}
+
+#[tokio::test]
+async fn a_wake_that_fails_is_tried_again_after_a_growing_wait() {
+    let rig = rig().await;
+    let later = unix_now() + 7 * 86_400;
+    snoozed(&rig, "t1", "m1", later - 1);
+    refuse_wakes(&rig, true);
+    let at = Arc::new(AtomicI64::new(later));
+    let worker = worker_at(&rig, at.clone());
+    worker.step().await;
+    assert_eq!(worker.idle().await.as_secs(), 2, "not every second");
+    at.store(later + 2, Ordering::SeqCst);
+    worker.step().await;
+    assert_eq!(worker.idle().await.as_secs(), 4, "doubled");
+    refuse_wakes(&rig, false);
+    at.store(later + 5, Ordering::SeqCst);
+    worker.step().await;
+    assert_eq!(state_of(&rig), SnoozeState::Active, "still waiting");
+    at.store(later + 6, Ordering::SeqCst);
+    worker.step().await;
+    assert_eq!(state_of(&rig), SnoozeState::Woken);
+}
+
+#[test]
+fn the_wait_after_a_failed_wake_doubles_up_to_the_longest_idle() {
+    use super::{MAX_IDLE, MIN_IDLE, next_wake_delay};
+    assert_eq!(next_wake_delay(None), MIN_IDLE * 2);
+    assert_eq!(next_wake_delay(Some(MIN_IDLE * 2)), MIN_IDLE * 4);
+    assert_eq!(next_wake_delay(Some(MAX_IDLE / 2 + MIN_IDLE)), MAX_IDLE);
+    assert_eq!(next_wake_delay(Some(MAX_IDLE)), MAX_IDLE);
+}
+
+#[tokio::test]
+async fn the_wait_starts_afresh_once_no_snooze_is_due() {
+    let rig = rig().await;
+    let later = unix_now() + 7 * 86_400;
+    snoozed(&rig, "t1", "m1", later - 1);
+    refuse_wakes(&rig, true);
+    let at = Arc::new(AtomicI64::new(later));
+    let worker = worker_at(&rig, at.clone());
+    worker.step().await;
+    // The snooze is cleared meanwhile: the next look finds nothing due.
+    let store = Store::open(&rig.db).unwrap();
+    store.conn().execute("DELETE FROM snoozes", []).unwrap();
+    at.store(later + 2, Ordering::SeqCst);
+    worker.step().await;
+    snoozed(&rig, "t2", "m2", later + 2);
+    at.store(later + 3, Ordering::SeqCst);
+    worker.step().await;
+    assert_eq!(worker.idle().await.as_secs(), 2, "not doubled from before");
 }

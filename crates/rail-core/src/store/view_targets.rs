@@ -1,9 +1,10 @@
 //! What a bulk select reads: the threads a list query matches as keys and flags, and the sender
-//! of one thread's newest message. A sibling read module of `view.rs`, built on the same
-//! `where_clause`, so a select-all and the drawn list can never disagree on what matches.
+//! of one thread's newest message from someone other than the user. A sibling read module of
+//! `view.rs`, built on the same `where_clause`, so a select-all and the drawn list can never
+//! disagree on what matches.
 
 use rusqlite::types::Value;
-use rusqlite::{OptionalExtension, params, params_from_iter};
+use rusqlite::{params, params_from_iter};
 
 use super::view::{AccountFilter, ListQuery, ThreadKey, int, mailboxes, where_clause};
 use super::{Store, StoreError};
@@ -63,29 +64,34 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// The `From` of the thread's newest message; `None` when there is no such thread, or its
-    /// newest message carries no readable address (both providers drop an address-less `From`).
-    /// One row: never `thread_detail`, which loads up to 200 messages with their bodies.
+    /// The `From` of the thread's newest message someone else sent: a message in the account's
+    /// Sent or Drafts, or from the account's own address, is the user's and is passed over, so a
+    /// thread the user replied to last still names the correspondent. `None` when there is no
+    /// such thread, or no message in it has a readable address that is not the user's (both
+    /// providers drop an address-less `From`). Reads `from_json` only, never the bodies.
     ///
     /// # Errors
     /// `StoreError` when the query cannot run.
     pub fn newest_sender(&self, thread_id: i64) -> Result<Option<Mailbox>, StoreError> {
-        let from: Option<String> = self
-            .conn()
-            .query_row(
-                "SELECT from_json FROM messages WHERE thread_id = ?1
-                 ORDER BY internal_date DESC, id DESC LIMIT 1",
-                params![thread_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let Some(json) = from else {
-            return Ok(None);
-        };
-        // An unreadable list reads as empty, as the roll-up does.
-        let sender = mailboxes(&json)
-            .into_iter()
-            .find(|m| !m.address.trim().is_empty());
-        Ok(sender)
+        let mut statement = self.conn().prepare(
+            "SELECT m.from_json, a.address FROM messages m
+             JOIN accounts a ON a.id = m.account_id
+             WHERE m.thread_id = ?1 AND NOT EXISTS (
+               SELECT 1 FROM message_folders mf JOIN folders f ON f.id = mf.folder_id
+               WHERE mf.message_id = m.id AND f.kind IN ('sent', 'drafts'))
+             ORDER BY m.internal_date DESC, m.id DESC",
+        )?;
+        let mut rows = statement.query(params![thread_id])?;
+        while let Some(row) = rows.next()? {
+            let (json, own): (String, String) = (row.get(0)?, row.get(1)?);
+            // An unreadable list reads as empty, as the roll-up does.
+            let sender = mailboxes(&json)
+                .into_iter()
+                .find(|m| !m.address.trim().is_empty());
+            if let Some(sender) = sender.filter(|m| !m.address.trim().eq_ignore_ascii_case(&own)) {
+                return Ok(Some(sender));
+            }
+        }
+        Ok(None)
     }
 }
