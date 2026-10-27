@@ -94,6 +94,8 @@ fn every_request_and_response_has_an_object_schema() {
         object_schemas::<DraftImport>(),
         object_schemas::<SnoozeSet>(),
         object_schemas::<SnoozeClear>(),
+        object_schemas::<AttachmentSave>(),
+        object_schemas::<AttachmentOpen>(),
     ];
     for (request, response) in all {
         assert_eq!(request["type"], "object", "{request}");
