@@ -274,7 +274,7 @@ mod terminal {
 
     use wiremock::MockServer;
 
-    use super::{COLS, JUST_ONE, ROWS, keeps_the_account, with_searches};
+    use super::{COLS, JUST_ONE, ROWS, keeps_the_account, sidebar_slice, with_searches};
     use crate::pty::{screen, script_available, text, wait_until};
     use crate::{StopsDaemon, bulk, write_config};
 
@@ -381,6 +381,80 @@ mod terminal {
 
         wait_for_the_one_thread(&output, "just-one");
         still_saved(&config);
+        quit(&mut child, &mut keys, &output);
+    }
+
+    /// Wait until some row shows `needle` — a modal's box title, say.
+    fn wait_anywhere(what: &str, output: &Arc<Mutex<Vec<u8>>>, needle: &'static str) {
+        wait_shown(what, output, move |rows| {
+            rows.iter().any(|row| row.contains(needle))
+        });
+    }
+
+    /// US-5 (FR-14, FR-17, FR-20): `r` renames the search — the sidebar draws the new name and
+    /// loses the old one, `config.toml` carries it with the query untouched, and the account
+    /// table beside it survives the write.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn r_renames_the_saved_search_in_config_and_the_sidebar() {
+        if !script_available() {
+            eprintln!("skipping: util-linux `script` is not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let _daemon = StopsDaemon(&dir);
+        let server = bulk::gmail().await;
+        let (mut child, mut keys, output, config) =
+            open_mail(&dir, &server, &with_searches(JUST_ONE));
+
+        to_the_last_search(&mut keys);
+        bulk::type_keys(&mut keys, b"r");
+        wait_anywhere("the rename prompt", &output, "Rename this saved search");
+        // The prompt opens pre-filled with the name, the cursor at its end: eight Backspaces
+        // (0x7f in raw mode) clear `just-one`, as the screen test's `press_n` does.
+        bulk::type_keys(&mut keys, &[0x7f; 8]);
+        bulk::type_keys(&mut keys, b"renamed\r");
+
+        wait_shown("the rename in the sidebar", &output, |rows| {
+            sidebar_slice(rows, "renamed").is_some() && sidebar_slice(rows, "just-one").is_none()
+        });
+        let saved = config_text(&config);
+        assert!(saved.contains("name = \"renamed\""), "{saved}");
+        assert!(!saved.contains("just-one"), "the old name is gone: {saved}");
+        assert!(
+            saved.contains("query = \"subject:m1\""),
+            "the query is kept: {saved}"
+        );
+        keeps_the_account(&saved);
+        quit(&mut child, &mut keys, &output);
+    }
+
+    /// US-5 (FR-15, FR-17, FR-20): `d` asks, `y` removes — the whole `SEARCHES` section leaves
+    /// the sidebar (FR-7: with none saved there is no section), `config.toml` loses the table,
+    /// and the account table survives the write.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn d_then_y_removes_the_saved_search_from_config_and_the_sidebar() {
+        if !script_available() {
+            eprintln!("skipping: util-linux `script` is not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let _daemon = StopsDaemon(&dir);
+        let server = bulk::gmail().await;
+        let (mut child, mut keys, output, config) =
+            open_mail(&dir, &server, &with_searches(JUST_ONE));
+
+        to_the_last_search(&mut keys);
+        bulk::type_keys(&mut keys, b"d");
+        wait_anywhere("the removal question", &output, "Remove a saved search");
+        bulk::type_keys(&mut keys, b"y");
+
+        wait_shown("the section gone from the sidebar", &output, |rows| {
+            sidebar_slice(rows, "just-one").is_none() && sidebar_slice(rows, "SEARCHES").is_none()
+        });
+        let saved = config_text(&config);
+        assert!(!saved.contains("[[saved_searches]]"), "{saved}");
+        assert!(!saved.contains("just-one"), "{saved}");
+        keeps_the_account(&saved);
         quit(&mut child, &mut keys, &output);
     }
 }
