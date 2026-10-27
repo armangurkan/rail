@@ -326,9 +326,30 @@ fn a_general_write_waits_for_the_config_lock() {
         text.contains("editor = \"vi\" # mine"),
         "the blocked write re-read the text it waited for: {text}"
     );
+    no_temporary_config_left(dir.path());
+}
+
+/// No `config.toml.<…>.tmp` sibling was left behind in `dir`. Asserted on the listing, not on
+/// one name: `paths::replace_private_atomic` calls its sibling `config.toml.<pid>-<n>.tmp`
+/// (`paths.rs`'s `temp_sibling`), so `config.toml.tmp` is absent whether or not the write
+/// cleaned up — the listing is the only thing that can tell. Finding `config.toml` in it is
+/// what says the directory was read at all.
+fn no_temporary_config_left(dir: &std::path::Path) {
+    let names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
     assert!(
-        !dir.path().join("config.toml.tmp").exists(),
-        "the temporary file carries the process id"
+        names.iter().any(|name| name == "config.toml"),
+        "the listing is of the real directory: {names:?}"
+    );
+    let left: Vec<&String> = names
+        .iter()
+        .filter(|name| name.starts_with("config.toml.") && name.ends_with(".tmp"))
+        .collect();
+    assert!(
+        left.is_empty(),
+        "a temporary file was left behind: {left:?}"
     );
 }
 
