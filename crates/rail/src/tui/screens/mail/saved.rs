@@ -301,15 +301,19 @@ impl MailScreen {
         self.sidebar.rename_cursor(old, new);
     }
 
-    /// FR-17 step 3: the open saved search, found again by name in the new list. A changed
-    /// position is followed with a fresh list read; a name that is gone falls back to All
-    /// inboxes and says so.
+    /// FR-17 step 3: the open saved search, found again by name (ignoring ASCII case, as the
+    /// daemon keys it) in the new list. A changed position is followed with a fresh list read;
+    /// a name that is gone falls back to All inboxes and says so.
     fn resolve_open_search(&mut self) -> Vec<Effect> {
         let ScopeChoice::Saved { index, name } = &self.scope else {
             return Vec::new();
         };
         let (index, name) = (*index, name.clone());
-        match self.saved.iter().position(|s| s.name == name) {
+        let found = self
+            .saved
+            .iter()
+            .position(|s| s.name.eq_ignore_ascii_case(&name));
+        match found {
             Some(at) if at == index => Vec::new(),
             Some(at) => self.set_scope(ScopeChoice::Saved { index: at, name }),
             None => {
@@ -526,6 +530,30 @@ mod tests {
         assert!(
             !screen.status_line().contains(GONE_NOTICE),
             "the rename was read as a removal: {}",
+            screen.status_line()
+        );
+    }
+
+    /// FR-17 step 3 finds the open search by name the way the daemon keys it, ignoring ASCII
+    /// case: a list that comes back with only the case changed (a hand edit, answered on
+    /// another write) still holds the open search, which is neither closed nor called gone.
+    #[tokio::test]
+    async fn a_case_only_change_keeps_the_open_search() {
+        let (_tmp, _fake, mut screen) = screen_with(&["dana", "b"]);
+        screen.scope = ScopeChoice::Saved {
+            index: 0,
+            name: "dana".into(),
+        };
+        let effects = screen.saved_searches_changed(Ok(searches(&["b", "Dana"])), None);
+        settle(&mut screen, effects).await;
+        assert!(
+            matches!(&screen.scope, ScopeChoice::Saved { index: 1, .. }),
+            "{:?}",
+            screen.scope
+        );
+        assert!(
+            !screen.status_line().contains(GONE_NOTICE),
+            "{}",
             screen.status_line()
         );
     }
