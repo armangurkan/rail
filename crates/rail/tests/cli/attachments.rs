@@ -1,24 +1,81 @@
-//! Saving an attachment through the real binary in a pseudo-terminal (AC-44): a thread opened
-//! with `Enter`, its attachments listed with `a`, `s` on the first one, and the bytes the mocked
-//! Gmail served landing as a 0600 file in the configured `attachment_dir`.
+//! Saving and opening attachments through the real binary in a pseudo-terminal, against a
+//! mocked Gmail, starting with `a` then `s` on one part (AC-44). Every wait reads the screen a
+//! 100x30 terminal would show — Rail redraws only the cells that changed, so a phrase on the
+//! bar is never one run in the stream — and every test checks the files on disk, their modes,
+//! and what Gmail was asked for. Linux only, like every pty test.
 
-use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::process::ChildStdin;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::pty::{LIMIT, collect, drawn_row, script_available, text, wait_until};
-use super::{KillsChild, StopsDaemon, WORK_FILE_BACKEND, rail_env, write_config};
+use super::bulk;
+use super::pty::{screen, script_available, text, wait_until};
+use super::{StopsDaemon, WORK_FILE_BACKEND, write_config};
 
 const API: &str = "/gmail/v1/users/me";
 /// `The plan is ready.` in base64, as Gmail serves a text part.
 const BODY_DATA: &str = "VGhlIHBsYW4gaXMgcmVhZHku";
-/// `hello` in base64url, the attachment's five bytes.
+/// `hello` in base64url, `plan.pdf`'s five bytes.
 const PLAN_DATA: &str = "aGVsbG8";
+/// The attachment list's top border, as `boxed` draws it.
+const BOX: &str = "┌ Attachments ";
+/// The hint bar, the last row of the 100x30 screen.
+const BAR: usize = 29;
+
+/// One attachment of the seeded message, as both the store and fake Gmail describe it.
+struct Part {
+    part_id: &'static str,
+    filename: &'static str,
+    mime_type: &'static str,
+    /// The bytes Gmail serves, and `data` is those bytes in base64url.
+    bytes: &'static [u8],
+    data: &'static str,
+    /// Gmail's own id for the bytes when they arrive from `attachments.get` instead of inline
+    /// in the message. A fetch of that path is a request only a save or an open makes: the
+    /// sync reads a message's parts from the message itself.
+    attachment_id: Option<&'static str>,
+}
+
+/// `plan.pdf`, five bytes inline: AC-44's part, byte for byte as it was.
+const PLAN: Part = Part {
+    part_id: "0.1",
+    filename: "plan.pdf",
+    mime_type: "application/pdf",
+    bytes: b"hello",
+    data: PLAN_DATA,
+    attachment_id: None,
+};
+
+impl Part {
+    /// The part as Gmail serves it inside the message.
+    fn wire(&self) -> Value {
+        let size = self.bytes.len();
+        let body = match self.attachment_id {
+            None => json!({"size": size, "data": self.data}),
+            Some(id) => json!({"size": size, "attachmentId": id}),
+        };
+        json!({
+            "partId": self.part_id, "filename": self.filename,
+            "mimeType": self.mime_type, "body": body
+        })
+    }
+
+    /// The part as the store lists it.
+    fn meta(&self) -> rail_core::provider::AttachmentMeta {
+        rail_core::provider::AttachmentMeta {
+            part_id: self.part_id.into(),
+            filename: self.filename.into(),
+            mime_type: self.mime_type.into(),
+            size: i64::try_from(self.bytes.len()).unwrap(),
+            plain_file: true,
+        }
+    }
+}
 
 /// Tokens that stay fresh, so the run never refreshes against the dead token URL.
 fn store_fresh_tokens(dir: &tempfile::TempDir) {
@@ -34,9 +91,9 @@ fn store_fresh_tokens(dir: &tempfile::TempDir) {
 }
 
 /// A store for `WORK_FILE_BACKEND`'s account holding one inbox thread whose body carries
-/// `plan.pdf` (part `0.1`).
-fn seed_thread_with_an_attachment(dir: &tempfile::TempDir) {
-    use rail_core::provider::{AttachmentMeta, Body, Envelope, FolderKind, Mailbox, RemoteFolder};
+/// `parts`.
+fn seed_thread_with_attachments(dir: &tempfile::TempDir, parts: &[Part]) {
+    use rail_core::provider::{Body, Envelope, FolderKind, Mailbox, RemoteFolder};
     use rail_core::store::Store;
     use rail_core::sync::Batch;
     let data = dir.path().join("data");
@@ -64,13 +121,7 @@ fn seed_thread_with_an_attachment(dir: &tempfile::TempDir) {
     };
     let body = Body {
         text: "The plan is ready.".into(),
-        attachments: vec![AttachmentMeta {
-            part_id: "0.1".into(),
-            filename: "plan.pdf".into(),
-            mime_type: "application/pdf".into(),
-            size: 5,
-            plain_file: true,
-        }],
+        attachments: parts.iter().map(Part::meta).collect(),
         ..Body::default()
     };
     let batch = Batch {
@@ -87,32 +138,55 @@ fn seed_thread_with_an_attachment(dir: &tempfile::TempDir) {
     store.apply(&batch, 1_760_000_000).unwrap();
 }
 
-/// Fake Gmail: enough for the daemon's start-up sync, plus m1 as a `multipart/mixed` message
-/// whose child part is the attachment, its five bytes inline.
-async fn gmail() -> MockServer {
-    let server = MockServer::start().await;
-    let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
+/// A 200 with a JSON body.
+fn ok(body: Value) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(body)
+}
+
+/// The routes the daemon's start-up sync asks for before any thread is opened.
+async fn mount_the_sync(server: &MockServer) {
     Mock::given(path(format!("{API}/labels")))
         .respond_with(ok(
             json!({"labels": [{"id": "INBOX", "name": "INBOX", "type": "system"}]}),
         ))
-        .mount(&server)
+        .mount(server)
         .await;
     Mock::given(path(format!("{API}/profile")))
         .respond_with(ok(
             json!({"emailAddress": "me@example.com", "messagesTotal": 1, "threadsTotal": 1, "historyId": "10"}),
         ))
-        .mount(&server)
+        .mount(server)
         .await;
     Mock::given(path(format!("{API}/history")))
         .respond_with(ok(json!({"history": [], "historyId": "10"})))
-        .mount(&server)
+        .mount(server)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{API}/messages")))
         .respond_with(ok(json!({"messages": [{"id": "m1", "threadId": "t1"}]})))
-        .mount(&server)
+        .mount(server)
         .await;
+}
+
+/// Fake Gmail: the start-up sync's routes, plus m1 as a `multipart/mixed` message whose child
+/// parts are `parts` — each one's bytes inline, or behind the `attachments.get` path its
+/// `attachment_id` names.
+async fn gmail(parts: &[Part]) -> MockServer {
+    let server = MockServer::start().await;
+    mount_the_sync(&server).await;
+    let mut children = vec![json!({
+        "partId": "0", "mimeType": "text/plain", "filename": "",
+        "body": {"size": 18, "data": BODY_DATA}
+    })];
+    for part in parts {
+        children.push(part.wire());
+        if let Some(id) = part.attachment_id {
+            Mock::given(path(format!("{API}/messages/m1/attachments/{id}")))
+                .respond_with(ok(json!({"size": part.bytes.len(), "data": part.data})))
+                .mount(&server)
+                .await;
+        }
+    }
     Mock::given(path(format!("{API}/messages/m1")))
         .respond_with(ok(json!({
             "id": "m1", "threadId": "t1", "labelIds": ["INBOX"], "snippet": "",
@@ -123,12 +197,7 @@ async fn gmail() -> MockServer {
                     {"name": "Subject", "value": "Quarterly plan"},
                     {"name": "From", "value": "Tom <tom@example.com>"}
                 ],
-                "parts": [
-                    {"partId": "0", "mimeType": "text/plain", "filename": "",
-                     "body": {"size": 18, "data": BODY_DATA}},
-                    {"partId": "0.1", "filename": "plan.pdf", "mimeType": "application/pdf",
-                     "body": {"size": 5, "data": PLAN_DATA}}
-                ]
+                "parts": children
             }
         })))
         .mount(&server)
@@ -136,15 +205,20 @@ async fn gmail() -> MockServer {
     server
 }
 
-/// AC-44: `a` then `s` in the reader saves the attachment into `attachment_dir`.
-#[tokio::test]
-async fn pressing_a_then_s_in_the_reader_saves_the_attachment_to_the_configured_directory() {
-    if !script_available() {
-        eprintln!("skipping: util-linux `script` is not installed");
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let _daemon = StopsDaemon(&dir);
+/// One run of the binary: the live child, its keyboard, the screen it has drawn, the Gmail it
+/// talks to and the directory `attachment_dir` points at. The daemon is stopped by the
+/// caller's own `StopsDaemon`.
+struct Run {
+    child: bulk::Spawned,
+    keys: ChildStdin,
+    output: Arc<Mutex<Vec<u8>>>,
+    server: MockServer,
+    saved: PathBuf,
+}
+
+/// Write the config, the tokens and the thread, start fake Gmail and launch `rail` at 100x30
+/// with `attachment_dir` pointing at `<dir>/saved`.
+async fn start(dir: &tempfile::TempDir, parts: &[Part]) -> Run {
     let saved = dir.path().join("saved");
     let config = WORK_FILE_BACKEND.replacen(
         "secrets = \"file\"\n",
@@ -154,78 +228,125 @@ async fn pressing_a_then_s_in_the_reader_saves_the_attachment_to_the_configured_
         ),
         1,
     );
-    write_config(&dir, &config);
-    store_fresh_tokens(&dir);
-    seed_thread_with_an_attachment(&dir);
-    let server = gmail().await;
+    write_config(dir, &config);
+    store_fresh_tokens(dir);
+    seed_thread_with_attachments(dir, parts);
+    let server = gmail(parts).await;
+    let (child, keys, output) = bulk::launch(dir, &server);
+    Run {
+        child,
+        keys,
+        output,
+        server,
+        saved,
+    }
+}
 
-    let command = format!(
-        "stty cols 100 rows 30; exec '{}'",
-        env!("CARGO_BIN_EXE_rail")
-    );
-    let mut script = Command::new("script");
-    rail_env(&mut script, &dir)
-        .env("RAIL_TEST_GMAIL_URL", format!("{}{API}/", server.uri()))
-        .args(["-q", "-e", "-c", &command, "/dev/null"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = KillsChild(Some(script.spawn().unwrap()));
-    let running = child.0.as_mut().unwrap();
-    let mut keys = running.stdin.take().unwrap();
-    let output = collect(running.stdout.take().unwrap());
-    let seen = |needle: &'static str| {
-        let output = output.clone();
-        move || text(&output).contains(needle)
-    };
-    let mut press = |bytes: &[u8]| {
-        keys.write_all(bytes).unwrap();
-        keys.flush().unwrap();
-    };
+/// Wait until the screen, as a 100x30 terminal shows it, passes `check` (rows from 0). The
+/// pattern `cli/snooze.rs` follows, and the reason `pty::screen` exists: a redraw touches only
+/// the cells that changed, so the stream carries fragments and cursor moves, never the phrase.
+fn wait_shown(
+    what: &str,
+    output: &Arc<Mutex<Vec<u8>>>,
+    check: impl Fn(&[String]) -> bool + Send + 'static,
+) {
+    let drawn = output.clone();
+    wait_until(what, output, move || check(&screen(&text(&drawn), 100, 30)));
+}
 
-    wait_until("the thread in the list", &output, seen("Quarterly plan"));
-    press(b"\r");
-    wait_until("the reader", &output, seen("ready."));
-    press(b"a");
-    wait_until("the attachment list", &output, seen("Attachments"));
-    press(b"s");
+/// Wait until row `row` (from 0) shows `needle`.
+fn wait_row(what: &str, output: &Arc<Mutex<Vec<u8>>>, row: usize, needle: String) {
+    wait_shown(what, output, move |rows| rows[row].contains(&needle));
+}
+
+/// Wait until some row shows `needle`.
+fn wait_anywhere(what: &str, output: &Arc<Mutex<Vec<u8>>>, needle: &'static str) {
+    wait_shown(what, output, move |rows| {
+        rows.iter().any(|r| r.contains(needle))
+    });
+}
+
+/// Open the thread and wait for the reader. The one barrier a run needs before the attachment
+/// keys: the thread's messages come from the daemon, while `a` reads what the reader already
+/// holds. Keys after this are written together — the TUI reads them in order, each in the
+/// state the one before it left.
+fn open_the_thread(run: &mut Run) {
+    wait_anywhere("the thread in the list", &run.output, "Quarterly plan");
+    bulk::type_keys(&mut run.keys, b"\r");
+    wait_anywhere("the reader", &run.output, "ready.");
+}
+
+/// `a` in the reader, with the list drawn.
+fn open_the_list(run: &mut Run) {
+    bulk::type_keys(&mut run.keys, b"a");
+    wait_anywhere("the attachment list", &run.output, BOX);
+}
+
+/// Send `keys` and wait for Rail to end successfully.
+fn ends(run: &mut Run, keys: &[u8]) {
+    bulk::type_keys(&mut run.keys, keys);
+    let status = bulk::wait_for_exit(&mut run.child, &run.output);
+    assert!(status.success(), "{status:?}: {:?}", text(&run.output));
+}
+
+/// How many `format=full` reads of m1 Gmail has answered: a part served inline costs one of
+/// these, because Gmail's own attachment id is not stable and Rail re-reads the message.
+async fn full_reads(server: &MockServer) -> usize {
+    let wanted = format!("{API}/messages/m1");
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|request| {
+            request.url.path() == wanted
+                && request
+                    .url
+                    .query_pairs()
+                    .any(|(key, value)| key == "format" && value == "full")
+        })
+        .count()
+}
+
+/// AC-44 (US-1): `a` then `s` in the reader saves the attachment into `attachment_dir`.
+#[tokio::test]
+async fn pressing_a_then_s_in_the_reader_saves_the_attachment_to_the_configured_directory() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let mut run = start(&dir, &[PLAN]).await;
+    open_the_thread(&mut run);
+    // Counted from here, so the read the save makes is told from the sync's own.
+    let before = full_reads(&run.server).await;
+    open_the_list(&mut run);
+    bulk::type_keys(&mut run.keys, b"s");
     // The status line is the barrier, not `file.exists()`: the handler creates the file with
     // `create_new` before it writes and fsyncs it (§7), so a poll between the two would read a
-    // short file. The status is printed only after the op answered.
-    // ratatui redraws only the cells that changed: `Saving…` already put `Sav` on the status
-    // row, so the stream carries a cursor move and `ed plan.pdf to …`, never the whole phrase.
-    // Read the row it was drawn on instead.
-    let status = output.clone();
-    wait_until("the status line", &output, move || {
-        drawn_row(&text(&status), "ed plan.pdf to") == Some(30)
-    });
-    let file = saved.join("plan.pdf");
+    // short file. The status is printed only after the op answered, and the whole §8 row is
+    // waited on over the rebuilt screen.
+    wait_row(
+        "the save's status line",
+        &run.output,
+        BAR,
+        format!("Saved plan.pdf to {}", run.saved.display()),
+    );
+    let file = run.saved.join("plan.pdf");
     assert_eq!(std::fs::read(&file).unwrap(), b"hello", "the served bytes");
     assert_eq!(
         std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
         0o600,
         "owner-only"
     );
-
+    assert_eq!(
+        full_reads(&run.server).await,
+        before + 1,
+        "Gmail was read once more, for the bytes"
+    );
     // `s` closes the list and leaves the reader open, where `q` is `reader.back` (a view's own
-    // binding beats `Global`), so the first `q` closes the thread and the second quits. Measured
-    // on Linux at this anchor: after the first `q` alone the process was still running.
-    press(b"q");
-    press(b"q");
-    let status = {
-        let running = child.0.as_mut().unwrap();
-        let deadline = Instant::now() + LIMIT;
-        loop {
-            if let Some(status) = running.try_wait().unwrap() {
-                break status;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "rail did not quit:\n{:?}",
-                text(&output)
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    };
-    assert!(status.success(), "{status:?}: {:?}", text(&output));
+    // binding beats `Global`), so the first `q` closes the thread and the second quits.
+    // Measured on Linux at this anchor: after the first `q` alone the process was still running.
+    ends(&mut run, b"qq");
 }
