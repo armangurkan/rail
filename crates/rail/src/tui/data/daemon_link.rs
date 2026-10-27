@@ -548,7 +548,7 @@ pub enum FakeCall {
     },
     SavedSearchPut {
         name: String,
-        query: String,
+        query: Option<String>,
         replaces: Option<String>,
     },
     SavedSearchRemove {

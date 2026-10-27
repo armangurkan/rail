@@ -99,7 +99,7 @@ async fn the_palette_s_rename_and_remove_act_on_the_search_they_name() {
         saved_calls(&f),
         [FakeCall::SavedSearchPut {
             name: "c-list".into(),
-            query: "subject:c1".into(),
+            query: None,
             replaces: Some("c-list".into()),
         }],
         "the prompt opened on the search the line named"

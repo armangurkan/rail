@@ -17,9 +17,37 @@ async fn r_renames_the_saved_search_under_the_cursor() {
         saved_calls(&f),
         [FakeCall::SavedSearchPut {
             name: "later".into(),
-            query: "from:dana is:unread".into(),
+            query: None,
             replaces: Some("needs-reply".into()),
         }]
+    );
+}
+
+/// #109: the screen's copy of the list can be older than the file — the user edited the
+/// query in `config.toml` while Rail was open — so a rename carries no query at all, and the
+/// answer's list, which is the file's, is what the screen then holds.
+#[tokio::test]
+async fn a_rename_sends_no_query_and_keeps_the_one_in_the_file() {
+    let mut f = saved_fixture(&five_threads(), &TWO).await;
+    f.fake.saved.lock().unwrap()[0].query = "from:dana is:unread is:starred".into();
+    sidebar_to(&mut f, None, "needs-reply").await;
+    press(&mut f, KeyCode::Char('r')).await;
+    press_n(&mut f, KeyCode::Backspace, 11).await;
+    type_text(&mut f, "later").await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(
+        saved_calls(&f),
+        [FakeCall::SavedSearchPut {
+            name: "later".into(),
+            query: None,
+            replaces: Some("needs-reply".into()),
+        }]
+    );
+    let held = &f.screen.saved[0];
+    assert_eq!(held.name, "later");
+    assert_eq!(
+        held.query, "from:dana is:unread is:starred",
+        "the file's query"
     );
 }
 
@@ -35,7 +63,7 @@ async fn renaming_to_the_same_or_a_case_changed_name_is_allowed() {
         saved_calls(&f),
         [FakeCall::SavedSearchPut {
             name: "needs-reply".into(),
-            query: "from:dana is:unread".into(),
+            query: None,
             replaces: Some("needs-reply".into()),
         }]
     );
@@ -50,7 +78,7 @@ async fn renaming_to_the_same_or_a_case_changed_name_is_allowed() {
         saved_calls(&f),
         [FakeCall::SavedSearchPut {
             name: "Needs-Reply".into(),
-            query: "from:dana is:unread".into(),
+            query: None,
             replaces: Some("needs-reply".into()),
         }]
     );

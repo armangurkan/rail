@@ -12,12 +12,13 @@ use super::{DaemonLink, MailEvent, job, send};
 use crate::tui::app::Effect;
 
 impl DaemonLink {
-    /// Save `name` for `query`, or rename the search `replaces` names (keeping its query).
-    /// The answer is the whole new list, so the screen never merges one itself.
+    /// Save `name` for `query`, or rename the search `replaces` names. A rename sends no
+    /// query, so the daemon keeps the one in the file (#109). The answer is the whole new
+    /// list, so the screen never merges one itself.
     pub fn saved_search_put(
         &self,
         name: String,
-        query: String,
+        query: Option<String>,
         replaces: Option<String>,
     ) -> Effect {
         match self.link.clone() {
@@ -73,12 +74,13 @@ fn changed(
 impl super::FakeDaemon {
     /// Record the call and answer: `saved_answer` when a test set one, else the request
     /// applied to the fake's own list — `replaces` edits that entry in place (keeping its
-    /// position, as the daemon's own edit does), any other name is appended.
+    /// position, and its query when none is sent, as the daemon's own edit does), any other
+    /// name is appended.
     pub(super) fn saved_search_put(
         &self,
         sink: &crate::tui::app::TaskSink,
         name: String,
-        query: String,
+        query: Option<String>,
         replaces: Option<&str>,
     ) {
         self.record(FakeCall::SavedSearchPut {
@@ -93,6 +95,8 @@ impl super::FakeDaemon {
             let mut saved = self.saved.lock().unwrap();
             let at = replaces
                 .and_then(|old| saved.iter().position(|s| s.name.eq_ignore_ascii_case(old)));
+            let kept = at.map(|at| saved[at].query.clone());
+            let query = query.or(kept).unwrap_or_default();
             let entry = rail_core::config::SavedSearch { name, query };
             match at {
                 Some(at) => saved[at] = entry,

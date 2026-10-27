@@ -69,7 +69,7 @@ impl MailScreen {
     /// Save the filter in force as `name`.
     pub(super) fn save_search(&mut self, name: String) -> Vec<Effect> {
         let query = self.filter_text.clone();
-        vec![self.ctx.link.saved_search_put(name, query, None)]
+        vec![self.ctx.link.saved_search_put(name, Some(query), None)]
     }
 
     /// The saved search under the sidebar cursor, by position — and only while that position
@@ -236,18 +236,16 @@ impl MailScreen {
         Vec::new()
     }
 
-    /// Rename the search the prompt named — `old`, at `index` when it opened — to `name`,
-    /// keeping its query. The pair travels on the request, so its own answer brings it back
-    /// and the open scope and the sidebar cursor can follow the row instead of reading a
-    /// changed name as a removal.
+    /// Rename the search the prompt named — `old`, at `index` when it opened — to `name`.
+    /// No query is sent: the screen's copy can be older than a hand edit to `config.toml`, so
+    /// the daemon keeps the one in the file (#109). The pair travels on the request, so its
+    /// own answer brings it back and the open scope and the sidebar cursor can follow the row
+    /// instead of reading a changed name as a removal.
     pub(super) fn rename_search(&mut self, index: usize, old: &str, name: String) -> Vec<Effect> {
-        let Some((old, query)) = self
-            .entry_at(index, old)
-            .map(|entry| (entry.name.clone(), entry.query.clone()))
-        else {
+        let Some(old) = self.entry_at(index, old).map(|entry| entry.name.clone()) else {
             return self.searches_moved();
         };
-        vec![self.ctx.link.saved_search_put(name, query, Some(old))]
+        vec![self.ctx.link.saved_search_put(name, None, Some(old))]
     }
 
     /// Remove the search the question named — `name`, at `index` when it was asked.

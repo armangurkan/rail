@@ -257,7 +257,7 @@ async fn s_saves_the_live_filter_under_a_name() {
         saved_calls(&f),
         [FakeCall::SavedSearchPut {
             name: "needs-reply".into(),
-            query: "from:dana".into(),
+            query: Some("from:dana".into()),
             replaces: None,
         }]
     );

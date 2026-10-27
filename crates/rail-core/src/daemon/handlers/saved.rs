@@ -25,7 +25,8 @@ use crate::paths::{create_private_dir, replace_private_atomic};
 enum Edit {
     Put {
         name: String,
-        query: String,
+        /// `None` keeps the query of the entry `replaces` names (#109).
+        query: Option<String>,
         replaces: Option<String>,
     },
     Remove {
@@ -108,24 +109,51 @@ fn edited(
             name,
             query,
             replaces,
-        } => {
-            let replaces = replaces.as_deref();
-            if let Some(old) = replaces.filter(|old| !holds(existing, old)) {
-                return Err(unknown(old));
-            }
-            if let Err(reason) = check_put(existing, name, query, replaces) {
-                // One rule, asked twice: `check_put` writes the sentence, `duplicate_name`
-                // says whether it was the clash, so the code matches the sentence.
-                let code = if duplicate_name(existing, name, replaces).is_some() {
-                    ErrorCode::Duplicate
-                } else {
-                    ErrorCode::InvalidInput
-                };
-                return Err(OpError::new(code, ErrorClass::Permanent, reason));
-            }
-            Ok(put_saved_search(text, target, name, query, replaces)?)
-        }
+        } => put_edit(
+            text,
+            target,
+            existing,
+            name,
+            query.as_deref(),
+            replaces.as_deref(),
+        ),
     }
+}
+
+/// Steps 3 to 5 for a put. A rename without a query keeps the file's own: the client's copy
+/// of the list can be older than a hand edit made while it was open, and writing it back would
+/// lose that edit (#109). The query checked is the one the file will hold.
+fn put_edit(
+    text: &str,
+    target: &Path,
+    existing: &[SavedSearch],
+    name: &str,
+    query: Option<&str>,
+    replaces: Option<&str>,
+) -> Result<String, OpError> {
+    let current = match replaces {
+        Some(old) => Some(
+            entry(existing, old)
+                .ok_or_else(|| unknown(old))?
+                .query
+                .as_str(),
+        ),
+        None => None,
+    };
+    let Some(checked) = query.or(current) else {
+        return Err(OpError::invalid_input("A new saved search needs a query."));
+    };
+    if let Err(reason) = check_put(existing, name, checked, replaces) {
+        // One rule, asked twice: `check_put` writes the sentence, `duplicate_name`
+        // says whether it was the clash, so the code matches the sentence.
+        let code = if duplicate_name(existing, name, replaces).is_some() {
+            ErrorCode::Duplicate
+        } else {
+            ErrorCode::InvalidInput
+        };
+        return Err(OpError::new(code, ErrorClass::Permanent, reason));
+    }
+    Ok(put_saved_search(text, target, name, query, replaces)?)
 }
 
 /// Step 6. Not `ops::error::write_config_text`: that goes through `write_private_atomic`,
@@ -156,7 +184,12 @@ fn resolve(path: &Path) -> Result<PathBuf, OpError> {
 /// True when `existing` holds `name`, ignoring ASCII case — the rule the loader makes saved
 /// search names unique by, so at most one entry can match.
 fn holds(existing: &[SavedSearch], name: &str) -> bool {
-    existing.iter().any(|s| s.name.eq_ignore_ascii_case(name))
+    entry(existing, name).is_some()
+}
+
+/// The entry `existing` holds under `name`, ignoring ASCII case.
+fn entry<'a>(existing: &'a [SavedSearch], name: &str) -> Option<&'a SavedSearch> {
+    existing.iter().find(|s| s.name.eq_ignore_ascii_case(name))
 }
 
 fn unknown(name: &str) -> OpError {

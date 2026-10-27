@@ -1370,6 +1370,8 @@ running syncs carry on unchanged.
 One table per saved search, in the order the sidebar lists them. `S` on the mail screen writes
 them, and so do `rename-search` and `remove-search`; your comments, formatting and other tables
 survive each write, and a rename edits the table where it stands, so its row keeps its place.
+A rename changes only the `name` line: the `query` stays exactly as the file has it, so a query
+you edited by hand while Rail was open is kept.
 
 | Key | Required | Meaning |
 |---|---|---|

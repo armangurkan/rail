@@ -12,11 +12,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::SavedSearch;
 
-/// Save a search, or rename the one `replaces` names (keeping its query and its position).
+/// Save a search, or rename the one `replaces` names (keeping its position).
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SavedSearchPutRequest {
     pub name: String,
-    pub query: String,
+    /// The filter text to save. A rename leaves it out (`None`) so the query in the file is
+    /// kept as written, however the client's copy of it has aged; a new search must carry one.
+    #[serde(default)]
+    pub query: Option<String>,
     /// The existing name this entry replaces; `None` saves a new search.
     pub replaces: Option<String>,
 }

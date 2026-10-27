@@ -35,8 +35,18 @@ async fn daemon(tmp: &tempfile::TempDir, config: &str) -> (Paths, DaemonClient) 
 fn put(name: &str, query: &str, replaces: Option<&str>) -> SavedSearchPutRequest {
     SavedSearchPutRequest {
         name: name.into(),
-        query: query.into(),
+        query: Some(query.into()),
         replaces: replaces.map(Into::into),
+    }
+}
+
+/// A rename as the TUI sends it: the new name and the old one, and no query, so the daemon
+/// keeps whatever query the file holds (#109).
+fn rename(name: &str, old: &str) -> SavedSearchPutRequest {
+    SavedSearchPutRequest {
+        name: name.into(),
+        query: None,
+        replaces: Some(old.into()),
     }
 }
 
@@ -130,6 +140,48 @@ async fn put_rename_and_remove_keep_the_file_and_its_comments() {
     assert!(!text.contains("[[saved_searches]]"), "{text}");
     assert!(text.contains("# mine"), "{text}");
     assert_eq!(mode(&paths.config_dir), 0o700);
+}
+
+/// #109: a rename changes only the name. The query in the file is the one kept, even when it
+/// was edited by hand after the client last read the list, and the comments around it stay.
+#[tokio::test]
+async fn a_rename_keeps_the_query_edited_in_the_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (paths, client) = daemon(&tmp, MINE).await;
+    let file = paths.config_file();
+    client
+        .call::<SavedSearchPut>(&put("dana", "from:dana", None))
+        .await
+        .unwrap();
+    let edited = std::fs::read_to_string(&file).unwrap().replace(
+        "query = \"from:dana\"",
+        "# narrowed by hand\nquery = 'from:dana is:unread' # weekly",
+    );
+    std::fs::write(&file, &edited).unwrap();
+
+    let renamed = client
+        .call::<SavedSearchPut>(&rename("later", "dana"))
+        .await
+        .unwrap();
+    assert_eq!(renamed, one("later", "from:dana is:unread"));
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("name = \"later\""), "{text}");
+    assert!(
+        text.contains("# narrowed by hand\nquery = 'from:dana is:unread' # weekly"),
+        "the hand-edited query line is kept as written: {text}"
+    );
+    assert!(text.contains("# mine"), "{text}");
+
+    // A new search has no query to keep, so leaving it out is refused and nothing is written.
+    let new = SavedSearchPutRequest {
+        name: "fresh".into(),
+        query: None,
+        replaces: None,
+    };
+    let err = client.call::<SavedSearchPut>(&new).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput, "{err:?}");
+    assert_eq!(err.message, "A new saved search needs a query.");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
 }
 
 /// AC-20b (§8 Symlinks, D-9): a dotfile-managed config is written where it points, so the link
