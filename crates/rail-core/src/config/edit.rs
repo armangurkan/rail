@@ -250,11 +250,15 @@ pub fn put_saved_search(
     let table = searches
         .get_mut(index)
         .ok_or_else(|| not_an_array_of_tables(path, "saved_searches"))?;
-    set_string(table, "name", name);
-    // Only when it changed: `set_string` keeps the line's trailing comment, but it cannot keep
-    // a literal string's `'…'` form, and a rename is the one caller that leaves the query
-    // alone. Not writing it is what keeps the user's quoting (FR-20). A table just pushed has
-    // no `query`, so `None != Some(query)` writes it.
+    // Each line only when its value changed: `set_string` keeps the line's trailing comment,
+    // but it cannot keep a literal string's `'…'` form, so writing a value back unchanged
+    // would re-quote a line the caller asked nothing of. Not writing it is what keeps the
+    // user's quoting (FR-20). Compared exactly, not the way the daemon keys a name, so a
+    // case-only rename still writes the new case. A table just pushed has neither key, so
+    // `None != Some(…)` writes both.
+    if table.get("name").and_then(Item::as_str) != Some(name) {
+        set_string(table, "name", name);
+    }
     if table.get("query").and_then(Item::as_str) != Some(query) {
         set_string(table, "query", query);
     }
@@ -742,5 +746,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(same, text, "a rename to the same name writes nothing");
+    }
+
+    /// FR-20's other half, for the **name** line. `set_string` keeps a line's trailing comment
+    /// but cannot keep a literal string's `'…'` form, so writing a name that did not change
+    /// re-quotes `'later'` to `"later"` and edits a line the user asked nothing of. The
+    /// byte-for-byte check above cannot see this: its name is a basic string, where writing
+    /// the same value back is invisible. A case-only rename is a real change and is still
+    /// written.
+    #[test]
+    fn a_rename_that_does_not_change_the_name_leaves_it_as_written() {
+        let path = Path::new("c.toml");
+        let text =
+            "[[saved_searches]]\nname = 'later' # literal name\nquery = 'from:dana' # literal\n";
+        let same = put_saved_search(text, path, "later", "from:dana", Some("later")).unwrap();
+        assert_eq!(same, text, "a no-op rename writes neither line");
+
+        let cased = put_saved_search(text, path, "LATER", "from:dana", Some("later")).unwrap();
+        assert!(
+            cased.contains("name = \"LATER\" # literal name"),
+            "a case-only rename is written, and keeps its line's comment: {cased}"
+        );
+        assert_eq!(parse(&cased, path).unwrap().saved_searches[0].name, "LATER");
     }
 }
