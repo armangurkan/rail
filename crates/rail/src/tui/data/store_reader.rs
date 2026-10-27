@@ -73,7 +73,10 @@ impl PartialEq for ScopeChoice {
             | (Self::Sent, Self::Sent)
             | (Self::Trash, Self::Trash)
             | (Self::Drafts, Self::Drafts) => true,
-            (Self::Account(a), Self::Account(b)) => a == b,
+            // One arm: an account and a saved search are both identified by their position in
+            // the config, and both compare it the same way.
+            (Self::Account(a), Self::Account(b))
+            | (Self::Saved { index: a, .. }, Self::Saved { index: b, .. }) => a == b,
             (
                 Self::Folder {
                     account: a,
@@ -86,7 +89,6 @@ impl PartialEq for ScopeChoice {
                     ..
                 },
             ) => a == b && x == y,
-            (Self::Saved { index: a, .. }, Self::Saved { index: b, .. }) => a == b,
             _ => false,
         }
     }
@@ -134,7 +136,7 @@ pub struct ListRequest {
     pub addresses: Vec<String>,
     pub names: Vec<String>,
     pub filter: Filter,
-    /// The open saved search's own filter, ANDed under the live one.
+    /// The open saved search's own filter, `ANDed` under the live one.
     pub saved: Option<Filter>,
     /// Every saved search's filter, parsed, in config order: the sidebar's counts.
     pub saved_all: Vec<Filter>,
