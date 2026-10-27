@@ -49,7 +49,7 @@ pub fn content_matches(mime_type: &str, bytes: &[u8]) -> bool {
         Signature::Bmp => is_bmp(bytes),
         Signature::Tiff => bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*"),
         Signature::Heic => is_heic(bytes),
-        Signature::Ooxml => bytes.starts_with(ZIP_ENTRY),
+        Signature::Ooxml => is_ooxml(bytes),
         Signature::Odf => is_odf(bytes, name),
         Signature::Ole => bytes.starts_with(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"),
         Signature::Rtf => bytes.starts_with(b"{\\rtf"),
@@ -105,19 +105,32 @@ fn is_odf(bytes: &[u8], mime_type: &str) -> bool {
         .is_some_and(|(name, data)| name == b"mimetype" && data.starts_with(mime_type.as_bytes()))
 }
 
+/// The parts an Office Open XML writer puts first: Word and python-docx write
+/// `[Content_Types].xml`, LibreOffice `_rels/.rels`, and others a part of the package itself.
+const OOXML_FIRST: [&[u8]; 2] = [b"[Content_Types].xml", b"_rels/.rels"];
+/// The package folders whose parts may come first instead.
+const OOXML_FOLDERS: [&[u8]; 4] = [b"docProps/", b"word/", b"xl/", b"ppt/"];
+
+/// A ZIP whose first entry is a part of an Office Open XML package: any other ZIP — a JAR,
+/// whose first entry is under `META-INF/`, renamed `.docx` — is refused.
+fn is_ooxml(bytes: &[u8]) -> bool {
+    first_zip_entry(bytes).is_some_and(|(name, _)| {
+        OOXML_FIRST.contains(&name) || OOXML_FOLDERS.iter().any(|folder| name.starts_with(folder))
+    })
+}
+
 /// Text a sniffing opener would still call text. Any 8-bit encoding is taken — UTF-8, or the
 /// Latin-1 and Windows-1252 a spreadsheet exports — because every byte string without a NUL
 /// is valid Latin-1, so requiring UTF-8 would refuse real files and keep nothing out. Refused:
 /// a NUL (binary, or UTF-16 text, which hides markup from the rest of the check); a start,
-/// after a UTF-8 byte-order mark and white space, of `<` (any markup), `#!` (a script),
+/// after every UTF-8 byte-order mark and white space, of `<` (any markup), `#!` (a script),
 /// `%PDF` or `%!` (PostScript); and a tag a sniffer takes for HTML, SVG or XML starting in
 /// the first `TEXT_SNIFF_WINDOW` bytes.
 fn is_plain_text(bytes: &[u8]) -> bool {
     if bytes.is_empty() || bytes.contains(&0) {
         return false;
     }
-    let body = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
-    let start = body.trim_ascii_start();
+    let start = past_marks_and_space(bytes);
     let scripted = [b"<".as_slice(), b"#!", b"%PDF", b"%!"]
         .iter()
         .any(|prefix| start.starts_with(prefix));
@@ -128,6 +141,18 @@ fn is_plain_text(bytes: &[u8]) -> bool {
 /// which Rust's `is_ascii_whitespace` leaves out.
 fn is_space(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+}
+
+/// `bytes` past every UTF-8 byte-order mark and white space at its start, in any order.
+fn past_marks_and_space(mut bytes: &[u8]) -> &[u8] {
+    loop {
+        let rest = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+        let rest = skip_space(rest);
+        if rest.len() == bytes.len() {
+            return rest;
+        }
+        bytes = rest;
+    }
 }
 
 /// Tag names a sniffer reads as HTML or SVG. Matched as a prefix, ASCII case ignored, after a

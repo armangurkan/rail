@@ -257,3 +257,47 @@ fn a_tag_with_odd_whitespace_or_case_is_still_found() {
         );
     }
 }
+
+/// The start-of-text check skips every byte-order mark and every ASCII white space, vertical
+/// tab and form feed included.
+#[test]
+fn repeated_marks_and_odd_white_space_do_not_hide_a_start() {
+    for start in [
+        b"\x0b<p>".as_slice(),
+        b"\x0c\x0b #!/bin/sh",
+        b"\xef\xbb\xbf\xef\xbb\xbf<p>",
+        b"\xef\xbb\xbf \xef\xbb\xbf\t%PDF-1.4",
+        b"\xef\xbb\xbf\x0b\xef\xbb\xbf%!PS",
+    ] {
+        assert!(
+            !content_matches("text/plain", start),
+            "{:?}",
+            String::from_utf8_lossy(start)
+        );
+    }
+}
+
+/// An OOXML file starts with one of the parts Office writers put first; a JAR (or any other
+/// ZIP) renamed `.docx` does not.
+#[test]
+fn an_ooxml_file_starts_with_an_office_part() {
+    for first in [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "docProps/app.xml",
+        "word/document.xml",
+        "xl/workbook.xml",
+        "ppt/presentation.xml",
+    ] {
+        assert!(content_matches(DOCX, &zip_entry(first, b"<")), "{first}");
+    }
+    for first in [
+        "META-INF/MANIFEST.MF",
+        "META-INF/",
+        "com/example/Main.class",
+        "mimetype",
+        "",
+    ] {
+        assert!(!content_matches(DOCX, &zip_entry(first, b"x")), "{first}");
+    }
+}
