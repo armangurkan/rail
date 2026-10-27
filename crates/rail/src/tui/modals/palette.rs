@@ -47,10 +47,20 @@ pub enum Target {
     Drafts,
     /// `:save-search`: name the filter in force and save it.
     SaveSearch,
-    /// `rename-search <name>`: rename the saved search at this position.
-    RenameSearch(usize),
-    /// `remove-search <name>`: remove the saved search at this position.
-    RemoveSearch(usize),
+    /// `rename-search <name>`: rename the saved search this entry showed. The name travels
+    /// with the position because the entries are built once, when the palette opens, and a
+    /// write's answer can replace the list while it is up — so a position alone would reach
+    /// whatever has since moved into it, or nothing.
+    RenameSearch {
+        index: usize,
+        name: String,
+    },
+    /// `remove-search <name>`: remove the saved search this entry showed, carried for the
+    /// reason `RenameSearch` gives.
+    RemoveSearch {
+        index: usize,
+        name: String,
+    },
     /// `:search-counts`: show or hide the unread count beside each saved search.
     SearchCounts,
 }

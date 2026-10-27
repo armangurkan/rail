@@ -428,12 +428,18 @@ fn assert_search_entries(entries: &[PaletteEntry], index: usize, name: &str) {
         (
             "rename",
             format!("Rename search: {name}"),
-            Target::RenameSearch(index),
+            Target::RenameSearch {
+                index,
+                name: name.to_string(),
+            },
         ),
         (
             "remove",
             format!("Remove search: {name}"),
-            Target::RemoveSearch(index),
+            Target::RemoveSearch {
+                index,
+                name: name.to_string(),
+            },
         ),
     ] {
         let found: Vec<_> = entries.iter().filter(|e| e.text == text).collect();

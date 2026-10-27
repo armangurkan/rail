@@ -78,7 +78,7 @@ impl MailScreen {
     /// would hand `r` and `d` the next search along. On any other row this is FR-16's notice
     /// and `None`, on a row the list has outlived it is the moved notice: neither key ever
     /// does nothing silently, and neither ever acts on a search the row does not name.
-    fn cursor_search(&mut self) -> Option<usize> {
+    fn cursor_search(&mut self) -> Option<(usize, String)> {
         let row = self
             .sidebar
             .selected()
@@ -91,18 +91,19 @@ impl MailScreen {
             self.say_searches_moved();
             return None;
         }
-        Some(index)
+        Some((index, name))
     }
 
-    /// `r` and `:rename-search`: the name prompt over the row, pre-filled with its name. The
-    /// query is not shown and does not change.
-    pub(super) fn rename_search_prompt(&mut self, index: usize) -> Vec<Effect> {
-        let Some((name, query)) = self
-            .saved
-            .get(index)
-            .map(|entry| (entry.name.clone(), entry.query.clone()))
+    /// `r` and `:rename-search`: the name prompt over the search `named` — at `index` when the
+    /// row or the palette entry was built — pre-filled with its name. The query is not shown
+    /// and does not change. A list replaced since then is resolved through `saved_at`, so the
+    /// prompt opens on the search the user was shown or on nothing, never on its neighbour.
+    pub(super) fn rename_search_prompt(&mut self, index: usize, named: &str) -> Vec<Effect> {
+        let Some((index, name, query)) = self
+            .saved_at(index, named)
+            .map(|(at, entry)| (at, entry.name.clone(), entry.query.clone()))
         else {
-            return Vec::new();
+            return self.searches_moved();
         };
         // FR-4's carve-out: the entry being renamed is skipped by the duplicate test, so the
         // same name, or the same name in another case, is accepted.
@@ -125,11 +126,15 @@ impl MailScreen {
         Vec::new()
     }
 
-    /// `d` and `:remove-search`: the confirmation, which says the mail is not touched. The
-    /// name it shows is the name it carries, so `y` cannot remove anything else.
-    pub(super) fn remove_search_confirm(&mut self, index: usize) -> Vec<Effect> {
-        let Some(name) = self.saved.get(index).map(|entry| entry.name.clone()) else {
-            return Vec::new();
+    /// `d` and `:remove-search`: the confirmation for the search `named`, which says the mail
+    /// is not touched. The name it shows is the name it carries, so `y` cannot remove anything
+    /// else; the search is resolved the way `rename_search_prompt` resolves it.
+    pub(super) fn remove_search_confirm(&mut self, index: usize, named: &str) -> Vec<Effect> {
+        let Some((index, name)) = self
+            .saved_at(index, named)
+            .map(|(at, entry)| (at, entry.name.clone()))
+        else {
+            return self.searches_moved();
         };
         let line = format!(
             "Remove the saved search \"{}\"? The mail it finds is not touched.",
@@ -146,7 +151,7 @@ impl MailScreen {
     /// `r` on the sidebar cursor's row.
     pub(super) fn rename_cursor_search(&mut self) -> Vec<Effect> {
         match self.cursor_search() {
-            Some(index) => self.rename_search_prompt(index),
+            Some((index, name)) => self.rename_search_prompt(index, &name),
             None => Vec::new(),
         }
     }
@@ -154,7 +159,7 @@ impl MailScreen {
     /// `d` on the sidebar cursor's row.
     pub(super) fn remove_cursor_search(&mut self) -> Vec<Effect> {
         match self.cursor_search() {
-            Some(index) => self.remove_search_confirm(index),
+            Some((index, name)) => self.remove_search_confirm(index, &name),
             None => Vec::new(),
         }
     }
@@ -169,16 +174,26 @@ impl MailScreen {
             .filter(|entry| entry.name.eq_ignore_ascii_case(name))
     }
 
-    /// The entry a `Saved` scope names: the one at `index` while it still carries `name`, else
-    /// the one called `name` wherever it has moved to, and `None` once nothing has that name.
-    /// Every read derived from a saved scope goes through here, so a position whose list was
-    /// replaced resolves to the search the user picked or to nothing — never to its neighbour.
-    pub(super) fn saved_entry(&self, index: usize, name: &str) -> Option<&SavedSearch> {
-        self.entry_at(index, name).or_else(|| {
+    /// The one resolution rule for a saved-search position plus the name shown with it: the
+    /// entry at `index` while it still carries `name`, else the one called `name` wherever it
+    /// has moved to, with the position it is actually at. `None` once nothing has that name.
+    /// Everything keyed by a saved position goes through here — a scope's read, the rename
+    /// prompt, the removal question — so a position whose list was replaced resolves to the
+    /// search the user picked or to nothing, never to its neighbour.
+    fn saved_at(&self, index: usize, name: &str) -> Option<(usize, &SavedSearch)> {
+        let at = if self.entry_at(index, name).is_some() {
+            index
+        } else {
             self.saved
                 .iter()
-                .find(|entry| entry.name.eq_ignore_ascii_case(name))
-        })
+                .position(|entry| entry.name.eq_ignore_ascii_case(name))?
+        };
+        Some((at, self.saved.get(at)?))
+    }
+
+    /// `saved_at` without the position, for the reads that only want the entry.
+    pub(super) fn saved_entry(&self, index: usize, name: &str) -> Option<&SavedSearch> {
+        self.saved_at(index, name).map(|(_, entry)| entry)
     }
 
     /// A `Saved` scope re-keyed to where its search actually is, whoever asked to open it: a
@@ -397,7 +412,7 @@ mod tests {
     #[tokio::test]
     async fn a_confirmed_removal_never_hits_a_search_that_moved() {
         let (_tmp, fake, mut screen) = screen_with(&["a-list", "b-list", "c-list"]);
-        screen.remove_search_confirm(0);
+        screen.remove_search_confirm(0, "a-list");
         let asked = confirm_body(&screen);
         assert!(asked[0].contains("\"a-list\""), "{asked:?}");
 
@@ -423,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn a_rename_never_hits_a_search_that_moved() {
         let (_tmp, fake, mut screen) = screen_with(&["a-list", "b-list", "c-list"]);
-        screen.rename_search_prompt(0);
+        screen.rename_search_prompt(0, "a-list");
         let effects = screen.saved_searches_changed(Ok(searches(&["b-list", "c-list"])), None);
         settle(&mut screen, effects).await;
 

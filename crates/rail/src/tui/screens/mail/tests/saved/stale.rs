@@ -42,6 +42,89 @@ fn answer_without_the_sidebar_read(f: &mut Fixture, searches: &[(&str, &str)]) {
     drop(effects);
 }
 
+/// A fixture whose palette is open over `THREE` while `MailScreen.saved` has already become
+/// `[b-list, c-list]`. The palette is built once, when it opens, so every entry in it now
+/// carries a position the list no longer backs: `c-list`'s is past the end, and `a-list`'s
+/// holds `b-list`.
+async fn palette_open_over_a_changed_list() -> Fixture {
+    let mut f = saved_fixture(&one_each(), &THREE).await;
+    press(&mut f, KeyCode::Char(':')).await;
+    answer_without_the_sidebar_read(&mut f, &THREE[1..]);
+    f
+}
+
+/// Type `text` into the palette that is already open, check the line `Enter` will run is
+/// `expect` — the match order is the fuzzy matcher's, not this test's business — and run it.
+async fn choose_from_the_open_palette(f: &mut Fixture, text: &str, expect: &str) {
+    type_text(f, text).await;
+    let top = match &f.screen.modal {
+        Some(Modal::Palette(palette)) => palette
+            .shown()
+            .first()
+            .map_or_else(String::new, |entry| entry.text.clone()),
+        _ => panic!("no palette is open for {text:?}"),
+    };
+    assert_eq!(top, expect, "the line Enter runs");
+    press(f, KeyCode::Enter).await;
+}
+
+/// G2 (FR-16, Q-5): the palette's `Rename search:` and `Remove search:` lines act on the search
+/// their own text names. They are built once with the list, so an answer landing while the
+/// palette is up leaves each one a position: the line saying `c-list` would reach whatever sits
+/// at that index — past the end, nothing at all — and the line saying a name that has gone
+/// would reach its neighbour and remove or rename a search the user never pointed at.
+#[tokio::test]
+async fn the_palette_s_rename_and_remove_act_on_the_search_they_name() {
+    let mut f = palette_open_over_a_changed_list().await;
+    choose_from_the_open_palette(&mut f, "remove-search c-list", "Remove search: c-list").await;
+    assert_eq!(
+        confirm_lines(&f),
+        ["Remove the saved search \"c-list\"? The mail it finds is not touched."]
+    );
+    press(&mut f, KeyCode::Char('y')).await;
+    assert_eq!(
+        saved_calls(&f),
+        [FakeCall::SavedSearchRemove {
+            name: "c-list".into()
+        }],
+        "the search the line named, and only it"
+    );
+
+    // The rename's prompt opens on the same search: `Enter` on it unedited names what it
+    // opened on, so the put that leaves says which search the prompt was about.
+    let mut f = palette_open_over_a_changed_list().await;
+    choose_from_the_open_palette(&mut f, "rename-search c-list", "Rename search: c-list").await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(
+        saved_calls(&f),
+        [FakeCall::SavedSearchPut {
+            name: "c-list".into(),
+            query: "subject:c1".into(),
+            replaces: Some("c-list".into()),
+        }],
+        "the prompt opened on the search the line named"
+    );
+
+    // `a-list` is gone and index 0 now holds `b-list`: both lines say the searches moved and
+    // send nothing, as `r` and `d` on a stale row do.
+    for (text, top) in [
+        ("remove-search a-list", "Remove search: a-list"),
+        ("rename-search a-list", "Rename search: a-list"),
+    ] {
+        let mut f = palette_open_over_a_changed_list().await;
+        choose_from_the_open_palette(&mut f, text, top).await;
+        assert!(f.screen.modal.is_none(), "{text} offered something");
+        assert!(
+            f.screen
+                .status_line()
+                .contains("The saved searches changed; try again."),
+            "{text}: {}",
+            f.screen.status_line()
+        );
+        assert_eq!(saved_calls(&f), Vec::new(), "{text} sent something");
+    }
+}
+
 /// G2 (FR-10, FR-12): `saved_filter` returns `None` for a position its list no longer holds,
 /// and `store_scope` turns a `Saved` scope into `Scope::All` — every folder of every account.
 /// Unnarrowed, that reads the whole mailbox under the row's title, and `* a` takes it. The two

@@ -77,13 +77,16 @@ impl MailScreen {
                         text: format!("Rename search: {name}"),
                         search: format!("rename-search {name}"),
                         key: key(Action::SidebarRenameSearch),
-                        target: Target::RenameSearch(index),
+                        target: Target::RenameSearch {
+                            index,
+                            name: name.clone(),
+                        },
                     },
                     PaletteEntry {
                         text: format!("Remove search: {name}"),
                         search: format!("remove-search {name}"),
                         key: key(Action::SidebarRemoveSearch),
-                        target: Target::RemoveSearch(index),
+                        target: Target::RemoveSearch { index, name },
                     },
                 ]
             })
