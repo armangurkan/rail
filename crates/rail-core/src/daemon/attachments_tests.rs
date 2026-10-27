@@ -552,6 +552,24 @@ async fn open_names_the_cache_file_from_the_type_not_the_sender_s_name() {
     );
 }
 
+/// FR-14: the copy's own name stays inside the file-name limit. Its stem comes from a name
+/// `sanitize_filename` has already capped at 255 bytes, so adding the type's extension pushed
+/// the whole name past what a file system takes, and every open of such a part failed.
+#[tokio::test]
+async fn an_open_copy_keeps_its_name_within_the_file_name_limit() {
+    let (h, _dest) = fixture().await;
+    let long = "a".repeat(255);
+    list_part(&h, "0.7", &long, "application/pdf", 3);
+    bytes_at(&h, "0.7", b"pdf".to_vec());
+    let response = open(&h, "0.7").await.unwrap();
+    let path = PathBuf::from(&response.path);
+    let name = path.file_name().expect("a file name").to_string_lossy();
+    assert!(name.len() <= 255, "{} bytes: {name}", name.len());
+    assert!(name.ends_with(".pdf"), "{name}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"pdf");
+    assert_eq!(mode(&path), 0o600);
+}
+
 /// AC-26: a type Rail does not open is refused before any provider call.
 #[tokio::test]
 async fn open_refuses_a_type_rail_does_not_open() {

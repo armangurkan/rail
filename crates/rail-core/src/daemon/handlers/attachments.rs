@@ -24,7 +24,7 @@ use crate::ops::{
 };
 use crate::paths::{Paths, create_private_dir};
 use crate::provider::ProviderError;
-use crate::provider::gmail::mime::sanitize_filename;
+use crate::provider::gmail::mime::{MAX_FILENAME_BYTES, sanitize_filename};
 use crate::store::Store;
 use crate::store::view::AttachmentView;
 use crate::sync::manager::{Reach, SearchTarget};
@@ -349,6 +349,15 @@ fn write_error(what: &str, error: &std::io::Error) -> OpError {
         | ErrorKind::NotADirectory
         | ErrorKind::ReadOnlyFilesystem
         | ErrorKind::AlreadyExists => unwritable_dir().with_detail(error.to_string()),
+        // A name this file system will not take (`ENAMETOOLONG` on Unix) comes from the
+        // sender, so the next try would offer the same name again: permanent, not an I/O
+        // hiccup to retry. The name is never quoted.
+        ErrorKind::InvalidFilename => OpError::new(
+            ErrorCode::InvalidInput,
+            ErrorClass::Permanent,
+            "this attachment's name is not one the file system takes",
+        )
+        .with_detail(error.to_string()),
         _ => OpError::io(ErrorCode::Internal, &format!("{what} an attachment"), error),
     }
 }
@@ -397,8 +406,11 @@ fn unopenable() -> OpError {
 }
 
 /// The name an opened copy gets: the sanitized original's stem plus the extension the type
-/// table gives, never the sender's own. On macOS `open` dispatches on the extension, so an
-/// `.html` part declared `image/png` is handed over as `.png`, not to a browser.
+/// table gives, never the sender's own, and never past `MAX_FILENAME_BYTES`. On macOS `open`
+/// dispatches on the extension, so an `.html` part declared `image/png` is handed over as
+/// `.png`, not to a browser. The stem arrives already capped at the whole limit, so the
+/// extension this adds has to be made room for, or the copy would be a file name the file
+/// system refuses.
 fn cache_name(filename: &str, extension: &str) -> String {
     let base = visible_name(filename);
     let stem = Path::new(&base)
@@ -406,6 +418,16 @@ fn cache_name(filename: &str, extension: &str) -> String {
         .and_then(std::ffi::OsStr::to_str)
         .filter(|stem| !stem.is_empty())
         .unwrap_or(FALLBACK_NAME);
+    // Whole characters at a time, as `sanitize_filename` cuts. One byte of the stem always
+    // stays, so the name can never come out as `.pdf`; every extension in `OPENABLE` is at
+    // most four bytes, so the cut only ever takes the last few characters.
+    let room = MAX_FILENAME_BYTES
+        .saturating_sub(extension.len() + 1)
+        .max(1);
+    let mut stem = stem.to_string();
+    while stem.len() > room {
+        stem.pop();
+    }
     format!("{stem}.{extension}")
 }
 
@@ -426,15 +448,25 @@ fn write_open_copy(paths: &Paths, name: &str, bytes: &[u8]) -> Result<String, Op
             "the cache directory's path is not valid UTF-8",
         ));
     };
-    let mut file = create_new_private(&path).map_err(|error| write_error("creating", &error))?;
+    // A failure leaves the token directory behind otherwise: it holds no file for the sweep
+    // to find stale, so nothing would ever remove it.
+    let mut file = match create_new_private(&path) {
+        Ok(file) => file,
+        Err(error) => {
+            drop_if_empty(&dir);
+            return Err(write_error("creating", &error));
+        }
+    };
     if let Err(error) = write_synced(&mut file, bytes) {
         drop(file);
         remove_written(&path);
+        drop_if_empty(&dir);
         return Err(write_error("writing", &error));
     }
     drop(file);
     if let Err(error) = quarantine(&path) {
         remove_written(&path);
+        drop_if_empty(&dir);
         return Err(quarantine_error(&error));
     }
     Ok(text)

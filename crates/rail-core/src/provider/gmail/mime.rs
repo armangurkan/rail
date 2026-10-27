@@ -7,7 +7,9 @@ use crate::provider::{Mailbox, Outgoing, ProviderError};
 
 /// Gmail's limit for a message and its attachments.
 pub const MAX_MESSAGE_BYTES: usize = 25 * 1024 * 1024;
-const MAX_FILENAME_BYTES: usize = 255;
+/// The longest one file name may be, in bytes: what `sanitize_filename` caps a sender's name
+/// at, and the limit a saved or opened attachment's own name has to stay inside.
+pub(crate) const MAX_FILENAME_BYTES: usize = 255;
 /// RFC 5322 specials an address-list parser reads as structure (`.` and the one `@` are
 /// fine): one of these inside an address could end it and start another recipient.
 const ADDRESS_SPECIALS: [char; 11] = ['(', ')', '<', '>', '[', ']', ':', ';', '\\', ',', '"'];
