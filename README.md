@@ -237,7 +237,10 @@ Both `rail` and `rail setup` refuse to start, naming the file and line and exiti
 names an action it does not know, a key it cannot read, `Ctrl-C` (which always quits), or a key
 another action of the same view already uses (a key that starts another action's sequence
 counts). They check before the terminal changes. A view's own key wins over a global one: `q`
-closes the reader but quits from the list.
+closes the reader but quits from the list. The defaults count too: `J`, `K`, `shift-down` and
+`shift-up` extend the selection in the list, so a `[keys]` entry that binds one of them to another
+list action (`"list.down" = "J"`, say) stops Rail from starting with that error until you change
+the entry or move `list.extend_down` / `list.extend_up` to other keys.
 
 The `global.*`, `list.*`, `sidebar.*`, `reader.*` and `compose.*` actions below take effect in the
 mail screen and the `wizard.*` ones in the setup wizard. In the mail screen `?` lists the keys of the view you
@@ -589,12 +592,17 @@ the selection, which stays as it was (`Space` still pages down, and selecting is
 archive, trash and move close the reader.
 
 `* a` selects every thread this mailbox and filter match — newest first, at most 10,000, and the
-header then reads `10,000 selected (more match)`. `* f` puts the sender of the thread under the
-cursor into the filter line as `from:<address>` and selects those: in the filter line that form
-matches that address exactly, where a plain `from:dana` matches every thread whose sender's name
-*or* address contains `dana`. A thread whose newest message has no readable sender, or one whose
-address the filter cannot carry, says `This thread has no sender to select by.` and changes
-nothing.
+header then reads `10,000 selected (more match)`; when nothing matches it says `Nothing matches.`
+and selects nothing. `* f` puts the sender of the thread under the cursor into the filter line as
+`from:<address>` and selects every thread with any message from that address, as the same `from:`
+filter would show them: in the filter line that form matches that address exactly, where a plain
+`from:dana` matches every thread whose sender's name *or* address contains `dana`. The sender is
+that of the thread's newest message from someone else: your own messages (from the account's
+address, or in its Sent or Drafts) are passed over, so a thread you answered last selects by the
+person you answered. A thread with no such message with a readable sender, or one whose address
+the filter cannot carry, says `This thread has no sender to select by.` and changes nothing. If
+you change the mailbox or the filter before `* a` or `* f` has answered, its answer is dropped and
+nothing is selected.
 
 `v` starts a range at the thread under the cursor: the bar says `range from here`, and while the
 range is open its first key hint is `Esc range`. Move as usual, then `v` or `Esc` ends the range
@@ -610,8 +618,8 @@ starts again from the new place. A terminal that does not report Shift with the 
 `J` and `K`; elsewhere in Rail, the Drafts folder included, a Shift-arrow moves like the plain
 arrow, and there `J` and `K` move too. While `v` has a range open, `J`, `K` and the Shift-arrows
 only move. If a sync reads the list again while you extend and the thread you started from leaves
-it, the extension carries on from where the cursor was. A selection holds at most 10,000 threads: an extension it stops says
-`The selection holds at most 10,000 threads.`
+it, the extension carries on from where the cursor was. A selection holds at most 10,000 threads:
+an extension or a `v` range it stops says `The selection holds at most 10,000 threads.`
 
 A bulk action goes out as one request per 200 threads per account, and one `z` takes the whole set
 back, reporting `undone` once; an undo that could take only part of it back says `undone in part:

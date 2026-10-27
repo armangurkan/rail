@@ -1,8 +1,8 @@
 //! `J`/`K` and Shift-↓/↑ through the mail screen: the first press anchors on the cursor row,
 //! each press selects from the anchor to the cursor, moving back deselects what the range
 //! added, any other key ends it, `v` range mode keeps the keys to moving, drafts refuse them,
-//! the cap holds, and help and the palette list them. A child module of `tests/bulk.rs`, whose
-//! helpers it uses.
+//! the cap holds (for a `v` range too), and help and the palette list them. A child module of
+//! `tests/bulk.rs`, whose helpers it uses.
 
 use super::super::drafts_folder::{drafts_fixture, open_drafts};
 use super::*;
@@ -166,6 +166,32 @@ async fn a_full_selection_says_so_and_stops_growing() {
         .collect();
     f.screen.actions.selection.add(&filler);
     press_n(&mut f, KeyCode::Char('J'), 2).await;
+    assert_eq!(f.screen.actions.selection.len(), MAX_SELECTION);
+    let line = f.screen.status_line();
+    assert!(
+        line.contains("The selection holds at most 10,000 threads."),
+        "{line}"
+    );
+}
+
+#[tokio::test]
+async fn a_v_range_into_a_full_selection_says_so() {
+    let mut f = fixture(6).await;
+    let filler: Vec<(i64, Picked)> = (0..MAX_SELECTION - 1)
+        .map(|i| {
+            let id = 1_000_000 + i64::try_from(i).unwrap();
+            let picked = Picked {
+                account_id: 1,
+                starred: false,
+                unread: false,
+            };
+            (id, picked)
+        })
+        .collect();
+    f.screen.actions.selection.add(&filler);
+    press(&mut f, KeyCode::Char('v')).await;
+    press_n(&mut f, KeyCode::Char('j'), 2).await;
+    press(&mut f, KeyCode::Char('v')).await;
     assert_eq!(f.screen.actions.selection.len(), MAX_SELECTION);
     let line = f.screen.status_line();
     assert!(

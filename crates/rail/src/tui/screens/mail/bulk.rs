@@ -228,10 +228,20 @@ impl MailScreen {
             .iter()
             .map(|row| (row.key.thread_id, Picked::of(row)))
             .collect();
-        self.actions.selection.add(&targets);
+        let full = self.actions.selection.add(&targets);
         // `(more match)` belongs to the capped select-all that set it.
         self.bulk.more = false;
+        if full {
+            self.say_full();
+        }
         Vec::new()
+    }
+
+    /// A range ran into the cap: the rows past it were left out, and the bar says why.
+    fn say_full(&mut self) {
+        let cap = thousands(u64::try_from(MAX_SELECTION).unwrap_or(u64::MAX));
+        let text = format!("The selection holds at most {cap} threads.");
+        self.status.notify(text, self.tick);
     }
 
     /// `* a`: read every thread this mailbox and filter match, up to one over the cap, so the
@@ -428,9 +438,7 @@ impl MailScreen {
         // `(more match)` belongs to the capped select-all that set it.
         self.bulk.more = false;
         if full {
-            let cap = thousands(u64::try_from(MAX_SELECTION).unwrap_or(u64::MAX));
-            let text = format!("The selection holds at most {cap} threads.");
-            self.status.notify(text, self.tick);
+            self.say_full();
         }
     }
 }
