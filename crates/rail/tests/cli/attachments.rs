@@ -1,6 +1,8 @@
 //! Saving and opening attachments through the real binary in a pseudo-terminal, against a
-//! mocked Gmail: `a` then `s` on one part (AC-44), `w` and `S` on every part of a message, and a
-//! second save that writes `2-plan.pdf` instead of replacing what is there. Every wait reads the screen a 100x30 terminal would show — Rail redraws only the
+//! mocked Gmail: `a` then `s` on one part (AC-44), `w` and `S` on every part of a message, a
+//! second save that writes `2-plan.pdf` instead of replacing what is there, and the
+//! once-a-session open question that hands a private copy to the system opener and takes it
+//! away again. Every wait reads the screen a 100x30 terminal would show — Rail redraws only the
 //! cells that changed, so a phrase on the bar is never one run in the stream — and every test
 //! checks the files on disk, their modes, and what Gmail was asked for. Linux only, like every
 //! pty test.
@@ -16,7 +18,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::bulk;
 use super::pty::{screen, script_available, text, wait_until};
-use super::{StopsDaemon, WORK_FILE_BACKEND, write_config};
+use super::{StopsDaemon, WORK_FILE_BACKEND, opened_url_file, write_config};
 
 const API: &str = "/gmail/v1/users/me";
 /// `The plan is ready.` in base64, as Gmail serves a text part.
@@ -508,4 +510,111 @@ async fn a_second_save_never_replaces_the_first() {
         "nothing else was written"
     );
     ends(&mut run, b"qq");
+}
+
+/// The file the stand-in opener was handed: the `file://` URL it records in
+/// `$RAIL_TEST_URL_FILE`, which it writes by rename, so reading it never catches half a URL.
+fn opened_copy(run: &Run, url_file: &Path) -> PathBuf {
+    let waiting = url_file.to_path_buf();
+    wait_until("the opener's URL", &run.output, move || waiting.is_file());
+    let url = std::fs::read_to_string(url_file).unwrap();
+    url::Url::parse(url.trim())
+        .unwrap_or_else(|error| panic!("{url:?}: {error}"))
+        .to_file_path()
+        .unwrap_or_else(|()| panic!("{url:?} is not a file URL"))
+}
+
+/// The session's first open: `a`, `Enter`, the question, and `y`. Nothing is opened before the
+/// answer, and the copy the opener was handed comes back.
+fn answer_the_open_question(run: &mut Run, url_file: &Path) -> PathBuf {
+    let _ = std::fs::remove_file(url_file);
+    open_the_list(run);
+    bulk::type_keys(&mut run.keys, b"\r");
+    wait_anywhere("the open question", &run.output, "┌ Open this attachment? ");
+    assert!(
+        !url_file.exists(),
+        "the question was asked, so nothing is open yet"
+    );
+    bulk::type_keys(&mut run.keys, b"y");
+    opened_copy(run, url_file)
+}
+
+/// `Enter` with the question already answered this session. The question would hold the open
+/// back until a key answered it, so a URL arriving at all is the proof it was not asked again.
+fn open_without_a_question(run: &mut Run, url_file: &Path) -> PathBuf {
+    let _ = std::fs::remove_file(url_file);
+    bulk::type_keys(&mut run.keys, b"a\r");
+    opened_copy(run, url_file)
+}
+
+/// FR-14: the copy is a 0600 file in a 0700 directory of its own, under the attachments
+/// directory `RAIL_CACHE_DIR` puts at `<dir>/cache/attachments`.
+fn assert_private(copy: &Path, dir: &tempfile::TempDir) {
+    let (bytes, mode) = saved_file(copy);
+    assert_eq!(bytes, PLAN.bytes, "the served bytes");
+    assert_eq!(mode, 0o600, "owner-only");
+    let token = copy.parent().expect("a token directory");
+    assert_eq!(
+        std::fs::metadata(token).unwrap().permissions().mode() & 0o777,
+        0o700,
+        "the token directory is the owner's alone"
+    );
+    let attachments = dir.path().join("cache").join("attachments");
+    assert_eq!(
+        token.parent(),
+        Some(attachments.as_path()),
+        "under the attachments directory"
+    );
+}
+
+/// Wait until every copy is gone, and its token directory with it (FR-15).
+fn wait_removed(run: &Run, copies: &[&Path]) {
+    let going: Vec<PathBuf> = copies.iter().map(|copy| (*copy).to_path_buf()).collect();
+    wait_until("the copies to go", &run.output, move || {
+        going
+            .iter()
+            .all(|copy| !copy.exists() && !copy.parent().is_some_and(Path::exists))
+    });
+}
+
+/// US-3, US-4, FR-5, FR-7, FR-14, FR-15: the session's first `Enter` asks, `y` hands a private
+/// copy to the stand-in opener, a second `Enter` opens without asking, closing the reader
+/// removes both copies and their token directories, and a copy still open when Rail ends goes
+/// with it.
+#[tokio::test]
+async fn opening_asks_once_then_hands_a_private_copy_to_the_opener() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let mut run = start(&dir, &[PLAN]).await;
+    let url_file = opened_url_file(&dir);
+    open_the_thread(&mut run);
+    let asked = answer_the_open_question(&mut run, &url_file);
+    assert_private(&asked, &dir);
+    let again = open_without_a_question(&mut run, &url_file);
+    assert_private(&again, &dir);
+    assert_ne!(again.parent(), asked.parent(), "a token directory each");
+    bulk::type_keys(&mut run.keys, b"q");
+    wait_removed(&run, &[&asked, &again]);
+    ends(&mut run, b"q");
+
+    // The session's end, on a run of its own: `q` in the reader is `reader.back`, which removes
+    // the copies on its way out, so a copy that is still open when Rail ends needs a quit that
+    // skips the reader — Ctrl-C always quits (`tui/app.rs:158`). A second run also starts the
+    // session's question again, which `answer_the_open_question` asserts.
+    let last = tempfile::tempdir().unwrap();
+    let _last_daemon = StopsDaemon(&last);
+    let mut run = start(&last, &[PLAN]).await;
+    let url_file = opened_url_file(&last);
+    open_the_thread(&mut run);
+    let left = answer_the_open_question(&mut run, &url_file);
+    ends(&mut run, b"\x03");
+    assert!(!left.exists(), "quitting left the copy: {left:?}");
+    assert!(
+        !left.parent().unwrap().exists(),
+        "quitting left its directory: {left:?}"
+    );
 }
