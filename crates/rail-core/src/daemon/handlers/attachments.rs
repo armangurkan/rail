@@ -141,13 +141,18 @@ async fn save_one(
 }
 
 /// `name` as a visible file name in the user's own directory: sanitized to one path segment,
-/// then stripped of its leading dots, so a part called `.zshenv`, `.gitconfig` or `.npmrc`
-/// cannot drop shell or tool configuration into a `$HOME` the user pointed `attachment_dir`
-/// at. `create_new` guards only names that already exist, and the `2-` prefix every later
-/// candidate carries is visible anyway. A name that was only dots becomes `attachment`.
+/// then stripped of every leading dot and space, so a part called `.zshenv`, `.gitconfig` or
+/// `.npmrc` cannot drop shell or tool configuration into a `$HOME` the user pointed
+/// `attachment_dir` at. The space matters: `sanitize_filename` keeps the one in `. .zshenv`
+/// and `file_name` sanitizes each candidate again, which trims it, so dropping the dots alone
+/// still wrote a hidden file. What this returns is a **fixed point** — it starts with neither
+/// a dot nor whitespace, and sanitizing cannot put either back — so no later sanitizing can
+/// uncover a leading dot. `create_new` guards only names that already exist, and the `2-`
+/// prefix every later candidate carries is visible anyway. A name of only dots and spaces
+/// becomes `attachment`.
 fn visible_name(name: &str) -> String {
     let base = sanitize_filename(name);
-    let visible = base.trim_start_matches('.');
+    let visible = base.trim_start_matches(|c: char| c == '.' || c.is_whitespace());
     if visible.is_empty() {
         FALLBACK_NAME.to_string()
     } else {

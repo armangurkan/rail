@@ -236,6 +236,39 @@ async fn a_hidden_name_is_made_visible() {
     assert_eq!(path, dest.join("attachment"));
 }
 
+/// AC-16c: a name that only *looks* visible is made visible too. `sanitize_filename` keeps the
+/// space between a leading dot and the rest, and `draft_files::file_name` sanitizes every
+/// candidate again — trimming that space — so stripping the dots alone still wrote `.zshenv`.
+#[tokio::test]
+async fn a_name_that_only_looks_visible_is_still_made_visible() {
+    let (h, dest) = fixture().await;
+    let names = [
+        ". .zshenv",
+        ".\t.npmrc",
+        "..\u{a0}.bashrc",
+        " .x",
+        ". . .zshenv",
+        ".\u{2028}.y",
+    ];
+    for (n, name) in names.iter().enumerate() {
+        let part = format!("1.{n}");
+        list_part(&h, &part, name, "text/plain", 5);
+        bytes_at(&h, &part, b"shell".to_vec());
+        let path = written(&save(&h, &[part.as_str()], &dest).await.unwrap());
+        assert!(path.is_file(), "{name:?} wrote nothing");
+    }
+    // Read back from the directory itself, not from the answer: the name on disk is the one
+    // that would be hidden.
+    let on_disk = entries(&dest);
+    assert_eq!(on_disk.len(), names.len(), "{on_disk:?}");
+    for name in &on_disk {
+        assert!(
+            !name.starts_with('.') && !name.starts_with('-'),
+            "{name:?} is not visible"
+        );
+    }
+}
+
 /// AC-19: an empty part list saves every attachment that message has, in the store's order:
 /// one result per part the store lists, however many that is. Nothing here caps them — the
 /// sync's own `MAX_ATTACHMENTS` is what bounds what the store can list for one message.
