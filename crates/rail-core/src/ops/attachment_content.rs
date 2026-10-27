@@ -20,9 +20,12 @@ pub enum Signature {
     Text,
 }
 
-/// How far into a text part Rail looks for markup: the most a common sniffer reads
-/// (`file`'s HTML rules search the first 4096 bytes; shared-mime-info's, 256).
-pub const TEXT_SNIFF_WINDOW: usize = 4096;
+/// How far into a text part a tag may start for Rail to refuse it: 64 KiB, sixteen times the
+/// most a common sniffer reads (`file`'s HTML rules search 4096 bytes, shared-mime-info's 256),
+/// so a sniffer that reads further one day is still covered, while a long CSV is not refused
+/// for a tag deep inside it that no opener looks at. A tag that starts inside the window is
+/// read to its end even past it, as `file` matches one whose start alone is in range.
+pub const TEXT_SNIFF_WINDOW: usize = 64 * 1024;
 
 /// The rule for `mime_type`, parameters stripped and case ignored; `None` outside `OPENABLE`.
 #[must_use]
@@ -78,23 +81,28 @@ fn is_heic(bytes: &[u8]) -> bool {
             .is_some_and(|brand| HEIC_BRANDS.iter().any(|known| brand == known.as_slice()))
 }
 
-/// A ZIP whose first entry is `mimetype`, holding the declared type: how ODF lays out every
-/// file (OpenDocument 1.2, part 3, §3.3), read from the local header without a ZIP reader.
-fn is_odf(bytes: &[u8], mime_type: &str) -> bool {
+/// A ZIP's first entry, from its local file header: the entry's name and the bytes from its
+/// data on. `None` when `bytes` is not a ZIP or the header is cut short.
+fn first_zip_entry(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
     let field = |at: usize| {
         bytes
             .get(at..at + 2)
             .map(|b| usize::from(u16::from_le_bytes([b[0], b[1]])))
     };
-    let (Some(name_len), Some(extra_len)) = (field(26), field(28)) else {
-        return false;
-    };
-    let data = 30 + name_len + extra_len;
-    bytes.starts_with(ZIP_ENTRY)
-        && bytes.get(30..30 + name_len) == Some(b"mimetype".as_slice())
-        && bytes
-            .get(data..data + mime_type.len())
-            .is_some_and(|found| found == mime_type.as_bytes())
+    if !bytes.starts_with(ZIP_ENTRY) {
+        return None;
+    }
+    let (name_len, extra_len) = (field(26)?, field(28)?);
+    let name = bytes.get(30..30 + name_len)?;
+    let data = bytes.get(30 + name_len + extra_len..)?;
+    Some((name, data))
+}
+
+/// A ZIP whose first entry is `mimetype`, holding the declared type: how ODF lays out every
+/// file (OpenDocument 1.2, part 3, §3.3), read from the local header without a ZIP reader.
+fn is_odf(bytes: &[u8], mime_type: &str) -> bool {
+    first_zip_entry(bytes)
+        .is_some_and(|(name, data)| name == b"mimetype" && data.starts_with(mime_type.as_bytes()))
 }
 
 /// Text a sniffing opener would still call text. Any 8-bit encoding is taken — UTF-8, or the
@@ -102,8 +110,8 @@ fn is_odf(bytes: &[u8], mime_type: &str) -> bool {
 /// is valid Latin-1, so requiring UTF-8 would refuse real files and keep nothing out. Refused:
 /// a NUL (binary, or UTF-16 text, which hides markup from the rest of the check); a start,
 /// after a UTF-8 byte-order mark and white space, of `<` (any markup), `#!` (a script),
-/// `%PDF` or `%!` (PostScript); and, in the first `TEXT_SNIFF_WINDOW` bytes, a tag a sniffer
-/// takes for HTML, SVG or XML, case ignored.
+/// `%PDF` or `%!` (PostScript); and a tag a sniffer takes for HTML, SVG or XML starting in
+/// the first `TEXT_SNIFF_WINDOW` bytes.
 fn is_plain_text(bytes: &[u8]) -> bool {
     if bytes.is_empty() || bytes.contains(&0) {
         return false;
@@ -113,35 +121,57 @@ fn is_plain_text(bytes: &[u8]) -> bool {
     let scripted = [b"<".as_slice(), b"#!", b"%PDF", b"%!"]
         .iter()
         .any(|prefix| start.starts_with(prefix));
-    !scripted && !has_sniffed_tag(&body[..body.len().min(TEXT_SNIFF_WINDOW)])
+    !scripted && !has_sniffed_tag(bytes)
 }
 
-/// Tags `file` and shared-mime-info read as HTML, SVG or XML anywhere near the start.
-const SNIFFED_TAGS: [&[u8]; 14] = [
-    b"<!doctype",
-    b"<?xml",
-    b"<!--",
-    b"<html",
-    b"<head",
-    b"<body",
-    b"<title",
-    b"<script",
-    b"<style",
-    b"<table",
-    b"<svg",
-    b"<iframe",
-    b"<h1",
-    b"<a href",
-];
+/// White space as `file` and C's `isspace` count it: vertical tab and form feed included,
+/// which Rust's `is_ascii_whitespace` leaves out.
+fn is_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+}
 
-/// Whether `window` holds one of `SNIFFED_TAGS`, ASCII case ignored.
-fn has_sniffed_tag(window: &[u8]) -> bool {
-    window.iter().enumerate().any(|(at, &byte)| {
-        byte == b'<'
-            && SNIFFED_TAGS.iter().any(|tag| {
-                window
-                    .get(at..at + tag.len())
-                    .is_some_and(|found| found.eq_ignore_ascii_case(tag))
-            })
-    })
+/// Tag names a sniffer reads as HTML or SVG. Matched as a prefix, ASCII case ignored, after a
+/// `<` and any white space: shared-mime-info matches `<HEAD` as a plain prefix, so requiring a
+/// `>` or a space after the name would let `<header>` through.
+const SNIFFED_NAMES: [&[u8]; 10] = [
+    b"html", b"head", b"body", b"title", b"script", b"style", b"table", b"svg", b"iframe", b"h1",
+];
+/// Declarations a sniffer reads as HTML or XML, matched the same way.
+const SNIFFED_DECLARATIONS: [&[u8]; 3] = [b"!doctype", b"?xml", b"!--"];
+
+/// Whether a sniffed tag starts in the first `TEXT_SNIFF_WINDOW` bytes; it may run past them.
+fn has_sniffed_tag(bytes: &[u8]) -> bool {
+    let window = bytes.len().min(TEXT_SNIFF_WINDOW);
+    (0..window).any(|at| bytes[at] == b'<' && is_sniffed_tag(&bytes[at + 1..]))
+}
+
+/// Whether `rest`, what follows a `<`, is a sniffed tag: white space, then a sniffed name or
+/// declaration, or `a`, white space and `href` — the whitespace any run of the six kinds, as
+/// `file`'s compact-whitespace match takes it.
+fn is_sniffed_tag(rest: &[u8]) -> bool {
+    let rest = skip_space(rest);
+    let starts = |prefix: &[u8]| {
+        rest.get(..prefix.len())
+            .is_some_and(|found| found.eq_ignore_ascii_case(prefix))
+    };
+    if SNIFFED_NAMES
+        .iter()
+        .chain(&SNIFFED_DECLARATIONS)
+        .any(|tag| starts(tag))
+    {
+        return true;
+    }
+    let Some(after_a) = rest.strip_prefix(b"a").or_else(|| rest.strip_prefix(b"A")) else {
+        return false;
+    };
+    let after_space = skip_space(after_a);
+    after_space.len() < after_a.len()
+        && after_space
+            .get(..4)
+            .is_some_and(|word| word.eq_ignore_ascii_case(b"href"))
+}
+
+/// `bytes` past any white space at its start.
+fn skip_space(bytes: &[u8]) -> &[u8] {
+    &bytes[bytes.iter().take_while(|b| is_space(**b)).count()..]
 }

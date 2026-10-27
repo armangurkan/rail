@@ -466,8 +466,9 @@ starts the way its type does (`%PDF-` for a PDF, the PNG, JPEG, GIF, WebP, BMP, 
 signature for an image, a ZIP for `.docx` and its kin, a ZIP naming its own type first for
 `.odt`, `.ods` and `.odp`, the old Office header for `.doc`, `.xls` and `.ppt`, `{\rtf` for RTF).
 Plain text, CSV and TSV may be in any 8-bit encoding (UTF-8, or Latin-1 from a spreadsheet), but
-not hold a NUL byte, start with markup, a `#!` script line or a PDF or PostScript header, or carry
-an HTML, SVG or XML tag in their first 4 KiB. A file that fails is not opened — a web page
+not hold a NUL byte, start with markup, a `#!` script line or a PDF or PostScript header, or have
+an HTML, SVG or XML tag start in their first 64 KiB, whatever its case or the white space inside
+it. A file that fails is not opened — a web page
 labelled as a picture would otherwise open in your browser — and is saved instead, with a line
 that says so. `s` saves the highlighted attachment, `S` saves every
 attachment of its message, and `Esc`, `q` or `a` closes the list. From the reader itself, `w`

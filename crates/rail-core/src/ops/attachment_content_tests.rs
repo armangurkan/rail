@@ -185,3 +185,75 @@ fn text_takes_words_and_refuses_what_a_sniffer_would_reroute() {
         assert!(content_matches(mime, &late), "{mime}: past the window");
     }
 }
+
+/// `filler` bytes of plain text, then `tail`.
+fn after(filler: usize, tail: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![b'x'; filler];
+    bytes.extend_from_slice(tail);
+    bytes
+}
+
+/// A tag that starts inside the window is found even when it runs past it: `file` needs only
+/// the tag's start inside its 4096 bytes, and 4093 bytes of filler before `<html>` was taken.
+#[test]
+fn a_tag_straddling_a_window_edge_is_still_found() {
+    for filler in 4085..=4100 {
+        assert!(
+            !content_matches("text/plain", &after(filler, b"<html>x")),
+            "<html> at {filler}"
+        );
+    }
+    for start in [TEXT_SNIFF_WINDOW - 5, TEXT_SNIFF_WINDOW - 1] {
+        assert!(
+            !content_matches("text/plain", &after(start, b"<script>")),
+            "<script> at {start}, running past the window"
+        );
+    }
+    assert!(content_matches(
+        "text/plain",
+        &after(TEXT_SNIFF_WINDOW, b"<script>")
+    ));
+}
+
+/// Whitespace inside a tag is whatever `file`'s compact-whitespace match takes: a tab, several
+/// spaces or a line break between `<a` and `href`, space after `<`, any case.
+#[test]
+fn a_tag_with_odd_whitespace_or_case_is_still_found() {
+    let words = b"Notes for Friday.\n";
+    for tag in [
+        b"<a\thref=x>".as_slice(),
+        b"<a  href=x>",
+        b"<a\nhref=x>",
+        b"<a\r\n\thref=x>",
+        b"<A HREF=x>",
+        b"< html>",
+        b"<HTML\n>",
+        b"<title/>",
+        b"<Script\tsrc=x>",
+        b"<!DocType html>",
+        b"<svg\nonload=x>",
+        b"<header>",
+    ] {
+        let mut bytes = words.to_vec();
+        bytes.extend_from_slice(tag);
+        assert!(
+            !content_matches("text/plain", &bytes),
+            "{:?}",
+            String::from_utf8_lossy(tag)
+        );
+    }
+    for fine in [
+        b"<a>".as_slice(),
+        b"<abc@example.com>",
+        b"< 3 hrefs",
+        b"a <b> c",
+    ] {
+        let mut bytes = words.to_vec();
+        bytes.extend_from_slice(fine);
+        assert!(
+            content_matches("text/plain", &bytes),
+            "{:?}",
+            String::from_utf8_lossy(fine)
+        );
+    }
+}
