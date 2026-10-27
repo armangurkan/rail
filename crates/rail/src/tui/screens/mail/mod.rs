@@ -412,10 +412,15 @@ impl MailScreen {
         self.request(seq, PageAt::First)
     }
 
-    /// The open scope's saved filter, re-derived on every read and never cached (FR-10).
+    /// The open scope's saved filter, re-derived on every read and never cached (FR-10). The
+    /// scope's position is trusted only while it still carries the scope's name; otherwise the
+    /// search is found by that name, and `None` once it is gone — which `list_query` reads as
+    /// "no rows", never as "every thread".
     fn saved_filter(&self) -> Option<Filter> {
         match &self.scope {
-            ScopeChoice::Saved { index, .. } => self.saved.get(*index).map(|s| parse(&s.query)),
+            ScopeChoice::Saved { index, name } => {
+                self.saved_entry(*index, name).map(|s| parse(&s.query))
+            }
             _ => None,
         }
     }
@@ -450,8 +455,11 @@ impl MailScreen {
     }
 
     /// Show `scope`. The old rows stay drawn until the new ones arrive (spec §3); a page
-    /// read of the old scope still in flight is dropped by its sequence number.
+    /// read of the old scope still in flight is dropped by its sequence number. A `Saved`
+    /// scope is re-keyed by name first, so every way of opening one — a sidebar row, a
+    /// palette entry, FR-17's re-find — lands on the search it named or on All inboxes.
     fn set_scope(&mut self, scope: ScopeChoice) -> Vec<Effect> {
+        let scope = self.resolve_saved_scope(scope);
         self.sidebar.point_at(&scope);
         self.scope = scope;
         self.list.cancel_loading();

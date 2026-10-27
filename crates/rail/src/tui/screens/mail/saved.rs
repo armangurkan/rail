@@ -10,7 +10,7 @@ use rail_core::config::SavedSearch;
 use rail_core::config::saved::check_put;
 use rail_core::ops::OpError;
 
-use super::sidebar_tree::RowKind;
+use super::sidebar_tree::{RowKey, RowKind};
 use super::{MailScreen, error_line};
 use crate::tui::app::Effect;
 use crate::tui::data::ScopeChoice;
@@ -28,6 +28,11 @@ const REMOVE_TITLE: &str = "Remove a saved search";
 const NAME_LABEL: &str = "Name: ";
 /// What a rename or a removal says when the row it named is no longer where it was.
 const MOVED_NOTICE: &str = "The saved searches changed; try again.";
+/// What opening a saved search says when its name is gone from the list. Named once: FR-17's
+/// re-find and `resolve_saved_scope` both show it, and one of the two would otherwise drift.
+const GONE_NOTICE: &str = "The saved search you had open is gone; showing All inboxes.";
+/// FR-16, on a row that is not a saved search at all.
+const NOT_A_SEARCH: &str = "That is not a saved search.";
 
 impl MailScreen {
     /// There is filter text to name. The gate is the **text**, not the parsed filter: the
@@ -67,14 +72,26 @@ impl MailScreen {
         vec![self.ctx.link.saved_search_put(name, query, None)]
     }
 
-    /// The saved search under the sidebar cursor, by position. On any other row this is
-    /// FR-16's notice and `None`: `r` and `d` never do nothing silently.
+    /// The saved search under the sidebar cursor, by position — and only while that position
+    /// still holds the row's own search. The rows outlive the list they were built from (an
+    /// earlier write's answer landing before the sidebar read comes back), so a position alone
+    /// would hand `r` and `d` the next search along. On any other row this is FR-16's notice
+    /// and `None`, on a row the list has outlived it is the moved notice: neither key ever
+    /// does nothing silently, and neither ever acts on a search the row does not name.
     fn cursor_search(&mut self) -> Option<usize> {
-        if let Some(RowKind::Saved { index }) = self.sidebar.selected().map(|r| r.kind.clone()) {
-            return Some(index);
+        let row = self
+            .sidebar
+            .selected()
+            .map(|r| (r.kind.clone(), r.key.clone()));
+        let Some((RowKind::Saved { index }, RowKey::Saved(name))) = row else {
+            self.status.notify(NOT_A_SEARCH, self.tick);
+            return None;
+        };
+        if self.entry_at(index, &name).is_none() {
+            self.say_searches_moved();
+            return None;
         }
-        self.status.notify("That is not a saved search.", self.tick);
-        None
+        Some(index)
     }
 
     /// `r` and `:rename-search`: the name prompt over the row, pre-filled with its name. The
@@ -152,10 +169,55 @@ impl MailScreen {
             .filter(|entry| entry.name.eq_ignore_ascii_case(name))
     }
 
-    /// The row moved under the open prompt or question: say so, and send nothing. Never
-    /// silently nothing, as FR-16 requires of `r` and `d`.
-    fn searches_moved(&mut self) -> Vec<Effect> {
+    /// The entry a `Saved` scope names: the one at `index` while it still carries `name`, else
+    /// the one called `name` wherever it has moved to, and `None` once nothing has that name.
+    /// Every read derived from a saved scope goes through here, so a position whose list was
+    /// replaced resolves to the search the user picked or to nothing — never to its neighbour.
+    pub(super) fn saved_entry(&self, index: usize, name: &str) -> Option<&SavedSearch> {
+        self.entry_at(index, name).or_else(|| {
+            self.saved
+                .iter()
+                .find(|entry| entry.name.eq_ignore_ascii_case(name))
+        })
+    }
+
+    /// A `Saved` scope re-keyed to where its search actually is, whoever asked to open it: a
+    /// sidebar row, a palette entry, or FR-17's own re-find. Both are built from a list a
+    /// write can replace before the sidebar read rebuilds them, and `store_scope` turns a
+    /// `Saved` scope into every folder of every account, so a position that no longer names
+    /// the search the user picked would open another search's mail — or, with no filter left
+    /// to narrow it, the whole mailbox. A name that is gone falls back to All inboxes with
+    /// the notice a removal already shows. Any other scope is returned untouched.
+    pub(super) fn resolve_saved_scope(&mut self, scope: ScopeChoice) -> ScopeChoice {
+        let ScopeChoice::Saved { index, name } = &scope else {
+            return scope;
+        };
+        let found = self
+            .saved
+            .iter()
+            .position(|entry| entry.name.eq_ignore_ascii_case(name));
+        match found {
+            Some(at) if at == *index => scope,
+            Some(at) => ScopeChoice::Saved {
+                index: at,
+                name: name.clone(),
+            },
+            None => {
+                self.status.notify(GONE_NOTICE, self.tick);
+                ScopeChoice::Unified
+            }
+        }
+    }
+
+    /// The row moved under the open prompt, question or cursor: say so. The callers send
+    /// nothing after it — never silently nothing, as FR-16 requires of `r` and `d`.
+    fn say_searches_moved(&mut self) {
         self.status.notify(MOVED_NOTICE, self.tick);
+    }
+
+    /// `say_searches_moved` for the callers that answer with effects.
+    fn searches_moved(&mut self) -> Vec<Effect> {
+        self.say_searches_moved();
         Vec::new()
     }
 
@@ -238,10 +300,7 @@ impl MailScreen {
             Some(at) if at == index => Vec::new(),
             Some(at) => self.set_scope(ScopeChoice::Saved { index: at, name }),
             None => {
-                self.status.notify(
-                    "The saved search you had open is gone; showing All inboxes.",
-                    self.tick,
-                );
+                self.status.notify(GONE_NOTICE, self.tick);
                 self.set_scope(ScopeChoice::Unified)
             }
         }

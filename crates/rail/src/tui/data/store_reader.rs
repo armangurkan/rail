@@ -597,6 +597,13 @@ fn account_filter(
 /// narrows by is built **here**, so anything else reading the same rows (a select-all over
 /// what the list shows) inherits the saved filter instead of quietly dropping it.
 fn list_query(request: &ListRequest, account_ids: &[Option<i64>]) -> Option<ListQuery> {
+    // Fail closed. A `Saved` scope with no filter no longer names a saved search — the screen
+    // could not find it — and `store_scope` would still widen it to every folder of every
+    // account, with nothing left to narrow it: the whole mailbox under that search's title.
+    // One guard here, so the list and a select-all both read nothing.
+    if matches!(request.scope, ScopeChoice::Saved { .. }) && request.saved.is_none() {
+        return None;
+    }
     let id_of = |index: usize| account_ids.get(index).copied().flatten();
     let scope = store_scope(&request.scope, account_ids)?;
     let account = account_filter(
@@ -722,5 +729,33 @@ mod tests {
         assert_eq!(query.scope, Scope::All { accounts: vec![1] });
         assert_eq!(query.saved.map(|f| f.from), Some(vec!["dana".to_string()]));
         assert!(query.filter.unread, "the live filter stays its own");
+    }
+
+    /// G2: a `Saved` scope whose filter did not come through builds no query at all, so both
+    /// readers that go through `list_query` — the page read and the select-all's match read —
+    /// see nothing. Without the guard `store_scope` still answers `Scope::All`, and with an
+    /// empty live filter that query is every thread of every account.
+    #[test]
+    fn a_saved_scope_with_no_filter_builds_no_query() {
+        let request = ListRequest {
+            seq: 1,
+            scope: ScopeChoice::Saved {
+                index: 7,
+                name: "gone".into(),
+            },
+            addresses: vec!["w@example.com".into()],
+            names: names(),
+            filter: parse(""),
+            saved: None,
+            saved_all: Vec::new(),
+            at: PageAt::First,
+            utc_offset: 0,
+        };
+        assert_eq!(
+            store_scope(&request.scope, &[Some(1)]),
+            Some(Scope::All { accounts: vec![1] }),
+            "the scope on its own is still every folder"
+        );
+        assert!(list_query(&request, &[Some(1)]).is_none());
     }
 }

@@ -13,6 +13,7 @@ use crate::tui::modals::{PaletteEntry, Target};
 use crate::tui::screens::mail::sidebar_tree::{RowKey, RowKind};
 
 mod edits;
+mod stale;
 
 /// A `Fixture` whose config holds `searches` (name, query) and whose store holds `envelopes`
 /// (account index, envelope), started and settled. `seed_store` puts every `mail_envelope` in
