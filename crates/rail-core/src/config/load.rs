@@ -734,6 +734,20 @@ client_id = "2"
             "{err}"
         );
 
+        // #110: an empty or blank query would list every thread of every account.
+        let blanks = format!("{}{}", table("ok", "is:unread"), table("blank", " \\t "));
+        let err = p(&blanks).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
+        assert!(
+            err.to_string()
+                .contains("saved_searches[1] (\"blank\"): the query is empty"),
+            "{err}"
+        );
+        assert!(
+            p(&table("none", "")).is_err(),
+            "an empty query is refused too"
+        );
+
         // `Config` derives `Debug`, so a derived one here would print every saved query.
         let shown = format!(
             "{:?}",

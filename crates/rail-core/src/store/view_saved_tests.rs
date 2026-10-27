@@ -221,8 +221,8 @@ fn saved_counts_counts_unread_threads_per_filter() {
         store
             .saved_counts(&ids, &any(&Filter::default()), 0)
             .unwrap(),
-        [4],
-        "an empty saved filter counts every unread thread",
+        [0],
+        "a saved filter with no condition counts nothing (#110)",
     );
     assert_eq!(
         store
@@ -235,7 +235,7 @@ fn saved_counts_counts_unread_threads_per_filter() {
                 0,
             )
             .unwrap(),
-        [1, 4],
+        [1, 0],
         "one count per filter, in order",
     );
 
@@ -285,7 +285,7 @@ fn saved_counts_counts_unread_threads_per_filter() {
             0,
         )
         .unwrap();
-    assert_eq!(counts.saved, [1, 4]);
+    assert_eq!(counts.saved, [1, 0], "no condition counts nothing");
     assert_eq!(
         store.sidebar_counts(&[1, 2], &[], 0).unwrap().saved,
         Vec::<u64>::new(),

@@ -602,8 +602,11 @@ fn list_query(request: &ListRequest, account_ids: &[Option<i64>]) -> Option<List
     // Fail closed. A `Saved` scope with no filter no longer names a saved search — the screen
     // could not find it — and `store_scope` would still widen it to every folder of every
     // account, with nothing left to narrow it: the whole mailbox under that search's title.
-    // One guard here, so the list and a select-all both read nothing.
-    if matches!(request.scope, ScopeChoice::Saved { .. }) && request.saved.is_none() {
+    // One guard here, so the list and a select-all both read nothing. A saved filter with no
+    // condition (an empty query, or only words the full-text query drops) narrows nothing
+    // either, so it fails closed the same way (#110).
+    let narrows = request.saved.as_ref().is_some_and(Filter::has_condition);
+    if matches!(request.scope, ScopeChoice::Saved { .. }) && !narrows {
         return None;
     }
     let id_of = |index: usize| account_ids.get(index).copied().flatten();
@@ -759,5 +762,34 @@ mod tests {
             "the scope on its own is still every folder"
         );
         assert!(list_query(&request, &[Some(1)]).is_none());
+    }
+
+    /// #110: a saved query with no condition — empty, or only words the full-text query
+    /// drops — would list every thread of every account, Trash and Spam included, and a
+    /// select-all would take them. It fails closed like a missing filter; a saved `account:`
+    /// on its own still narrows, so it still reads.
+    #[test]
+    fn a_saved_filter_with_no_condition_builds_no_query() {
+        let request = |saved: &str| ListRequest {
+            seq: 1,
+            scope: ScopeChoice::Saved {
+                index: 0,
+                name: "all".into(),
+            },
+            addresses: vec!["w@example.com".into()],
+            names: names(),
+            filter: parse(""),
+            saved: Some(parse(saved)),
+            saved_all: vec![parse(saved)],
+            at: PageAt::First,
+            utc_offset: 0,
+        };
+        for saved in ["", "* ( )"] {
+            assert!(
+                list_query(&request(saved), &[Some(1)]).is_none(),
+                "{saved:?}"
+            );
+        }
+        assert!(list_query(&request("account:work"), &[Some(1)]).is_some());
     }
 }

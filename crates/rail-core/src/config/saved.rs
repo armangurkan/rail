@@ -102,8 +102,8 @@ pub fn name_rule() -> String {
 /// cannot drift apart.
 ///
 /// # Errors
-/// The sentence to show: a malformed name, a name already saved, an over-long query, or the
-/// cap reached (the last only when `replaces` is `None`, since a rename adds nothing).
+/// The sentence to show: a malformed name, a name already saved, an empty or over-long
+/// query, or the cap reached (the last only when `replaces` is `None`, since a rename adds nothing).
 pub fn check_put(
     existing: &[SavedSearch],
     name: &str,
@@ -115,6 +115,9 @@ pub fn check_put(
     }
     if duplicate_name(existing, name, replaces).is_some() {
         return Err(format!("A saved search named {name:?} already exists."));
+    }
+    if query.trim().is_empty() {
+        return Err("A saved search query must not be empty.".to_string());
     }
     if query.chars().count() > MAX_FILTER_CHARS {
         return Err(format!(
@@ -130,8 +133,8 @@ pub fn check_put(
 }
 
 /// Every `[[saved_searches]]` table of a config file, in the loader's own wording: a bad or
-/// duplicate name is quoted (as an account name is), an over-long query is reported by
-/// position and name and **never by value** — a `ConfigError::Invalid` message lands in
+/// duplicate name is quoted (as an account name is), an empty or over-long query is reported
+/// by position and name and **never by value** — a `ConfigError::Invalid` message lands in
 /// `OpError.detail`, which `DoctorReport.config_error` carries and the MCP `rail_status` tool
 /// returns to an agent.
 pub(super) fn validate_saved_searches(config: &Config) -> Result<(), String> {
@@ -146,6 +149,13 @@ pub(super) fn validate_saved_searches(config: &Config) -> Result<(), String> {
         if !names.insert(search.name.to_ascii_lowercase()) {
             return Err(format!(
                 "duplicate saved search name {:?} (names are compared ignoring case)",
+                search.name
+            ));
+        }
+        // An empty query parses to no condition, which would list every thread (#110).
+        if search.query.trim().is_empty() {
+            return Err(format!(
+                "saved_searches[{index}] ({:?}): the query is empty",
                 search.name
             ));
         }
@@ -217,5 +227,18 @@ mod tests {
             check_put(&full, "S2", "subject:s1", Some("s1")),
             Err("A saved search named \"S2\" already exists.".to_string())
         );
+    }
+
+    /// #110: an empty or blank query is refused in §8's style, so a save can never name a
+    /// search that lists every thread.
+    #[test]
+    fn an_empty_or_blank_query_is_refused() {
+        for query in ["", "   ", "\t\n"] {
+            assert_eq!(
+                check_put(&[], "ok", query, None),
+                Err("A saved search query must not be empty.".to_string()),
+                "{query:?}"
+            );
+        }
     }
 }

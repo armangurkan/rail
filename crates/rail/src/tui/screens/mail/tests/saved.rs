@@ -620,6 +620,21 @@ async fn select_all_in_a_saved_search_selects_only_its_matches() {
     assert_eq!(selected_ids(&f), listed, "exactly the rows it lists");
 }
 
+/// #110: a saved query with no condition (only words the full-text query drops) lists
+/// nothing, counts nothing, and a select-all in it takes nothing — never every thread.
+#[tokio::test]
+async fn a_saved_search_with_no_condition_lists_and_selects_nothing() {
+    let mut f = saved_fixture(&five_threads(), &[("everything", "* ( )")]).await;
+    // No count is drawn: a count of 0 shows nothing, where the bug counted every unread one.
+    assert_eq!(saved_rows(&f), [("everything".to_string(), None)]);
+    sidebar_to(&mut f, None, "everything").await;
+    press(&mut f, KeyCode::Enter).await;
+    assert!(subjects(&f).is_empty(), "{:?}", subjects(&f));
+    press(&mut f, KeyCode::Char('*')).await;
+    press(&mut f, KeyCode::Char('a')).await;
+    assert!(selected_ids(&f).is_empty(), "{:?}", selected_ids(&f));
+}
+
 /// AC-19 (FR-19): `:search-counts` turns the counts off and on, saving, nothing else touched.
 #[tokio::test]
 async fn search_counts_toggles_and_saves() {

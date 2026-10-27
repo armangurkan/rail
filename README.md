@@ -1376,11 +1376,13 @@ you edited by hand while Rail was open is kept.
 | Key | Required | Meaning |
 |---|---|---|
 | `name` | yes | 1 to 40 ASCII letters, digits, `-` or `_`; unique among saved searches, compared ignoring case. It is what the sidebar, the palette and the header show. |
-| `query` | yes | Filter text, exactly as you would type it after `/`; at most 1024 characters. |
+| `query` | yes | Filter text, exactly as you would type it after `/`; not empty, at most 1024 characters. |
 
 Rail keeps at most 20 saved searches. A name with a space or an accent in it, a duplicate name,
-an over-long query or a 21st table makes `config.toml` invalid, and `rail doctor` says which
-entry is wrong — by name and position, never by quoting the query, which is yours.
+an empty or over-long query or a 21st table makes `config.toml` invalid, and `rail doctor` says which
+entry is wrong — by name and position, never by quoting the query, which is yours. A query that
+narrows nothing — only characters the filter ignores, such as `* ( )` — lists no threads and
+counts none, rather than every thread of every account.
 
 ```toml
 [[saved_searches]]

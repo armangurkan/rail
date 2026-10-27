@@ -183,6 +183,13 @@ impl Filter {
         *self == Filter::default()
     }
 
+    /// True when the filter narrows anything: a condition the store applies, or an
+    /// `account:`. A filter of words the full-text query drops (`* ( )`) has none, and a
+    /// saved search made of it must list nothing rather than every thread (#110).
+    pub fn has_condition(&self) -> bool {
+        self.account.is_some() || self.message_sql(0).is_some()
+    }
+
     /// The operators as Rail read them, for the status line (so a typo shows as a word).
     pub fn describe(&self) -> Vec<String> {
         let mut parts: Vec<String> = Vec::new();
@@ -318,6 +325,25 @@ fn pattern(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// #110: a filter narrows only when it has a condition the store applies or an
+    /// `account:`. Words the full-text query drops (`*`, brackets) are no condition.
+    #[test]
+    fn only_a_condition_or_an_account_narrows() {
+        for text in ["", "   ", "* ( )", "\"\""] {
+            assert!(!parse(text).has_condition(), "{text:?}");
+        }
+        for text in [
+            "is:unread",
+            "dana",
+            "from:dana",
+            "account:home",
+            "before:2026-01-01",
+        ] {
+            assert!(parse(text).has_condition(), "{text:?}");
+        }
+        assert!(!Filter::default().has_condition());
+    }
+
     use super::*;
 
     #[test]

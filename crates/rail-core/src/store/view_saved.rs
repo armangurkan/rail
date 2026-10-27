@@ -46,7 +46,8 @@ impl Store {
         account: AccountFilter,
         utc_offset: i32,
     ) -> Result<u64, StoreError> {
-        if account == AccountFilter::Nobody {
+        // A filter with no condition would count every unread thread; its list shows none.
+        if account == AccountFilter::Nobody || !filter.has_condition() {
             return Ok(0);
         }
         let mut sql = "SELECT count(*) FROM threads t
