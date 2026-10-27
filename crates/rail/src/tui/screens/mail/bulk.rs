@@ -13,7 +13,7 @@ use super::header::thousands;
 use super::selection::Picked;
 use super::{MailScreen, Modal};
 use crate::tui::app::Effect;
-use crate::tui::data::ReadError;
+use crate::tui::data::{ReadError, ScopeChoice};
 use crate::tui::keys::Action;
 use crate::tui::modals::{Command, Confirm};
 use crate::tui::text::{escape, fit};
@@ -34,8 +34,12 @@ pub(crate) struct BulkState {
     pub(super) more: bool,
     /// The newest `* a` read's sequence number: an older answer is dropped.
     pub(super) latest_match: u64,
+    /// The mailbox and filter the newest `* a` read was asked for.
+    pub(super) match_shown: Option<Shown>,
     /// The newest `* f` read's sequence number.
     pub(super) latest_sender: u64,
+    /// The mailbox and filter the newest `* f` read was asked for.
+    pub(super) sender_shown: Option<Shown>,
     /// The Shift range under way: any key but `J`/`K` and Shift-↓/↑ ends it.
     pub(super) extending: Option<Extending>,
 }
@@ -46,6 +50,15 @@ pub(crate) struct BulkState {
 pub(super) struct Extending {
     anchor: i64,
     added: BTreeSet<i64>,
+}
+
+/// The mailbox and filter the list shows, recorded when a `* a` or `* f` read is asked for.
+/// Its answer is applied only while the list still shows the same: compared on the answer, not
+/// cleared where the scope or filter changes, so a new way to change them cannot miss it.
+#[derive(Debug)]
+pub(super) struct Shown {
+    scope: ScopeChoice,
+    filter: Filter,
 }
 
 impl BulkState {
@@ -112,6 +125,19 @@ pub(super) fn undo_batches(rows: &[RowToken]) -> Vec<Vec<RowToken>> {
 }
 
 impl MailScreen {
+    /// The mailbox and filter the list shows now.
+    pub(super) fn shown(&self) -> Shown {
+        Shown {
+            scope: self.scope.clone(),
+            filter: self.filter.clone(),
+        }
+    }
+
+    /// The list still shows what a read recorded in `asked` was asked for.
+    fn still_shown(&self, asked: Option<&Shown>) -> bool {
+        asked.is_some_and(|shown| shown.scope == self.scope && shown.filter == self.filter)
+    }
+
     /// `d`: the trash question, which asks at every size. One thread names its subject;
     /// several are counted, and each provider's note follows.
     pub(super) fn confirm_trash(&mut self, targets: Vec<(i64, Picked)>) -> Vec<Effect> {
@@ -217,13 +243,15 @@ impl MailScreen {
     }
 
     /// `Store::matching_targets` answered: add the newest `MAX_SELECTION` to the selection and
-    /// say so, or report the read's error. An answer a newer press superseded is dropped.
+    /// say so, or report the read's error. An answer a newer press superseded, or one for a
+    /// mailbox or filter the list no longer shows, is dropped: it would select threads that
+    /// are not on screen.
     pub(super) fn matched(
         &mut self,
         seq: u64,
         result: Result<Vec<(ThreadKey, i64, bool, bool)>, ReadError>,
     ) -> Vec<Effect> {
-        if seq != self.bulk.latest_match {
+        if seq != self.bulk.latest_match || !self.still_shown(self.bulk.match_shown.as_ref()) {
             return Vec::new();
         }
         let answer = match result {
@@ -269,17 +297,19 @@ impl MailScreen {
         };
         let seq = self.next_seq();
         self.bulk.latest_sender = seq;
+        self.bulk.sender_shown = Some(self.shown());
         vec![self.ctx.store.sender(seq, thread_id)]
     }
 
     /// `Store::newest_sender` answered: put the address in the filter line as the exact form
-    /// and select everything it matches. An answer a newer press superseded is dropped.
+    /// and select everything it matches. An answer a newer press superseded, or one for a
+    /// mailbox or filter the list no longer shows, is dropped.
     pub(super) fn sender_read(
         &mut self,
         seq: u64,
         result: Result<Option<Mailbox>, ReadError>,
     ) -> Vec<Effect> {
-        if seq != self.bulk.latest_sender {
+        if seq != self.bulk.latest_sender || !self.still_shown(self.bulk.sender_shown.as_ref()) {
             return Vec::new();
         }
         let sender = match result {

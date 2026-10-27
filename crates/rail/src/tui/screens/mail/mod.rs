@@ -372,6 +372,7 @@ impl MailScreen {
     fn match_request(&mut self) -> ListRequest {
         let seq = self.next_seq();
         self.bulk.latest_match = seq;
+        self.bulk.match_shown = Some(self.shown());
         self.request(seq, PageAt::First)
     }
 
