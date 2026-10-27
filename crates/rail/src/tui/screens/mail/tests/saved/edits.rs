@@ -108,7 +108,7 @@ async fn d_asks_then_removes_the_saved_search() {
     press(&mut f, KeyCode::Char('d')).await;
     press(&mut f, KeyCode::Char('n')).await;
     assert!(f.screen.modal.is_none());
-    assert!(saved_calls(&f).is_empty());
+    assert_eq!(saved_calls(&f), Vec::new());
 }
 
 /// AC-15b (Q-5): the palette's indexed entry reaches the same confirmation as `d`.
@@ -135,7 +135,7 @@ async fn r_and_d_on_another_row_say_so() {
             f.screen.status_line()
         );
     }
-    assert!(saved_calls(&f).is_empty());
+    assert_eq!(saved_calls(&f), Vec::new());
 }
 
 /// AC-17 (FR-17 steps 3-4): the scope falls back and the rows leave (what `read_sidebar` buys).

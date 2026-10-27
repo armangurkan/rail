@@ -276,7 +276,7 @@ async fn s_without_a_filter_says_to_set_one() {
         "{}",
         f.screen.status_line()
     );
-    assert!(saved_calls(&f).is_empty());
+    assert_eq!(saved_calls(&f), Vec::new());
 }
 
 /// AC-3 (FR-4): a name already saved is refused in the prompt, before any call.
@@ -295,7 +295,7 @@ async fn a_clashing_name_is_refused_in_the_prompt() {
         refusal(&f).as_deref(),
         Some("A saved search named \"needs-reply\" already exists.")
     );
-    assert!(saved_calls(&f).is_empty());
+    assert_eq!(saved_calls(&f), Vec::new());
 }
 
 /// AC-4 (FR-5): a bad name is refused in the prompt. Asserted through `refusal()`, not on the
@@ -311,7 +311,7 @@ async fn a_bad_name_is_refused_in_the_prompt() {
         refusal(&f).as_deref(),
         Some("A saved search name must be 1 to 40 letters, digits, '-' or '_'.")
     );
-    assert!(saved_calls(&f).is_empty());
+    assert_eq!(saved_calls(&f), Vec::new());
 }
 
 /// AC-5 (FR-1): `Esc` cancels and changes nothing, down to the frame.
@@ -324,7 +324,7 @@ async fn esc_cancels_the_prompt() {
     type_text(&mut f, "x").await;
     press(&mut f, KeyCode::Esc).await;
     assert!(f.screen.modal.is_none());
-    assert!(saved_calls(&f).is_empty());
+    assert_eq!(saved_calls(&f), Vec::new());
     assert_eq!(drawn(&f, 90, 24), before);
 }
 
@@ -493,7 +493,7 @@ async fn the_palette_opens_the_save_prompt() {
         Some("A saved search name must be 1 to 40 letters, digits, '-' or '_'."),
         "it started empty"
     );
-    assert!(saved_calls(&f).is_empty());
+    assert_eq!(saved_calls(&f), Vec::new());
 }
 
 /// AC-9 (FR-2, Q-5): `save-search` needs a filter and the two others need a search;
