@@ -51,6 +51,48 @@ async fn a_rename_sends_no_query_and_keeps_the_one_in_the_file() {
     );
 }
 
+/// #109's other half: renaming the open search whose query was edited by hand brings the
+/// file's query back, so the list is read again for it — otherwise the rows shown are the old
+/// query's while select-all, paging and `/` already use the new one.
+#[tokio::test]
+async fn renaming_the_open_search_with_an_edited_query_reads_its_list_again() {
+    let envelopes = vec![
+        (0, dana("d1", "dt1", BASE_MS, "INBOX", false)),
+        (0, dana("d2", "dt2", BASE_MS + 60_000, "INBOX", true)),
+        (0, mail_envelope("w1", "wt1", BASE_MS + 120_000)),
+    ];
+    let mut f = saved_fixture(&envelopes, &[("dana", "from:dana is:unread")]).await;
+    sidebar_to(&mut f, None, "dana").await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(subjects(&f), ["subject d1"]);
+
+    f.fake.saved.lock().unwrap()[0].query = "from:dana".into();
+    press(&mut f, KeyCode::Tab).await;
+    press(&mut f, KeyCode::Char('r')).await;
+    press_n(&mut f, KeyCode::Backspace, 4).await;
+    type_text(&mut f, "dana2").await;
+    press(&mut f, KeyCode::Enter).await;
+
+    assert!(
+        matches!(&f.screen.scope, ScopeChoice::Saved { index: 0, name } if name == "dana2"),
+        "{:?}",
+        f.screen.scope
+    );
+    assert_eq!(
+        subjects(&f),
+        ["subject d2", "subject d1"],
+        "the file's query"
+    );
+    press(&mut f, KeyCode::Tab).await; // back to the list from the sidebar
+    press(&mut f, KeyCode::Char('*')).await;
+    press(&mut f, KeyCode::Char('a')).await;
+    assert_eq!(
+        selected_ids(&f),
+        listed_ids(&f),
+        "select-all takes what is listed"
+    );
+}
+
 /// AC-14b (FR-4's `replaces` carve-out): no edit at all, and a case change, are both accepted.
 #[tokio::test]
 async fn renaming_to_the_same_or_a_case_changed_name_is_allowed() {

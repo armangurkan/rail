@@ -270,12 +270,14 @@ impl MailScreen {
     ) -> Vec<Effect> {
         match result {
             Ok(searches) => {
+                // Taken before the rename re-keys the scope, while the old list still holds it.
+                let open_query = self.open_query();
                 if let Some((old, new)) = renamed {
                     self.follow_rename(&old, &new);
                 }
                 self.saved = searches;
                 let mut effects = vec![self.read_sidebar()];
-                effects.extend(self.resolve_open_search());
+                effects.extend(self.resolve_open_search(open_query.as_deref()));
                 effects
             }
             Err(error) => {
@@ -301,10 +303,23 @@ impl MailScreen {
         self.sidebar.rename_cursor(old, new);
     }
 
+    /// The open saved search's query, from the list the screen holds now.
+    fn open_query(&self) -> Option<String> {
+        match &self.scope {
+            ScopeChoice::Saved { index, name } => {
+                self.saved_entry(*index, name).map(|s| s.query.clone())
+            }
+            _ => None,
+        }
+    }
+
     /// FR-17 step 3: the open saved search, found again by name (ignoring ASCII case, as the
-    /// daemon keys it) in the new list. A changed position is followed with a fresh list read;
-    /// a name that is gone falls back to All inboxes and says so.
-    fn resolve_open_search(&mut self) -> Vec<Effect> {
+    /// daemon keys it) in the new list. A changed position is followed with a fresh list read,
+    /// and so is a changed query — a rename brings back the file's query, which a hand edit
+    /// may have changed (`was` is the query before the answer), and rows of the old query
+    /// under a select-all of the new one would break "it takes exactly what it lists". A name
+    /// that is gone falls back to All inboxes and says so.
+    fn resolve_open_search(&mut self, was: Option<&str>) -> Vec<Effect> {
         let ScopeChoice::Saved { index, name } = &self.scope else {
             return Vec::new();
         };
@@ -314,7 +329,7 @@ impl MailScreen {
             .iter()
             .position(|s| s.name.eq_ignore_ascii_case(&name));
         match found {
-            Some(at) if at == index => Vec::new(),
+            Some(at) if at == index && was == Some(self.saved[at].query.as_str()) => Vec::new(),
             Some(at) => self.set_scope(ScopeChoice::Saved { index: at, name }),
             None => {
                 self.status.notify(GONE_NOTICE, self.tick);
