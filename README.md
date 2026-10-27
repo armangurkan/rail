@@ -1214,8 +1214,8 @@ the daemon (the `draft-files` folder of the data directory, 0600 files in 0700 f
 [Writing mail](#writing-mail)); discarding the draft removes them, and the daemon removes any no
 draft refers to when it starts. Saving an attachment (`s`, `S`, `w`) writes a private (0600) file
 into `attachment_dir` — your download directory unless you set one — and never replaces a file
-that is there: a clash becomes `2-name.pdf`, and a name beginning with a dot loses it, so a save
-cannot hide a file in that directory. Opening an attachment writes a 0600 copy in a 0700 directory
+that is there: a clash becomes `2-name.pdf`, and a name beginning with a dot or a dash loses it,
+so a save cannot hide a file in that directory or leave one shaped like a command-line option. Opening an attachment writes a 0600 copy in a 0700 directory
 of its own under the cache directory (`~/.cache/rail/attachments/` on Linux), removed when you
 close the reader or quit; any copy older than 24 hours is swept when the daemon starts and before
 each open. On macOS, files Rail writes are quarantined like downloads. The editor's working file

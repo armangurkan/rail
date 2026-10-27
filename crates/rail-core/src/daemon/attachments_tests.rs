@@ -269,6 +269,27 @@ async fn a_name_that_only_looks_visible_is_still_made_visible() {
     }
 }
 
+/// FR-11: a leading dash goes the same way as a leading dot. A sender's
+/// `--checkpoint-action=exec=sh run.sh` must not land in the download directory as a name a
+/// later glob hands to a command as an option.
+#[tokio::test]
+async fn an_option_shaped_name_loses_its_dashes() {
+    let (h, dest) = fixture().await;
+    let names = [
+        ("--checkpoint=1", "checkpoint=1"),
+        ("-rf", "rf"),
+        (" - . -", "attachment"),
+    ];
+    for (n, (name, written_as)) in names.into_iter().enumerate() {
+        let part = format!("2.{n}");
+        list_part(&h, &part, name, "text/plain", 2);
+        bytes_at(&h, &part, b"hi".to_vec());
+        let path = written(&save(&h, &[part.as_str()], &dest).await.unwrap());
+        assert_eq!(path, dest.join(written_as), "{name:?}");
+        assert!(path.is_file(), "{name:?} wrote nothing");
+    }
+}
+
 /// AC-19: an empty part list saves every attachment that message has, in the store's order:
 /// one result per part the store lists, however many that is. Nothing here caps them — the
 /// sync's own `MAX_ATTACHMENTS` is what bounds what the store can list for one message.
