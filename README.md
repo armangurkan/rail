@@ -521,7 +521,9 @@ then behaves like a mailbox — its own row in the sidebar under `SEARCHES`, an 
 `Search: <name>` palette entry, a header title, paging and `Esc` — and lists every folder of
 every account narrowed by that filter, so it finds archived mail an inbox view would not. `/`
 narrows a saved search further, and `Esc` on the reopened filter line clears only that live
-filter; it never removes a saved search. An `account:<name>` inside a saved query still narrows
+filter; it never removes a saved search. `S` inside an open saved search saves only what you
+typed after `/`, not that text joined to the open search's query: to save the narrower search,
+type the whole filter. An `account:<name>` inside a saved query still narrows
 to that account. A saved `before:`/`after:` keeps the date you typed, so a saved date ages: a
 search for `after:2026-01-01` means that one day for ever, not "since a year ago". `r` and `d`
 always act on the search the prompt or the question named: if the list changed while one of them
@@ -1383,6 +1385,10 @@ an empty or over-long query or a 21st table makes `config.toml` invalid, and `ra
 entry is wrong — by name and position, never by quoting the query, which is yours. A query that
 narrows nothing — only characters the filter ignores, such as `* ( )` — lists no threads and
 counts none, rather than every thread of every account.
+
+A Rail older than saved searches cannot read a `config.toml` that holds `[[saved_searches]]`
+tables or `saved_search_counts` in `[general]`: it reports the config invalid. To go back to an
+older version, remove them first.
 
 ```toml
 [[saved_searches]]
