@@ -26,9 +26,12 @@ async fn fixture() -> (DaemonHarness, PathBuf) {
             rusqlite::params![message],
         )
         .unwrap();
+    // A real PDF header: `attachment.open` refuses bytes that do not match the declared type.
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    pdf.resize(2048, b' ');
     h.mock.with(|m| {
         m.attachment_bytes
-            .insert(("m1".to_string(), "0.1".to_string()), vec![7u8; 2048]);
+            .insert(("m1".to_string(), "0.1".to_string()), pdf);
     });
     let dest = h.paths.cache_dir.join("quarantined");
     std::fs::create_dir_all(&dest).unwrap();
