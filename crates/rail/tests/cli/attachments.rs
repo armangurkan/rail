@@ -472,6 +472,8 @@ async fn a_second_save_never_replaces_the_first() {
     let _daemon = StopsDaemon(&dir);
     let mut run = start(&dir, &[PLAN]).await;
     open_the_thread(&mut run);
+    // Counted from here, so the reads the two saves make are told from the sync's own.
+    let before = full_reads(&run.server).await;
     open_the_list(&mut run);
     bulk::type_keys(&mut run.keys, b"s");
     let saved = run.saved.clone();
@@ -509,6 +511,11 @@ async fn a_second_save_never_replaces_the_first() {
         names,
         ["2-plan.pdf", "plan.pdf"],
         "nothing else was written"
+    );
+    assert_eq!(
+        full_reads(&run.server).await,
+        before + 2,
+        "Gmail was read once per save, for the bytes"
     );
     ends(&mut run, b"qq");
 }
@@ -593,10 +600,22 @@ async fn opening_asks_once_then_hands_a_private_copy_to_the_opener() {
     let mut run = start(&dir, &[PLAN]).await;
     let url_file = opened_url_file(&dir);
     open_the_thread(&mut run);
+    // Counted from here, so each open's own read is told from the sync's.
+    let before = full_reads(&run.server).await;
     let asked = answer_the_open_question(&mut run, &url_file);
     assert_private(&asked, &dir);
+    assert_eq!(
+        full_reads(&run.server).await,
+        before + 1,
+        "the first open read Gmail once, for the bytes"
+    );
     let again = open_without_a_question(&mut run, &url_file);
     assert_private(&again, &dir);
+    assert_eq!(
+        full_reads(&run.server).await,
+        before + 2,
+        "and the second read it once more"
+    );
     assert_ne!(again.parent(), asked.parent(), "a token directory each");
     bulk::type_keys(&mut run.keys, b"q");
     wait_removed(&run, &[&asked, &again]);
@@ -611,7 +630,13 @@ async fn opening_asks_once_then_hands_a_private_copy_to_the_opener() {
     let mut run = start(&last, &[PLAN]).await;
     let url_file = opened_url_file(&last);
     open_the_thread(&mut run);
+    let before = full_reads(&run.server).await;
     let left = answer_the_open_question(&mut run, &url_file);
+    assert_eq!(
+        full_reads(&run.server).await,
+        before + 1,
+        "this run's own open read its own Gmail once"
+    );
     ends(&mut run, b"\x03");
     assert!(!left.exists(), "quitting left the copy: {left:?}");
     assert!(
