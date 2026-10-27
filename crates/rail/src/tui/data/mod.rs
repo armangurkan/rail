@@ -226,12 +226,17 @@ pub enum MailEvent {
     },
     /// `attachment.save` answered. `account` lets the screen name the provider in a
     /// `Missing` line; `dir` is what the status line says the files landed in; `single` is
-    /// true when one part was asked for (`s` or an `Enter` Rail would not open).
+    /// true when one part was asked for (`s` or an `Enter` Rail would not open), which is what
+    /// the log says about the save. `name` is the file that save asked for, when it was one,
+    /// and `unopenable` the type an `Enter` would not open when that turned into a save
+    /// (FR-6): both travel with the answer, so two saves in flight never cross their lines.
     AttachmentSaved {
         result: Result<AttachmentSaveResponse, OpError>,
         account: String,
         dir: String,
         single: bool,
+        name: Option<String>,
+        unopenable: Option<String>,
     },
     /// `attachment.open` answered; `filename` names the part in a failure's line.
     AttachmentOpened {
@@ -433,8 +438,8 @@ impl fmt::Debug for MailEvent {
                 .field("count", count)
                 .field("ok", &subject.is_ok())
                 .finish(),
-            // Never `dir`, `filename` or `account`: a sender-chosen name and a user's own
-            // directory must not reach a log.
+            // Never `dir`, `name`, `unopenable` or `account`: a sender-chosen name or type
+            // and a user's own directory must not reach a log.
             Self::AttachmentSaved { result, single, .. } => f
                 .debug_struct("AttachmentSaved")
                 .field("ok", &result.is_ok())

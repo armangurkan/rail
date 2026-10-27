@@ -20,16 +20,14 @@ use crate::tui::app::Effect;
 use crate::tui::modals::{AttachmentTarget, Command, Confirm, Modal};
 use crate::tui::text::escape;
 
-/// What the attachment keys are waiting on.
+/// What the attachment keys are waiting on. The file a save named and the type an `Enter`
+/// would not open are **not** here: they travel on `MailEvent::AttachmentSaved`, because more
+/// than one save can be in flight and a slot on the screen would be read by whichever answer
+/// arrived first.
 #[derive(Default)]
 pub(super) struct AttachmentState {
     /// The open question was answered yes this session, so it is not asked again.
     confirmed: bool,
-    /// The file the save in flight named, when one part was asked for: a failure's line names
-    /// it, and a whole message's save has no one file to name.
-    name: Option<String>,
-    /// The type `Enter` would not open, when it turned into a save (FR-6).
-    unopenable: Option<String>,
 }
 
 impl MailScreen {
@@ -120,14 +118,15 @@ impl MailScreen {
             self.no_destination();
             return Vec::new();
         };
-        self.attachment.name = name;
-        self.attachment.unopenable = unopenable;
         self.status.notify("Saving…", self.tick);
-        vec![
-            self.ctx
-                .link
-                .attachment_save(account.to_string(), message.to_string(), part_ids, dir),
-        ]
+        vec![self.ctx.link.attachment_save(
+            account.to_string(),
+            message.to_string(),
+            part_ids,
+            dir,
+            name,
+            unopenable,
+        )]
     }
 
     /// Neither `[general] attachment_dir` nor a download directory resolved, so there is
@@ -144,11 +143,9 @@ impl MailScreen {
         result: Result<AttachmentSaveResponse, OpError>,
         account: &str,
         dir: &str,
-        single: bool,
+        name: Option<&str>,
+        unopenable: Option<&str>,
     ) -> Vec<Effect> {
-        // Taken either way, so a later answer never reuses this one's file.
-        let name = self.attachment.name.take().filter(|_| single);
-        let unopenable = self.attachment.unopenable.take();
         let response = match result {
             Ok(response) => response,
             Err(error) => {
@@ -163,13 +160,7 @@ impl MailScreen {
                 .notify("This message has no attachments.", self.tick);
             return Vec::new();
         }
-        let (text, failed) = self.save_line(
-            &response.results,
-            account,
-            dir,
-            name.as_deref(),
-            unopenable.as_deref(),
-        );
+        let (text, failed) = self.save_line(&response.results, account, dir, name, unopenable);
         if failed {
             tracing::warn!(
                 parts = response.results.len(),

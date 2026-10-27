@@ -166,3 +166,62 @@ async fn open_failures_each_get_their_own_line() {
     );
     assert!(opened.lock().unwrap().is_empty(), "nothing was opened");
 }
+
+/// AC-40b: two saves in flight keep their own status lines. The file a save named, and the
+/// type an `Enter` would not open, travel with that save's own answer; they used to sit in one
+/// screen-wide slot that the next save overwrote and the first answer emptied, so whichever
+/// answer arrived first spoke for the wrong save.
+#[tokio::test]
+async fn two_saves_in_flight_keep_their_own_status_lines() {
+    // `press` settles a key's effects before it returns, so the two saves are sent by hand and
+    // answered afterwards: that is what has both of them in flight at once.
+    let (mut f, _) = attachment_fixture().await;
+    let failed = permanent(ErrorCode::Provider, "Gmail refused the attachment");
+    press(&mut f, KeyCode::Char('a')).await;
+    let first = f.screen.update(Msg::Key(key(KeyCode::Char('s'))));
+    press(&mut f, KeyCode::Char('a')).await;
+    highlight(&mut f, "logo.png").await;
+    let second = f.screen.update(Msg::Key(key(KeyCode::Char('s'))));
+    answer_save(&f, vec![failure("0.1", &failed)]);
+    settle_capturing(&mut f.screen, first, &f.last_theme, &f.editor).await;
+    assert_eq!(
+        f.screen.status.notice(),
+        Some(format!("Could not save plan.pdf: {}", failed.message).as_str())
+    );
+    answer_save(&f, vec![failure("0.2", &failed)]);
+    settle_capturing(&mut f.screen, second, &f.last_theme, &f.editor).await;
+    assert_eq!(
+        f.screen.status.notice(),
+        Some(format!("Could not save logo.png: {}", failed.message).as_str())
+    );
+
+    // The same for the type `Enter` would not open (FR-6): it belongs to the save that `Enter`
+    // turned into, not to whichever save answers first.
+    let mut parts = PARTS.to_vec();
+    parts.push(("m1", "0.3", "page.html", 128, "text/html"));
+    let (mut f, _) = attachment_fixture_with(&parts, &[]).await;
+    let dir = saved_dir(&f);
+    press(&mut f, KeyCode::Char('a')).await;
+    let openable = f.screen.update(Msg::Key(key(KeyCode::Char('s'))));
+    press(&mut f, KeyCode::Char('a')).await;
+    highlight(&mut f, "page.html").await;
+    let refused = f.screen.update(Msg::Key(key(KeyCode::Enter)));
+    answer_save(&f, vec![saved_result("0.1", &dir.join("plan.pdf"), 2048)]);
+    settle_capturing(&mut f.screen, openable, &f.last_theme, &f.editor).await;
+    assert_eq!(
+        f.screen.status.notice(),
+        Some(format!("Saved plan.pdf to {}", saved_text(&f)).as_str())
+    );
+    answer_save(&f, vec![saved_result("0.3", &dir.join("page.html"), 128)]);
+    settle_capturing(&mut f.screen, refused, &f.last_theme, &f.editor).await;
+    assert_eq!(
+        f.screen.status.notice(),
+        Some(
+            format!(
+                "Rail does not open text/html files; saved page.html to {}",
+                saved_text(&f)
+            )
+            .as_str()
+        )
+    );
+}

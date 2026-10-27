@@ -13,15 +13,20 @@ use crate::tui::app::Effect;
 impl DaemonLink {
     /// Save `part_ids` of `message_id` into `dir`; an empty list means every attachment the
     /// store lists for that message. `dir` is absolute: the daemon's working directory is `/`,
-    /// so the client resolves it.
+    /// so the client resolves it. `name` is the one file this save asked for, when it asked for
+    /// one, and `unopenable` the type an `Enter` would not open when that turned into this
+    /// save: both are carried here and handed back with the answer, so the status line of a
+    /// save that is still in flight cannot be spoken for by another save's answer.
     pub fn attachment_save(
         &self,
         account: String,
         message_id: String,
         part_ids: Vec<String>,
         dir: String,
+        name: Option<String>,
+        unopenable: Option<String>,
     ) -> Effect {
-        // One part asked for: the status line can then name the file it was.
+        // One part asked for: the log line says which kind of save this was.
         let single = part_ids.len() == 1;
         match self.link.clone() {
             Link::Daemon(connector) => job(move |sink| async move {
@@ -39,12 +44,25 @@ impl DaemonLink {
                         account,
                         dir,
                         single,
+                        name,
+                        unopenable,
                     },
                 );
             }),
             #[cfg(test)]
             Link::Fake(fake) => job(move |sink| async move {
-                fake.attachment_save(&sink, account, message_id, &part_ids, dir, single);
+                let result = fake.attachment_save(&account, message_id, &part_ids, &dir);
+                send(
+                    &sink,
+                    MailEvent::AttachmentSaved {
+                        result,
+                        account,
+                        dir,
+                        single,
+                        name,
+                        unopenable,
+                    },
+                );
             }),
         }
     }
@@ -90,27 +108,25 @@ impl super::FakeDaemon {
     /// part `Saved` into `dir` under its own name.
     fn attachment_save(
         &self,
-        sink: &crate::tui::app::TaskSink,
-        account: String,
+        account: &str,
         message_id: String,
         part_ids: &[String],
-        dir: String,
-        single: bool,
-    ) {
+        dir: &str,
+    ) -> Result<rail_core::ops::AttachmentSaveResponse, rail_core::ops::OpError> {
         use rail_core::ops::{AttachmentOutcome, AttachmentResult, AttachmentSaveResponse};
         self.record(super::FakeCall::AttachmentSave {
-            account: account.clone(),
+            account: account.to_string(),
             message_id,
             part_ids: part_ids.to_vec(),
-            dir: dir.clone(),
+            dir: dir.to_string(),
         });
-        let result = self.save_answer.lock().unwrap().take().unwrap_or_else(|| {
+        self.save_answer.lock().unwrap().take().unwrap_or_else(|| {
             let results = part_ids
                 .iter()
                 .map(|part_id| AttachmentResult {
                     part_id: part_id.clone(),
                     outcome: AttachmentOutcome::Saved {
-                        path: std::path::Path::new(&dir)
+                        path: std::path::Path::new(dir)
                             .join(part_id)
                             .display()
                             .to_string(),
@@ -119,16 +135,7 @@ impl super::FakeDaemon {
                 })
                 .collect();
             Ok(AttachmentSaveResponse { results })
-        });
-        send(
-            sink,
-            MailEvent::AttachmentSaved {
-                result,
-                account,
-                dir,
-                single,
-            },
-        );
+        })
     }
 }
 

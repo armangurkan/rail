@@ -245,6 +245,14 @@ fn saved_result(part: &str, path: &std::path::Path, size: i64) -> AttachmentResu
     }
 }
 
+/// One `Failed` result for `part`.
+fn failure(part: &str, error: &OpError) -> AttachmentResult {
+    AttachmentResult {
+        part_id: part.to_string(),
+        outcome: AttachmentOutcome::Failed(error.clone()),
+    }
+}
+
 /// The answer the fake gives the next `attachment.save`.
 fn answer_save(f: &Fixture, results: Vec<AttachmentResult>) {
     *f.fake.save_answer.lock().unwrap() = Some(Ok(AttachmentSaveResponse { results }));
@@ -746,6 +754,8 @@ async fn debug_of_the_rows_and_the_events_prints_counts_only() {
         account: "work".into(),
         dir: "/x".into(),
         single: true,
+        name: Some("plan.pdf".into()),
+        unopenable: Some("application/pdf".into()),
     };
     let openend = MailEvent::AttachmentOpened {
         result: Ok(AttachmentOpenResponse {

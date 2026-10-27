@@ -85,8 +85,16 @@ impl MailScreen {
                 result,
                 account,
                 dir,
-                single,
-            } => self.attachment_saved(result, &account, &dir, single),
+                name,
+                unopenable,
+                ..
+            } => self.attachment_saved(
+                result,
+                &account,
+                &dir,
+                name.as_deref(),
+                unopenable.as_deref(),
+            ),
             MailEvent::AttachmentOpened {
                 result,
                 account,
