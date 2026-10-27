@@ -254,10 +254,9 @@ impl MailScreen {
         &mut self,
         result: Result<Vec<SavedSearch>, OpError>,
     ) -> Vec<Effect> {
-        let renamed = self.pending_rename.take();
         match result {
             Ok(searches) => {
-                if let Some((old, new)) = renamed {
+                if let Some((old, new)) = self.rename_answered(&searches) {
                     self.follow_rename(&old, &new);
                 }
                 self.saved = searches;
@@ -266,6 +265,10 @@ impl MailScreen {
                 effects
             }
             Err(error) => {
+                // Nothing was written, so there is no new list for a remembered rename to
+                // follow. Which write failed is not on the event, so this clears it, as every
+                // answer did before the rename learnt to wait for its own.
+                self.pending_rename = None;
                 tracing::warn!(code = ?error.code, "a saved-search write failed");
                 let text = format!(
                     "Could not change the saved searches: {}",
@@ -274,6 +277,26 @@ impl MailScreen {
                 self.status.error(text, self.ctx.clock.now(), self.tick);
                 Vec::new()
             }
+        }
+    }
+
+    /// The rename in flight, taken, when `searches` is **its** answer: the new name is in the
+    /// arriving list. Every `saved_search.put` and `.remove` answers with the whole list, so
+    /// another write's answer would otherwise consume the rename and re-key the open scope and
+    /// the cursor to a name that list does not hold — which FR-17 step 3 reads one line later
+    /// as a removal. Left in place otherwise, for the answer it belongs to. Names are compared
+    /// the way the daemon keys them, ignoring ASCII case, so a case-only rename is its own
+    /// answer too.
+    fn rename_answered(&mut self, searches: &[SavedSearch]) -> Option<(String, String)> {
+        let its_own = self.pending_rename.as_ref().is_some_and(|(_, new)| {
+            searches
+                .iter()
+                .any(|entry| entry.name.eq_ignore_ascii_case(new))
+        });
+        if its_own {
+            self.pending_rename.take()
+        } else {
+            None
         }
     }
 
@@ -445,5 +468,55 @@ mod tests {
             "{}",
             screen.status_line()
         );
+    }
+
+    /// G3 (FR-17 step 1): the rename remembered for the scope to follow belongs to **its**
+    /// answer. Every `saved_search.put` and `.remove` answers with the whole list, so a save
+    /// already in flight answers first here; consuming the rename on that answer re-keys the
+    /// open scope to a name the arriving list does not hold, which step 3 reads one line later
+    /// as a removal — the search the user is looking at, closed by their own rename.
+    #[tokio::test]
+    async fn a_rename_is_followed_on_its_own_answer() {
+        let (_tmp, _fake, mut screen) = screen_with(&["a", "b"]);
+        screen.scope = ScopeChoice::Saved {
+            index: 0,
+            name: "a".into(),
+        };
+        // `r` on `a`, renamed to `x`: the put is sent and remembered. Its answer is held back,
+        // so the save of `c` that was already in flight is the next one to land.
+        drop(screen.rename_search(0, "a", "x".to_string()));
+        assert_eq!(
+            screen.pending_rename,
+            Some(("a".to_string(), "x".to_string()))
+        );
+
+        let effects = screen.saved_searches_changed(Ok(searches(&["a", "b", "c"])));
+        settle(&mut screen, effects).await;
+        assert_eq!(
+            screen.scope,
+            ScopeChoice::Saved {
+                index: 0,
+                name: "a".into()
+            },
+            "the scope stayed on the search it was opened on"
+        );
+        assert_eq!(screen.status.notice(), None, "nothing was called gone");
+        assert_eq!(
+            screen.pending_rename,
+            Some(("a".to_string(), "x".to_string())),
+            "the rename waits for its own answer"
+        );
+
+        let effects = screen.saved_searches_changed(Ok(searches(&["x", "b", "c"])));
+        settle(&mut screen, effects).await;
+        assert_eq!(
+            screen.scope,
+            ScopeChoice::Saved {
+                index: 0,
+                name: "x".into()
+            }
+        );
+        assert_eq!(screen.pending_rename, None, "it was followed once");
+        assert_eq!(screen.status.notice(), None);
     }
 }
