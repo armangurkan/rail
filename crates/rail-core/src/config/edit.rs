@@ -250,8 +250,14 @@ pub fn put_saved_search(
     let table = searches
         .get_mut(index)
         .ok_or_else(|| not_an_array_of_tables(path, "saved_searches"))?;
-    table["name"] = value(name);
-    table["query"] = value(query);
+    set_string(table, "name", name);
+    // Only when it changed: `set_string` keeps the line's trailing comment, but it cannot keep
+    // a literal string's `'…'` form, and a rename is the one caller that leaves the query
+    // alone. Not writing it is what keeps the user's quoting (FR-20). A table just pushed has
+    // no `query`, so `None != Some(query)` writes it.
+    if table.get("query").and_then(Item::as_str) != Some(query) {
+        set_string(table, "query", query);
+    }
     let out = doc.to_string();
     parse(&out, path)?;
     Ok(out)
@@ -686,5 +692,55 @@ mod tests {
             err.to_string().contains("no [[saved_searches]] entry"),
             "{err}"
         );
+    }
+
+    /// FR-20 and README's "your comments, formatting and other tables survive each write", on
+    /// the two lines a rename touches. Assigning `table["name"]`/`table["query"]` replaces the
+    /// item together with its decor, so the trailing comment on each line goes and a literal
+    /// query is re-quoted; `set_string` keeps the decor, and an unchanged query is not written
+    /// at all, which is the only thing that keeps its `'…'` form. A rename to the same name
+    /// writes nothing, so the file comes back byte for byte.
+    #[test]
+    fn a_rename_keeps_the_comments_and_quoting_of_its_lines() {
+        let path = Path::new("c.toml");
+        let text = "[[saved_searches]]\nname = \"needs-reply\" # triage queue\nquery = 'from:dana is:unread' # weekly review\n\n[[accounts]]\nname = \"work\"\nkind = \"gmail\"\naddress = \"me@example.com\"\nclient_id = \"g\"\n";
+        let config = parse(text, path).unwrap();
+        assert_eq!(config.saved_searches[0].query, "from:dana is:unread");
+
+        let renamed = put_saved_search(
+            text,
+            path,
+            "later",
+            "from:dana is:unread",
+            Some("needs-reply"),
+        )
+        .unwrap();
+        assert!(
+            renamed.contains("name = \"later\" # triage queue"),
+            "the name's own comment stays: {renamed}"
+        );
+        assert!(
+            renamed.contains("query = 'from:dana is:unread' # weekly review"),
+            "an unchanged query keeps its comment and its single quotes: {renamed}"
+        );
+        assert_eq!(parse(&renamed, path).unwrap().accounts.len(), 1);
+
+        // A query that did change is written, and keeps its line's comment.
+        let requeried =
+            put_saved_search(&renamed, path, "later", "from:dana", Some("later")).unwrap();
+        assert!(
+            requeried.contains("query = \"from:dana\" # weekly review"),
+            "{requeried}"
+        );
+
+        let same = put_saved_search(
+            text,
+            path,
+            "needs-reply",
+            "from:dana is:unread",
+            Some("needs-reply"),
+        )
+        .unwrap();
+        assert_eq!(same, text, "a rename to the same name writes nothing");
     }
 }
