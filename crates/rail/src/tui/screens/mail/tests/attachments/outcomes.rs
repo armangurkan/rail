@@ -173,6 +173,12 @@ async fn open_failures_each_get_their_own_line() {
 /// arrived first spoke for the wrong save.
 #[tokio::test]
 async fn two_saves_in_flight_keep_their_own_status_lines() {
+    each_failed_save_keeps_its_own_file().await;
+    the_refused_type_stays_with_the_save_that_asked().await;
+}
+
+/// The file each of the two failing saves named.
+async fn each_failed_save_keeps_its_own_file() {
     // `press` settles a key's effects before it returns, so the two saves are sent by hand and
     // answered afterwards: that is what has both of them in flight at once.
     let (mut f, _) = attachment_fixture().await;
@@ -194,9 +200,11 @@ async fn two_saves_in_flight_keep_their_own_status_lines() {
         f.screen.status.notice(),
         Some(format!("Could not save logo.png: {}", failed.message).as_str())
     );
+}
 
-    // The same for the type `Enter` would not open (FR-6): it belongs to the save that `Enter`
-    // turned into, not to whichever save answers first.
+/// The same for the type `Enter` would not open (FR-6): it belongs to the save that `Enter`
+/// turned into, not to whichever save answers first.
+async fn the_refused_type_stays_with_the_save_that_asked() {
     let mut parts = PARTS.to_vec();
     parts.push(("m1", "0.3", "page.html", 128, "text/html"));
     let (mut f, _) = attachment_fixture_with(&parts, &[]).await;

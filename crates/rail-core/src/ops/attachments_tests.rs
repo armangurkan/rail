@@ -134,26 +134,53 @@ fn part_id_validation_accepts_both_providers_and_refuses_the_rest() {
     let many: Vec<String> = (0..=MAX_SAVE_PARTS).map(|n| format!("0.{n}")).collect();
     let named: Vec<&str> = many.iter().map(String::as_str).collect();
     for bad in [long.as_str(), "bell\u{7}", "zero\u{200b}width"] {
-        let error = save_of("m1", &[bad])
-            .checked_parts()
-            .expect_err("a part id Rail does not pass on");
-        assert!(refused(&error), "{bad:?}: {error:?}");
-        assert!(
-            !error.message.contains(bad),
-            "the id is never quoted: {error:?}"
-        );
-        let open = AttachmentOpenRequest {
-            account: "work".into(),
-            message_id: "m1".into(),
-            part_id: bad.to_string(),
-        };
-        assert!(refused(&open.checked().expect_err("the same rule")));
+        a_refused_part_id(bad);
     }
     let error = save_of("m1", &named)
         .checked_parts()
         .expect_err("too many parts");
     assert!(refused(&error), "{error:?}");
 
+    both_providers_ids_are_accepted(graph);
+    for bad in [long.as_str(), ""] {
+        let error = save_of(bad, &["0.1"])
+            .checked_parts()
+            .expect_err("a message id Rail does not pass on");
+        assert!(refused(&error), "{bad:?}: {error:?}");
+    }
+
+    // FR-13: one result per distinct part, first occurrence kept.
+    assert_eq!(
+        save_of("m1", &["0.1", "0.1", "0.2"])
+            .checked_parts()
+            .unwrap(),
+        ["0.1", "0.2"]
+    );
+
+    a_destination_is_checked_first();
+}
+
+/// One part id Rail does not pass on: refused on a save and on an open alike, and never quoted
+/// back in the refusal.
+fn a_refused_part_id(bad: &str) {
+    let error = save_of("m1", &[bad])
+        .checked_parts()
+        .expect_err("a part id Rail does not pass on");
+    assert!(refused(&error), "{bad:?}: {error:?}");
+    assert!(
+        !error.message.contains(bad),
+        "the id is never quoted: {error:?}"
+    );
+    let open = AttachmentOpenRequest {
+        account: "work".into(),
+        message_id: "m1".into(),
+        part_id: bad.to_string(),
+    };
+    assert!(refused(&open.checked().expect_err("the same rule")));
+}
+
+/// Both providers' part ids, Gmail's empty one included, taken on a part id and on a message id.
+fn both_providers_ids_are_accepted(graph: &str) {
     assert_eq!(
         save_of("m1", &["0.1", graph]).checked_parts().unwrap(),
         ["0.1", graph]
@@ -179,22 +206,10 @@ fn part_id_validation_accepts_both_providers_and_refuses_the_rest() {
         .checked()
         .is_ok()
     );
-    for bad in [long.as_str(), ""] {
-        let error = save_of(bad, &["0.1"])
-            .checked_parts()
-            .expect_err("a message id Rail does not pass on");
-        assert!(refused(&error), "{bad:?}: {error:?}");
-    }
+}
 
-    // FR-13: one result per distinct part, first occurrence kept.
-    assert_eq!(
-        save_of("m1", &["0.1", "0.1", "0.2"])
-            .checked_parts()
-            .unwrap(),
-        ["0.1", "0.2"]
-    );
-
-    // The destination is checked before anything else is asked of the store or the provider.
+/// The destination is checked before anything else is asked of the store or the provider.
+fn a_destination_is_checked_first() {
     for dir in ["relative/path", "", "~/Downloads"] {
         let mut request = save_of("m1", &["0.1"]);
         request.dir = dir.to_string();

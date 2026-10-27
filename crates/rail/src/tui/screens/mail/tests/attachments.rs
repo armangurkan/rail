@@ -721,10 +721,8 @@ async fn closing_the_reader_removes_what_it_opened() {
     assert!(!path.exists(), "dropping the screen removed it");
 }
 
-/// AC-32 (the `rail` half): neither the modal's rows nor the two events print a name, a type, a
-/// directory, a path or an account.
-#[tokio::test]
-async fn debug_of_the_rows_and_the_events_prints_counts_only() {
+/// The modal's row and the open target, each printed through `Debug`.
+fn printed_rows() -> [String; 2] {
     let row = AttachmentRow {
         account: "work".into(),
         message: "m1".into(),
@@ -741,6 +739,11 @@ async fn debug_of_the_rows_and_the_events_prints_counts_only() {
         filename: "plan.pdf".into(),
         mime_type: "application/pdf".into(),
     };
+    [format!("{row:?}"), format!("{target:?}")]
+}
+
+/// The save's answer and the open's, each printed through `Debug`.
+fn printed_events() -> [String; 2] {
     let saved = MailEvent::AttachmentSaved {
         result: Ok(AttachmentSaveResponse {
             results: vec![AttachmentResult {
@@ -764,12 +767,14 @@ async fn debug_of_the_rows_and_the_events_prints_counts_only() {
         account: "work".into(),
         filename: "plan.pdf".into(),
     };
-    let printed = [
-        format!("{row:?}"),
-        format!("{target:?}"),
-        format!("{saved:?}"),
-        format!("{openend:?}"),
-    ];
+    [format!("{saved:?}"), format!("{openend:?}")]
+}
+
+/// AC-32 (the `rail` half): neither the modal's rows nor the two events print a name, a type, a
+/// directory, a path or an account.
+#[tokio::test]
+async fn debug_of_the_rows_and_the_events_prints_counts_only() {
+    let printed = [printed_rows(), printed_events()].concat();
     for text in &printed {
         for secret in ["plan", "/x", "work", "application/pdf", "0.1", "m1"] {
             assert!(!text.contains(secret), "{text} carries {secret}");

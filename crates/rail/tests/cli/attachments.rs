@@ -460,6 +460,30 @@ async fn s_capital_in_the_list_saves_every_attachment() {
     ends(&mut run, b"qq");
 }
 
+/// What the two saves left in the destination: the first file still holding the bytes the user
+/// put there, the second save's own bytes beside it under the name the bar reported, and nothing
+/// else written.
+fn assert_the_first_file_was_kept(saved: &Path, first: &Path) {
+    assert_eq!(
+        std::fs::read(first).unwrap(),
+        b"mine",
+        "the file that was there"
+    );
+    let (bytes, mode) = saved_file(&saved.join("2-plan.pdf"));
+    assert_eq!(bytes, PLAN.bytes, "the served bytes, beside it");
+    assert_eq!(mode, 0o600, "owner-only");
+    let mut names: Vec<String> = std::fs::read_dir(saved)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["2-plan.pdf", "plan.pdf"],
+        "nothing else was written"
+    );
+}
+
 /// US-4, FR-11: a second save never replaces the first. `plan.pdf` keeps the bytes it has and
 /// the next save lands beside it as `2-plan.pdf`, which is the name the bar reports.
 #[tokio::test]
@@ -494,24 +518,7 @@ async fn a_second_save_never_replaces_the_first() {
         BAR,
         format!("Saved 2-plan.pdf to {}", saved.display()),
     );
-    assert_eq!(
-        std::fs::read(&first).unwrap(),
-        b"mine",
-        "the file that was there"
-    );
-    let (bytes, mode) = saved_file(&saved.join("2-plan.pdf"));
-    assert_eq!(bytes, PLAN.bytes, "the served bytes, beside it");
-    assert_eq!(mode, 0o600, "owner-only");
-    let mut names: Vec<String> = std::fs::read_dir(&saved)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
-    assert_eq!(
-        names,
-        ["2-plan.pdf", "plan.pdf"],
-        "nothing else was written"
-    );
+    assert_the_first_file_was_kept(&saved, &first);
     assert_eq!(
         full_reads(&run.server).await,
         before + 2,
@@ -620,11 +627,14 @@ async fn opening_asks_once_then_hands_a_private_copy_to_the_opener() {
     bulk::type_keys(&mut run.keys, b"q");
     wait_removed(&run, &[&asked, &again]);
     ends(&mut run, b"q");
+    a_copy_still_open_when_rail_ends_goes_with_it().await;
+}
 
-    // The session's end, on a run of its own: `q` in the reader is `reader.back`, which removes
-    // the copies on its way out, so a copy that is still open when Rail ends needs a quit that
-    // skips the reader — Ctrl-C always quits (`tui/app.rs:158`). A second run also starts the
-    // session's question again, which `answer_the_open_question` asserts.
+/// The session's end, on a run of its own: `q` in the reader is `reader.back`, which removes
+/// the copies on its way out, so a copy that is still open when Rail ends needs a quit that
+/// skips the reader — Ctrl-C always quits (`tui/app.rs:158`). A second run also starts the
+/// session's question again, which `answer_the_open_question` asserts.
+async fn a_copy_still_open_when_rail_ends_goes_with_it() {
     let last = tempfile::tempdir().unwrap();
     let _last_daemon = StopsDaemon(&last);
     let mut run = start(&last, &[PLAN]).await;
