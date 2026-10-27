@@ -9,7 +9,8 @@
 //! `DeleteDraft` row goes through `pushing`. Once a draft row completes, the account's sync
 //! engine is nudged so Gmail's copy (Sent or Drafts) arrives. Snoozes that fall due go back on its
 //! next pass, paused or not: the store queues their return and the status board tells who
-//! watches. Logs carry row ids, counts and codes only.
+//! watches; a wake the store fails is tried again after a wait that doubles up to `MAX_IDLE`.
+//! Logs carry row ids, counts and codes only.
 
 mod compose;
 #[cfg(test)]
@@ -64,6 +65,19 @@ use crate::store::{Store, StoreError};
 pub const MIN_IDLE: Duration = Duration::from_secs(1);
 pub const MAX_IDLE: Duration = Duration::from_secs(60);
 
+/// The wait after a wake that failed, given the one before it: twice `MIN_IDLE` at first, then
+/// doubled each time, at most `MAX_IDLE`.
+pub(super) fn next_wake_delay(previous: Option<Duration>) -> Duration {
+    previous.map_or(MIN_IDLE * 2, |d| d * 2).min(MAX_IDLE)
+}
+
+/// After a failed wake: when the worker tries again, and the wait that led there.
+#[derive(Debug, Clone, Copy)]
+struct WakeRetry {
+    at: i64,
+    delay: Duration,
+}
+
 pub struct WorkerParts {
     pub name: String,
     pub address: String,
@@ -106,6 +120,8 @@ pub struct Worker {
     /// True while a claimed `Send` or `PushDraft` row is being carried out: a stop lets it
     /// finish.
     sending: AtomicBool,
+    /// Set while wakes fail: the next is not tried before its time (`next_wake_delay`).
+    wake_retry: Mutex<Option<WakeRetry>>,
 }
 
 /// What a row's provider calls left to record.
@@ -162,6 +178,7 @@ impl Worker {
             kind: parts.kind,
             recovered: Mutex::new(HashSet::new()),
             sending: AtomicBool::new(false),
+            wake_retry: Mutex::new(None),
         }
     }
 
@@ -263,13 +280,15 @@ impl Worker {
         Next::Again
     }
 
-    /// Until the earliest due row or snooze, within `MIN_IDLE..=MAX_IDLE`.
+    /// Until the earliest due row or snooze (not before a failed wake's retry), within
+    /// `MIN_IDLE..=MAX_IDLE`.
     async fn idle(&self) -> Duration {
-        let id = self.account_id;
+        let (id, retry) = (self.account_id, self.wake_retry_at());
         let due = self
             .read(move |store| {
                 let row = store.outbox_next_due(id)?;
-                Ok(row.into_iter().chain(store.snooze_next_due(id)?).min())
+                let snooze = store.snooze_next_due(id)?.map(|at| at.max(retry));
+                Ok(row.into_iter().chain(snooze).min())
             })
             .await
             .ok()
@@ -285,6 +304,9 @@ impl Worker {
     /// (sent as any row is, once the account can send) and the status board tells who watches.
     async fn wake_due(&self) {
         let (id, now) = (self.account_id, (self.clock)());
+        if now < self.wake_retry_at() {
+            return;
+        }
         let next = match self.read(move |store| store.snooze_next_due(id)).await {
             Ok(next) => next,
             Err(error) => {
@@ -296,7 +318,9 @@ impl Worker {
             return;
         }
         let wake = OutboxWrite::Wake { account_id: id };
-        match self.writer.outbox_at(wake, now).await {
+        let outcome = self.writer.outbox_at(wake, now).await;
+        self.wake_tried(now, outcome.is_ok());
+        match outcome {
             Ok(OutboxOutcome::Woke { threads }) if threads.is_empty() => {}
             Ok(OutboxOutcome::Woke { threads }) => {
                 tracing::info!(account = %self.name, threads = threads.len(), "snoozed threads went back");
@@ -309,6 +333,31 @@ impl Worker {
                 tracing::warn!(account = %self.name, error = %error.message, "could not put snoozed threads back");
             }
         }
+    }
+
+    /// When a failed wake may be tried again; `i64::MIN` while wakes succeed.
+    fn wake_retry_at(&self) -> i64 {
+        let retry = self
+            .wake_retry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        retry.map_or(i64::MIN, |r| r.at)
+    }
+
+    /// A wake at `now` succeeded (the wait resets) or failed (the wait grows).
+    fn wake_tried(&self, now: i64, ok: bool) {
+        let mut retry = self
+            .wake_retry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *retry = (!ok).then(|| {
+            let delay = next_wake_delay(retry.map(|r| r.delay));
+            let secs = i64::try_from(delay.as_secs()).unwrap_or(i64::MAX);
+            WakeRetry {
+                at: now.saturating_add(secs),
+                delay,
+            }
+        });
     }
 
     async fn send(&self, row: &OutboxRow) -> Result<Landed, ProviderError> {
