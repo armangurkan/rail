@@ -144,3 +144,17 @@ fn rail_taking_the_thread_out_again_drops_its_failed_return() {
     assert_eq!(failed(&store), []);
     assert_eq!(snoozes(&store), []);
 }
+
+#[test]
+fn a_failed_return_goes_once_none_of_its_mail_is_still_archived() {
+    let mut store = seeded();
+    woken_t1(&mut store);
+    fail_return(&mut store, NOW + HOUR, refused());
+    let trashed = vec![
+        in_folders("m1", "t1", 1_000, &["TRASH"]),
+        in_folders("m2", "t1", 2_000, &["TRASH"]),
+    ];
+    sync(&mut store, trashed, NOW + 2 * HOUR);
+    assert_eq!(failed(&store), [], "nothing left to return");
+    assert_eq!(snoozes(&store), []);
+}

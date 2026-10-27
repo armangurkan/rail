@@ -19,9 +19,6 @@ use super::{Store, StoreError, rollup};
 use crate::config::FolderModel;
 use crate::ops::{Action, OutboxId, client_token};
 
-mod settle;
-pub(super) use settle::{left_inbox, return_still_owed, settle_woken};
-
 /// Messages of a thread that `prune_old` and `sweep_unseen` keep: a snoozed thread stays whole
 /// until it comes back.
 pub(super) const NOT_SNOOZED: &str = "NOT EXISTS (SELECT 1 FROM threads st JOIN snoozes s
@@ -44,6 +41,11 @@ macro_rules! archived_in_folder {
          WHERE mf.message_id = m.id AND f.kind = 'archive')"
     };
 }
+
+// After the two macros above, which `return_still_owed!` names.
+pub(in crate::store) use {archived_by_labels, archived_in_folder};
+mod settle;
+pub(super) use settle::{left_inbox, return_still_owed, settle_woken};
 
 /// Snooze `s` (its archive row joined as `o`) holds its thread `ht`: not woken, and either waiting
 /// for an archive that has not failed, or archived with some recorded message still where the
@@ -680,6 +682,34 @@ impl Store {
              ORDER BY s.until"
         ))?;
         let rows = stmt.query_map([json(&threads)], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The messages of a return (`messages`, provider ids) to send now: those still in
+    /// `threads` (the account's) and in neither Trash nor Spam, in the order given. A return
+    /// retried late leaves mail trashed or reported since where it is, as the local apply does.
+    ///
+    /// # Errors
+    /// The database's, as a `StoreError`.
+    pub fn returnable(
+        &self,
+        account_id: i64,
+        threads: &[i64],
+        messages: &[String],
+    ) -> Result<Vec<String>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT r.value FROM json_each(?3) r WHERE EXISTS (
+               SELECT 1 FROM messages m JOIN threads t ON t.id = m.thread_id
+               WHERE t.account_id = ?1 AND m.remote_id = r.value
+                 AND m.thread_id IN (SELECT value FROM json_each(?2))
+                 AND NOT EXISTS (SELECT 1 FROM message_folders mf
+                                 JOIN folders f ON f.id = mf.folder_id
+                                 WHERE mf.message_id = m.id AND f.kind IN ('trash', 'spam')))
+             ORDER BY r.key",
+        )?;
+        let rows = stmt.query_map(params![account_id, json(&threads), json(&messages)], |r| {
+            r.get(0)
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

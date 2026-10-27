@@ -734,8 +734,12 @@ you moved to another folder meanwhile stays there). If the server refuses the ar
 `Enter` in `:errors` sends it again); snoozing the thread again starts afresh. A return the server
 cannot take right away is tried again like any action; one it refuses, or that gives up after 20
 attempts, leaves the thread archived and stays in `:errors` (`Could not return to the inbox: …`)
-through later syncs, where `Enter` sends it again. It leaves `:errors` once it is sent, once the
-thread is back in the inbox by other means, or when you archive, trash or move the thread. Removing an account
+through later syncs, where `Enter` sends it again; a retry leaves mail you trashed or reported as
+spam since where it is. It leaves `:errors` once it is sent, once the thread is back in the inbox
+by other means, once none of its messages is still archived (all trashed, reported or filed
+elsewhere), or when you archive, trash or move the thread in Rail. So a return the server keeps
+refusing stays until you send it again with `Enter` in `:errors` and it goes through, or you
+archive, trash or move the thread in Rail to give it up. Removing an account
 leaves its snoozed threads archived, since nothing syncs that account any more.
 
 ## Writing mail

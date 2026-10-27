@@ -10,8 +10,10 @@ use super::super::StoreError;
 use super::super::outbox::json;
 use crate::ops::Action;
 
-/// Outbox row `$o` is a snooze's return whose thread has no mail in the inbox: while it is failed,
-/// a sync neither clears it nor settles its woken snooze (#106).
+/// Outbox row `$o` is a snooze's return still owed: its thread has no mail in the inbox, and
+/// some message it names is still where the snooze's archive left it (`archived_by_labels!`,
+/// `archived_in_folder!`), not trashed, reported or filed since. While it is failed, a sync
+/// neither clears it nor settles its woken snooze (#106).
 macro_rules! return_still_owed {
     ($o:literal) => {
         concat!(
@@ -24,7 +26,21 @@ macro_rules! return_still_owed {
                JOIN messages m ON m.thread_id = rt.value
                JOIN message_folders mf ON mf.message_id = m.id
                JOIN folders f ON f.id = mf.folder_id
-               WHERE f.kind = 'inbox')"
+               WHERE f.kind = 'inbox')
+             AND EXISTS (SELECT 1 FROM json_each(",
+            $o,
+            ".thread_ids) rt
+               JOIN messages m ON m.thread_id = rt.value
+               WHERE m.remote_id IN (SELECT value FROM json_each(",
+            $o,
+            ".payload, '$.messages'))
+                 AND CASE (SELECT a.kind FROM accounts a WHERE a.id = ",
+            $o,
+            ".account_id) WHEN 'm365' THEN ",
+            $crate::store::snoozes::archived_in_folder!(),
+            " ELSE ",
+            $crate::store::snoozes::archived_by_labels!(),
+            " END)"
         )
     };
 }
