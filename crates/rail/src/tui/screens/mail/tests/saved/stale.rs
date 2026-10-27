@@ -159,8 +159,7 @@ async fn a_vanished_saved_search_never_opens_every_thread() {
     assert_eq!(f.screen.scope, ScopeChoice::Unified);
     assert!(
         f.screen.header_left().starts_with("▍Rail │ All inboxes"),
-        "{}",
-        f.screen.header_left()
+        "the header falls back to All inboxes"
     );
 
     // The same stale `Enter` where All inboxes has mail, so the notice is not replaced by the
@@ -193,8 +192,7 @@ async fn a_stale_row_opens_its_own_search_by_name() {
     assert_eq!(subjects(&f), ["subject b1"]);
     assert!(
         f.screen.header_left().starts_with("▍Rail │ Search: b-list"),
-        "{}",
-        f.screen.header_left()
+        "the header titles the search the row names"
     );
     // Matched, not compared: `ScopeChoice`'s `PartialEq` reads a `Saved`'s `index` only.
     assert!(

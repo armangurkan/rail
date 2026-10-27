@@ -74,8 +74,7 @@ async fn renaming_the_open_search_follows_it() {
     );
     assert!(
         f.screen.header_left().starts_with("▍Rail │ Search: later"),
-        "{}",
-        f.screen.header_left()
+        "the header titles the renamed search"
     );
     assert_eq!(f.screen.status.notice(), None, "a rename is not a removal");
     assert!(
@@ -205,8 +204,7 @@ async fn removing_the_search_above_the_open_one_shifts_its_index() {
         f.screen
             .header_left()
             .starts_with("▍Rail │ Search: big-attachments"),
-        "{}",
-        f.screen.header_left()
+        "the header titles the search that stays open"
     );
     assert_eq!(
         f.screen.status.notice(),

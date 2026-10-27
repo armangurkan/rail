@@ -231,7 +231,7 @@ async fn sidebar_up_to(f: &mut Fixture, account: Option<usize>, label: &str) {
         }
         press(f, KeyCode::Char('k')).await;
     }
-    panic!("no sidebar row {label:?} of {account:?} above the cursor");
+    panic!("no sidebar row {label:?} above the cursor");
 }
 
 /// `config.toml` as the user would have it.
@@ -536,8 +536,7 @@ async fn opening_a_saved_search_shows_its_threads_like_a_mailbox() {
         f.screen
             .header_left()
             .starts_with("▍Rail │ Search: dana · 2 unread"),
-        "{}",
-        f.screen.header_left()
+        "the header titles the open saved search and counts its 2 unread"
     );
     assert_eq!(subjects(&f), ["subject d2", "subject d1"]);
 }
@@ -616,8 +615,7 @@ async fn select_all_in_a_saved_search_selects_only_its_matches() {
 
     assert!(
         f.screen.header_left().contains("· 2 selected"),
-        "{}",
-        f.screen.header_left()
+        "the header counts the 2 selected threads"
     );
     assert_eq!(selected_ids(&f), listed, "exactly the rows it lists");
 }
@@ -635,8 +633,7 @@ async fn search_counts_toggles_and_saves() {
     assert!(row.ends_with('1'), "the count is drawn: {row:?}");
     assert!(
         f.screen.header_left().contains(" unread"),
-        "{}",
-        f.screen.header_left()
+        "the header shows the open search's unread count"
     );
 
     run_from_the_palette(&mut f, "search-counts").await;
@@ -651,8 +648,7 @@ async fn search_counts_toggles_and_saves() {
     );
     assert!(
         !f.screen.header_left().contains(" unread"),
-        "{}",
-        f.screen.header_left()
+        "the header leaves the unread count out while counts are off"
     );
 
     run_from_the_palette(&mut f, "search-counts").await;
@@ -665,8 +661,7 @@ async fn search_counts_toggles_and_saves() {
     assert!(row.ends_with('1'), "the count is back: {row:?}");
     assert!(
         f.screen.header_left().contains(" unread"),
-        "{}",
-        f.screen.header_left()
+        "the header shows the unread count again"
     );
 }
 
