@@ -648,9 +648,10 @@ async fn a_copy_still_open_when_rail_ends_goes_with_it() {
         "this run's own open read its own Gmail once"
     );
     ends(&mut run, b"\x03");
-    assert!(!left.exists(), "quitting left the copy: {left:?}");
+    assert!(!left.exists(), "quitting left the copy: {}", left.display());
     assert!(
         !left.parent().unwrap().exists(),
-        "quitting left its directory: {left:?}"
+        "quitting left its directory: {}",
+        left.display()
     );
 }
