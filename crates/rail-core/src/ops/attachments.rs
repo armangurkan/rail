@@ -12,6 +12,7 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::attachment_content::Signature;
 use super::error::OpError;
 
 /// Part ids one `attachment.save` may name. An empty list is bounded instead by the store's
@@ -31,54 +32,81 @@ pub const MAX_DIR_BYTES: usize = 4096;
 /// depend on the `rail` binary: the TUI re-exports this constant, so there is one value.
 pub const STALE_AFTER: Duration = Duration::from_secs(86_400);
 
-/// Types Rail hands to the system opener, with the extension it writes for each. Scripted and
-/// executable formats are deliberately absent — `text/html`, `image/svg+xml`, shell scripts,
-/// `.desktop`, `.app`, `.pkg`, `.dmg`, `.jar`, `.scpt` — because opening runs a program of the
-/// system's choosing on bytes a stranger sent. `text/markdown` is absent too: common Markdown
+/// Types Rail hands to the system opener, with the extension it writes for each and the
+/// signature its bytes must carry (`attachment_content`): a new row cannot leave the content
+/// check out. Scripted and executable formats are deliberately absent — `text/html`,
+/// `image/svg+xml`, shell scripts, `.desktop`, `.app`, `.pkg`, `.dmg`, `.jar`, `.scpt` —
+/// because opening runs a program of the system's choosing on bytes a stranger sent. `text/markdown` is absent too: common Markdown
 /// viewers render embedded HTML in a `WebView`, which would undo the `text/html` exclusion.
-pub const OPENABLE: [(&str, &str); 21] = [
-    ("application/pdf", "pdf"),
-    ("text/plain", "txt"),
-    ("text/csv", "csv"),
-    ("text/tab-separated-values", "tsv"),
-    ("application/rtf", "rtf"),
-    ("application/msword", "doc"),
+pub const OPENABLE: [(&str, &str, Signature); 21] = [
+    ("application/pdf", "pdf", Signature::Pdf),
+    ("text/plain", "txt", Signature::Text),
+    ("text/csv", "csv", Signature::Text),
+    ("text/tab-separated-values", "tsv", Signature::Text),
+    ("application/rtf", "rtf", Signature::Rtf),
+    ("application/msword", "doc", Signature::Ole),
     (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "docx",
+        Signature::Ooxml,
     ),
-    ("application/vnd.ms-excel", "xls"),
+    ("application/vnd.ms-excel", "xls", Signature::Ole),
     (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "xlsx",
+        Signature::Ooxml,
     ),
-    ("application/vnd.ms-powerpoint", "ppt"),
+    ("application/vnd.ms-powerpoint", "ppt", Signature::Ole),
     (
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "pptx",
+        Signature::Ooxml,
     ),
-    ("application/vnd.oasis.opendocument.text", "odt"),
-    ("application/vnd.oasis.opendocument.spreadsheet", "ods"),
-    ("application/vnd.oasis.opendocument.presentation", "odp"),
-    ("image/png", "png"),
-    ("image/jpeg", "jpg"),
-    ("image/gif", "gif"),
-    ("image/webp", "webp"),
-    ("image/bmp", "bmp"),
-    ("image/tiff", "tif"),
-    ("image/heic", "heic"),
+    (
+        "application/vnd.oasis.opendocument.text",
+        "odt",
+        Signature::Odf,
+    ),
+    (
+        "application/vnd.oasis.opendocument.spreadsheet",
+        "ods",
+        Signature::Odf,
+    ),
+    (
+        "application/vnd.oasis.opendocument.presentation",
+        "odp",
+        Signature::Odf,
+    ),
+    ("image/png", "png", Signature::Png),
+    ("image/jpeg", "jpg", Signature::Jpeg),
+    ("image/gif", "gif", Signature::Gif),
+    ("image/webp", "webp", Signature::WebP),
+    ("image/bmp", "bmp", Signature::Bmp),
+    ("image/tiff", "tif", Signature::Tiff),
+    ("image/heic", "heic", Signature::Heic),
 ];
 
 /// The extension `OPENABLE` gives for `mime_type`, parameters stripped and case ignored
 /// (`text/plain; charset=utf-8` matches `text/plain`). `None` means Rail does not open it.
 #[must_use]
 pub fn openable(mime_type: &str) -> Option<&'static str> {
+    openable_entry(mime_type).map(|(_, extension, _)| extension)
+}
+
+/// `mime_type`'s row of `OPENABLE`, by `openable`'s matching.
+pub(super) fn openable_entry(mime_type: &str) -> Option<(&'static str, &'static str, Signature)> {
     let base = mime_type.split(';').next().unwrap_or_default().trim();
     OPENABLE
         .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(base))
-        .map(|(_, extension)| *extension)
+        .find(|(name, _, _)| name.eq_ignore_ascii_case(base))
+        .copied()
 }
+
+/// The refusal an open gets when the bytes are not what the declared type says
+/// (`attachment_content::content_matches`). Rail's own words, quoting nothing of the part; the
+/// TUI matches on it to save the attachment instead.
+pub const CONTENT_MISMATCH: &str =
+    "this attachment's contents do not match its type, so Rail does not open it";
 
 /// A part id's own rule: at most `MAX_PART_ID_BYTES` bytes, with no control and no format
 /// character, so an unbounded or invisible id never reaches SQLite or a provider URL. **Empty

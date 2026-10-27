@@ -7,15 +7,15 @@ use rail_core::ops::op::{AttachmentOpen, AttachmentSave};
 use rail_core::ops::{AttachmentOpenRequest, AttachmentSaveRequest};
 
 use super::daemon_link::Link;
-use super::{DaemonLink, MailEvent, job, send};
+use super::{DaemonLink, MailEvent, NotOpened, job, send};
 use crate::tui::app::Effect;
 
 impl DaemonLink {
     /// Save `part_ids` of `message_id` into `dir`; an empty list means every attachment the
     /// store lists for that message. `dir` is absolute: the daemon's working directory is `/`,
     /// so the client resolves it. `name` is the one file this save asked for, when it asked for
-    /// one, and `unopenable` the type an `Enter` would not open when that turned into this
-    /// save: both are carried here and handed back with the answer, so the status line of a
+    /// one, and `unopenable` why an `Enter` did not open it when that turned into this save:
+    /// both are carried here and handed back with the answer, so the status line of a
     /// save that is still in flight cannot be spoken for by another save's answer.
     pub fn attachment_save(
         &self,
@@ -24,7 +24,7 @@ impl DaemonLink {
         part_ids: Vec<String>,
         dir: String,
         name: Option<String>,
-        unopenable: Option<String>,
+        unopenable: Option<NotOpened>,
     ) -> Effect {
         // One part asked for: the log line says which kind of save this was.
         let single = part_ids.len() == 1;
@@ -81,8 +81,8 @@ impl DaemonLink {
             Link::Daemon(connector) => job(move |sink| async move {
                 let request = AttachmentOpenRequest {
                     account: account.clone(),
-                    message_id,
-                    part_id,
+                    message_id: message_id.clone(),
+                    part_id: part_id.clone(),
                 };
                 let result = connector.call::<AttachmentOpen>(&request).await;
                 send(
@@ -90,6 +90,8 @@ impl DaemonLink {
                     MailEvent::AttachmentOpened {
                         result,
                         account,
+                        message: message_id,
+                        part_id,
                         filename,
                     },
                 );
@@ -155,8 +157,8 @@ impl super::FakeDaemon {
     ) {
         self.record(super::FakeCall::AttachmentOpen {
             account: account.clone(),
-            message_id,
-            part_id,
+            message_id: message_id.clone(),
+            part_id: part_id.clone(),
         });
         let result = self
             .open_answer
@@ -169,6 +171,8 @@ impl super::FakeDaemon {
             MailEvent::AttachmentOpened {
                 result,
                 account,
+                message: message_id,
+                part_id,
                 filename,
             },
         );

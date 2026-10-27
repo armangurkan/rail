@@ -3,8 +3,8 @@
 //! each file got — never bytes, and never a replaced file: a name already in the destination
 //! becomes `2-name.pdf`. The destination is the user's own directory, so its mode is never
 //! changed. An open writes one part into a private directory of its own under the cache,
-//! named from the stored type rather than the sender's, and answers that path for the front
-//! end to hand to the system opener; those copies are swept at daemon start and before every
+//! named from the stored type rather than the sender's — and only once its bytes carry that
+//! type's signature — and answers that path for the front end to hand to the system opener; those copies are swept at daemon start and before every
 //! open. Front-end operations only: no MCP tool reaches them. Logs carry counts and error
 //! kinds, never a file name or a path.
 
@@ -19,8 +19,8 @@ use crate::daemon::registry::Call;
 use crate::error::ErrorClass;
 use crate::ops::{
     AttachmentOpenRequest, AttachmentOpenResponse, AttachmentOutcome, AttachmentResult,
-    AttachmentSaveRequest, AttachmentSaveResponse, ErrorCode, OpError, STALE_AFTER, openable,
-    unwritable_dir,
+    AttachmentSaveRequest, AttachmentSaveResponse, CONTENT_MISMATCH, ErrorCode, OpError,
+    STALE_AFTER, content_matches, openable, unwritable_dir,
 };
 use crate::paths::{Paths, create_private_dir};
 use crate::provider::ProviderError;
@@ -426,6 +426,12 @@ pub(super) async fn open(
             .attachment(&request.message_id, &meta.part_id),
     )
     .await?;
+    // The declared type is the sender's word, and an opener may sniff the bytes instead, so
+    // markup declared `image/png` could reach a browser: refused before anything is written.
+    if !content_matches(&meta.mime_type, &bytes) {
+        tracing::warn!("an attachment's bytes did not match its type; not opened");
+        return Err(content_mismatch());
+    }
     let name = cache_name(&meta.filename, extension);
     let paths = call.ctx.paths.clone();
     // Taken before the sweep and held through the write.
@@ -453,6 +459,16 @@ fn unopenable() -> OpError {
         ErrorCode::Unsupported,
         ErrorClass::Permanent,
         "Rail does not open this attachment's type",
+    )
+}
+
+/// The refusal bytes that do not match their declared type get: permanent, since the same
+/// bytes come back on a retry, and quoting nothing of the part.
+fn content_mismatch() -> OpError {
+    OpError::new(
+        ErrorCode::Unsupported,
+        ErrorClass::Permanent,
+        CONTENT_MISMATCH,
     )
 }
 

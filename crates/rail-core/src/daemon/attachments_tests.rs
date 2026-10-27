@@ -26,9 +26,14 @@ use crate::provider::mock::{Call, MockProvider, envelope};
 use crate::store::Store;
 use crate::test_support::{daemon_context, mock_factory, start_daemon};
 
+/// A PNG's signature and the start of its header chunk: an open checks the bytes (#107).
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+/// A PDF's header line.
+const PDF: &[u8] = b"%PDF-1.7\n";
+
 /// Fixture **D**: the synced daemon of `draft_tests`, m1 listing `plan.pdf` (part `0.1`) whose
 /// 2048 bytes Gmail has, and a destination directory at mode 0755.
-async fn fixture() -> (DaemonHarness, PathBuf) {
+pub(super) async fn fixture() -> (DaemonHarness, PathBuf) {
     let h = DaemonHarness::new().await;
     list_part(&h, "0.1", "plan.pdf", "application/pdf", 2048);
     bytes_at(&h, "0.1", vec![7u8; 2048]);
@@ -45,7 +50,7 @@ fn destination(h: &DaemonHarness, name: &str) -> PathBuf {
 }
 
 /// Tell the store m1 has this attachment, as a body fetch would.
-fn list_part(h: &DaemonHarness, part: &str, filename: &str, mime: &str, size: i64) {
+pub(super) fn list_part(h: &DaemonHarness, part: &str, filename: &str, mime: &str, size: i64) {
     let message = h.message_id("m1");
     Store::open(&h.paths.db_file())
         .unwrap()
@@ -59,7 +64,7 @@ fn list_part(h: &DaemonHarness, part: &str, filename: &str, mime: &str, size: i6
 }
 
 /// What Gmail answers for m1's part.
-fn bytes_at(h: &DaemonHarness, part: &str, bytes: Vec<u8>) {
+pub(super) fn bytes_at(h: &DaemonHarness, part: &str, bytes: Vec<u8>) {
     h.mock.with(|m| {
         m.attachment_bytes
             .insert(("m1".to_string(), part.to_string()), bytes);
@@ -92,7 +97,7 @@ async fn save_into(
     h.call::<AttachmentSave>(&request).await
 }
 
-async fn open(h: &DaemonHarness, part: &str) -> Result<AttachmentOpenResponse, OpError> {
+pub(super) async fn open(h: &DaemonHarness, part: &str) -> Result<AttachmentOpenResponse, OpError> {
     let request = AttachmentOpenRequest {
         account: "work".into(),
         message_id: "m1".into(),
@@ -118,7 +123,7 @@ fn mode(path: &Path) -> u32 {
     std::fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
-fn attachment_calls(h: &DaemonHarness) -> usize {
+pub(super) fn attachment_calls(h: &DaemonHarness) -> usize {
     h.mock
         .calls()
         .iter()
@@ -139,7 +144,7 @@ fn fetch_policies(h: &DaemonHarness) -> Vec<Option<RetryPolicy>> {
 }
 
 /// The files directly under `dir`, sorted; an absent directory holds none.
-fn entries(dir: &Path) -> Vec<String> {
+pub(super) fn entries(dir: &Path) -> Vec<String> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -151,7 +156,7 @@ fn entries(dir: &Path) -> Vec<String> {
 }
 
 /// Nothing is in `dir`, and the names it holds when there are any.
-fn nothing_written(dir: &Path) {
+pub(super) fn nothing_written(dir: &Path) {
     assert_eq!(entries(dir), Vec::<String>::new(), "nothing was written");
 }
 
@@ -313,15 +318,15 @@ async fn an_option_shaped_name_loses_its_dashes() {
 async fn a_part_whose_id_is_empty_is_saved_and_opened() {
     let (h, dest) = fixture().await;
     list_part(&h, "", "photo.png", "image/png", 3);
-    bytes_at(&h, "", b"png".to_vec());
+    bytes_at(&h, "", PNG.to_vec());
     let response = save(&h, &[""], &dest).await.unwrap();
     assert_eq!(response.results[0].part_id, "");
     let path = written(&response);
     assert_eq!(path, dest.join("photo.png"));
-    assert_eq!(std::fs::read(&path).unwrap(), b"png");
+    assert_eq!(std::fs::read(&path).unwrap(), PNG);
     let copy = PathBuf::from(open(&h, "").await.unwrap().path);
     assert!(copy.ends_with("photo.png"), "{}", copy.display());
-    assert_eq!(std::fs::read(&copy).unwrap(), b"png");
+    assert_eq!(std::fs::read(&copy).unwrap(), PNG);
 }
 
 /// AC-19: an empty part list saves every attachment that message has, in the store's order:
@@ -613,7 +618,7 @@ async fn an_unwritable_destination_is_a_permanent_refusal() {
 async fn open_names_the_cache_file_from_the_type_not_the_sender_s_name() {
     let (h, _dest) = fixture().await;
     list_part(&h, "0.4", "invoice.html", "image/png", 3);
-    bytes_at(&h, "0.4", b"png".to_vec());
+    bytes_at(&h, "0.4", PNG.to_vec());
     let response = open(&h, "0.4").await.unwrap();
     let path = PathBuf::from(&response.path);
     assert!(
@@ -621,7 +626,7 @@ async fn open_names_the_cache_file_from_the_type_not_the_sender_s_name() {
         "the extension comes from the type: {}",
         path.display()
     );
-    assert_eq!(std::fs::read(&path).unwrap(), b"png");
+    assert_eq!(std::fs::read(&path).unwrap(), PNG);
     assert_eq!(mode(&path), 0o600);
     let token = path.parent().expect("a token directory");
     assert_eq!(mode(token), 0o700);
@@ -645,13 +650,13 @@ async fn an_open_copy_keeps_its_name_within_the_file_name_limit() {
     let (h, _dest) = fixture().await;
     let long = "a".repeat(255);
     list_part(&h, "0.7", &long, "application/pdf", 3);
-    bytes_at(&h, "0.7", b"pdf".to_vec());
+    bytes_at(&h, "0.7", PDF.to_vec());
     let response = open(&h, "0.7").await.unwrap();
     let path = PathBuf::from(&response.path);
     let name = path.file_name().expect("a file name").to_string_lossy();
     assert!(name.len() <= 255, "{} bytes: {name}", name.len());
     assert!(name.ends_with(".pdf"), "{name}");
-    assert_eq!(std::fs::read(&path).unwrap(), b"pdf");
+    assert_eq!(std::fs::read(&path).unwrap(), PDF);
     assert_eq!(mode(&path), 0o600);
 }
 
@@ -702,7 +707,7 @@ async fn the_start_sweep_removes_only_stale_open_files() {
 async fn an_open_sweeps_stale_copies_first() {
     let (h, _dest) = fixture().await;
     list_part(&h, "0.4", "invoice.pdf", "application/pdf", 3);
-    bytes_at(&h, "0.4", b"pdf".to_vec());
+    bytes_at(&h, "0.4", PDF.to_vec());
     let stale = stale_copy(&h.paths, "old", 25 * 3600);
     let fresh = stale_copy(&h.paths, "new", 3600);
     let response = open(&h, "0.4").await.unwrap();

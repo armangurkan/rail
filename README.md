@@ -458,7 +458,16 @@ five such parameters. Rail opens only `http`, `https` and `mailto` links of at m
 message's rows sit under a `MESSAGE <n>` heading when more than one message carries attachments.
 `Enter` or `o` opens the highlighted one with the program your system uses for it — Rail asks once
 a session before the first open, and only for the common document and image types it hands over;
-anything else is saved instead and says so. `s` saves the highlighted attachment, `S` saves every
+anything else is saved instead and says so. A type is the sender's claim, and your system's opener
+may judge a file by its contents instead, so before writing the copy Rail checks that the file
+starts the way its type does (`%PDF-` for a PDF, the PNG, JPEG, GIF, WebP, BMP, TIFF or HEIC
+signature for an image, a ZIP for `.docx` and its kin, a ZIP naming its own type first for
+`.odt`, `.ods` and `.odp`, the old Office header for `.doc`, `.xls` and `.ppt`, `{\rtf` for RTF).
+Plain text, CSV and TSV may be in any 8-bit encoding (UTF-8, or Latin-1 from a spreadsheet), but
+not hold a NUL byte, start with markup, a `#!` script line or a PDF or PostScript header, or carry
+an HTML, SVG or XML tag in their first 4 KiB. A file that fails is not opened — a web page
+labelled as a picture would otherwise open in your browser — and is saved instead, with a line
+that says so. `s` saves the highlighted attachment, `S` saves every
 attachment of its message, and `Esc`, `q` or `a` closes the list. From the reader itself, `w`
 saves the cursor message's attachments without opening the list. Saves land in `[general]
 attachment_dir` (below), your download directory by default, and never replace a file you have: a

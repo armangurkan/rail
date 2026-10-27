@@ -20,6 +20,7 @@ use crate::tui::modals::{AttachmentRow, AttachmentTarget};
 use crate::tui::test_util::{recording_opener, render_lines, snapshot};
 
 mod keys;
+mod mismatch;
 mod outcomes;
 
 /// Fixture **F**'s parts: `(remote message id, part id, filename, size, mime type)`.
@@ -758,13 +759,15 @@ fn printed_events() -> [String; 2] {
         dir: "/x".into(),
         single: true,
         name: Some("plan.pdf".into()),
-        unopenable: Some("application/pdf".into()),
+        unopenable: Some(crate::tui::data::NotOpened::Type("application/pdf".into())),
     };
     let openend = MailEvent::AttachmentOpened {
         result: Ok(AttachmentOpenResponse {
             path: "/x/plan.pdf".into(),
         }),
         account: "work".into(),
+        message: "m1".into(),
+        part_id: "0.1".into(),
         filename: "plan.pdf".into(),
     };
     [format!("{saved:?}"), format!("{openend:?}")]

@@ -4,6 +4,7 @@
 
 pub mod accounts;
 pub mod actions;
+pub mod attachment_content;
 pub mod attachments;
 pub mod body;
 pub mod confirm;
@@ -20,6 +21,8 @@ pub mod status;
 pub mod sync;
 pub mod untrusted;
 
+#[cfg(test)]
+mod attachment_content_tests;
 #[cfg(test)]
 mod attachments_tests;
 #[cfg(test)]
@@ -40,10 +43,12 @@ pub use actions::{
     M365_NO_ARCHIVE, MAX_ACTION_LABELS, MAX_ACTION_THREADS, MAX_CLIENT_TOKEN_CHARS, MAX_UNDO_ROWS,
     OutboxDepth, OutboxId, RowToken, UNDO_GRACE, checked_token, client_token,
 };
+pub use attachment_content::{Signature, content_matches};
 pub use attachments::{
     AttachmentOpenRequest, AttachmentOpenResponse, AttachmentOutcome, AttachmentResult,
-    AttachmentSaveRequest, AttachmentSaveResponse, MAX_DIR_BYTES, MAX_PART_ID_BYTES,
-    MAX_SAVE_PARTS, OPENABLE, STALE_AFTER, not_absolute_dir, openable, unwritable_dir,
+    AttachmentSaveRequest, AttachmentSaveResponse, CONTENT_MISMATCH, MAX_DIR_BYTES,
+    MAX_PART_ID_BYTES, MAX_SAVE_PARTS, OPENABLE, STALE_AFTER, not_absolute_dir, openable,
+    unwritable_dir,
 };
 pub use body::{
     BodyFetchRequest, BodyFetchResponse, BodyFetchResult, BodyOutcome, MAX_BODY_FETCH,

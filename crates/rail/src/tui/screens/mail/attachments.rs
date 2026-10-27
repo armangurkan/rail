@@ -10,14 +10,14 @@ use std::path::{Path, PathBuf};
 
 use rail_core::config::AccountKind;
 use rail_core::ops::{
-    AttachmentOpenResponse, AttachmentOutcome, AttachmentResult, AttachmentSaveResponse, ErrorCode,
-    OpError, openable,
+    AttachmentOpenResponse, AttachmentOutcome, AttachmentResult, AttachmentSaveResponse,
+    CONTENT_MISMATCH, ErrorCode, OpError, openable,
 };
 use rail_core::provider::graph::REFERENCE_ATTACHMENT;
 
 use super::MailScreen;
 use crate::tui::app::Effect;
-use crate::tui::data::MailEvent;
+use crate::tui::data::{MailEvent, NotOpened};
 use crate::tui::modals::{AttachmentTarget, Command, Confirm, Modal};
 use crate::tui::text::escape;
 
@@ -50,11 +50,11 @@ impl MailScreen {
     }
 
     /// The list's `s`: save the highlighted part alone. `unopenable` is set when an `Enter`
-    /// on a type Rail does not open became this save.
+    /// Rail would not open became this save, and says why.
     pub(super) fn save_attachment(
         &mut self,
         target: AttachmentTarget,
-        unopenable: Option<String>,
+        unopenable: Option<NotOpened>,
     ) -> Vec<Effect> {
         self.send_save(
             &target.account,
@@ -107,7 +107,7 @@ impl MailScreen {
         message: &str,
         part_ids: Vec<String>,
         name: Option<String>,
-        unopenable: Option<String>,
+        unopenable: Option<NotOpened>,
     ) -> Vec<Effect> {
         let Some(dir) = self
             .ctx
@@ -150,18 +150,26 @@ impl MailScreen {
                 name,
                 unopenable,
                 ..
-            } => self.attachment_saved(
-                result,
-                &account,
-                &dir,
-                name.as_deref(),
-                unopenable.as_deref(),
-            ),
+            } => {
+                self.attachment_saved(result, &account, &dir, name.as_deref(), unopenable.as_ref())
+            }
             MailEvent::AttachmentOpened {
                 result,
                 account,
+                message,
+                part_id,
                 filename,
-            } => self.attachment_opened(result, &account, &filename),
+            } => {
+                // The type is not needed again: an open the daemon refused is only ever saved.
+                let target = AttachmentTarget {
+                    account,
+                    message,
+                    part_id,
+                    filename,
+                    mime_type: String::new(),
+                };
+                self.attachment_opened(result, target)
+            }
             other => self.action_event(other),
         }
     }
@@ -173,7 +181,7 @@ impl MailScreen {
         account: &str,
         dir: &str,
         name: Option<&str>,
-        unopenable: Option<&str>,
+        unopenable: Option<&NotOpened>,
     ) -> Vec<Effect> {
         let response = match result {
             Ok(response) => response,
@@ -209,7 +217,7 @@ impl MailScreen {
         account: &str,
         dir: &str,
         name: Option<&str>,
-        unopenable: Option<&str>,
+        unopenable: Option<&NotOpened>,
     ) -> (String, bool) {
         let total = results.len();
         let saved = results.iter().filter(|r| written(r).is_some()).count();
@@ -221,9 +229,12 @@ impl MailScreen {
             // The name the file actually got, so a clash that became `2-plan.pdf` says so.
             let file = escape(written(&results[0]).unwrap_or_default());
             let text = match unopenable {
-                Some(mime) => format!(
+                Some(NotOpened::Type(mime)) => format!(
                     "Rail does not open {} files; saved {file} to {dir}",
                     escape(mime)
+                ),
+                Some(NotOpened::Contents) => format!(
+                    "Rail does not open a file whose contents do not match its type; saved {file} to {dir}"
                 ),
                 None => format!("Saved {file} to {dir}"),
             };
@@ -290,7 +301,7 @@ impl MailScreen {
         }
         if openable(&target.mime_type).is_none() {
             let mime = target.mime_type.clone();
-            return self.save_attachment(target, Some(mime));
+            return self.save_attachment(target, Some(NotOpened::Type(mime)));
         }
         if !self.attachment.confirmed {
             self.modal = Some(Modal::Confirm(Confirm::new(
@@ -310,18 +321,23 @@ impl MailScreen {
     }
 
     /// `attachment.open` answered: the path becomes a `file://` URL for the opener, and the
-    /// copy is remembered so closing the reader removes it.
+    /// copy is remembered so closing the reader removes it. Bytes the daemon found not to match
+    /// their type are saved instead, as a type Rail does not open is, and the opener is never
+    /// called.
     pub(super) fn attachment_opened(
         &mut self,
         result: Result<AttachmentOpenResponse, OpError>,
-        account: &str,
-        filename: &str,
+        target: AttachmentTarget,
     ) -> Vec<Effect> {
         let answer = match result {
             Ok(answer) => answer,
+            Err(error) if is_content_mismatch(&error) => {
+                tracing::warn!("an attachment's bytes did not match its type; saving it instead");
+                return self.save_attachment(target, Some(NotOpened::Contents));
+            }
             Err(error) => {
                 tracing::warn!(code = ?error.code, "an attachment could not be opened");
-                let text = self.open_failure(&error, account, filename);
+                let text = self.open_failure(&error, &target.account, &target.filename);
                 self.status.error(text, self.ctx.clock.now(), self.tick);
                 return Vec::new();
             }
@@ -378,6 +394,12 @@ fn open_lines() -> Vec<String> {
             .to_string(),
         "Rail asks once per session; the files are removed when you close the reader.".to_string(),
     ]
+}
+
+/// The daemon's refusal of bytes that do not match their declared type: Rail's own words,
+/// matched exactly, as `REFERENCE_ATTACHMENT` is.
+fn is_content_mismatch(error: &OpError) -> bool {
+    error.code == ErrorCode::Unsupported && error.message == CONTENT_MISMATCH
 }
 
 /// The file name a `Saved` outcome's path ends in; `None` for a part that did not land.

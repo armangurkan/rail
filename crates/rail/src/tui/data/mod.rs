@@ -65,6 +65,15 @@ pub enum DaemonEvent {
     Woke(SnoozeWoke),
 }
 
+/// Why an `Enter` on an attachment became a save, carried with the save so its line says so.
+#[derive(Clone, PartialEq, Eq)]
+pub enum NotOpened {
+    /// A type outside the open list: the sender's declared type, drawn escaped.
+    Type(String),
+    /// The daemon found the bytes are not what the declared type says (#107).
+    Contents,
+}
+
 /// One answer to the mail screen.
 pub enum MailEvent {
     Listed {
@@ -228,20 +237,23 @@ pub enum MailEvent {
     /// `Missing` line; `dir` is what the status line says the files landed in; `single` is
     /// true when one part was asked for (`s` or an `Enter` Rail would not open), which is what
     /// the log says about the save. `name` is the file that save asked for, when it was one,
-    /// and `unopenable` the type an `Enter` would not open when that turned into a save
-    /// (FR-6): both travel with the answer, so two saves in flight never cross their lines.
+    /// and `unopenable` why an `Enter` did not open it when that turned into a save (FR-6,
+    /// #107): both travel with the answer, so two saves in flight never cross their lines.
     AttachmentSaved {
         result: Result<AttachmentSaveResponse, OpError>,
         account: String,
         dir: String,
         single: bool,
         name: Option<String>,
-        unopenable: Option<String>,
+        unopenable: Option<NotOpened>,
     },
-    /// `attachment.open` answered; `filename` names the part in a failure's line.
+    /// `attachment.open` answered; `filename` names the part in a failure's line, and
+    /// `message` and `part_id` say which part to save when the daemon would not open it.
     AttachmentOpened {
         result: Result<AttachmentOpenResponse, OpError>,
         account: String,
+        message: String,
+        part_id: String,
         filename: String,
     },
 }
