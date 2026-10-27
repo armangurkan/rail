@@ -167,10 +167,10 @@ async fn open_failures_each_get_their_own_line() {
     assert!(opened.lock().unwrap().is_empty(), "nothing was opened");
 }
 
-/// AC-40b: two saves in flight keep their own status lines. The file a save named, and the
-/// type an `Enter` would not open, travel with that save's own answer; they used to sit in one
-/// screen-wide slot that the next save overwrote and the first answer emptied, so whichever
-/// answer arrived first spoke for the wrong save.
+/// §8's status lines, beyond AC-40: two saves in flight keep their own. The file a save named, and
+/// the type an `Enter` would not open, travel with that save's own answer; they used to sit in one
+/// screen-wide slot that the next save overwrote and the first answer emptied, so whichever answer
+/// arrived first spoke for the wrong save.
 #[tokio::test]
 async fn two_saves_in_flight_keep_their_own_status_lines() {
     // `press` settles a key's effects before it returns, so the two saves are sent by hand and

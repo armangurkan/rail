@@ -236,9 +236,10 @@ async fn a_hidden_name_is_made_visible() {
     assert_eq!(path, dest.join("attachment"));
 }
 
-/// AC-16c: a name that only *looks* visible is made visible too. `sanitize_filename` keeps the
-/// space between a leading dot and the rest, and `draft_files::file_name` sanitizes every
-/// candidate again — trimming that space — so stripping the dots alone still wrote `.zshenv`.
+/// FR-11, as AC-16b's `.zshenv`: a name that only *looks* visible is made visible too.
+/// `sanitize_filename` keeps the space between a leading dot and the rest, and
+/// `draft_files::file_name` sanitizes every candidate again — trimming that space — so stripping
+/// the dots alone still wrote `.zshenv`.
 #[tokio::test]
 async fn a_name_that_only_looks_visible_is_still_made_visible() {
     let (h, dest) = fixture().await;
@@ -290,7 +291,8 @@ async fn an_option_shaped_name_loses_its_dashes() {
     }
 }
 
-/// FR-2/FR-5: Gmail stores `""` as the part id of a single-part message whose top part is the
+/// §7's part-id limit, through FR-4's `s` and FR-5's `Enter`: Gmail stores `""` as the part
+/// id of a single-part message whose top part is the
 /// file itself (`gmail/body.rs`'s `part_id_ok` keeps it, and `find_part` matches the payload
 /// for it), so `s`, `Enter` and `o` have to reach that part: an empty **part** id is one both
 /// operations take.
@@ -394,9 +396,9 @@ async fn provider_failures_map_to_missing_and_failed() {
     assert!(entries(&dest).is_empty(), "{:?}", entries(&dest));
 }
 
-/// FR-3: a network failure stops the save. Every part after the first such failure is given
-/// that same failure without a fetch of its own, so a save of a many-part message cannot hold
-/// `Saving…` up for a retry run per part while the network is down.
+/// FR-13 (one part fetched at a time): a network failure stops the save. Every part after the first
+/// such failure is given that same failure without a fetch of its own, so a save of a many-part
+/// message cannot hold `Saving…` up for a retry run per part while the network is down.
 #[tokio::test]
 async fn a_network_failure_stops_the_fetches_that_would_follow() {
     let (h, dest) = fixture().await;

@@ -1,8 +1,8 @@
-//! The sweep's own two loops. A copy's directory can go between the moment the sweep lists it
-//! and the moment it reads it — the reader removes the copies it opened (`tui::open`), and the
-//! sweep before every open runs beside the one at start — and a directory the sweep cannot read
-//! at all must not stop it from sweeping the rest. Neither can be raced into a real sweep from
-//! a test, so the loops are driven directly, beside the handler they belong to.
+//! FR-15's sweep, at the level of its own two loops. A copy's directory can go between the moment
+//! the sweep lists it and the moment it reads it — the reader removes the copies it opened
+//! (`tui::open`), and the sweep before every open runs beside the one at start — and a directory
+//! the sweep cannot read at all must not stop it from sweeping the rest. Neither can be raced into
+//! a real sweep from a test, so the loops are driven directly, beside the handler they belong to.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
