@@ -22,6 +22,7 @@ use crate::tui::test_util::render_lines;
 
 mod chunks;
 mod late_answers;
+mod sender;
 mod shift_range;
 
 /// Press a two-key chord, e.g. `chord(f, '*', 'a')`.

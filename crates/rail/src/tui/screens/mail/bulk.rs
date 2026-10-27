@@ -290,7 +290,8 @@ impl MailScreen {
         Vec::new()
     }
 
-    /// `* f`: read the `From` of the cursor thread's newest message, to filter by.
+    /// `* f`: read the `From` of the cursor thread's newest message someone other than the user
+    /// sent, to filter by.
     pub(super) fn select_sender(&mut self) -> Vec<Effect> {
         let Some(thread_id) = self.list.selected().map(|row| row.key.thread_id) else {
             return Vec::new();
