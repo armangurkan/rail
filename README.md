@@ -654,7 +654,8 @@ refuses an action for good (the thread or the label no longer exists), Rail undo
 list, shows "Could not archive: …" on the thread's row, and keeps the error in `:errors`, where
 `Enter` on it sends the action again. Refusals are listed in `:errors` again whenever Rail
 connects to the daemon, so one that happened while Rail was closed or disconnected is not lost.
-A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed`.
+A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed` (a
+snoozed thread's failed return excepted: see [Snooze](#snooze)).
 On a Microsoft 365 account the same keys act through Outlook's folders, where a message lives in
 one folder. `e` moves the thread's Inbox messages to Archive; on a mailbox with no Archive folder
 it says `This mailbox has no Archive folder; press m to move.` (Rail never makes one). `d` moves
@@ -727,7 +728,11 @@ devices show the thread archived until it comes back, and it comes back while th
 snooze took out of the inbox: on Gmail it adds `INBOX` to them (one you trashed or reported as
 spam meanwhile stays there), and on Microsoft 365 it moves them from Archive back to Inbox (one
 you moved to another folder meanwhile stays there). If the server refuses the archive, the snooze fails with it (`Could not archive: …`, and
-`Enter` in `:errors` sends it again); snoozing the thread again starts afresh. Removing an account
+`Enter` in `:errors` sends it again); snoozing the thread again starts afresh. A return the server
+cannot take right away is tried again like any action; one it refuses, or that gives up after 20
+attempts, leaves the thread archived and stays in `:errors` (`Could not return to the inbox: …`)
+through later syncs, where `Enter` sends it again. It leaves `:errors` once it is sent, once the
+thread is back in the inbox by other means, or when you archive, trash or move the thread. Removing an account
 leaves its snoozed threads archived, since nothing syncs that account any more.
 
 ## Writing mail

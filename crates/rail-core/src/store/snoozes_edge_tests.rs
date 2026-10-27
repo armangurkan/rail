@@ -49,7 +49,7 @@ fn failed_rows(store: &Store) -> i64 {
 }
 
 /// Rail queues `action` on `thread` (account 1).
-fn act(store: &mut Store, action: Action, thread: i64, token: &str) {
+pub(super) fn act(store: &mut Store, action: Action, thread: i64, token: &str) {
     let new = NewAction {
         account_id: 1,
         action,
@@ -63,7 +63,7 @@ fn act(store: &mut Store, action: Action, thread: i64, token: &str) {
 }
 
 /// t1 snoozed until `NOW + HOUR`, its archive sent, then woken at `NOW + HOUR`.
-fn woken_t1(store: &mut Store) -> i64 {
+pub(super) fn woken_t1(store: &mut Store) -> i64 {
     let t1 = thread(store, "t1");
     snooze(store, vec![t1], NOW + HOUR, "a");
     send_next(store, NOW + 10);

@@ -19,6 +19,9 @@ use super::{Store, StoreError, rollup};
 use crate::config::FolderModel;
 use crate::ops::{Action, OutboxId, client_token};
 
+mod settle;
+pub(super) use settle::{left_inbox, return_still_owed, settle_woken};
+
 /// Messages of a thread that `prune_old` and `sweep_unseen` keep: a snoozed thread stays whole
 /// until it comes back.
 pub(super) const NOT_SNOOZED: &str = "NOT EXISTS (SELECT 1 FROM threads st JOIN snoozes s
@@ -559,56 +562,6 @@ pub(super) fn incoming(
         return Ok(0);
     }
     Ok(tx.execute(INCOMING, params![account, json(&messages), now])?)
-}
-
-/// Rail archived, trashed or moved `threads` (or snoozes one again): a thread that came back from
-/// a snooze leaves its woken row, so its rollup dates it by its mail again.
-pub(super) fn left_inbox(
-    tx: &Transaction,
-    account: i64,
-    action: &Action,
-    threads: &[i64],
-) -> Result<(), StoreError> {
-    if !matches!(
-        action,
-        Action::Archive {} | Action::Trash {} | Action::Move { .. }
-    ) {
-        return Ok(());
-    }
-    tx.execute(
-        "DELETE FROM snoozes WHERE account_id = ?1 AND woken_at IS NOT NULL
-           AND EXISTS (SELECT 1 FROM threads t WHERE t.account_id = snoozes.account_id
-                       AND t.remote_id = snoozes.thread_remote
-                       AND t.id IN (SELECT value FROM json_each(?2)))",
-        params![account, json(&threads)],
-    )?;
-    Ok(())
-}
-
-/// A sync batch touched `threads`: one that came back from a snooze but is out of the inbox now
-/// (archived elsewhere, or its return reverted) leaves its woken row, so the rollup dates it by
-/// its mail again. Run after the waiting actions are applied again, so a return still on its way
-/// keeps the thread in the inbox.
-pub(super) fn settle_woken(
-    tx: &Transaction,
-    account: i64,
-    threads: &BTreeSet<i64>,
-) -> Result<(), StoreError> {
-    if threads.is_empty() {
-        return Ok(());
-    }
-    tx.execute(
-        "DELETE FROM snoozes WHERE account_id = ?1 AND woken_at IS NOT NULL
-           AND EXISTS (SELECT 1 FROM threads t WHERE t.account_id = snoozes.account_id
-                       AND t.remote_id = snoozes.thread_remote
-                       AND t.id IN (SELECT value FROM json_each(?2))
-                       AND NOT EXISTS (SELECT 1 FROM messages m
-                                       JOIN message_folders mf ON mf.message_id = m.id
-                                       JOIN folders f ON f.id = mf.folder_id
-                                       WHERE m.thread_id = t.id AND f.kind = 'inbox'))",
-        params![account, json(threads)],
-    )?;
-    Ok(())
 }
 
 fn forget_woken(tx: &Transaction, account: i64, remote: &str) -> Result<(), StoreError> {

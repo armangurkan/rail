@@ -32,6 +32,8 @@ pub mod snoozes;
 #[cfg(test)]
 mod snoozes_edge_tests;
 #[cfg(test)]
+mod snoozes_return_tests;
+#[cfg(test)]
 mod snoozes_single_tests;
 #[cfg(test)]
 mod snoozes_tests;
