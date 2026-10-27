@@ -147,6 +147,31 @@ fn subjects(f: &Fixture) -> Vec<String> {
         .collect()
 }
 
+/// The thread ids the list shows, ascending: what a select-all over it must take.
+fn listed_ids(f: &Fixture) -> Vec<i64> {
+    let mut ids: Vec<i64> = f
+        .screen
+        .list
+        .rows()
+        .iter()
+        .map(|r| r.key.thread_id)
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// The selected thread ids, ascending (`Selection` keeps them in a `BTreeMap`), as
+/// `tests/bulk.rs` reads them.
+fn selected_ids(f: &Fixture) -> Vec<i64> {
+    f.screen
+        .actions
+        .selection
+        .targets()
+        .iter()
+        .map(|(id, _)| *id)
+        .collect()
+}
+
 /// The `(label, count)` of every saved-search row, in sidebar order.
 fn saved_rows(f: &Fixture) -> Vec<(String, Option<u64>)> {
     f.screen
@@ -556,6 +581,38 @@ async fn account_inside_a_saved_query_narrows_the_list_and_the_count() {
     assert_eq!(subjects(&f), ["subject dh"]);
     set_filter(&mut f, "account:work").await;
     assert!(subjects(&f).is_empty(), "{:?}", subjects(&f));
+}
+
+/// Plan C.4 (FR-10, FR-12): `* a` inside an open saved search selects exactly the rows it
+/// lists — the header's count and the ids — and never a thread the search leaves out. The
+/// select-all and the list read through the one `ListQuery` `list_query` builds
+/// (`data/store_reader.rs`), and this is what holds the match path there: five threads in the
+/// store, two of them the search's.
+#[tokio::test]
+async fn select_all_in_a_saved_search_selects_only_its_matches() {
+    let envelopes = vec![
+        (0, dana("d1", "dt1", BASE_MS, "Label_1", false)),
+        (0, dana("d2", "dt2", BASE_MS + 60_000, "Label_1", false)),
+        (0, mail_envelope("w1", "wt1", BASE_MS + 120_000)),
+        (0, mail_envelope("w2", "wt2", BASE_MS + 180_000)),
+        (1, mail_envelope("h1", "ht1", BASE_MS + 240_000)),
+    ];
+    let mut f = saved_fixture(&envelopes, &[("dana", "from:dana")]).await;
+    sidebar_to(&mut f, None, "dana").await;
+    press(&mut f, KeyCode::Enter).await;
+    assert_eq!(subjects(&f), ["subject d2", "subject d1"]);
+    let listed = listed_ids(&f);
+    assert_eq!(listed.len(), 2, "two of the five threads: {listed:?}");
+
+    press(&mut f, KeyCode::Char('*')).await;
+    press(&mut f, KeyCode::Char('a')).await;
+
+    assert!(
+        f.screen.header_left().contains("· 2 selected"),
+        "{}",
+        f.screen.header_left()
+    );
+    assert_eq!(selected_ids(&f), listed, "exactly the rows it lists");
 }
 
 /// AC-19 (FR-19): `:search-counts` turns the counts off and on, saving, nothing else touched.
