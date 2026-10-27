@@ -235,7 +235,7 @@ impl MailScreen {
         self.reader = None;
         self.modal = None;
         self.open_files.remove_all();
-        self.opened_attachments.remove_all();
+        self.opened_attachments.close(self.tick);
         self.pending_open = None;
         // An answer to a read still in flight must not reopen the thread.
         self.latest_thread = self.next_seq();

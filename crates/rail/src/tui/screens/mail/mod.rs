@@ -246,8 +246,8 @@ pub struct MailScreen {
     html_confirmed: bool,
     /// What the attachment keys are waiting on.
     attachment: attachments::AttachmentState,
-    /// The copies `attachment.open` wrote this session, removed when the reader closes and on
-    /// drop, so quitting takes them too.
+    /// The copies `attachment.open` wrote this session, removed `OPENED_GRACE` after the reader
+    /// closes (on a later tick) and at once on drop, so quitting takes them too.
     opened_attachments: OpenedAttachments,
     /// The message `o` is waiting on a body fetch for.
     pending_open: Option<i64>,
@@ -654,6 +654,7 @@ impl Screen for MailScreen {
             Msg::Tick => {
                 self.tick = self.tick.wrapping_add(1);
                 self.status.tick(self.tick);
+                self.opened_attachments.expire(self.tick);
                 Vec::new()
             }
             Msg::Resize(..) => Vec::new(),

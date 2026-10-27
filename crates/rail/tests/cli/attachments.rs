@@ -609,9 +609,10 @@ fn wait_removed(run: &Run, copies: &[&Path]) {
 }
 
 /// US-3, US-4, FR-5, FR-7, FR-14, FR-15: the session's first `Enter` asks, `y` hands a private
-/// copy to the stand-in opener, a second `Enter` opens without asking, closing the reader
-/// removes both copies and their token directories, and a copy still open when Rail ends goes
-/// with it.
+/// copy to the stand-in opener, a second `Enter` opens without asking, and quitting removes
+/// both copies and their token directories — closing the reader first leaves them their
+/// minute's grace (#108), which a quit does not wait out — and a copy still open when Rail
+/// ends goes with it.
 #[tokio::test]
 async fn opening_asks_once_then_hands_a_private_copy_to_the_opener() {
     if !script_available() {
@@ -640,15 +641,14 @@ async fn opening_asks_once_then_hands_a_private_copy_to_the_opener() {
         "and the second read it once more"
     );
     assert_ne!(again.parent(), asked.parent(), "a token directory each");
-    bulk::type_keys(&mut run.keys, b"q");
+    ends(&mut run, b"qq");
     wait_removed(&run, &[&asked, &again]);
-    ends(&mut run, b"q");
     a_copy_still_open_when_rail_ends_goes_with_it().await;
 }
 
-/// The session's end, on a run of its own: `q` in the reader is `reader.back`, which removes
-/// the copies on its way out, so a copy that is still open when Rail ends needs a quit that
-/// skips the reader — Ctrl-C always quits (`tui/app.rs:158`). A second run also starts the
+/// The session's end, on a run of its own: `q` in the reader is `reader.back`, which starts
+/// the copies' grace on its way out, so a copy that is still open when Rail ends needs a quit
+/// that skips the reader — Ctrl-C always quits (`tui/app.rs:158`). A second run also starts the
 /// session's question again, which `answer_the_open_question` asserts.
 async fn a_copy_still_open_when_rail_ends_goes_with_it() {
     let last = tempfile::tempdir().unwrap();

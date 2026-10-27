@@ -1,6 +1,6 @@
 //! Saving and opening a thread's attachments from the reader: the list with its cursor and its
 //! message headings, `s`, `S` and `w`, the once-a-session open question, the status line each
-//! outcome gets, the modal's snapshots, and the copies removed when the reader closes.
+//! outcome gets and the modal's snapshots; the copies' removal is in `grace.rs`.
 
 use std::path::PathBuf;
 
@@ -19,6 +19,7 @@ use super::*;
 use crate::tui::modals::{AttachmentRow, AttachmentTarget};
 use crate::tui::test_util::{recording_opener, render_lines, snapshot};
 
+mod grace;
 mod keys;
 mod mismatch;
 mod outcomes;
@@ -44,7 +45,7 @@ const OPEN_LINES: [&str; 4] = [
     "Rail writes this attachment to a private temporary file and hands it to your system opener.",
     "Which program runs is your system's choice, and the file came from the sender, not from Rail.",
     "Office documents and RTF can hold macros or links that run or fetch content when opened.",
-    "Rail asks once per session; the files are removed when you close the reader.",
+    "Rail asks once per session; the files are removed a minute after you close the reader.",
 ];
 
 /// One row inside the box: marker 2 · name 38 · 1 · type 24 · 1 · size 8, right-aligned, over
@@ -689,55 +690,6 @@ async fn attachments_modal_survives_tiny_areas() {
             })
             .expect("draw");
     }
-}
-
-/// AC-28: the copies `attachment.open` wrote go when the reader closes, and when the screen is
-/// dropped with the reader still open.
-#[tokio::test]
-async fn closing_the_reader_removes_what_it_opened() {
-    // Two attachments, as AC-28 asks: the first answers the session's open question, the second
-    // goes straight through. Each gets its own token directory, so a `remove_all` that removed
-    // only the last path would fail here.
-    let (mut f, opened) = attachment_fixture().await;
-    press(&mut f, KeyCode::Char('a')).await;
-    press(&mut f, KeyCode::Enter).await;
-    press(&mut f, KeyCode::Char('y')).await;
-    press(&mut f, KeyCode::Char('a')).await;
-    highlight(&mut f, "logo.png").await;
-    press(&mut f, KeyCode::Char('o')).await;
-    let written: Vec<PathBuf> = opened
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|url| url.to_file_path().expect("a file URL"))
-        .collect();
-    assert_eq!(written.len(), 2, "{written:?}");
-    for path in &written {
-        assert!(path.is_file(), "the fake wrote {written:?}");
-    }
-    let dirs: Vec<&std::path::Path> = written
-        .iter()
-        .map(|path| path.parent().expect("a token directory"))
-        .collect();
-    assert_ne!(dirs[0], dirs[1], "a token directory each: {written:?}");
-    press(&mut f, KeyCode::Char('q')).await;
-    for path in &written {
-        assert!(!path.exists(), "the file stayed: {path:?}");
-    }
-    for dir in &dirs {
-        assert!(!dir.exists(), "the token directory stayed: {dir:?}");
-    }
-
-    let (mut f, opened) = confirmed_fixture().await;
-    press(&mut f, KeyCode::Char('a')).await;
-    press(&mut f, KeyCode::Char('o')).await;
-    let path = opened.lock().unwrap()[0]
-        .to_file_path()
-        .expect("a file URL");
-    assert!(path.is_file());
-    let Fixture { _tmp, screen, .. } = f;
-    drop(screen);
-    assert!(!path.exists(), "dropping the screen removed it");
 }
 
 /// The modal's row and the open target, each printed through `Debug`.

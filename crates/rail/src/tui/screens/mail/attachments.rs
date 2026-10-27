@@ -321,9 +321,9 @@ impl MailScreen {
     }
 
     /// `attachment.open` answered: the path becomes a `file://` URL for the opener, and the
-    /// copy is remembered so closing the reader removes it. Bytes the daemon found not to match
-    /// their type are saved instead, as a type Rail does not open is, and the opener is never
-    /// called.
+    /// copy is remembered so it goes `OPENED_GRACE` after the reader closes. Bytes the daemon
+    /// found not to match their type are saved instead, as a type Rail does not open is, and
+    /// the opener is never called.
     pub(super) fn attachment_opened(
         &mut self,
         result: Result<AttachmentOpenResponse, OpError>,
@@ -395,7 +395,8 @@ fn open_lines() -> Vec<String> {
             .to_string(),
         "Office documents and RTF can hold macros or links that run or fetch content when opened."
             .to_string(),
-        "Rail asks once per session; the files are removed when you close the reader.".to_string(),
+        "Rail asks once per session; the files are removed a minute after you close the reader."
+            .to_string(),
     ]
 }
 
