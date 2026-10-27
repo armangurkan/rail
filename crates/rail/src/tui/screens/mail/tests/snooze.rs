@@ -184,7 +184,11 @@ async fn a_selection_is_snoozed_with_one_call_per_account() {
             panic!("{call:?}");
         };
         assert_eq!((until, grace), (MIDNIGHT + 18 * HOUR, true));
-        assert_eq!(threads.len(), 2, "{account}");
+        assert_eq!(
+            threads.len(),
+            2,
+            "each account's snooze call carries two threads"
+        );
         accounts.push(account);
         snoozed.extend(threads);
     }
