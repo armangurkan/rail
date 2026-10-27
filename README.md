@@ -509,6 +509,8 @@ always act on the search the prompt or the question named: if the list changed w
 was open — an earlier save or removal was answered underneath it — Rail says
 `The saved searches changed; try again.` and changes nothing. Rail keeps at most 20 saved
 searches, in `[[saved_searches]]` in `config.toml`, where they are yours to read, edit and share.
+On a large mailbox each counted search costs a query of its own on every sidebar refresh, so
+`:search-counts` turns the counts off.
 
 `:` opens the command palette: type a few letters of a key action for the current view, an account,
 a label or a merged mailbox (`Mailbox: Starred`, `Mailbox: Drafts`, `Mailbox: Sent`,
