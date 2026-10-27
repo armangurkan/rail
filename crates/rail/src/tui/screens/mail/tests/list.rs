@@ -441,8 +441,7 @@ async fn the_capped_select_all_note_goes_when_the_selection_changes_another_way(
     assert!(!f.screen.bulk.more, "`Space` picked one row");
     assert!(
         !f.screen.header_left().contains("more match"),
-        "{}",
-        f.screen.header_left()
+        "`Space` takes `(more match)` off the header"
     );
 
     f.screen.bulk.more = true;

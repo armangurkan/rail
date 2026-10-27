@@ -217,8 +217,7 @@ async fn select_all_selects_every_matching_thread() {
     );
     assert!(
         f.screen.header_left().contains("· 62 selected"),
-        "{}",
-        f.screen.header_left()
+        "the header counts the 62 selected threads"
     );
 }
 
@@ -244,8 +243,7 @@ async fn select_all_honours_the_live_filter() {
     assert_eq!(selected_ids(&f), wanted);
     assert!(
         f.screen.header_left().contains("· 3 selected"),
-        "{}",
-        f.screen.header_left()
+        "the header counts the 3 selected threads"
     );
 }
 
@@ -307,8 +305,7 @@ async fn a_capped_select_all_says_more_match() {
         f.screen
             .header_left()
             .ends_with("· 10,000 selected (more match)"),
-        "{}",
-        f.screen.header_left()
+        "the header says 10,000 selected and that more match"
     );
 }
 
