@@ -34,7 +34,7 @@ pub const STALE_AFTER: Duration = Duration::from_secs(86_400);
 /// executable formats are deliberately absent — `text/html`, `image/svg+xml`, shell scripts,
 /// `.desktop`, `.app`, `.pkg`, `.dmg`, `.jar`, `.scpt` — because opening runs a program of the
 /// system's choosing on bytes a stranger sent. `text/markdown` is absent too: common Markdown
-/// viewers render embedded HTML in a WebView, which would undo the `text/html` exclusion.
+/// viewers render embedded HTML in a `WebView`, which would undo the `text/html` exclusion.
 pub const OPENABLE: [(&str, &str); 21] = [
     ("application/pdf", "pdf"),
     ("text/plain", "txt"),
