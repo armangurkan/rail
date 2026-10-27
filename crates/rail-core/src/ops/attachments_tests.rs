@@ -32,14 +32,14 @@ fn save_response() -> AttachmentSaveResponse {
 fn the_two_names_exist_and_are_not_retry_safe() {
     assert_eq!(names::ATTACHMENT_SAVE, "attachment.save");
     assert_eq!(names::ATTACHMENT_OPEN, "attachment.open");
-    // Slots 25 and 26: appended after `draft.import` and adjacent in that order.
-    assert_eq!(names::ALL[24], names::ATTACHMENT_SAVE);
-    assert_eq!(names::ALL[25], names::ATTACHMENT_OPEN);
-    let after_import = names::ALL
+    // Slots 27 and 28: appended after `snooze.clear` and adjacent in that order.
+    assert_eq!(names::ALL[26], names::ATTACHMENT_SAVE);
+    assert_eq!(names::ALL[27], names::ATTACHMENT_OPEN);
+    let after_clear = names::ALL
         .iter()
-        .position(|name| *name == names::DRAFT_IMPORT)
-        .expect("draft.import is in ALL");
-    assert_eq!(after_import + 1, 24, "the pair follows draft.import");
+        .position(|name| *name == names::SNOOZE_CLEAR)
+        .expect("snooze.clear is in ALL");
+    assert_eq!(after_clear + 1, 26, "the pair follows snooze.clear");
     assert!(!crate::daemon::retry_safe(names::ATTACHMENT_SAVE));
     assert!(!crate::daemon::retry_safe(names::ATTACHMENT_OPEN));
 }
