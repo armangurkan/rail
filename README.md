@@ -240,7 +240,10 @@ counts). They check before the terminal changes. A view's own key wins over a gl
 closes the reader but quits from the list. The defaults count too: `J`, `K`, `shift-down` and
 `shift-up` extend the selection in the list, so a `[keys]` entry that binds one of them to another
 list action (`"list.down" = "J"`, say) stops Rail from starting with that error until you change
-the entry or move `list.extend_down` / `list.extend_up` to other keys.
+the entry or move `list.extend_down` / `list.extend_up` to other keys. Likewise `h` snoozes in the
+list and the reader, so the reader's headers moved to `H`: an older `"reader.headers" = "h"` entry
+stops Rail from starting with `[keys] "list.snooze" (h) and "reader.headers" (h) cannot share a
+key in the reader view` until you remove it or bind `list.snooze` to another key.
 
 The `global.*`, `list.*`, `sidebar.*`, `reader.*` and `compose.*` actions below take effect in the
 mail screen and the `wizard.*` ones in the setup wizard. In the mail screen `?` lists the keys of the view you
@@ -432,8 +435,8 @@ at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its text. Wh
 oldest messages are not shown, `[5 older messages of this thread are not shown]` stands where they
 would be. `j`/`k` move the cursor, `n`/`p` jump between the newest message and each card, `Tab` (or
 `Enter` on a card, the subject or a preview) opens or closes the message under the cursor, and
-`Enter` on `[n quoted lines]` shows the quoted text. `H` shows or hides, for the session, the
-headers of every open message: `From:`, `To:` and `Cc:` with addresses,
+`Enter` on `[n quoted lines]` shows the quoted text. `H` (`h` before snooze took it) shows or
+hides, for the session, the headers of every open message: `From:`, `To:` and `Cc:` with addresses,
 `Date: Fri 10 Oct 2025 12:40`, and `Subject:` when it differs from the thread's. With
 `icons = "ascii"` the arrows are `>` and `v` and the rules `-`.
 
