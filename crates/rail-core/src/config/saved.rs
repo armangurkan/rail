@@ -111,9 +111,7 @@ pub fn check_put(
     replaces: Option<&str>,
 ) -> Result<(), String> {
     if check_name(name).is_err() {
-        return Err(format!(
-            "A saved search name must be 1 to {MAX_SAVED_SEARCH_NAME_CHARS} letters, digits, '-' or '_'."
-        ));
+        return Err(name_rule());
     }
     if duplicate_name(existing, name, replaces).is_some() {
         return Err(format!("A saved search named {name:?} already exists."));
