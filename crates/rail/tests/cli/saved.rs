@@ -11,6 +11,50 @@ fn with_searches(tables: &str) -> String {
 
 const DANA: &str = "\n[[saved_searches]]\nname = \"dana\"\nquery = \"from:dana\"\n";
 
+/// FR-20: the `[[accounts]]` table and the `[general]` key `WORK_FILE_BACKEND` puts in
+/// `config.toml` are still there after Rail rewrote the file. Asserted line by line rather
+/// than as one block: `toml_edit` keeps the tables it did not touch, not their spacing.
+#[cfg(all(target_os = "linux", debug_assertions))]
+fn keeps_the_account(text: &str) {
+    for wanted in [
+        "[[accounts]]",
+        "name = \"work\"",
+        "kind = \"gmail\"",
+        "address = \"me@example.com\"",
+        "client_id = \"cid\"",
+        "client_secret = \"sec\"",
+        "secrets = \"file\"",
+    ] {
+        assert!(text.contains(wanted), "{wanted} went missing:\n{text}");
+    }
+}
+
+/// The terminal every pseudo-terminal test here asks `stty` for.
+#[cfg(all(target_os = "linux", debug_assertions))]
+const COLS: usize = 100;
+#[cfg(all(target_os = "linux", debug_assertions))]
+const ROWS: usize = 30;
+
+/// The sidebar pane's slice of the drawn row holding `label`, trailing spaces trimmed: what
+/// the sidebar shows for that row, without the panes beside it, its count at the end.
+/// `pty::screen` gives each row as the terminal shows it; the sidebar has no left border and
+/// its 25 columns of content are followed by the divider `│` at column 26
+/// (`SIDEBAR_WIDTH = 26`, `screens/mail/layout.rs`), so the sidebar's cell is the text before
+/// the row's first `│`. The header's cell is `▍Rail `, so the `Search: <name>` it carries once
+/// a search is open can never be mistaken for a sidebar row.
+///
+/// A modal covers part of it: a centred box is 56 columns wide, so at 100 columns it starts at
+/// column 22, inside the sidebar, and its border cuts this slice before the count at the
+/// pane's right edge. So no count may be read off a row while a modal is open — the counts
+/// test waits for the palette to close first.
+#[cfg(all(target_os = "linux", debug_assertions))]
+fn sidebar_slice(rows: &[String], label: &str) -> Option<String> {
+    rows.iter()
+        .filter_map(|row| row.split('│').next())
+        .find(|cell| cell.contains(label))
+        .map(|cell| cell.trim_end().to_string())
+}
+
 /// The report row holding `FAIL config`, and everything below it (the `detail` row, which
 /// `outside()` wraps over as many rows as it needs).
 fn config_failure(text: &str) -> (String, String) {
@@ -126,7 +170,7 @@ fn saving_the_filter_writes_the_search_and_shows_it_in_the_sidebar() {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
-    use super::pty::{LIMIT, collect, drawn_row, script_available, text, wait_until};
+    use super::pty::{LIMIT, collect, drawn_row, screen, script_available, text, wait_until};
 
     if !script_available() {
         eprintln!("skipping: util-linux `script` is not installed");
@@ -185,6 +229,15 @@ fn saving_the_filter_writes_the_search_and_shows_it_in_the_sidebar() {
     assert!(saved.contains("[[saved_searches]]"), "{saved}");
     assert!(saved.contains("name = \"needs-reply\""), "{saved}");
     assert!(saved.contains("query = \"from:tom\""), "{saved}");
+    // FR-20: the `[[accounts]]` table `write_config` put there survives Rail's write.
+    keeps_the_account(&saved);
+    // US-2 (FR-8): the row carries its unread count, and the one seeded thread is unread.
+    // Read off `pty::screen`, which puts each row back together from the cells Rail drew.
+    let counted = output.clone();
+    wait_until("the search's unread count", &output, move || {
+        sidebar_slice(&screen(&text(&counted), COLS, ROWS), "needs-reply")
+            .is_some_and(|slice| slice.ends_with('1'))
+    });
 
     keys.write_all(b"q").unwrap();
     keys.flush().unwrap();
