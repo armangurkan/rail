@@ -14,8 +14,11 @@ never let a secret reach a log or the terminal.
 ```
 crates/rail-core/        Library: paths, config, store, auth, onboarding, operations, daemon, sync. No terminal dependency.
   src/config/            TOML model, loading with line-numbered errors, comment-preserving edits
+    config/saved.rs      The `[[saved_searches]]` tables: a name and the filter text it stands for, the rules a save or a rename must pass, and the `Debug` that prints a name but only the query's length
   src/store/             SQLite open, migrations, repositories
     store/view.rs        Read-only queries the mail screen runs: thread pages (an inbox, a folder, Starred, Snoozed, Sent and Trash across accounts), the sidebar's counts, one thread, a message's HTML
+    store/view_sidebar.rs The sidebar's numbers: each account's inbox, every folder of every account, the merged mailboxes, and one count per saved search
+    store/view_saved.rs  The count beside each saved search: the threads its query finds that hold an unread message, and the three things that bound what those queries cost
     store/filter.rs      The filter line's syntax as SQL conditions
     store/outbox.rs      The outbox queue the action operations and the worker share
     store/drafts.rs      Local drafts, their recipients and attachments
@@ -30,12 +33,14 @@ crates/rail-core/        Library: paths, config, store, auth, onboarding, operat
     ops/drafts.rs        The draft operations' types and the limits on a message
     ops/snooze.rs        `snooze.set`, `snooze.clear` and the `snooze.woke` notice, and a snooze's time limits
     ops/attachments.rs   `attachment.save` and `attachment.open`: their types, the id rule both check, and the types Rail hands to the system opener
+    ops/saved.rs         `saved_search.put` and `saved_search.remove`: their types, and why a saved query keeps `Debug` off all of them
   src/daemon/            JSON-RPC wire format, client and connector, the socket server and its handlers
     daemon/handlers/drafts.rs  The `draft.save`, `draft.send` and `draft.discard` handlers
     daemon/handlers/drafts_gmail.rs  The `draft.push` and `draft.import` handlers (either provider)
     daemon/handlers/draft_files.rs  The private files of an imported draft: fetch, removal, the start-up sweep
     daemon/handlers/snooze.rs  The `snooze.set` and `snooze.clear` handlers
     daemon/handlers/attachments.rs  The `attachment.save` and `attachment.open` handlers: the visible name a save writes under, the private copy an open hands to the opener, and the sweep of stale copies
+    daemon/handlers/saved.rs  The `saved_search.put` and `saved_search.remove` handlers: every refusal decided before the edit and under the config lock, so a clashing name and an unknown one are told apart
   src/accounts/          The add, login and remove pipeline the daemon runs
   src/guide/             Google and Microsoft setup steps as versioned data
   src/provider/          The provider trait, the shared HTTP layer (quota pacing, retries, the Graph dialect and limiter), the HTML-to-text scanner (`provider/html.rs`), and the Gmail and Graph providers
@@ -60,9 +65,12 @@ crates/rail/             Binary: clap CLI, logging, and the account, daemon, doc
     tui/text             Escaping, width, wrapping and hyperlinks for text that came from outside
     tui/data             The mail screen's read side (the store reader) and its link to the daemon
     tui/data/attachments_link.rs  The two attachment calls the mail screen sends, and what each answer carries back to its own status line
+    tui/data/saved_link.rs  The two saved-search calls the mail screen sends, and the rename an answer carries back so the open search can follow it
     tui/snooze.rs        The snooze chooser's choices and the times it reads from typed text
     tui/screens/mail     The mail screen: thread list, sidebar, status bar; `events.rs` takes the store's and the daemon's answers, `header.rs` and `hints.rs` draw the header row and the hint bar, `sidebar_tree.rs` builds the sidebar's rows and folds and `sidebar_view.rs` draws them, `list_view.rs` draws the thread list's rows and date groups, `composing*.rs` is its side of writing mail, `drafts_pane.rs` and `drafts_flow.rs` its Drafts folder, `snooze_flow.rs` its snooze chooser and what it sends
     tui/screens/mail/attachments.rs  The mail screen's side of `s`, `S`, `w` and the open question: what each key sends, and the status line each answer gets
+    tui/screens/mail/saved.rs  The mail screen's side of `S`, `r` and `d`: what each key sends, the one rule that resolves a saved-search position plus the name shown with it, and what a changed list does to the open search
+    tui/screens/mail/search_counts_toggle.rs  `:search-counts`: the count beside each saved search off or on, for the session and in `config.toml`
     tui/screens/mail/tests/compose_gmail.rs, drafts_folder.rs  The tests of saving to Gmail and of the Drafts folder
     tui/screens/reader   The reader: `cards.rs` builds the title block, the newest message and the cards, `lines.rs` the parts of an open message (folded quotes, numbered links), `view.rs` draws them
     tui/screens/compose  The composer: the compose file, reply and forward prefill, prompts with completion, the review
@@ -70,6 +78,7 @@ crates/rail/             Binary: clap CLI, logging, and the account, daemon, doc
     tui/open.rs          The files handed to the system opener: `o`'s HTML copies (`OpenFiles`), and `OpenedAttachments`, the opened attachment copies; both go when the reader closes
     tui/modals           The palette, filter line, help, confirmations, label pickers and the error list
     tui/modals/attachments.rs  The attachment list `a` opens: its rows and message headings, its cursor, and the part a save or an open names
+    tui/modals/prompt.rs  The one-line name prompt behind `S` and `r`: it runs the same check the daemon runs and refuses in place, so a bad name never leaves it
     tui/theme            The default look, the vendored scheme table and the mapping from a scheme (scripts/update-schemes.sh regenerates schemes.txt; never edit it by hand)
   tests/                 End-to-end tests against the built binary, in a pseudo-terminal, and over MCP
 assets/brand/            Logos and the app icon
