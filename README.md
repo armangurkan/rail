@@ -237,7 +237,13 @@ Both `rail` and `rail setup` refuse to start, naming the file and line and exiti
 names an action it does not know, a key it cannot read, `Ctrl-C` (which always quits), or a key
 another action of the same view already uses (a key that starts another action's sequence
 counts). They check before the terminal changes. A view's own key wins over a global one: `q`
-closes the reader but quits from the list.
+closes the reader but quits from the list. The defaults count too: `J`, `K`, `shift-down` and
+`shift-up` extend the selection in the list, so a `[keys]` entry that binds one of them to another
+list action (`"list.down" = "J"`, say) stops Rail from starting with that error until you change
+the entry or move `list.extend_down` / `list.extend_up` to other keys. Likewise `h` snoozes in the
+list and the reader, so the reader's headers moved to `H`: an older `"reader.headers" = "h"` entry
+stops Rail from starting with `[keys] "list.snooze" (h) and "reader.headers" (h) cannot share a
+key in the reader view` until you remove it or bind `list.snooze` to another key.
 
 The `global.*`, `list.*`, `sidebar.*`, `reader.*` and `compose.*` actions below take effect in the
 mail screen and the `wizard.*` ones in the setup wizard. In the mail screen `?` lists the keys of the view you
@@ -430,8 +436,8 @@ at the right edge (`▸   2   Tom` … `Mon 22:11`), over a line of its text. Wh
 oldest messages are not shown, `[5 older messages of this thread are not shown]` stands where they
 would be. `j`/`k` move the cursor, `n`/`p` jump between the newest message and each card, `Tab` (or
 `Enter` on a card, the subject or a preview) opens or closes the message under the cursor, and
-`Enter` on `[n quoted lines]` shows the quoted text. `H` shows or hides, for the session, the
-headers of every open message: `From:`, `To:` and `Cc:` with addresses,
+`Enter` on `[n quoted lines]` shows the quoted text. `H` (`h` before snooze took it) shows or
+hides, for the session, the headers of every open message: `From:`, `To:` and `Cc:` with addresses,
 `Date: Fri 10 Oct 2025 12:40`, and `Subject:` when it differs from the thread's. With
 `icons = "ascii"` the arrows are `>` and `v` and the rules `-`.
 
@@ -598,12 +604,17 @@ the selection, which stays as it was (`Space` still pages down, and selecting is
 archive, trash and move close the reader.
 
 `* a` selects every thread this mailbox and filter match — newest first, at most 10,000, and the
-header then reads `10,000 selected (more match)`. `* f` puts the sender of the thread under the
-cursor into the filter line as `from:<address>` and selects those: in the filter line that form
-matches that address exactly, where a plain `from:dana` matches every thread whose sender's name
-*or* address contains `dana`. A thread whose newest message has no readable sender, or one whose
-address the filter cannot carry, says `This thread has no sender to select by.` and changes
-nothing.
+header then reads `10,000 selected (more match)`; when nothing matches it says `Nothing matches.`
+and selects nothing. `* f` puts the sender of the thread under the cursor into the filter line as
+`from:<address>` and selects every thread with any message from that address, as the same `from:`
+filter would show them: in the filter line that form matches that address exactly, where a plain
+`from:dana` matches every thread whose sender's name *or* address contains `dana`. The sender is
+that of the thread's newest message from someone else: your own messages (from the account's
+address, or in its Sent or Drafts) are passed over, so a thread you answered last selects by the
+person you answered. A thread with no such message with a readable sender, or one whose address
+the filter cannot carry, says `This thread has no sender to select by.` and changes nothing. If
+you change the mailbox or the filter before `* a` or `* f` has answered, its answer is dropped and
+nothing is selected.
 
 `v` starts a range at the thread under the cursor: the bar says `range from here`, and while the
 range is open its first key hint is `Esc range`. Move as usual, then `v` or `Esc` ends the range
@@ -619,8 +630,8 @@ starts again from the new place. A terminal that does not report Shift with the 
 `J` and `K`; elsewhere in Rail, the Drafts folder included, a Shift-arrow moves like the plain
 arrow, and there `J` and `K` move too. While `v` has a range open, `J`, `K` and the Shift-arrows
 only move. If a sync reads the list again while you extend and the thread you started from leaves
-it, the extension carries on from where the cursor was. A selection holds at most 10,000 threads: an extension it stops says
-`The selection holds at most 10,000 threads.`
+it, the extension carries on from where the cursor was. A selection holds at most 10,000 threads:
+an extension or a `v` range it stops says `The selection holds at most 10,000 threads.`
 
 A bulk action goes out as one request per 200 threads per account, and one `z` takes the whole set
 back, reporting `undone` once; an undo that could take only part of it back says `undone in part:
@@ -654,7 +665,8 @@ refuses an action for good (the thread or the label no longer exists), Rail undo
 list, shows "Could not archive: …" on the thread's row, and keeps the error in `:errors`, where
 `Enter` on it sends the action again. Refusals are listed in `:errors` again whenever Rail
 connects to the daemon, so one that happened while Rail was closed or disconnected is not lost.
-A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed`.
+A later sync that brings Gmail's state of that thread clears the refusal and its `1 failed` (a
+snoozed thread's failed return excepted: see [Snooze](#snooze)).
 On a Microsoft 365 account the same keys act through Outlook's folders, where a message lives in
 one folder. `e` moves the thread's Inbox messages to Archive; on a mailbox with no Archive folder
 it says `This mailbox has no Archive folder; press m to move.` (Rail never makes one). `d` moves
@@ -727,7 +739,15 @@ devices show the thread archived until it comes back, and it comes back while th
 snooze took out of the inbox: on Gmail it adds `INBOX` to them (one you trashed or reported as
 spam meanwhile stays there), and on Microsoft 365 it moves them from Archive back to Inbox (one
 you moved to another folder meanwhile stays there). If the server refuses the archive, the snooze fails with it (`Could not archive: …`, and
-`Enter` in `:errors` sends it again); snoozing the thread again starts afresh. Removing an account
+`Enter` in `:errors` sends it again); snoozing the thread again starts afresh. A return the server
+cannot take right away is tried again like any action; one it refuses, or that gives up after 20
+attempts, leaves the thread archived and stays in `:errors` (`Could not return to the inbox: …`)
+through later syncs, where `Enter` sends it again; a retry leaves mail you trashed or reported as
+spam since where it is. It leaves `:errors` once it is sent, once the thread is back in the inbox
+by other means, once none of its messages is still archived (all trashed, reported or filed
+elsewhere), or when you archive, trash or move the thread in Rail. So a return the server keeps
+refusing stays until you send it again with `Enter` in `:errors` and it goes through, or you
+archive, trash or move the thread in Rail to give it up. Removing an account
 leaves its snoozed threads archived, since nothing syncs that account any more.
 
 ## Writing mail

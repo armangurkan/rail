@@ -573,7 +573,10 @@ pub(crate) fn retry(
 }
 
 /// Spec §3: a failed row is kept until it is retried or a sync writes server state for one of
-/// its threads. Deletes the account's failed rows on `threads`; how many.
+/// its threads. Deletes the account's failed rows on `threads`; how many. A snooze's failed
+/// return is the exception (#106): the server's state is the very archive it failed to undo, and
+/// nothing else would bring the thread back, so it stays until it is retried, the thread is in
+/// the inbox again by other means, or Rail takes the thread out again (`snoozes::left_inbox`).
 pub(super) fn clear_failed(
     tx: &Transaction,
     account: i64,
@@ -583,9 +586,14 @@ pub(super) fn clear_failed(
         return Ok(0);
     }
     Ok(tx.execute(
-        "DELETE FROM outbox WHERE account_id = ?1 AND state = 'failed'
-           AND EXISTS (SELECT 1 FROM json_each(outbox.thread_ids) t
-                       WHERE t.value IN (SELECT value FROM json_each(?2)))",
+        concat!(
+            "DELETE FROM outbox WHERE account_id = ?1 AND state = 'failed'
+               AND EXISTS (SELECT 1 FROM json_each(outbox.thread_ids) t
+                           WHERE t.value IN (SELECT value FROM json_each(?2)))
+               AND NOT (",
+            snoozes::return_still_owed!("outbox"),
+            ")"
+        ),
         params![account, json(threads)],
     )?)
 }

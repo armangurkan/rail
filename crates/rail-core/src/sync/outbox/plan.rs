@@ -81,9 +81,16 @@ pub(super) fn plan(store: &Store, row: &OutboxRow) -> Result<Plan, StoreError> {
     if threads.is_empty() {
         return Ok(Plan::Nothing);
     }
-    let Some(action) = store.row_action(row)? else {
+    let Some(mut action) = store.row_action(row)? else {
         return Ok(Plan::LabelGone);
     };
+    // A return retried late from `:errors` sends only the mail not trashed or reported since.
+    if let Action::Unsnooze { messages } = &mut action {
+        *messages = store.returnable(row.account_id, &row.thread_ids, messages)?;
+        if messages.is_empty() {
+            return Ok(Plan::Nothing);
+        }
+    }
     Ok(match change_for(store, row.account_id, &action)? {
         Some(change) => Plan::Send { threads, change },
         None => Plan::LabelGone,
