@@ -325,6 +325,8 @@ fn pattern(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// #110: a filter narrows only when it has a condition the store applies or an
     /// `account:`. Words the full-text query drops (`*`, brackets) are no condition.
     #[test]
@@ -343,8 +345,6 @@ mod tests {
         }
         assert!(!Filter::default().has_condition());
     }
-
-    use super::*;
 
     #[test]
     fn operators_become_conditions_and_the_rest_words() {
