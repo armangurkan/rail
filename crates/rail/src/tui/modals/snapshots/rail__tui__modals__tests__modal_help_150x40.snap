@@ -39,6 +39,5 @@ expression: text
                                    │  f                    Forward the latest message                             │
                                    │  Space                Select or unselect the thread                          │
                                    │  Esc                  Clear the selection                                    │
-                                   │  * a                  Select every thread this mailbox and filter match      │
                                    │↓ more                                                                        │
                                    └──────────────────────────────────────────────────────────────────────────────┘

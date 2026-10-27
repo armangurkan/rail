@@ -23,6 +23,5 @@ expression: text
      │  j, ↓                 Next thread                                            │
      │  k, ↑                 Previous thread                                        │
      │  PgDn, Ctrl-d         One page down                                          │
-     │  PgUp, Ctrl-u         One page up                                            │
      │↓ more                                                                        │
      └──────────────────────────────────────────────────────────────────────────────┘
