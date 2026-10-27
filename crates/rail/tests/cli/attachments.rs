@@ -1,11 +1,12 @@
 //! Saving and opening attachments through the real binary in a pseudo-terminal, against a
-//! mocked Gmail, starting with `a` then `s` on one part (AC-44). Every wait reads the screen a
-//! 100x30 terminal would show — Rail redraws only the cells that changed, so a phrase on the
-//! bar is never one run in the stream — and every test checks the files on disk, their modes,
-//! and what Gmail was asked for. Linux only, like every pty test.
+//! mocked Gmail: `a` then `s` on one part (AC-44), and `w` and `S` on every
+//! part of a message. Every wait reads the screen a 100x30 terminal would show — Rail redraws only the
+//! cells that changed, so a phrase on the bar is never one run in the stream — and every test
+//! checks the files on disk, their modes, and what Gmail was asked for. Linux only, like every
+//! pty test.
 
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ChildStdin;
 use std::sync::{Arc, Mutex};
 
@@ -22,6 +23,8 @@ const API: &str = "/gmail/v1/users/me";
 const BODY_DATA: &str = "VGhlIHBsYW4gaXMgcmVhZHku";
 /// `hello` in base64url, `plan.pdf`'s five bytes.
 const PLAN_DATA: &str = "aGVsbG8";
+/// `the notes` in base64url, `notes.txt`'s nine.
+const NOTES_DATA: &str = "dGhlIG5vdGVz";
 /// The attachment list's top border, as `boxed` draws it.
 const BOX: &str = "┌ Attachments ";
 /// The hint bar, the last row of the 100x30 screen.
@@ -49,6 +52,16 @@ const PLAN: Part = Part {
     bytes: b"hello",
     data: PLAN_DATA,
     attachment_id: None,
+};
+
+/// `notes.txt`, whose bytes Gmail only hands over from `attachments.get`.
+const NOTES: Part = Part {
+    part_id: "0.2",
+    filename: "notes.txt",
+    mime_type: "text/plain",
+    bytes: b"the notes",
+    data: NOTES_DATA,
+    attachment_id: Some("att-notes"),
 };
 
 impl Part {
@@ -289,6 +302,34 @@ fn ends(run: &mut Run, keys: &[u8]) {
     assert!(status.success(), "{status:?}: {:?}", text(&run.output));
 }
 
+/// What `path` holds and the mode it holds it at.
+fn saved_file(path: &Path) -> (Vec<u8>, u32) {
+    let bytes = std::fs::read(path).unwrap_or_else(|error| panic!("{path:?}: {error}"));
+    let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    (bytes, mode)
+}
+
+/// Every part of `parts` on disk in `dir`, owner-only, holding the bytes Gmail served.
+fn each_part_saved(dir: &Path, parts: &[Part]) {
+    for part in parts {
+        let (bytes, mode) = saved_file(&dir.join(part.filename));
+        assert_eq!(bytes, part.bytes, "{}: the served bytes", part.filename);
+        assert_eq!(mode, 0o600, "{}: owner-only", part.filename);
+    }
+}
+
+/// How many times Gmail was asked for `attachment_id`'s bytes.
+async fn attachment_fetches(server: &MockServer, attachment_id: &str) -> usize {
+    let wanted = format!("{API}/messages/m1/attachments/{attachment_id}");
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|request| request.url.path() == wanted)
+        .count()
+}
+
 /// How many `format=full` reads of m1 Gmail has answered: a part served inline costs one of
 /// these, because Gmail's own attachment id is not stable and Rail re-reads the message.
 async fn full_reads(server: &MockServer) -> usize {
@@ -348,5 +389,70 @@ async fn pressing_a_then_s_in_the_reader_saves_the_attachment_to_the_configured_
     // `s` closes the list and leaves the reader open, where `q` is `reader.back` (a view's own
     // binding beats `Global`), so the first `q` closes the thread and the second quits.
     // Measured on Linux at this anchor: after the first `q` alone the process was still running.
+    ends(&mut run, b"qq");
+}
+
+/// US-2, FR-9: `w` in the reader saves every attachment of the message under the cursor,
+/// without opening the list, and the bar carries §8's save-all line.
+#[tokio::test]
+async fn w_in_the_reader_saves_every_attachment_of_the_message() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let parts = [PLAN, NOTES];
+    let mut run = start(&dir, &parts).await;
+    open_the_thread(&mut run);
+    bulk::type_keys(&mut run.keys, b"w");
+    wait_row(
+        "the save-all line",
+        &run.output,
+        BAR,
+        format!("Saved 2 attachments to {}", run.saved.display()),
+    );
+    each_part_saved(&run.saved, &parts);
+    assert_eq!(
+        attachment_fetches(&run.server, "att-notes").await,
+        1,
+        "Gmail served notes.txt's bytes once"
+    );
+    wait_shown("no list was opened", &run.output, |rows| {
+        rows.iter().all(|row| !row.contains(BOX))
+    });
+    ends(&mut run, b"qq");
+}
+
+/// US-2, FR-4: `S` in the attachment list saves every attachment of that row's message and
+/// closes the list.
+#[tokio::test]
+async fn s_capital_in_the_list_saves_every_attachment() {
+    if !script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _daemon = StopsDaemon(&dir);
+    let parts = [PLAN, NOTES];
+    let mut run = start(&dir, &parts).await;
+    open_the_thread(&mut run);
+    open_the_list(&mut run);
+    bulk::type_keys(&mut run.keys, b"S");
+    wait_row(
+        "the save-all line",
+        &run.output,
+        BAR,
+        format!("Saved 2 attachments to {}", run.saved.display()),
+    );
+    wait_shown("the list closed", &run.output, |rows| {
+        rows.iter().all(|row| !row.contains(BOX))
+    });
+    each_part_saved(&run.saved, &parts);
+    assert_eq!(
+        attachment_fetches(&run.server, "att-notes").await,
+        1,
+        "Gmail served notes.txt's bytes once"
+    );
     ends(&mut run, b"qq");
 }
