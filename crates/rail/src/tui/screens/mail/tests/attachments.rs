@@ -19,6 +19,7 @@ use super::*;
 use crate::tui::modals::{AttachmentRow, AttachmentTarget};
 use crate::tui::test_util::{recording_opener, render_lines, snapshot};
 
+mod keys;
 mod outcomes;
 
 /// Fixture **F**'s parts: `(remote message id, part id, filename, size, mime type)`.
