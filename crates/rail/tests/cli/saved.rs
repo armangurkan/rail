@@ -11,6 +11,13 @@ fn with_searches(tables: &str) -> String {
 
 const DANA: &str = "\n[[saved_searches]]\nname = \"dana\"\nquery = \"from:dana\"\n";
 
+/// One hand-written saved search over fake Gmail's three threads (`Budget m1`, `Budget m2`,
+/// `Budget m3`): `subject:` is a `LIKE` over the message subject (`store/filter.rs`), so this
+/// one finds `Budget m1` alone. The name carries no digit, so "no count is drawn" can be read
+/// off the sidebar row.
+#[cfg(all(target_os = "linux", debug_assertions))]
+const JUST_ONE: &str = "\n[[saved_searches]]\nname = \"just-one\"\nquery = \"subject:m1\"\n";
+
 /// FR-20: the `[[accounts]]` table and the `[general]` key `WORK_FILE_BACKEND` puts in
 /// `config.toml` are still there after Rail rewrote the file. Asserted line by line rather
 /// than as one block: `toml_edit` keeps the tables it did not touch, not their spacing.
@@ -251,4 +258,129 @@ fn saving_the_filter_writes_the_search_and_shows_it_in_the_sidebar() {
         std::thread::sleep(Duration::from_millis(50));
     }
     drop(keys);
+}
+
+/// Plan C.3: the rest of the saved-search stories end to end — opening one as a mailbox, `r`,
+/// `d`, the palette and `:search-counts` — the real binary in a pseudo-terminal against fake
+/// Gmail. Every wait reads `pty::screen` rows, so what is asserted is what the terminal shows,
+/// and every claim about the settings is read off `config.toml`. Gated like `mod pty`, whose
+/// helpers these reuse together with `mod bulk`'s fake Gmail; `mod saved` itself is not gated,
+/// because `rail doctor` runs everywhere.
+#[cfg(all(target_os = "linux", debug_assertions))]
+mod terminal {
+    use std::path::{Path, PathBuf};
+    use std::process::ChildStdin;
+    use std::sync::{Arc, Mutex};
+
+    use wiremock::MockServer;
+
+    use super::{COLS, JUST_ONE, ROWS, keeps_the_account, with_searches};
+    use crate::pty::{screen, script_available, text, wait_until};
+    use crate::{StopsDaemon, bulk, write_config};
+
+    /// The header is the screen's first row.
+    const HEADER: usize = 0;
+    /// `j` enough times to pass the sidebar's last row: `Sidebar::step` "stays at either end"
+    /// (`screens/mail/sidebar.rs`), so any number over the row count lands on the last row the
+    /// cursor stops on.
+    const PAST_THE_END: [u8; 30] = [b'j'; 30];
+
+    /// Wait until the screen, as the 100x30 terminal shows it, passes `check` (rows from 0);
+    /// on timeout fail with everything the terminal drew.
+    fn wait_shown(
+        what: &str,
+        output: &Arc<Mutex<Vec<u8>>>,
+        check: impl Fn(&[String]) -> bool + Send + 'static,
+    ) {
+        let drawn = output.clone();
+        wait_until(what, output, move || {
+            check(&screen(&text(&drawn), COLS, ROWS))
+        });
+    }
+
+    /// Wait until the saved search `name` is the open mailbox holding only what its query
+    /// finds: the header names it, `Budget m1` is drawn, and the other two threads are gone.
+    /// All three are drawn before this, so the two that must leave carry the assertion.
+    fn wait_for_the_one_thread(output: &Arc<Mutex<Vec<u8>>>, name: &'static str) {
+        let title = format!("Search: {name}");
+        wait_shown("the search open with its one thread", output, move |rows| {
+            rows[HEADER].contains(&title)
+                && rows.iter().any(|row| row.contains("Budget m1"))
+                && !rows
+                    .iter()
+                    .any(|row| row.contains("Budget m2") || row.contains("Budget m3"))
+        });
+    }
+
+    /// `rail` in a 100x30 pseudo-terminal against fake Gmail with `config` on disk, settled
+    /// once all three threads are drawn: the child, its keyboard, everything it drew, and the
+    /// path of `config.toml`.
+    fn open_mail(
+        dir: &tempfile::TempDir,
+        server: &MockServer,
+        config: &str,
+    ) -> (bulk::Spawned, ChildStdin, Arc<Mutex<Vec<u8>>>, PathBuf) {
+        let path = write_config(dir, config);
+        bulk::store_tokens(dir);
+        let (child, keys, output) = bulk::launch(dir, server);
+        wait_shown("the three threads in the list", &output, |rows| {
+            bulk::MESSAGES.iter().all(|id| {
+                let subject = format!("Budget {id}");
+                rows.iter().any(|row| row.contains(&subject))
+            })
+        });
+        (child, keys, output, path)
+    }
+
+    /// `Tab` to the sidebar, then past its last row. FR-7 puts the saved searches last with no
+    /// rule under them, so the cursor lands on the last saved search whatever the accounts
+    /// above hold. A wrong row is never silent: `r` and `d` show FR-16's notice there and the
+    /// wait that follows times out with the screen.
+    fn to_the_last_search(keys: &mut ChildStdin) {
+        bulk::type_keys(keys, b"\t");
+        bulk::type_keys(keys, &PAST_THE_END);
+    }
+
+    /// `q`: Rail quits cleanly, as every pseudo-terminal test ends.
+    fn quit(child: &mut bulk::Spawned, keys: &mut ChildStdin, output: &Arc<Mutex<Vec<u8>>>) {
+        bulk::type_keys(keys, b"q");
+        let status = bulk::wait_for_exit(child, output);
+        assert!(status.success(), "{status:?}: {:?}", text(output));
+    }
+
+    /// `config.toml` as it is on disk.
+    fn config_text(path: &Path) -> String {
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    /// The hand-written saved search is still in `config.toml`, query and all: a read-only
+    /// flow may not rewrite it.
+    fn still_saved(path: &Path) {
+        let saved = config_text(path);
+        assert!(saved.contains("name = \"just-one\""), "{saved}");
+        assert!(saved.contains("query = \"subject:m1\""), "{saved}");
+        keeps_the_account(&saved);
+    }
+
+    /// US-4 (FR-10, FR-11): `Enter` on the search in the sidebar opens it as a mailbox — the
+    /// header names it and the list holds only the thread its query finds. Nothing is written.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_saved_search_opens_as_a_mailbox_with_only_its_threads() {
+        if !script_available() {
+            eprintln!("skipping: util-linux `script` is not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let _daemon = StopsDaemon(&dir);
+        let server = bulk::gmail().await;
+        let (mut child, mut keys, output, config) =
+            open_mail(&dir, &server, &with_searches(JUST_ONE));
+
+        to_the_last_search(&mut keys);
+        bulk::type_keys(&mut keys, b"\r");
+
+        wait_for_the_one_thread(&output, "just-one");
+        still_saved(&config);
+        quit(&mut child, &mut keys, &output);
+    }
 }
