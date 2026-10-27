@@ -20,6 +20,7 @@ use crate::ops::{
 use crate::paths::Paths;
 use crate::provider::ProviderError;
 use crate::provider::graph::REFERENCE_ATTACHMENT;
+use crate::provider::http::RetryPolicy;
 use crate::provider::limits::MAX_ATTACHMENTS;
 use crate::provider::mock::{Call, MockProvider, envelope};
 use crate::store::Store;
@@ -123,6 +124,18 @@ fn attachment_calls(h: &DaemonHarness) -> usize {
         .iter()
         .filter(|c| **c == Call::Attachment)
         .count()
+}
+
+/// The retry policy each part fetch ran under, in the order the fetches were made. The mock
+/// records the override in force per call, so `None` is the sync's own backoff.
+fn fetch_policies(h: &DaemonHarness) -> Vec<Option<RetryPolicy>> {
+    h.mock.with(|m| {
+        m.policies
+            .iter()
+            .filter(|(call, _)| *call == Call::Attachment)
+            .map(|(_, policy)| *policy)
+            .collect()
+    })
 }
 
 /// The files directly under `dir`, sorted; an absent directory holds none.
@@ -427,6 +440,14 @@ async fn a_network_failure_stops_the_fetches_that_would_follow() {
         1,
         "only the first part was fetched"
     );
+    // Spec §7: that one fetch runs on the short interactive policy, not the sync's backoff, so
+    // the short-circuit above is not the only thing keeping `Saving…` from hanging on a retry
+    // run. `None` here would be the sync's own policy.
+    assert_eq!(
+        fetch_policies(&h),
+        [Some(RetryPolicy::interactive())],
+        "the one fetch ran on the interactive policy"
+    );
     nothing_written(&dest);
 }
 
@@ -607,6 +628,12 @@ async fn open_names_the_cache_file_from_the_type_not_the_sender_s_name() {
     assert_eq!(
         token.parent().expect("the attachments directory"),
         h.paths.attachments_dir()
+    );
+    // Spec §7, as a save's fetch: the person waiting on the open gets the interactive policy.
+    assert_eq!(
+        fetch_policies(&h),
+        [Some(RetryPolicy::interactive())],
+        "the open's fetch ran on the interactive policy"
     );
 }
 
