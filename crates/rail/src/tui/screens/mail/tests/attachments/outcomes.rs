@@ -233,3 +233,37 @@ async fn the_refused_type_stays_with_the_save_that_asked() {
         )
     );
 }
+
+/// An opener that cannot start is logged by its error kind alone: its message may carry the
+/// file's URL, whose name is the sender's.
+#[tokio::test]
+async fn an_opener_failure_logs_its_kind_never_the_url() {
+    let (mut f, _) = confirmed_fixture().await;
+    f.screen.ctx.opener = Arc::new(|url: &Url| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no handler for {url}"),
+        ))
+    });
+    let path = f
+        .paths
+        .attachments_dir()
+        .join("tok1")
+        .join("Payroll-Dana.pdf");
+    let target = AttachmentTarget {
+        account: "work".into(),
+        message: "m1".into(),
+        part_id: "0.1".into(),
+        filename: "Payroll-Dana.pdf".into(),
+        mime_type: String::new(),
+    };
+    let answer = Ok(AttachmentOpenResponse {
+        path: path.display().to_string(),
+    });
+    let (_, log) = crate::tui::test_util::logged(|| f.screen.attachment_opened(answer, target));
+    assert!(log.contains("could not start the opener"), "{log}");
+    assert!(log.contains("NotFound"), "{log}");
+    for secret in ["Payroll", "Dana", "tok1", "file://"] {
+        assert!(!log.contains(secret), "{log} carries {secret}");
+    }
+}

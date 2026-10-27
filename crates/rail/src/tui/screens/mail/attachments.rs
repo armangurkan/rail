@@ -350,7 +350,8 @@ impl MailScreen {
         };
         self.opened_attachments.add(path);
         if let Err(error) = (self.ctx.opener)(&url) {
-            tracing::warn!(error = %error, "could not start the opener");
+            // The kind alone: the error's text may quote the URL, whose name is the sender's.
+            tracing::warn!(kind = ?error.kind(), "could not start the opener");
             let text = format!("Could not start the opener: {}", escape(&error.to_string()));
             self.status.error(text, self.ctx.clock.now(), self.tick);
         }
