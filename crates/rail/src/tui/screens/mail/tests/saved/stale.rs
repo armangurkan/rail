@@ -105,8 +105,7 @@ async fn the_palette_s_rename_and_remove_act_on_the_search_they_name() {
         "the prompt opened on the search the line named"
     );
 
-    // `a-list` is gone and index 0 now holds `b-list`: both lines say the searches moved and
-    // send nothing, as `r` and `d` on a stale row do.
+    // `a-list` is gone (index 0 holds `b-list`): both say the searches moved, like a stale r/d.
     for (text, top) in [
         ("remove-search a-list", "Remove search: a-list"),
         ("rename-search a-list", "Rename search: a-list"),
