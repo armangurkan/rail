@@ -162,66 +162,81 @@ fn seed_tom_thread(dir: &tempfile::TempDir) {
     store.apply(&batch, 1_760_000_000).unwrap();
 }
 
-/// AC-30 (US-1/US-2, DELTA's end-to-end ruling): the real binary in a pseudo-terminal saves
-/// the filter in force and draws it in the sidebar, and `config.toml` holds the table.
+/// Everything the pseudo-terminal has drawn so far, as `pty::collect` hands it over.
+#[cfg(all(target_os = "linux", debug_assertions))]
+type Drawn = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
+
+/// Wait until `needle` is anywhere in what the terminal has drawn.
+#[cfg(all(target_os = "linux", debug_assertions))]
+fn wait_for_text(what: &str, output: &Drawn, needle: &'static str) {
+    use super::pty::{text, wait_until};
+
+    let drawn = output.clone();
+    wait_until(what, output, move || text(&drawn).contains(needle));
+}
+
+/// `rail` in a 100x30 pseudo-terminal with `config.toml` already on disk: the child, its
+/// keyboard and everything it draws, settled once the mail screen is up.
 ///
 /// 100 columns **is** `SIDEBAR_MIN_COLUMNS`, so no `b` is needed, and `MailScreen` starts with
 /// the list focused, the pane `list.save_search` is bound to, so no `Tab` is needed either.
-/// The last wait carries the whole predicate: the prompt echoes the name before anything is
-/// saved, so `needs-reply` alone would be vacuous, and the heading is drawn only after the
-/// daemon's `Ok` — which it answers after writing the file.
 #[cfg(all(target_os = "linux", debug_assertions))]
-#[test]
-fn saving_the_filter_writes_the_search_and_shows_it_in_the_sidebar() {
-    use std::io::Write;
+fn launch_on_the_mail_screen(
+    dir: &tempfile::TempDir,
+) -> (super::KillsChild, std::process::ChildStdin, Drawn) {
     use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
 
-    use super::pty::{LIMIT, collect, drawn_row, screen, script_available, text, wait_until};
-
-    if !script_available() {
-        eprintln!("skipping: util-linux `script` is not installed");
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let config = write_config(&dir, WORK_FILE_BACKEND);
-    seed_tom_thread(&dir);
-    let _daemon = StopsDaemon(&dir);
+    use super::pty::collect;
 
     let command = format!(
         "stty cols 100 rows 30; exec '{}'",
         env!("CARGO_BIN_EXE_rail")
     );
     let mut script = Command::new("script");
-    super::rail_env(&mut script, &dir)
+    super::rail_env(&mut script, dir)
         .args(["-q", "-e", "-c", &command, "/dev/null"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = super::KillsChild(Some(script.spawn().unwrap()));
-    let (mut keys, output) = {
+    let (keys, output) = {
         let rail = child.0.as_mut().unwrap();
         let keys = rail.stdin.take().unwrap();
         let output = collect(rail.stdout.take().unwrap());
         (keys, output)
     };
-    let seen = |needle: &'static str| {
-        let output = output.clone();
-        move || text(&output).contains(needle)
-    };
+    wait_for_text("the mail screen", &output, "All inboxes");
+    (child, keys, output)
+}
 
-    wait_until("the mail screen", &output, seen("All inboxes"));
+/// `/from:tom`, then `S`, `name` and `Enter`. The wait between the two is what makes `S` reach
+/// a screen whose filter line has text, whatever the filter debounce is doing.
+#[cfg(all(target_os = "linux", debug_assertions))]
+fn save_the_filter_as(keys: &mut std::process::ChildStdin, output: &Drawn, name: &str) {
+    use std::io::Write;
+
     keys.write_all(b"/from:tom\r").unwrap();
     keys.flush().unwrap();
-    wait_until("the filter in the header", &output, seen("from:tom"));
+    wait_for_text("the filter in the header", output, "from:tom");
     keys.write_all(b"S").unwrap();
     keys.flush().unwrap();
-    keys.write_all(b"needs-reply").unwrap();
+    keys.write_all(name.as_bytes()).unwrap();
     keys.flush().unwrap();
     keys.write_all(b"\r").unwrap();
     keys.flush().unwrap();
+}
+
+/// Wait until the saved search is drawn as a row under the `SEARCHES` heading.
+///
+/// This wait carries the whole predicate: the prompt echoes the name before anything is saved,
+/// so `needs-reply` alone would be vacuous, and the heading is drawn only after the daemon's
+/// `Ok` — which it answers after writing the file.
+#[cfg(all(target_os = "linux", debug_assertions))]
+fn wait_for_the_search_row(output: &Drawn) {
+    use super::pty::{drawn_row, text, wait_until};
+
     let drawn = output.clone();
-    wait_until("the saved search in the sidebar", &output, move || {
+    wait_until("the saved search in the sidebar", output, move || {
         let shown = text(&drawn);
         match (
             drawn_row(&shown, "SEARCHES"),
@@ -231,20 +246,28 @@ fn saving_the_filter_writes_the_search_and_shows_it_in_the_sidebar() {
             _ => false,
         }
     });
+}
 
-    let saved = std::fs::read_to_string(&config).unwrap();
-    assert!(saved.contains("[[saved_searches]]"), "{saved}");
-    assert!(saved.contains("name = \"needs-reply\""), "{saved}");
-    assert!(saved.contains("query = \"from:tom\""), "{saved}");
-    // FR-20: the `[[accounts]]` table `write_config` put there survives Rail's write.
-    keeps_the_account(&saved);
-    // US-2 (FR-8): the row carries its unread count, and the one seeded thread is unread.
-    // Read off `pty::screen`, which puts each row back together from the cells Rail drew.
+/// US-2 (FR-8): the row carries its unread count, and the one seeded thread is unread. Read
+/// off `pty::screen`, which puts each row back together from the cells Rail drew.
+#[cfg(all(target_os = "linux", debug_assertions))]
+fn wait_for_the_unread_count(output: &Drawn) {
+    use super::pty::{screen, text, wait_until};
+
     let counted = output.clone();
-    wait_until("the search's unread count", &output, move || {
+    wait_until("the search's unread count", output, move || {
         sidebar_slice(&screen(&text(&counted), COLS, ROWS), "needs-reply")
             .is_some_and(|slice| slice.ends_with('1'))
     });
+}
+
+/// `q`: Rail quits inside `pty::LIMIT`, and the keyboard is dropped after it has.
+#[cfg(all(target_os = "linux", debug_assertions))]
+fn quit_cleanly(child: &mut super::KillsChild, mut keys: std::process::ChildStdin, output: &Drawn) {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+
+    use super::pty::{LIMIT, text};
 
     keys.write_all(b"q").unwrap();
     keys.flush().unwrap();
@@ -253,11 +276,41 @@ fn saving_the_filter_writes_the_search_and_shows_it_in_the_sidebar() {
         assert!(
             Instant::now() < deadline,
             "rail did not quit:\n{:?}",
-            text(&output)
+            text(output)
         );
         std::thread::sleep(Duration::from_millis(50));
     }
     drop(keys);
+}
+
+/// AC-30 (US-1/US-2, DELTA's end-to-end ruling): the real binary in a pseudo-terminal saves
+/// the filter in force and draws it in the sidebar, and `config.toml` holds the table. Each
+/// step is one of the helpers above; what each wait proves is written up with it.
+#[cfg(all(target_os = "linux", debug_assertions))]
+#[test]
+fn saving_the_filter_writes_the_search_and_shows_it_in_the_sidebar() {
+    if !super::pty::script_available() {
+        eprintln!("skipping: util-linux `script` is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let config = write_config(&dir, WORK_FILE_BACKEND);
+    seed_tom_thread(&dir);
+    let _daemon = StopsDaemon(&dir);
+
+    let (mut child, mut keys, output) = launch_on_the_mail_screen(&dir);
+    save_the_filter_as(&mut keys, &output, "needs-reply");
+    wait_for_the_search_row(&output);
+
+    let saved = std::fs::read_to_string(&config).unwrap();
+    assert!(saved.contains("[[saved_searches]]"), "{saved}");
+    assert!(saved.contains("name = \"needs-reply\""), "{saved}");
+    assert!(saved.contains("query = \"from:tom\""), "{saved}");
+    // FR-20: the `[[accounts]]` table `write_config` put there survives Rail's write.
+    keeps_the_account(&saved);
+    wait_for_the_unread_count(&output);
+
+    quit_cleanly(&mut child, keys, &output);
 }
 
 /// Plan C.3: the rest of the saved-search stories end to end — opening one as a mailbox, `r`,
