@@ -458,7 +458,9 @@ five such parameters. Rail opens only `http`, `https` and `mailto` links of at m
 message's rows sit under a `MESSAGE <n>` heading when more than one message carries attachments.
 `Enter` or `o` opens the highlighted one with the program your system uses for it — Rail asks once
 a session before the first open, and only for the common document and image types it hands over;
-anything else is saved instead and says so. A type is the sender's claim, and your system's opener
+anything else is saved instead and says so. Office documents (Word, Excel, PowerPoint and their
+OpenDocument kin) and RTF are among them, so the question warns that they can hold macros or links
+that run or fetch content when opened. A type is the sender's claim, and your system's opener
 may judge a file by its contents instead, so before writing the copy Rail checks that the file
 starts the way its type does (`%PDF-` for a PDF, the PNG, JPEG, GIF, WebP, BMP, TIFF or HEIC
 signature for an image, a ZIP for `.docx` and its kin, a ZIP naming its own type first for

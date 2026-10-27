@@ -385,12 +385,15 @@ impl MailScreen {
 }
 
 /// The question asked before the session's first open: the file is written for a program of
-/// the system's choosing, and the bytes came from the sender (§6 slot 1).
+/// the system's choosing, the bytes came from the sender (§6 slot 1), and the Office and RTF
+/// types Rail hands over can carry macros or links that act when the file opens.
 fn open_lines() -> Vec<String> {
     vec![
         "Rail writes this attachment to a private temporary file and hands it to your system opener."
             .to_string(),
         "Which program runs is your system's choice, and the file came from the sender, not from Rail."
+            .to_string(),
+        "Office documents and RTF can hold macros or links that run or fetch content when opened."
             .to_string(),
         "Rail asks once per session; the files are removed when you close the reader.".to_string(),
     ]

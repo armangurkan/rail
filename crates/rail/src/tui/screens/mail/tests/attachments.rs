@@ -39,10 +39,11 @@ const PARTS: &[(&str, &str, &str, i64, &str)] = &[
 /// The hint on the modal's last inside row.
 const HINT: &str = "Enter or o opens · s saves · S saves all · j/k move · Esc closes";
 
-/// The open question's three sentences (§6 slot 1).
-const OPEN_LINES: [&str; 3] = [
+/// The open question's four sentences (§6 slot 1).
+const OPEN_LINES: [&str; 4] = [
     "Rail writes this attachment to a private temporary file and hands it to your system opener.",
     "Which program runs is your system's choice, and the file came from the sender, not from Rail.",
+    "Office documents and RTF can hold macros or links that run or fetch content when opened.",
     "Rail asks once per session; the files are removed when you close the reader.",
 ];
 
@@ -478,6 +479,23 @@ async fn enter_asks_once_then_opens_with_the_system_opener() {
         *opened.lock().unwrap(),
         [Url::from_file_path(&path).unwrap()]
     );
+}
+
+/// The open question warns that Office documents and RTF can run macros or fetch content,
+/// and the warning is drawn, not cut, on an ordinary terminal.
+#[tokio::test]
+async fn the_open_question_warns_about_office_macros() {
+    let (mut f, _) = attachment_fixture().await;
+    press(&mut f, KeyCode::Char('a')).await;
+    highlight(&mut f, "Q4 numbers.xlsx").await;
+    press(&mut f, KeyCode::Enter).await;
+    let Some(Modal::Confirm(confirm)) = &f.screen.modal else {
+        panic!("no question");
+    };
+    assert_eq!(confirm.lines()[2], OPEN_LINES[2]);
+    let text = draw(&f, 100, 30);
+    assert!(text.contains("macros"), "{text}");
+    assert!(text.contains("when opened."), "{text}");
 }
 
 /// AC-8: the open question is asked once a session.
