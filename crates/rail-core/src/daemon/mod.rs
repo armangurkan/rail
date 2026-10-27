@@ -16,7 +16,7 @@ pub mod wire;
 #[cfg(test)]
 mod action_tests;
 #[cfg(test)]
-mod attachment_tests;
+mod attachments_tests;
 #[cfg(test)]
 mod body_tests;
 #[cfg(test)]
