@@ -271,11 +271,12 @@ mod terminal {
     use std::path::{Path, PathBuf};
     use std::process::ChildStdin;
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     use wiremock::MockServer;
 
     use super::{COLS, JUST_ONE, ROWS, keeps_the_account, sidebar_slice, with_searches};
-    use crate::pty::{screen, script_available, text, wait_until};
+    use crate::pty::{LIMIT, screen, script_available, text, wait_until};
     use crate::{StopsDaemon, bulk, write_config};
 
     /// The header is the screen's first row.
@@ -490,5 +491,90 @@ mod terminal {
         wait_for_the_one_thread(&output, "just-one");
         still_saved(&config);
         quit(&mut child, &mut keys, &output);
+    }
+
+    /// Wait until the search's row carries its unread count, or none, while `All inboxes`
+    /// keeps its own: FR-19 turns off the saved searches' counts alone, so a frame caught half
+    /// drawn — every count missing — can never be read as the setting having changed.
+    fn wait_for_the_counts(output: &Arc<Mutex<Vec<u8>>>, counted: bool) {
+        let what = if counted {
+            "the search's unread count"
+        } else {
+            "no count on the search's row"
+        };
+        // Fake Gmail's threads are all unread, so `All inboxes` counts every one of them.
+        let all_inboxes = bulk::MESSAGES.len().to_string();
+        wait_shown(what, output, move |rows| {
+            sidebar_slice(rows, "All inboxes").is_some_and(|slice| slice.ends_with(&all_inboxes))
+                && sidebar_slice(rows, "just-one").is_some_and(|slice| {
+                    if counted {
+                        slice.ends_with('1')
+                    } else {
+                        !slice.chars().any(|c| c.is_ascii_digit())
+                    }
+                })
+        });
+    }
+
+    /// How often `config.toml` is read while waiting for a write.
+    const POLL: Duration = Duration::from_millis(50);
+    /// Wait until `config.toml` passes `check`. `:search-counts` writes it on a blocking task
+    /// (`screens/mail/themes.rs:205`), so the setting reaches the file after the redraw the
+    /// screen waits on; bounded by `pty::LIMIT`, and failing with the file.
+    fn wait_config(what: &str, path: &Path, check: impl Fn(&str) -> bool) {
+        let deadline = Instant::now() + LIMIT;
+        loop {
+            let text = config_text(path);
+            if check(&text) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {what}; config.toml:\n{text}"
+            );
+            std::thread::sleep(POLL);
+        }
+    }
+
+    /// US-6 (FR-19, FR-20): `:search-counts` turns the sidebar's counts off and on and saves
+    /// the setting, keeping everything else in `config.toml`. The count is read only once the
+    /// palette has closed, because its box covers the cells the count is drawn in.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_counts_toggles_and_is_saved_to_config() {
+        if !script_available() {
+            eprintln!("skipping: util-linux `script` is not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let _daemon = StopsDaemon(&dir);
+        let server = bulk::gmail().await;
+        let (mut child, mut keys, output, config) =
+            open_mail(&dir, &server, &with_searches(JUST_ONE));
+        // Fake Gmail's three threads are unread, and the query finds one of them.
+        wait_for_the_counts(&output, true);
+
+        toggle_the_counts(&mut keys, &output);
+        wait_for_the_counts(&output, false);
+        wait_config("the setting off in config.toml", &config, |text| {
+            text.contains("saved_search_counts = false")
+        });
+        still_saved(&config);
+
+        toggle_the_counts(&mut keys, &output);
+        wait_for_the_counts(&output, true);
+        wait_config("the setting gone from config.toml", &config, |text| {
+            !text.contains("saved_search_counts")
+        });
+        still_saved(&config);
+        quit(&mut child, &mut keys, &output);
+    }
+
+    /// `:search-counts` from the palette, waiting for its box to leave the screen: while it is
+    /// open its border cuts the sidebar before the count, so no count may be read until then.
+    fn toggle_the_counts(keys: &mut ChildStdin, output: &Arc<Mutex<Vec<u8>>>) {
+        bulk::type_keys(keys, b":search-counts\r");
+        wait_shown("the palette closed", output, |rows| {
+            !rows.iter().any(|row| row.contains(PALETTE_TITLE))
+        });
     }
 }
